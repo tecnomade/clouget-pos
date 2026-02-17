@@ -1,0 +1,43 @@
+[package]
+name = "clouget-pos"
+version = "0.1.0"
+description = "Clouget Punto de Venta - POS para pequeños negocios"
+authors = ["Clouget"]
+edition = "2021"
+default-run = "clouget-pos"
+
+[lib]
+name = "clouget_pos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+rand = "0.8"
+sha2 = "0.10"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+quick-xml = "0.37"
+# SRI: P12 parsing para validar certificado al cargar
+p12-keystore = "0.2"
+x509-parser = "0.16"
+# Firma XAdES-BES: delegada a Node.js (ec-sri-invoice-signer via scripts/firmar-xml.cjs)
+# RIDE PDF generation
+genpdf = { version = "0.2", features = ["images"] }
+qrcode = "0.13"
+image = "0.23"
+barcoders = "1"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"

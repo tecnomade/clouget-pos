@@ -1,0 +1,14 @@
+pub mod productos;
+pub mod clientes;
+pub mod ventas;
+pub mod caja;
+pub mod config;
+pub mod impresion;
+pub mod reportes;
+pub mod gastos;
+pub mod cuentas;
+pub mod respaldo;
+pub mod licencia;
+pub mod usuarios;
+pub mod exportar;
+pub mod sri;

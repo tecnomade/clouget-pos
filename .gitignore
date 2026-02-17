@@ -1,0 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Signing keys (NEVER commit)
+*.key
+*.key.pub
+
+# Build tools and temp artifacts
+sign-tool/target/
+latest.json
+
+# Accidental $HOME folder from key generation
+$HOME/
+
+# Local build/sign scripts
+build-signed.bat
+sign-updater.ps1
+sign-file.ps1
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
