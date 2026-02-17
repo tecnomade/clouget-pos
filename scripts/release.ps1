@@ -92,7 +92,8 @@ $LatestJson = @{
 } | ConvertTo-Json -Depth 4
 
 $LatestJsonPath = Join-Path $BundleDir "latest.json"
-Set-Content -Path $LatestJsonPath -Value $LatestJson -Encoding UTF8
+# Escribir sin BOM (PowerShell -Encoding UTF8 agrega BOM, lo que rompe el parser JSON de Tauri)
+[System.IO.File]::WriteAllText($LatestJsonPath, $LatestJson, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "OK - latest.json generado" -ForegroundColor Green
 
 # --- Paso 6: Crear GitHub Release ---
@@ -124,6 +125,12 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Verifica: gh auth status" -ForegroundColor Yellow
     exit 1
 }
+
+# Subir copia con nombre fijo para landing page (URL estable entre versiones)
+$FixedExe = Join-Path $BundleDir "Clouget-POS-setup.exe"
+Copy-Item $ExePath $FixedExe -Force
+gh release upload "v$Version" $FixedExe --repo $GhRepo --clobber
+Write-Host "OK - Subido Clouget-POS-setup.exe (enlace fijo para landing)" -ForegroundColor Green
 
 Write-Host "`n=== Release v$Version publicado exitosamente ===" -ForegroundColor Green
 Write-Host "URL: https://github.com/$GhRepo/releases/tag/v$Version" -ForegroundColor Cyan
