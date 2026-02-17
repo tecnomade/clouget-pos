@@ -326,6 +326,7 @@ export interface ItemCarrito {
   iva_porcentaje: number;
   subtotal: number;
   stock_disponible: number;
+  stock_minimo: number;
   precio_base: number;
   precios_disponibles?: PrecioProductoDetalle[];
   lista_seleccionada?: string;

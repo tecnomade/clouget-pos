@@ -175,6 +175,7 @@ export default function PuntoVenta() {
           iva_porcentaje: producto.iva_porcentaje,
           subtotal: precioEfectivo,
           stock_disponible: producto.stock_actual,
+          stock_minimo: producto.stock_minimo,
           precio_base: producto.precio_venta,
           precios_disponibles: preciosDisponibles,
           lista_seleccionada: listaSel,
@@ -795,7 +796,13 @@ export default function PuntoVenta() {
                       <td>
                         <strong>{item.nombre}</strong>
                         {item.codigo && <span className="text-secondary" style={{ marginLeft: 8, fontSize: 12 }}>{item.codigo}</span>}
-                        {item.stock_disponible <= 0 && <span className="text-danger" style={{ marginLeft: 4, fontSize: 11 }}>Sin stock</span>}
+                        <span style={{
+                          fontSize: 11, marginLeft: 6,
+                          color: item.stock_disponible <= 0 ? "#dc2626" : item.stock_disponible <= item.stock_minimo ? "#d97706" : "#94a3b8",
+                          fontWeight: item.stock_disponible <= item.stock_minimo ? 600 : undefined,
+                        }}>
+                          (stock: {item.stock_disponible})
+                        </span>
                       </td>
                       <td>
                         <input type="number" className="input" value={item.cantidad} min={1} step={1}
@@ -808,23 +815,24 @@ export default function PuntoVenta() {
                             <select
                               className="input"
                               style={{ width: 90, fontSize: 11, padding: "3px 2px", textAlign: "right", appearance: "auto" }}
-                              value={item.precio_unitario.toFixed(2)}
+                              value={item.lista_seleccionada ?? "base"}
                               onChange={(e) => {
-                                const val = e.target.value;
-                                if (val === "base") {
+                                const key = e.target.value;
+                                if (key === "base") {
                                   cambiarListaPrecioItem(item.producto_id, item.precio_base, undefined);
                                 } else {
-                                  const precio = parseFloat(val);
-                                  const match = item.precios_disponibles?.find(p => Math.abs(p.precio - precio) < 0.001);
-                                  cambiarListaPrecioItem(item.producto_id, precio, match?.lista_nombre);
+                                  const match = item.precios_disponibles?.find(p => p.lista_nombre === key);
+                                  if (match) {
+                                    cambiarListaPrecioItem(item.producto_id, match.precio, match.lista_nombre);
+                                  }
                                 }
                               }}
                             >
-                              <option value={item.precio_base.toFixed(2)}>
+                              <option value="base">
                                 ${item.precio_base.toFixed(2)} (Base)
                               </option>
                               {item.precios_disponibles.map((pp) => (
-                                <option key={pp.lista_precio_id} value={pp.precio.toFixed(2)}>
+                                <option key={pp.lista_precio_id} value={pp.lista_nombre}>
                                   ${pp.precio.toFixed(2)} ({pp.lista_nombre})
                                 </option>
                               ))}
