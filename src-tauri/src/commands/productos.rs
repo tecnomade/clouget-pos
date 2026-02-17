@@ -6,13 +6,29 @@ use tauri::State;
 pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // Auto-generar código si viene vacío
+    let codigo = match &producto.codigo {
+        Some(c) if !c.trim().is_empty() => Some(c.trim().to_string()),
+        _ => {
+            let next: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(CAST(REPLACE(codigo, 'P', '') AS INTEGER)), 0) + 1
+                     FROM productos WHERE codigo LIKE 'P%' AND LENGTH(codigo) <= 8",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(1);
+            Some(format!("P{:04}", next))
+        }
+    };
+
     conn.execute(
         "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id,
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
          unidad_medida, es_servicio, activo)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
-            producto.codigo,
+            codigo,
             producto.codigo_barras,
             producto.nombre,
             producto.descripcion,
@@ -68,15 +84,22 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
 }
 
 #[tauri::command]
-pub fn buscar_productos(db: State<Database>, termino: String) -> Result<Vec<ProductoBusqueda>, String> {
+pub fn buscar_productos(
+    db: State<Database>,
+    termino: String,
+    lista_precio_id: Option<i64>,
+) -> Result<Vec<ProductoBusqueda>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let busqueda = format!("%{}%", termino);
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre
+            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+                    p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
+                    pp.precio as precio_lista
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
+             LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?2
              WHERE p.activo = 1
              AND (p.nombre LIKE ?1 OR p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1)
              ORDER BY p.nombre
@@ -85,7 +108,7 @@ pub fn buscar_productos(db: State<Database>, termino: String) -> Result<Vec<Prod
         .map_err(|e| e.to_string())?;
 
     let productos = stmt
-        .query_map(rusqlite::params![busqueda], |row| {
+        .query_map(rusqlite::params![busqueda, lista_precio_id], |row| {
             Ok(ProductoBusqueda {
                 id: row.get(0)?,
                 codigo: row.get(1)?,
@@ -95,6 +118,7 @@ pub fn buscar_productos(db: State<Database>, termino: String) -> Result<Vec<Prod
                 stock_actual: row.get(5)?,
                 stock_minimo: row.get(6)?,
                 categoria_nombre: row.get(7)?,
+                precio_lista: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -138,23 +162,33 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
 }
 
 #[tauri::command]
-pub fn listar_productos(db: State<Database>, solo_activos: bool) -> Result<Vec<ProductoBusqueda>, String> {
+pub fn listar_productos(
+    db: State<Database>,
+    solo_activos: bool,
+    lista_precio_id: Option<i64>,
+) -> Result<Vec<ProductoBusqueda>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let sql = if solo_activos {
-        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.stock_actual, p.stock_minimo, c.nombre
-         FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id
+        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio
+         FROM productos p
+         LEFT JOIN categorias c ON p.categoria_id = c.id
+         LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
          WHERE p.activo = 1 ORDER BY p.nombre"
     } else {
-        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.stock_actual, p.stock_minimo, c.nombre
-         FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id
+        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio
+         FROM productos p
+         LEFT JOIN categorias c ON p.categoria_id = c.id
+         LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
          ORDER BY p.nombre"
     };
 
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
 
     let productos = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params![lista_precio_id], |row| {
             Ok(ProductoBusqueda {
                 id: row.get(0)?,
                 codigo: row.get(1)?,
@@ -164,6 +198,7 @@ pub fn listar_productos(db: State<Database>, solo_activos: bool) -> Result<Vec<P
                 stock_actual: row.get(5)?,
                 stock_minimo: row.get(6)?,
                 categoria_nombre: row.get(7)?,
+                precio_lista: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -179,7 +214,8 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.stock_actual, p.stock_minimo, c.nombre
+            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+                    p.stock_actual, p.stock_minimo, c.nombre
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              INNER JOIN venta_detalles vd ON vd.producto_id = p.id
@@ -201,6 +237,7 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 stock_actual: row.get(5)?,
                 stock_minimo: row.get(6)?,
                 categoria_nombre: row.get(7)?,
+                precio_lista: None,
             })
         })
         .map_err(|e| e.to_string())?

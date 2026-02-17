@@ -29,6 +29,7 @@ pub struct ProductoBusqueda {
     pub stock_actual: f64,
     pub stock_minimo: f64,
     pub categoria_nombre: Option<String>,
+    pub precio_lista: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

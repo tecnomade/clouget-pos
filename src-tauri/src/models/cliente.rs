@@ -10,4 +10,6 @@ pub struct Cliente {
     pub telefono: Option<String>,
     pub email: Option<String>,
     pub activo: bool,
+    pub lista_precio_id: Option<i64>,
+    pub lista_precio_nombre: Option<String>,
 }

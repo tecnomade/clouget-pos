@@ -1,19 +1,21 @@
 import { useState, useEffect } from "react";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, exportarInventarioCsv } from "../services/api";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
-import type { ProductoBusqueda, Producto, Categoria } from "../types";
+import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 
 function FormProducto({
   onGuardar,
   onCancelar,
   productoEditar,
   categorias,
+  listasPrecios,
 }: {
   onGuardar: () => void;
   onCancelar: () => void;
   productoEditar?: Producto;
   categorias: Categoria[];
+  listasPrecios: ListaPrecio[];
 }) {
   const { toastError } = useToast();
   const [form, setForm] = useState<Producto>(
@@ -30,14 +32,39 @@ function FormProducto({
       activo: true,
     }
   );
+  const [preciosLista, setPreciosLista] = useState<Record<number, string>>({});
+
+  // Cargar precios existentes al editar
+  useEffect(() => {
+    if (productoEditar?.id) {
+      obtenerPreciosProducto(productoEditar.id).then((precios) => {
+        const map: Record<number, string> = {};
+        precios.forEach((p) => { map[p.lista_precio_id] = p.precio.toString(); });
+        setPreciosLista(map);
+      }).catch(() => {});
+    }
+  }, [productoEditar?.id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      let productoId: number;
       if (form.id) {
         await actualizarProducto(form);
+        productoId = form.id;
       } else {
-        await crearProducto(form);
+        productoId = await crearProducto(form);
+      }
+      // Guardar precios por lista
+      const preciosArr: PrecioProducto[] = [];
+      for (const [listaId, precioStr] of Object.entries(preciosLista)) {
+        const precio = parseFloat(precioStr);
+        if (!isNaN(precio) && precio > 0) {
+          preciosArr.push({ lista_precio_id: Number(listaId), producto_id: productoId, precio });
+        }
+      }
+      if (preciosArr.length > 0) {
+        await guardarPreciosProducto(productoId, preciosArr);
       }
       onGuardar();
     } catch (err) {
@@ -154,6 +181,37 @@ function FormProducto({
           </select>
         </div>
       </div>
+      {/* Precios por lista */}
+      {listasPrecios.length > 0 && (
+        <div style={{ marginTop: 16, padding: 12, background: "#f8fafc", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+          <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
+            Precios por lista
+          </label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {listasPrecios.map((lp) => (
+              <div key={lp.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, flex: 1 }}>
+                  {lp.nombre}
+                  {lp.es_default && <span style={{ fontSize: 10, color: "#16a34a", marginLeft: 4 }}>(defecto)</span>}
+                </span>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder={form.precio_venta.toFixed(2)}
+                  style={{ width: 110, fontSize: 12 }}
+                  value={preciosLista[lp.id!] ?? ""}
+                  onChange={(e) => setPreciosLista({ ...preciosLista, [lp.id!]: e.target.value })}
+                />
+              </div>
+            ))}
+          </div>
+          <span className="text-secondary" style={{ fontSize: 10, marginTop: 6, display: "block" }}>
+            Deje vacío para usar el precio base (${form.precio_venta.toFixed(2)})
+          </span>
+        </div>
+      )}
       <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
         <button type="button" className="btn btn-outline" onClick={onCancelar}>
           Cancelar
@@ -170,14 +228,16 @@ export default function Productos() {
   const { toastExito, toastError } = useToast();
   const [productos, setProductos] = useState<ProductoBusqueda[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [productoEditar, setProductoEditar] = useState<Producto | undefined>();
   const [filtro, setFiltro] = useState("");
 
   const cargarDatos = async () => {
-    const [prods, cats] = await Promise.all([listarProductos(true), listarCategorias()]);
+    const [prods, cats, listas] = await Promise.all([listarProductos(true), listarCategorias(), listarListasPrecios().catch(() => [])]);
     setProductos(prods);
     setCategorias(cats);
+    setListasPrecios(listas);
   };
 
   useEffect(() => {
@@ -243,6 +303,7 @@ export default function Productos() {
               <FormProducto
                 productoEditar={productoEditar}
                 categorias={categorias}
+                listasPrecios={listasPrecios}
                 onGuardar={() => {
                   setMostrarForm(false);
                   cargarDatos();

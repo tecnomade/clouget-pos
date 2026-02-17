@@ -25,6 +25,9 @@ import type {
   PedidoCreado,
   NuevaNotaCredito,
   NotaCreditoInfo,
+  ListaPrecio,
+  PrecioProducto,
+  PrecioProductoDetalle,
 } from "../types";
 
 // --- Productos ---
@@ -37,16 +40,16 @@ export async function actualizarProducto(producto: Producto): Promise<void> {
   return invoke("actualizar_producto", { producto });
 }
 
-export async function buscarProductos(termino: string): Promise<ProductoBusqueda[]> {
-  return invoke("buscar_productos", { termino });
+export async function buscarProductos(termino: string, listaPrecioId?: number): Promise<ProductoBusqueda[]> {
+  return invoke("buscar_productos", { termino, listaPrecioId: listaPrecioId ?? null });
 }
 
 export async function obtenerProducto(id: number): Promise<Producto> {
   return invoke("obtener_producto", { id });
 }
 
-export async function listarProductos(soloActivos: boolean = true): Promise<ProductoBusqueda[]> {
-  return invoke("listar_productos", { soloActivos });
+export async function listarProductos(soloActivos: boolean = true, listaPrecioId?: number): Promise<ProductoBusqueda[]> {
+  return invoke("listar_productos", { soloActivos, listaPrecioId: listaPrecioId ?? null });
 }
 
 export async function productosMasVendidos(limite: number = 12): Promise<ProductoBusqueda[]> {
@@ -426,4 +429,34 @@ export async function emitirNotaCreditoSri(ncId: number): Promise<ResultadoEmisi
 
 export async function generarRideNcPdf(ncId: number): Promise<string> {
   return invoke("generar_ride_nc_pdf", { ncId });
+}
+
+// --- Listas de Precios ---
+
+export async function listarListasPrecios(): Promise<ListaPrecio[]> {
+  return invoke("listar_listas_precios");
+}
+
+export async function crearListaPrecio(lista: ListaPrecio): Promise<number> {
+  return invoke("crear_lista_precio", { lista });
+}
+
+export async function actualizarListaPrecio(lista: ListaPrecio): Promise<void> {
+  return invoke("actualizar_lista_precio", { lista });
+}
+
+export async function establecerListaDefault(id: number): Promise<void> {
+  return invoke("establecer_lista_default", { id });
+}
+
+export async function guardarPreciosProducto(productoId: number, precios: PrecioProducto[]): Promise<void> {
+  return invoke("guardar_precios_producto", { productoId, precios });
+}
+
+export async function obtenerPreciosProducto(productoId: number): Promise<PrecioProductoDetalle[]> {
+  return invoke("obtener_precios_producto", { productoId });
+}
+
+export async function resolverPrecioProducto(productoId: number, clienteId?: number): Promise<number> {
+  return invoke("resolver_precio_producto", { productoId, clienteId: clienteId ?? null });
 }

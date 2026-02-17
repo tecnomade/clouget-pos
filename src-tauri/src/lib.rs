@@ -121,6 +121,14 @@ pub fn run() {
             commands::sri::obtener_emails_pendientes,
             commands::sri::emitir_nota_credito_sri,
             commands::sri::generar_ride_nc_pdf,
+            // Listas de precios
+            commands::listas_precios::listar_listas_precios,
+            commands::listas_precios::crear_lista_precio,
+            commands::listas_precios::actualizar_lista_precio,
+            commands::listas_precios::establecer_lista_default,
+            commands::listas_precios::guardar_precios_producto,
+            commands::listas_precios::obtener_precios_producto,
+            commands::listas_precios::resolver_precio_producto,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

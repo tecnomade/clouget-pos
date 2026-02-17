@@ -12,3 +12,4 @@ pub mod licencia;
 pub mod usuarios;
 pub mod exportar;
 pub mod sri;
+pub mod listas_precios;

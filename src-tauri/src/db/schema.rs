@@ -282,6 +282,30 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             fecha_carga TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
             fecha_expiracion TEXT
         );
+
+        -- Listas de precios (tarifas)
+        CREATE TABLE IF NOT EXISTS listas_precios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            descripcion TEXT,
+            es_default INTEGER NOT NULL DEFAULT 0,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+
+        -- Precios por producto y lista
+        CREATE TABLE IF NOT EXISTS precios_producto (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lista_precio_id INTEGER NOT NULL,
+            producto_id INTEGER NOT NULL,
+            precio REAL NOT NULL,
+            FOREIGN KEY (lista_precio_id) REFERENCES listas_precios(id) ON DELETE CASCADE,
+            FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE,
+            UNIQUE(lista_precio_id, producto_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_precios_lista ON precios_producto(lista_precio_id);
+        CREATE INDEX IF NOT EXISTS idx_precios_producto ON precios_producto(producto_id);
         ",
     )?;
 
@@ -301,6 +325,30 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Agregar columna numero_factura (secuencial SRI, solo se asigna al autorizar)
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN numero_factura TEXT", []);
+
+    // --- Migración: Listas de precios ---
+    // Agregar lista_precio_id a clientes
+    let _ = conn.execute(
+        "ALTER TABLE clientes ADD COLUMN lista_precio_id INTEGER REFERENCES listas_precios(id)",
+        [],
+    );
+
+    // Seed: crear lista por defecto si no existe ninguna
+    let lista_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM listas_precios", [], |row| row.get(0))
+        .unwrap_or(0);
+    if lista_count == 0 {
+        let _ = conn.execute(
+            "INSERT INTO listas_precios (nombre, descripcion, es_default) VALUES ('Precio Publico', 'Lista de precios por defecto', 1)",
+            [],
+        );
+        // Copiar precio_venta de productos existentes a la lista por defecto
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO precios_producto (lista_precio_id, producto_id, precio)
+             SELECT 1, id, precio_venta FROM productos",
+            [],
+        );
+    }
 
     Ok(())
 }

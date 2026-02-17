@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
-import { listarClientes, crearCliente, actualizarCliente } from "../services/api";
+import { listarClientes, crearCliente, actualizarCliente, listarListasPrecios } from "../services/api";
 import { useToast } from "../components/Toast";
-import type { Cliente } from "../types";
+import type { Cliente, ListaPrecio } from "../types";
 
 export default function Clientes() {
   const { toastExito, toastError } = useToast();
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [editando, setEditando] = useState<Cliente | undefined>();
+  const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
   const [form, setForm] = useState<Cliente>({
     tipo_identificacion: "CEDULA",
     nombre: "",
@@ -15,7 +16,9 @@ export default function Clientes() {
   });
 
   const cargar = async () => {
-    setClientes(await listarClientes());
+    const [cls, listas] = await Promise.all([listarClientes(), listarListasPrecios().catch(() => [])]);
+    setClientes(cls);
+    setListasPrecios(listas);
   };
 
   useEffect(() => { cargar(); }, []);
@@ -90,10 +93,20 @@ export default function Clientes() {
                     <input className="input" type="email" value={form.email ?? ""}
                       onChange={(e) => setForm({ ...form, email: e.target.value || undefined })} />
                   </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
+                  <div>
                     <label className="text-secondary" style={{ fontSize: 12 }}>Dirección</label>
                     <input className="input" value={form.direccion ?? ""}
                       onChange={(e) => setForm({ ...form, direccion: e.target.value || undefined })} />
+                  </div>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Lista de precios</label>
+                    <select className="input" value={form.lista_precio_id ?? ""}
+                      onChange={(e) => setForm({ ...form, lista_precio_id: e.target.value ? Number(e.target.value) : undefined })}>
+                      <option value="">Por defecto</option>
+                      {listasPrecios.map((lp) => (
+                        <option key={lp.id} value={lp.id}>{lp.nombre}{lp.es_default ? " (defecto)" : ""}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
@@ -112,6 +125,7 @@ export default function Clientes() {
                   <th>Nombre</th>
                   <th>Teléfono</th>
                   <th>Email</th>
+                  <th>Lista precios</th>
                   <th></th>
                 </tr>
               </thead>
@@ -122,6 +136,7 @@ export default function Clientes() {
                     <td><strong>{c.nombre}</strong></td>
                     <td className="text-secondary">{c.telefono ?? "-"}</td>
                     <td className="text-secondary">{c.email ?? "-"}</td>
+                    <td className="text-secondary">{c.lista_precio_nombre ?? "Por defecto"}</td>
                     <td>
                       <button className="btn btn-outline" onClick={() => abrirEditar(c)}>Editar</button>
                     </td>
@@ -129,7 +144,7 @@ export default function Clientes() {
                 ))}
                 {clientes.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center text-secondary" style={{ padding: 40 }}>
+                    <td colSpan={6} className="text-center text-secondary" style={{ padding: 40 }}>
                       No hay clientes registrados
                     </td>
                   </tr>

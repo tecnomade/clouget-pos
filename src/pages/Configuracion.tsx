@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio } from "../services/api";
+import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
 import Modal from "../components/Modal";
-import type { Categoria, LicenciaInfo, UsuarioInfo, EstadoSri, PlanSri, ConfigContratacion, PedidoCreado } from "../types";
+import type { Categoria, LicenciaInfo, UsuarioInfo, EstadoSri, PlanSri, ConfigContratacion, PedidoCreado, ListaPrecio } from "../types";
 
 export default function Configuracion() {
   const { toastExito, toastError } = useToast();
@@ -31,6 +31,13 @@ export default function Configuracion() {
   const [cargandoPlanes, setCargandoPlanes] = useState(false);
   const [creandoPedido, setCreandoPedido] = useState(false);
   const [pedidoCreado, setPedidoCreado] = useState<PedidoCreado | null>(null);
+  // Listas de precios
+  const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
+  const [nuevaListaNombre, setNuevaListaNombre] = useState("");
+  const [nuevaListaDesc, setNuevaListaDesc] = useState("");
+  const [editandoListaId, setEditandoListaId] = useState<number | null>(null);
+  const [editListaNombre, setEditListaNombre] = useState("");
+  const [editListaDesc, setEditListaDesc] = useState("");
   // Cajeros
   const [usuarios, setUsuarios] = useState<UsuarioInfo[]>([]);
   const [mostrarFormCajero, setMostrarFormCajero] = useState(false);
@@ -44,8 +51,8 @@ export default function Configuracion() {
   const [ambientePendiente, setAmbientePendiente] = useState("");
 
   const cargarDatos = async () => {
-    const [cfg, cats, imps, ruta, lic, usrs, sri] = await Promise.all([
-      obtenerConfig(), listarCategorias(), listarImpresorasCached(), obtenerRutaDb(), obtenerEstadoLicencia(), listarUsuarios().catch(() => []), consultarEstadoSri().catch(() => null)
+    const [cfg, cats, imps, ruta, lic, usrs, sri, listas] = await Promise.all([
+      obtenerConfig(), listarCategorias(), listarImpresorasCached(), obtenerRutaDb(), obtenerEstadoLicencia(), listarUsuarios().catch(() => []), consultarEstadoSri().catch(() => null), listarListasPrecios().catch(() => [])
     ]);
     setConfig(cfg);
     setCategorias(cats);
@@ -54,6 +61,7 @@ export default function Configuracion() {
     setLicencia(lic);
     setUsuarios(usrs);
     setEstadoSri(sri);
+    setListasPrecios(listas);
   };
 
   useEffect(() => { cargarDatos(); }, []);
@@ -358,6 +366,123 @@ export default function Configuracion() {
                       }}
                     >
                       {c.nombre}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Listas de Precios */}
+          <div className="card">
+            <div className="card-header">Listas de Precios</div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
+                Defina tarifas diferentes (Público, Mayorista, etc.) y asígnelas a clientes.
+              </p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <input
+                  className="input"
+                  placeholder="Nombre de lista..."
+                  style={{ flex: 1 }}
+                  value={nuevaListaNombre}
+                  onChange={(e) => setNuevaListaNombre(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && nuevaListaNombre.trim()) {
+                      (async () => {
+                        try {
+                          await crearListaPrecio({ nombre: nuevaListaNombre.trim(), descripcion: nuevaListaDesc.trim() || undefined, es_default: false, activo: true });
+                          setNuevaListaNombre("");
+                          setNuevaListaDesc("");
+                          setListasPrecios(await listarListasPrecios());
+                          toastExito("Lista creada");
+                        } catch (err) { toastError("Error: " + err); }
+                      })();
+                    }
+                  }}
+                />
+                <button className="btn btn-primary" onClick={async () => {
+                  if (!nuevaListaNombre.trim()) return;
+                  try {
+                    await crearListaPrecio({ nombre: nuevaListaNombre.trim(), descripcion: nuevaListaDesc.trim() || undefined, es_default: false, activo: true });
+                    setNuevaListaNombre("");
+                    setNuevaListaDesc("");
+                    setListasPrecios(await listarListasPrecios());
+                    toastExito("Lista creada");
+                  } catch (err) { toastError("Error: " + err); }
+                }}>Agregar</button>
+              </div>
+              {listasPrecios.length === 0 ? (
+                <p className="text-secondary text-center" style={{ padding: 16 }}>
+                  No hay listas de precios
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {listasPrecios.map((lp) => (
+                    <div key={lp.id} style={{
+                      padding: "8px 12px",
+                      background: "var(--color-bg)",
+                      borderRadius: "var(--radius)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                    }}>
+                      {editandoListaId === lp.id ? (
+                        <div style={{ flex: 1, display: "flex", gap: 6, alignItems: "center" }}>
+                          <input className="input" style={{ flex: 1, fontSize: 12 }}
+                            value={editListaNombre}
+                            onChange={(e) => setEditListaNombre(e.target.value)} />
+                          <input className="input" style={{ flex: 1, fontSize: 12 }}
+                            placeholder="Descripción"
+                            value={editListaDesc}
+                            onChange={(e) => setEditListaDesc(e.target.value)} />
+                          <button className="btn btn-primary" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={async () => {
+                              try {
+                                await actualizarListaPrecio({ id: lp.id, nombre: editListaNombre.trim(), descripcion: editListaDesc.trim() || undefined, es_default: lp.es_default, activo: lp.activo });
+                                setEditandoListaId(null);
+                                setListasPrecios(await listarListasPrecios());
+                                toastExito("Lista actualizada");
+                              } catch (err) { toastError("Error: " + err); }
+                            }}>OK</button>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => setEditandoListaId(null)}>x</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{lp.nombre}</span>
+                            {lp.descripcion && (
+                              <span className="text-secondary" style={{ fontSize: 11, marginLeft: 8 }}>{lp.descripcion}</span>
+                            )}
+                          </div>
+                          {lp.es_default && (
+                            <span style={{ fontSize: 10, background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
+                              Por defecto
+                            </span>
+                          )}
+                          {!lp.es_default && (
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10 }}
+                              onClick={async () => {
+                                try {
+                                  await establecerListaDefault(lp.id!);
+                                  setListasPrecios(await listarListasPrecios());
+                                  toastExito(`"${lp.nombre}" es ahora la lista por defecto`);
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>
+                              Defecto
+                            </button>
+                          )}
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10 }}
+                            onClick={() => {
+                              setEditandoListaId(lp.id!);
+                              setEditListaNombre(lp.nombre);
+                              setEditListaDesc(lp.descripcion || "");
+                            }}>
+                            Editar
+                          </button>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>

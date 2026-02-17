@@ -26,6 +26,7 @@ export interface ProductoBusqueda {
   stock_actual: number;
   stock_minimo: number;
   categoria_nombre?: string;
+  precio_lista?: number;
 }
 
 export interface Categoria {
@@ -45,6 +46,29 @@ export interface Cliente {
   telefono?: string;
   email?: string;
   activo: boolean;
+  lista_precio_id?: number;
+  lista_precio_nombre?: string;
+}
+
+// Listas de Precios
+export interface ListaPrecio {
+  id?: number;
+  nombre: string;
+  descripcion?: string;
+  es_default: boolean;
+  activo: boolean;
+}
+
+export interface PrecioProducto {
+  lista_precio_id: number;
+  producto_id: number;
+  precio: number;
+}
+
+export interface PrecioProductoDetalle {
+  lista_precio_id: number;
+  lista_nombre: string;
+  precio: number;
 }
 
 // Venta
@@ -302,4 +326,7 @@ export interface ItemCarrito {
   iva_porcentaje: number;
   subtotal: number;
   stock_disponible: number;
+  precio_base: number;
+  precios_disponibles?: PrecioProductoDetalle[];
+  lista_seleccionada?: string;
 }

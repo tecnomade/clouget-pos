@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -80,7 +80,7 @@ export default function PuntoVenta() {
   const handleBuscar = async (termino: string) => {
     setBusqueda(termino);
     if (termino.length >= 1) {
-      setResultados(await buscarProductos(termino));
+      setResultados(await buscarProductos(termino, clienteSeleccionado?.lista_precio_id));
     } else {
       setResultados([]);
     }
@@ -136,31 +136,51 @@ export default function PuntoVenta() {
     }
   };
 
-  const agregarAlCarrito = (producto: ProductoBusqueda) => {
-    setCarrito((prev) => {
-      const existente = prev.find((i) => i.producto_id === producto.id);
-      if (existente) {
-        return prev.map((i) =>
+  const agregarAlCarrito = async (producto: ProductoBusqueda) => {
+    const precioEfectivo = producto.precio_lista ?? producto.precio_venta;
+
+    // Check if already in cart
+    const existente = carrito.find((i) => i.producto_id === producto.id);
+    if (existente) {
+      setCarrito((prev) =>
+        prev.map((i) =>
           i.producto_id === producto.id
             ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario - i.descuento }
             : i
-        );
+        )
+      );
+    } else {
+      // Fetch available prices for this product
+      let preciosDisponibles: { lista_precio_id: number; lista_nombre: string; precio: number }[] = [];
+      try {
+        preciosDisponibles = await obtenerPreciosProducto(producto.id);
+      } catch { /* ignore */ }
+
+      // Determine which list is currently selected
+      let listaSel: string | undefined;
+      if (producto.precio_lista != null && preciosDisponibles.length > 0) {
+        const match = preciosDisponibles.find(p => Math.abs(p.precio - precioEfectivo) < 0.001);
+        listaSel = match?.lista_nombre;
       }
-      return [
+
+      setCarrito((prev) => [
         ...prev,
         {
           producto_id: producto.id,
           codigo: producto.codigo ?? undefined,
           nombre: producto.nombre,
           cantidad: 1,
-          precio_unitario: producto.precio_venta,
+          precio_unitario: precioEfectivo,
           descuento: 0,
           iva_porcentaje: producto.iva_porcentaje,
-          subtotal: producto.precio_venta,
+          subtotal: precioEfectivo,
           stock_disponible: producto.stock_actual,
+          precio_base: producto.precio_venta,
+          precios_disponibles: preciosDisponibles,
+          lista_seleccionada: listaSel,
         },
-      ];
-    });
+      ]);
+    }
     setBusqueda("");
     setResultados([]);
     inputRef.current?.focus();
@@ -192,6 +212,21 @@ export default function PuntoVenta() {
 
   const eliminarItem = (productoId: number) => {
     setCarrito((prev) => prev.filter((i) => i.producto_id !== productoId));
+  };
+
+  const cambiarListaPrecioItem = (productoId: number, nuevoPrecio: number, listaNombre?: string) => {
+    setCarrito((prev) =>
+      prev.map((i) =>
+        i.producto_id === productoId
+          ? {
+              ...i,
+              precio_unitario: nuevoPrecio,
+              subtotal: i.cantidad * nuevoPrecio - i.descuento,
+              lista_seleccionada: listaNombre,
+            }
+          : i
+      )
+    );
   };
 
   const subtotal = carrito.reduce((sum, i) => sum + i.subtotal, 0);
@@ -344,6 +379,33 @@ export default function PuntoVenta() {
     setTipoDocumento("NOTA_VENTA");
     inputRef.current?.focus();
   }, []);
+
+  // Recalcular precios del carrito al cambiar de cliente
+  const recalcularPreciosCarrito = useCallback(async (clienteId: number | null) => {
+    if (carrito.length === 0) return;
+    const nuevoCarrito = await Promise.all(
+      carrito.map(async (item) => {
+        try {
+          const nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteId ?? undefined);
+          // Determine which list matches the new price
+          let listaSel: string | undefined;
+          if (item.precios_disponibles) {
+            const match = item.precios_disponibles.find(p => Math.abs(p.precio - nuevoPrecio) < 0.001);
+            listaSel = match?.lista_nombre;
+          }
+          return {
+            ...item,
+            precio_unitario: nuevoPrecio,
+            subtotal: item.cantidad * nuevoPrecio - item.descuento,
+            lista_seleccionada: listaSel,
+          };
+        } catch {
+          return item;
+        }
+      })
+    );
+    setCarrito(nuevoCarrito);
+  }, [carrito]);
 
   // Escuchar F9 (cobrar) y F10 (nueva venta) via CustomEvent
   useEffect(() => {
@@ -532,9 +594,14 @@ export default function PuntoVenta() {
               <div className="flex gap-2 items-center">
                 <span style={{ fontSize: 13, background: "#e0f2fe", padding: "4px 10px", borderRadius: 4 }}>
                   {clienteSeleccionado.nombre}
+                  {clienteSeleccionado.lista_precio_nombre && (
+                    <span style={{ fontSize: 10, marginLeft: 6, background: "#dbeafe", padding: "1px 6px", borderRadius: 3, color: "#1e40af" }}>
+                      {clienteSeleccionado.lista_precio_nombre}
+                    </span>
+                  )}
                 </span>
                 <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 11 }}
-                  onClick={() => { setClienteSeleccionado(null); setMostrarClientes(false); }}>
+                  onClick={() => { setClienteSeleccionado(null); setMostrarClientes(false); recalcularPreciosCarrito(null); }}>
                   x
                 </button>
               </div>
@@ -599,7 +666,7 @@ export default function PuntoVenta() {
                 )}
                 {clientesResultados.map((c) => (
                   <div key={c.id} style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 4, fontSize: 13 }}
-                    onClick={() => { setClienteSeleccionado(c); setMostrarClientes(false); setBusquedaCliente(""); setClientesResultados([]); setMostrarCrearCliente(false); }}
+                    onClick={() => { setClienteSeleccionado(c); setMostrarClientes(false); setBusquedaCliente(""); setClientesResultados([]); setMostrarCrearCliente(false); recalcularPreciosCarrito(c.id ?? null); }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
@@ -663,7 +730,14 @@ export default function PuntoVenta() {
                       }}>
                         Stock: {p.stock_actual}{p.stock_actual <= p.stock_minimo && p.stock_minimo > 0 ? ` (min: ${p.stock_minimo})` : ""}
                       </span>
-                      <strong>${p.precio_venta.toFixed(2)}</strong>
+                      {p.precio_lista != null && p.precio_lista !== p.precio_venta ? (
+                        <span>
+                          <strong style={{ color: "#1e40af" }}>${p.precio_lista.toFixed(2)}</strong>
+                          <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: 4, textDecoration: "line-through" }}>${p.precio_venta.toFixed(2)}</span>
+                        </span>
+                      ) : (
+                        <strong>${p.precio_venta.toFixed(2)}</strong>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -728,7 +802,41 @@ export default function PuntoVenta() {
                           style={{ width: 60, textAlign: "center", padding: "4px" }}
                           onChange={(e) => actualizarCantidad(item.producto_id, parseFloat(e.target.value) || 0)} />
                       </td>
-                      <td className="text-right">${item.precio_unitario.toFixed(2)}</td>
+                      <td className="text-right">
+                        {item.precios_disponibles && item.precios_disponibles.length > 0 ? (
+                          <div style={{ position: "relative" }}>
+                            <select
+                              className="input"
+                              style={{ width: 90, fontSize: 11, padding: "3px 2px", textAlign: "right", appearance: "auto" }}
+                              value={item.precio_unitario.toFixed(2)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "base") {
+                                  cambiarListaPrecioItem(item.producto_id, item.precio_base, undefined);
+                                } else {
+                                  const precio = parseFloat(val);
+                                  const match = item.precios_disponibles?.find(p => Math.abs(p.precio - precio) < 0.001);
+                                  cambiarListaPrecioItem(item.producto_id, precio, match?.lista_nombre);
+                                }
+                              }}
+                            >
+                              <option value={item.precio_base.toFixed(2)}>
+                                ${item.precio_base.toFixed(2)} (Base)
+                              </option>
+                              {item.precios_disponibles.map((pp) => (
+                                <option key={pp.lista_precio_id} value={pp.precio.toFixed(2)}>
+                                  ${pp.precio.toFixed(2)} ({pp.lista_nombre})
+                                </option>
+                              ))}
+                            </select>
+                            {item.lista_seleccionada && (
+                              <div style={{ fontSize: 9, color: "#1e40af", textAlign: "right" }}>{item.lista_seleccionada}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span>${item.precio_unitario.toFixed(2)}</span>
+                        )}
+                      </td>
                       <td className="text-right">
                         <input type="number" className="input" value={item.descuento} min={0} step={0.1}
                           style={{ width: 65, textAlign: "center", padding: "4px" }}
