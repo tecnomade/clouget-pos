@@ -1,6 +1,6 @@
 [package]
 name = "clouget-pos"
-version = "0.2.3"
+version = "0.2.4"
 description = "Clouget Punto de Venta - POS para pequeños negocios"
 authors = ["Clouget"]
 edition = "2021"

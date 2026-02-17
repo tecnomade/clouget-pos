@@ -56,7 +56,11 @@ Write-Host "OK - Instalador: $ExeName" -ForegroundColor Green
 Write-Host "`n[3/6] Creando artefacto de update (.nsis.zip)..." -ForegroundColor Yellow
 $ZipPath = Join-Path $BundleDir $ZipName
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
-Compress-Archive -Path $ExePath -DestinationPath $ZipPath -CompressionLevel Optimal
+# Usar .NET ZipFile (Deflate estandar) en vez de Compress-Archive (Deflate64, no soportado por Tauri)
+Add-Type -Assembly System.IO.Compression.FileSystem
+$zip = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Create')
+[System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $ExePath, $ExeName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+$zip.Dispose()
 Write-Host "OK - $ZipName ($('{0:N1}' -f ((Get-Item $ZipPath).Length / 1MB)) MB)" -ForegroundColor Green
 
 # --- Paso 4: Firmar ---
@@ -75,7 +79,10 @@ Write-Host "OK - Firmado" -ForegroundColor Green
 
 # --- Paso 5: Generar latest.json ---
 Write-Host "`n[5/6] Generando latest.json..." -ForegroundColor Yellow
-$Signature = Get-Content $SigPath -Raw
+
+# Leer la firma y base64-encodearla (Tauri espera el mismo formato que la pubkey)
+$SigBytes = [System.IO.File]::ReadAllBytes($SigPath)
+$Signature = [System.Convert]::ToBase64String($SigBytes)
 $ZipUrlName = $ZipName -replace ' ', '.'
 $PubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
@@ -85,7 +92,7 @@ $LatestJson = @{
     pub_date = $PubDate
     platforms = @{
         "windows-x86_64" = @{
-            signature = $Signature.Trim()
+            signature = $Signature
             url = "https://github.com/$GhRepo/releases/download/v$Version/$ZipUrlName"
         }
     }
@@ -94,7 +101,7 @@ $LatestJson = @{
 $LatestJsonPath = Join-Path $BundleDir "latest.json"
 # Escribir sin BOM (PowerShell -Encoding UTF8 agrega BOM, lo que rompe el parser JSON de Tauri)
 [System.IO.File]::WriteAllText($LatestJsonPath, $LatestJson, (New-Object System.Text.UTF8Encoding $false))
-Write-Host "OK - latest.json generado" -ForegroundColor Green
+Write-Host "OK - latest.json generado (sin BOM)" -ForegroundColor Green
 
 # --- Paso 6: Crear GitHub Release ---
 Write-Host "`n[6/6] Creando GitHub Release v$Version..." -ForegroundColor Yellow
@@ -139,3 +146,4 @@ Write-Host "  - $ExeName (instalador para nuevos clientes)" -ForegroundColor Whi
 Write-Host "  - $ZipName (artefacto de auto-update)" -ForegroundColor White
 Write-Host "  - $SigName (firma criptografica)" -ForegroundColor White
 Write-Host "  - latest.json (manifiesto de update)" -ForegroundColor White
+Write-Host "  - Clouget-POS-setup.exe (enlace fijo para landing page)" -ForegroundColor White
