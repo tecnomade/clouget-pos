@@ -14,14 +14,17 @@ export default function UpdateChecker() {
 
   const verificarActualizacion = useCallback(async () => {
     try {
+      console.log("[Updater] Verificando actualizaciones...");
       const resultado = await check();
+      console.log("[Updater] Resultado:", resultado);
       if (resultado) {
         setUpdate(resultado);
         setEstado("disponible");
+      } else {
+        console.log("[Updater] No hay actualizaciones disponibles (ya esta en la ultima version)");
       }
     } catch (e) {
-      // Fallo silencioso - problemas de red no deben molestar al usuario
-      console.warn("Error al verificar actualizacion:", e);
+      console.error("[Updater] Error al verificar actualizacion:", e);
     }
   }, []);
 

@@ -1,6 +1,6 @@
 [package]
 name = "clouget-pos"
-version = "0.2.0"
+version = "0.2.1"
 description = "Clouget Punto de Venta - POS para pequeños negocios"
 authors = ["Clouget"]
 edition = "2021"
@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
