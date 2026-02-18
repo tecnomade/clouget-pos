@@ -71,6 +71,11 @@ fn pp_aligned(text: &str, style: Style, align: Alignment) -> impl Element {
     Paragraph::new(text).aligned(align).styled(style).padded(Margins::trbl(1, 1, 1, 3))
 }
 
+/// Paragraph alineado a la derecha con padding (para valores monetarios)
+fn pp_right(text: &str, style: Style) -> impl Element {
+    Paragraph::new(text).aligned(Alignment::Right).styled(style).padded(Margins::trbl(1, 3, 1, 1))
+}
+
 // ============================================
 // GENERADOR RIDE PDF
 // ============================================
@@ -146,7 +151,7 @@ pub fn generar_ride_pdf(
 
     // --- Columna izquierda: Datos del emisor ---
     let mut col_izq = LinearLayout::vertical();
-    col_izq.push(Break::new(1.0));
+    col_izq.push(Break::new(0.5));
 
     // Logo del negocio (si existe en config como base64) - formato horizontal
     if let Some(logo_b64) = config.get("logo_negocio") {
@@ -158,7 +163,7 @@ pub fn generar_ride_pdf(
                         logo_img = logo_img.with_alignment(Alignment::Center);
                         logo_img = logo_img.with_scale(genpdf::Scale::new(0.6, 0.45));
                         col_izq.push(logo_img);
-                        col_izq.push(Break::new(1.0));
+                        col_izq.push(Break::new(0.5));
                     }
                     let _ = std::fs::remove_file(&logo_temp);
                 }
@@ -167,55 +172,51 @@ pub fn generar_ride_pdf(
     }
 
     col_izq.push(pp(nombre_negocio, s_title));
-    col_izq.push(Break::new(1.0));
-    if !ruc.is_empty() {
-        col_izq.push(pp(&format!("RUC: {}", ruc), s_bold));
-    }
+    col_izq.push(Break::new(0.5));
     if !direccion_neg.is_empty() {
-        col_izq.push(Break::new(0.8));
         col_izq.push(pp(&format!("Direccion Matriz: {}", direccion_neg), s_normal));
         col_izq.push(pp(&format!("Direccion Sucursal: {}", direccion_neg), s_normal));
     }
     if !telefono_neg.is_empty() {
         col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_normal));
     }
-    col_izq.push(Break::new(1.0));
+    col_izq.push(Break::new(0.5));
     col_izq.push(pp("OBLIGADO A LLEVAR CONTABILIDAD: NO", s_bold));
     if !regimen_label.is_empty() {
-        col_izq.push(Break::new(0.5));
+        col_izq.push(Break::new(0.3));
         col_izq.push(pp(regimen_label, s_regimen));
     }
-    // Espacio extra al final para igualar con columna derecha
-    col_izq.push(Break::new(2.5));
+    // Espacio al final para igualar con columna derecha
+    col_izq.push(Break::new(1.0));
 
     // --- Columna derecha: Datos del documento + clave de acceso ---
     let mut col_der = LinearLayout::vertical();
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.3));
     col_der.push(pp(&format!("R.U.C.:  {}", ruc), s_ruc));
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.5));
     col_der.push(pp(tipo_doc, s_doc_type));
     let num_factura_ride = venta.venta.numero_factura.as_deref().unwrap_or(&venta.venta.numero);
     col_der.push(pp(&format!("No. {}", num_factura_ride), s_doc_no));
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.5));
     col_der.push(pp("NUMERO DE AUTORIZACION", s_bold));
     col_der.push(pp(autorizacion, s_clave));
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.5));
     col_der.push(pp("FECHA Y HORA DE AUTORIZACION", s_bold));
     col_der.push(pp(fecha_aut_str, s_normal));
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.5));
     col_der.push(pp(&format!("AMBIENTE:    {}", ambiente_label), s_normal));
     col_der.push(pp("EMISION:     NORMAL", s_normal));
-    col_der.push(Break::new(0.8));
+    col_der.push(Break::new(0.5));
 
     // Clave de acceso + código de barras integrados en columna derecha
     col_der.push(pp("CLAVE DE ACCESO:", s_bold));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     if !clave_acceso.is_empty() {
         match generar_barcode128_image(clave_acceso) {
             Ok(barcode_path) => {
                 if let Ok(mut barcode_img) = genpdf::elements::Image::from_path(&barcode_path) {
                     barcode_img = barcode_img.with_alignment(Alignment::Center);
-                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(0.55, 0.5));
+                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(0.55, 0.8));
                     col_der.push(barcode_img);
                 }
                 let _ = std::fs::remove_file(&barcode_path);
@@ -225,10 +226,9 @@ pub fn generar_ride_pdf(
             }
         }
     }
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.2));
     col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
-    // Espacio extra al final para igualar con columna izquierda
-    col_der.push(Break::new(1.5));
+    col_der.push(Break::new(0.5));
 
     // Envolver cada columna en un borde (framed) con padding interno
     header_table
@@ -319,9 +319,9 @@ pub fn generar_ride_pdf(
         .element(pp("Codigo", s_small_bold))
         .element(pp("Cant.", s_small_bold))
         .element(pp("Descripcion", s_small_bold))
-        .element(pp("P. Unit.", s_small_bold))
-        .element(pp("Desc.", s_small_bold))
-        .element(pp("Subtotal", s_small_bold))
+        .element(pp_right("P. Unit.", s_small_bold))
+        .element(pp_right("Desc.", s_small_bold))
+        .element(pp_right("Subtotal", s_small_bold))
         .push()
         .map_err(|e| format!("Error tabla header: {}", e))?;
 
@@ -332,9 +332,9 @@ pub fn generar_ride_pdf(
             .element(pp(&det.codigo, s_small))
             .element(pp(&format_cantidad(det.cantidad), s_small))
             .element(pp(&det.nombre, s_small))
-            .element(pp(&format_dinero(det.precio_unitario), s_small))
-            .element(pp(&format_dinero(det.descuento), s_small))
-            .element(pp(&format_dinero(det.precio_total_sin_impuesto), s_small))
+            .element(pp_right(&format_dinero(det.precio_unitario), s_small))
+            .element(pp_right(&format_dinero(det.descuento), s_small))
+            .element(pp_right(&format_dinero(det.precio_total_sin_impuesto), s_small))
             .push()
             .map_err(|e| format!("Error tabla fila: {}", e))?;
     }
@@ -393,7 +393,7 @@ pub fn generar_ride_pdf(
     pago_table
         .row()
         .element(pp(forma_pago_desc, s_small))
-        .element(pp(&format_dinero(venta.venta.total), s_small))
+        .element(pp_right(&format_dinero(venta.venta.total), s_small))
         .push()
         .map_err(|e| format!("Error forma pago fila: {}", e))?;
 
@@ -446,7 +446,7 @@ pub fn generar_ride_pdf(
         totales_table
             .row()
             .element(pp(label, *style))
-            .element(pp(&format_dinero(*valor), *style))
+            .element(pp_right(&format_dinero(*valor), *style))
             .push()
             .map_err(|e| format!("Error totales fila: {}", e))?;
     }
@@ -455,7 +455,7 @@ pub fn generar_ride_pdf(
     totales_table
         .row()
         .element(pp("VALOR TOTAL", s_total_bold))
-        .element(pp(&format_dinero(venta.venta.total), s_total_bold))
+        .element(pp_right(&format_dinero(venta.venta.total), s_total_bold))
         .push()
         .map_err(|e| format!("Error totales valor total: {}", e))?;
 
