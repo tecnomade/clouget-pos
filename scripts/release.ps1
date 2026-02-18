@@ -56,14 +56,11 @@ Write-Host "OK - Instalador: $ExeName" -ForegroundColor Green
 Write-Host "`n[3/6] Creando artefacto de update (.nsis.zip)..." -ForegroundColor Yellow
 $ZipPath = Join-Path $BundleDir $ZipName
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
-# Usar .NET ZipFile con NoCompression (Store, method 0)
-# tauri-plugin-updater usa zip crate con default-features=false → solo soporta Store
-Add-Type -Assembly System.IO.Compression.FileSystem
-$zip = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Create')
-# IMPORTANTE: Usar NoCompression (Store, method 0) porque tauri-plugin-updater
-# usa el crate zip con default-features=false, que NO soporta Deflate (method 8)
-[System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $ExePath, $ExeName, [System.IO.Compression.CompressionLevel]::NoCompression) | Out-Null
-$zip.Dispose()
+# Crear ZIP con Store (method 0) usando Python
+# NOTA: .NET 8 CompressionLevel.NoCompression sigue usando Deflate (method 8)
+# y tauri-plugin-updater usa zip crate con default-features=false que SOLO soporta Store (method 0)
+# Python zipfile.ZIP_STORED garantiza method 0
+python -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_STORED); z.write(sys.argv[2],sys.argv[3]); z.close()" "$ZipPath" "$ExePath" "$ExeName"
 Write-Host "OK - $ZipName ($('{0:N1}' -f ((Get-Item $ZipPath).Length / 1MB)) MB)" -ForegroundColor Green
 
 # --- Paso 4: Firmar ---
