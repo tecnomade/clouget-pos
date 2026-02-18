@@ -1,13 +1,10 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use genpdf::elements::{Break, LinearLayout, Paragraph, StyledElement, TableLayout};
+use genpdf::elements::{Break, LinearLayout, PaddedElement, Paragraph, StyledElement, TableLayout};
 use genpdf::style::{Style, Color};
 use genpdf::{Alignment, Document, Element, Margins, SimplePageDecorator};
 use std::collections::HashMap;
 
 use crate::models::VentaCompleta;
-
-/// Prefijo de padding lateral para textos dentro de secciones enmarcadas
-const PAD: &str = "   ";
 
 /// Info del documento modificado (para notas de crédito)
 pub struct DocModificado {
@@ -64,14 +61,14 @@ fn format_dinero(val: f64) -> String {
     format!("{:.2}", val)
 }
 
-/// Paragraph con padding lateral (prefijo de espacios)
-fn pp(text: &str, style: Style) -> StyledElement<Paragraph> {
-    Paragraph::new(format!("{}{}", PAD, text)).styled(style)
+/// Paragraph con padding real (izquierdo 3mm) para celdas de tabla/secciones
+fn pp(text: &str, style: Style) -> PaddedElement<StyledElement<Paragraph>> {
+    Paragraph::new(text).styled(style).padded(Margins::trbl(1, 1, 1, 3))
 }
 
-/// Paragraph con padding lateral + alineado
+/// Paragraph con padding real + alineado
 fn pp_aligned(text: &str, style: Style, align: Alignment) -> impl Element {
-    Paragraph::new(format!("{}{}", PAD, text)).aligned(align).styled(style)
+    Paragraph::new(text).aligned(align).styled(style).padded(Margins::trbl(1, 1, 1, 3))
 }
 
 // ============================================
@@ -149,7 +146,7 @@ pub fn generar_ride_pdf(
 
     // --- Columna izquierda: Datos del emisor ---
     let mut col_izq = LinearLayout::vertical();
-    col_izq.push(Break::new(0.8));
+    col_izq.push(Break::new(1.0));
 
     // Logo del negocio (si existe en config como base64) - formato horizontal
     if let Some(logo_b64) = config.get("logo_negocio") {
@@ -161,7 +158,7 @@ pub fn generar_ride_pdf(
                         logo_img = logo_img.with_alignment(Alignment::Center);
                         logo_img = logo_img.with_scale(genpdf::Scale::new(0.6, 0.45));
                         col_izq.push(logo_img);
-                        col_izq.push(Break::new(0.5));
+                        col_izq.push(Break::new(1.0));
                     }
                     let _ = std::fs::remove_file(&logo_temp);
                 }
@@ -170,7 +167,7 @@ pub fn generar_ride_pdf(
     }
 
     col_izq.push(pp(nombre_negocio, s_title));
-    col_izq.push(Break::new(0.8));
+    col_izq.push(Break::new(1.0));
     if !ruc.is_empty() {
         col_izq.push(pp(&format!("RUC: {}", ruc), s_bold));
     }
@@ -182,36 +179,37 @@ pub fn generar_ride_pdf(
     if !telefono_neg.is_empty() {
         col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_normal));
     }
-    col_izq.push(Break::new(0.8));
+    col_izq.push(Break::new(1.0));
     col_izq.push(pp("OBLIGADO A LLEVAR CONTABILIDAD: NO", s_bold));
     if !regimen_label.is_empty() {
         col_izq.push(Break::new(0.5));
         col_izq.push(pp(regimen_label, s_regimen));
     }
-    col_izq.push(Break::new(0.8));
+    // Espacio extra al final para igualar con columna derecha
+    col_izq.push(Break::new(2.5));
 
     // --- Columna derecha: Datos del documento + clave de acceso ---
     let mut col_der = LinearLayout::vertical();
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
     col_der.push(pp(&format!("R.U.C.:  {}", ruc), s_ruc));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
     col_der.push(pp(tipo_doc, s_doc_type));
     let num_factura_ride = venta.venta.numero_factura.as_deref().unwrap_or(&venta.venta.numero);
     col_der.push(pp(&format!("No. {}", num_factura_ride), s_doc_no));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
     col_der.push(pp("NUMERO DE AUTORIZACION", s_bold));
     col_der.push(pp(autorizacion, s_clave));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
     col_der.push(pp("FECHA Y HORA DE AUTORIZACION", s_bold));
     col_der.push(pp(fecha_aut_str, s_normal));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
     col_der.push(pp(&format!("AMBIENTE:    {}", ambiente_label), s_normal));
     col_der.push(pp("EMISION:     NORMAL", s_normal));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.8));
 
     // Clave de acceso + código de barras integrados en columna derecha
     col_der.push(pp("CLAVE DE ACCESO:", s_bold));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     if !clave_acceso.is_empty() {
         match generar_barcode128_image(clave_acceso) {
             Ok(barcode_path) => {
@@ -227,15 +225,16 @@ pub fn generar_ride_pdf(
             }
         }
     }
-    col_der.push(Break::new(0.2));
+    col_der.push(Break::new(0.3));
     col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
-    col_der.push(Break::new(0.5));
+    // Espacio extra al final para igualar con columna izquierda
+    col_der.push(Break::new(1.5));
 
-    // Envolver cada columna en un borde (framed)
+    // Envolver cada columna en un borde (framed) con padding interno
     header_table
         .row()
-        .element(col_izq.framed())
-        .element(col_der.framed())
+        .element(col_izq.padded(Margins::trbl(2, 3, 2, 3)).framed())
+        .element(col_der.padded(Margins::trbl(2, 3, 2, 3)).framed())
         .push()
         .map_err(|e| format!("Error tabla header: {}", e))?;
 
@@ -263,7 +262,6 @@ pub fn generar_ride_pdf(
     // SECCION 3: DATOS DEL COMPRADOR (recuadro full width)
     // ===================================================================
     let mut comprador_section = LinearLayout::vertical();
-    comprador_section.push(Break::new(0.5));
 
     // Fila 1: Razon Social + Identificacion (2 columnas)
     let tipo_id_label = if cliente.identificacion == "9999999999999" {
@@ -305,9 +303,8 @@ pub fn generar_ride_pdf(
         .push()
         .map_err(|e| format!("Error fila comprador 2: {}", e))?;
     comprador_section.push(fila2);
-    comprador_section.push(Break::new(0.5));
 
-    doc.push(comprador_section.framed());
+    doc.push(comprador_section.padded(Margins::trbl(3, 2, 3, 2)).framed());
     doc.push(Break::new(1.0));
 
     // ===================================================================
@@ -352,24 +349,28 @@ pub fn generar_ride_pdf(
 
     // --- Columna izquierda: Info adicional + Forma de pago ---
     let mut info_col = LinearLayout::vertical();
-    info_col.push(Break::new(0.5));
+    info_col.push(Break::new(0.8));
     info_col.push(pp("Informacion Adicional", s_bold));
-    info_col.push(Break::new(0.5));
+    info_col.push(Break::new(1.0));
 
     if !cliente.direccion.is_empty() {
         info_col.push(pp(&format!("Direccion:  {}", cliente.direccion), s_small));
+        info_col.push(Break::new(0.3));
     }
     if !cliente.email.is_empty() {
         info_col.push(pp(&format!("Email:  {}", cliente.email), s_small));
+        info_col.push(Break::new(0.3));
     }
     if !cliente.telefono.is_empty() {
         info_col.push(pp(&format!("Telefono:  {}", cliente.telefono), s_small));
+        info_col.push(Break::new(0.3));
     }
     if !cliente.observacion.is_empty() {
         info_col.push(pp(&format!("Observacion:  {}", cliente.observacion), s_small));
+        info_col.push(Break::new(0.3));
     }
 
-    info_col.push(Break::new(1.5));
+    info_col.push(Break::new(2.0));
 
     // Forma de pago (sub-tabla dentro de info adicional)
     let mut pago_table = TableLayout::new(vec![5, 2]);
@@ -397,7 +398,7 @@ pub fn generar_ride_pdf(
         .map_err(|e| format!("Error forma pago fila: {}", e))?;
 
     info_col.push(pago_table);
-    info_col.push(Break::new(0.5));
+    info_col.push(Break::new(1.0));
 
     // --- Columna derecha: Totales desglosados ---
     let mut totales_col = LinearLayout::vertical();
@@ -463,8 +464,8 @@ pub fn generar_ride_pdf(
     // Juntar las dos columnas
     bottom_table
         .row()
-        .element(info_col.framed())
-        .element(totales_col)
+        .element(info_col.padded(Margins::trbl(2, 2, 2, 2)).framed())
+        .element(totales_col.padded(Margins::trbl(0, 0, 0, 2)))
         .push()
         .map_err(|e| format!("Error tabla bottom: {}", e))?;
 
@@ -728,7 +729,7 @@ fn generar_barcode128_image(data: &str) -> Result<String, String> {
     let encoded: Vec<u8> = barcode.encode();
 
     // Generar imagen PNG manualmente (sin feature "image" de barcoders)
-    let height = 60_u32;
+    let height = 80_u32;
     let scale_x = 3_u32;
     let quiet_zone = 10_u32; // margen lateral blanco
     let width = (encoded.len() as u32) * scale_x + quiet_zone * 2;
