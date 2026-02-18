@@ -306,6 +306,25 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_precios_lista ON precios_producto(lista_precio_id);
         CREATE INDEX IF NOT EXISTS idx_precios_producto ON precios_producto(producto_id);
+
+        -- Kardex: Movimientos de inventario
+        CREATE TABLE IF NOT EXISTS movimientos_inventario (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            stock_anterior REAL NOT NULL,
+            stock_nuevo REAL NOT NULL,
+            costo_unitario REAL,
+            referencia_id INTEGER,
+            motivo TEXT,
+            usuario TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mov_inv_producto ON movimientos_inventario(producto_id);
+        CREATE INDEX IF NOT EXISTS idx_mov_inv_fecha ON movimientos_inventario(created_at);
+        CREATE INDEX IF NOT EXISTS idx_mov_inv_tipo ON movimientos_inventario(tipo);
         ",
     )?;
 

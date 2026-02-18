@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use crate::models::VentaCompleta;
 
 /// Prefijo de padding lateral para textos dentro de secciones enmarcadas
-const PAD: &str = "  ";
+const PAD: &str = "   ";
 
 /// Info del documento modificado (para notas de crédito)
 pub struct DocModificado {
@@ -106,20 +106,20 @@ pub fn generar_ride_pdf(
     decorator.set_margins(Margins::trbl(20, 25, 20, 25));
     doc.set_page_decorator(decorator);
 
-    // Estilos
-    let s_normal = Style::new().with_font_size(8);
-    let s_bold = Style::new().with_font_size(8).bold();
-    let s_small = Style::new().with_font_size(7);
-    let s_small_bold = Style::new().with_font_size(7).bold();
-    let s_title = Style::new().with_font_size(12).bold();
-    let s_doc_type = Style::new().with_font_size(14).bold();
-    let s_doc_no = Style::new().with_font_size(11);
-    let s_ruc = Style::new().with_font_size(9).bold();
+    // Estilos (tamaños aumentados para mejor legibilidad)
+    let s_normal = Style::new().with_font_size(9);
+    let s_bold = Style::new().with_font_size(9).bold();
+    let s_small = Style::new().with_font_size(8);
+    let s_small_bold = Style::new().with_font_size(8).bold();
+    let s_title = Style::new().with_font_size(14).bold();
+    let s_doc_type = Style::new().with_font_size(16).bold();
+    let s_doc_no = Style::new().with_font_size(12);
+    let s_ruc = Style::new().with_font_size(10).bold();
     let s_clave = Style::new().with_font_size(7);
-    let s_clave_small = Style::new().with_font_size(6);
-    let s_total_bold = Style::new().with_font_size(10).bold();
+    let s_clave_small = Style::new().with_font_size(7);
+    let s_total_bold = Style::new().with_font_size(11).bold();
     let s_pie = Style::new().with_font_size(7).with_color(Color::Greyscale(128));
-    let s_regimen = Style::new().with_font_size(7).bold();
+    let s_regimen = Style::new().with_font_size(8).bold();
 
     // --- Datos del config ---
     let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
@@ -149,7 +149,7 @@ pub fn generar_ride_pdf(
 
     // --- Columna izquierda: Datos del emisor ---
     let mut col_izq = LinearLayout::vertical();
-    col_izq.push(Break::new(0.5));
+    col_izq.push(Break::new(0.8));
 
     // Logo del negocio (si existe en config como base64) - formato horizontal
     if let Some(logo_b64) = config.get("logo_negocio") {
@@ -159,10 +159,9 @@ pub fn generar_ride_pdf(
                 if std::fs::write(&logo_temp, &logo_bytes).is_ok() {
                     if let Ok(mut logo_img) = genpdf::elements::Image::from_path(&logo_temp) {
                         logo_img = logo_img.with_alignment(Alignment::Center);
-                        // Escala mayor para aprovechar espacio disponible
                         logo_img = logo_img.with_scale(genpdf::Scale::new(0.6, 0.45));
                         col_izq.push(logo_img);
-                        col_izq.push(Break::new(0.3));
+                        col_izq.push(Break::new(0.5));
                     }
                     let _ = std::fs::remove_file(&logo_temp);
                 }
@@ -171,47 +170,48 @@ pub fn generar_ride_pdf(
     }
 
     col_izq.push(pp(nombre_negocio, s_title));
-    col_izq.push(Break::new(0.5));
+    col_izq.push(Break::new(0.8));
     if !ruc.is_empty() {
         col_izq.push(pp(&format!("RUC: {}", ruc), s_bold));
     }
     if !direccion_neg.is_empty() {
-        col_izq.push(Break::new(0.5));
+        col_izq.push(Break::new(0.8));
         col_izq.push(pp(&format!("Direccion Matriz: {}", direccion_neg), s_normal));
         col_izq.push(pp(&format!("Direccion Sucursal: {}", direccion_neg), s_normal));
     }
     if !telefono_neg.is_empty() {
         col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_normal));
     }
-    col_izq.push(Break::new(0.5));
+    col_izq.push(Break::new(0.8));
     col_izq.push(pp("OBLIGADO A LLEVAR CONTABILIDAD: NO", s_bold));
     if !regimen_label.is_empty() {
         col_izq.push(Break::new(0.5));
         col_izq.push(pp(regimen_label, s_regimen));
     }
-    col_izq.push(Break::new(0.5));
+    col_izq.push(Break::new(0.8));
 
     // --- Columna derecha: Datos del documento + clave de acceso ---
     let mut col_der = LinearLayout::vertical();
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     col_der.push(pp(&format!("R.U.C.:  {}", ruc), s_ruc));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     col_der.push(pp(tipo_doc, s_doc_type));
     let num_factura_ride = venta.venta.numero_factura.as_deref().unwrap_or(&venta.venta.numero);
     col_der.push(pp(&format!("No. {}", num_factura_ride), s_doc_no));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     col_der.push(pp("NUMERO DE AUTORIZACION", s_bold));
     col_der.push(pp(autorizacion, s_clave));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     col_der.push(pp("FECHA Y HORA DE AUTORIZACION", s_bold));
     col_der.push(pp(fecha_aut_str, s_normal));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     col_der.push(pp(&format!("AMBIENTE:    {}", ambiente_label), s_normal));
     col_der.push(pp("EMISION:     NORMAL", s_normal));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
 
     // Clave de acceso + código de barras integrados en columna derecha
     col_der.push(pp("CLAVE DE ACCESO:", s_bold));
+    col_der.push(Break::new(0.3));
     if !clave_acceso.is_empty() {
         match generar_barcode128_image(clave_acceso) {
             Ok(barcode_path) => {
@@ -227,8 +227,9 @@ pub fn generar_ride_pdf(
             }
         }
     }
+    col_der.push(Break::new(0.2));
     col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
 
     // Envolver cada columna en un borde (framed)
     header_table
@@ -239,7 +240,7 @@ pub fn generar_ride_pdf(
         .map_err(|e| format!("Error tabla header: {}", e))?;
 
     doc.push(header_table);
-    doc.push(Break::new(0.5));
+    doc.push(Break::new(1.0));
 
     // (Clave de acceso integrada en columna derecha del encabezado)
 
@@ -262,7 +263,7 @@ pub fn generar_ride_pdf(
     // SECCION 3: DATOS DEL COMPRADOR (recuadro full width)
     // ===================================================================
     let mut comprador_section = LinearLayout::vertical();
-    comprador_section.push(Break::new(0.3));
+    comprador_section.push(Break::new(0.5));
 
     // Fila 1: Razon Social + Identificacion (2 columnas)
     let tipo_id_label = if cliente.identificacion == "9999999999999" {
@@ -304,15 +305,15 @@ pub fn generar_ride_pdf(
         .push()
         .map_err(|e| format!("Error fila comprador 2: {}", e))?;
     comprador_section.push(fila2);
-    comprador_section.push(Break::new(0.3));
+    comprador_section.push(Break::new(0.5));
 
     doc.push(comprador_section.framed());
-    doc.push(Break::new(0.5));
+    doc.push(Break::new(1.0));
 
     // ===================================================================
     // SECCION 4: TABLA DE PRODUCTOS
     // ===================================================================
-    let mut table = TableLayout::new(vec![2, 1, 5, 2, 1, 2]);
+    let mut table = TableLayout::new(vec![2, 1, 6, 2, 1, 2]);
     table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
     // Header
@@ -342,17 +343,18 @@ pub fn generar_ride_pdf(
     }
 
     doc.push(table);
-    doc.push(Break::new(1));
+    doc.push(Break::new(1.5));
 
     // ===================================================================
     // SECCION 5: INFO ADICIONAL + TOTALES (2 columnas)
     // ===================================================================
-    let mut bottom_table = TableLayout::new(vec![11, 9]);
+    let mut bottom_table = TableLayout::new(vec![12, 8]);
 
     // --- Columna izquierda: Info adicional + Forma de pago ---
     let mut info_col = LinearLayout::vertical();
     info_col.push(Break::new(0.5));
     info_col.push(pp("Informacion Adicional", s_bold));
+    info_col.push(Break::new(0.5));
 
     if !cliente.direccion.is_empty() {
         info_col.push(pp(&format!("Direccion:  {}", cliente.direccion), s_small));
@@ -367,7 +369,7 @@ pub fn generar_ride_pdf(
         info_col.push(pp(&format!("Observacion:  {}", cliente.observacion), s_small));
     }
 
-    info_col.push(Break::new(1));
+    info_col.push(Break::new(1.5));
 
     // Forma de pago (sub-tabla dentro de info adicional)
     let mut pago_table = TableLayout::new(vec![5, 2]);
@@ -467,7 +469,7 @@ pub fn generar_ride_pdf(
         .map_err(|e| format!("Error tabla bottom: {}", e))?;
 
     doc.push(bottom_table);
-    doc.push(Break::new(2));
+    doc.push(Break::new(2.5));
 
     // ===================================================================
     // PIE DE PAGINA

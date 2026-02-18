@@ -74,6 +74,7 @@ pub fn run() {
             commands::reportes::resumen_fiados_pendientes,
             commands::reportes::resumen_periodo,
             commands::reportes::listar_ventas_periodo,
+            commands::reportes::ventas_por_dia,
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,
@@ -129,6 +130,10 @@ pub fn run() {
             commands::listas_precios::guardar_precios_producto,
             commands::listas_precios::obtener_precios_producto,
             commands::listas_precios::resolver_precio_producto,
+            // Inventario / Kardex
+            commands::inventario::registrar_movimiento,
+            commands::inventario::listar_movimientos,
+            commands::inventario::resumen_inventario,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

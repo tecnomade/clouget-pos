@@ -123,6 +123,15 @@ pub fn registrar_venta(
         )
         .map_err(|e| e.to_string())?;
 
+        // Obtener stock antes de descontar y verificar si es servicio
+        let (stock_antes, es_servicio): (f64, bool) = conn
+            .query_row(
+                "SELECT stock_actual, es_servicio FROM productos WHERE id = ?1",
+                rusqlite::params![item.producto_id],
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .unwrap_or((0.0, false));
+
         // Descontar stock (si no es servicio)
         conn.execute(
             "UPDATE productos SET stock_actual = stock_actual - ?1,
@@ -131,6 +140,23 @@ pub fn registrar_venta(
             rusqlite::params![item.cantidad, item.producto_id],
         )
         .map_err(|e| e.to_string())?;
+
+        // Registrar movimiento de inventario (kardex) para productos físicos
+        if !es_servicio {
+            let _ = conn.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario)
+                 VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    item.producto_id,
+                    -(item.cantidad),
+                    stock_antes,
+                    stock_antes - item.cantidad,
+                    item.precio_unitario,
+                    venta_id,
+                    usuario_nombre,
+                ],
+            );
+        }
 
         // Obtener nombre del producto
         let nombre_prod: String = conn

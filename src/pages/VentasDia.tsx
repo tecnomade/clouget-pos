@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import ModalNotaCredito from "../components/ModalNotaCredito";
-import type { ResumenDiario, ResumenPeriodo, ProductoMasVendido, AlertaStock } from "../services/api";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import type { ResumenDiario, ResumenPeriodo, ProductoMasVendido, AlertaStock, VentaDiaria } from "../services/api";
 import type { Venta, NotaCreditoInfo } from "../types";
 
 function fechaHoy(): string {
@@ -52,8 +53,10 @@ export default function VentasDia() {
   const [notasCredito, setNotasCredito] = useState<NotaCreditoInfo[]>([]);
   const [ncVenta, setNcVenta] = useState<{ id: number; numero: string } | null>(null);
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
+  const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
 
   const esRango = fechaDesde !== fechaHasta;
+  const COLORES_PIE = ["#22c55e", "#3b82f6", "#f59e0b", "#8b5cf6"];
 
   const handleExportarCSV = async () => {
     try {
@@ -92,12 +95,13 @@ export default function VentasDia() {
       return;
     }
     if (esRango) {
-      const [v, r, top, a, ncs] = await Promise.all([
+      const [v, r, top, a, ncs, tend] = await Promise.all([
         listarVentasPeriodo(fechaDesde, fechaHasta),
         resumenPeriodo(fechaDesde, fechaHasta),
-        productosMasVendidosReporte(fechaDesde, fechaHasta, 5),
+        productosMasVendidosReporte(fechaDesde, fechaHasta, 10),
         alertasStockBajo(),
         listarNotasCreditoDia(fechaDesde).catch(() => [] as NotaCreditoInfo[]),
+        ventasPorDia(fechaDesde, fechaHasta).catch(() => [] as VentaDiaria[]),
       ]);
       setVentas(v);
       setResumen(null);
@@ -105,11 +109,12 @@ export default function VentasDia() {
       setTopProductos(top);
       setAlertas(a);
       setNotasCredito(ncs);
+      setTendencia(tend);
     } else {
       const [v, r, top, a, ncs] = await Promise.all([
         listarVentasDia(fechaDesde),
         resumenDiario(fechaDesde),
-        productosMasVendidosReporte(fechaDesde, fechaDesde, 5),
+        productosMasVendidosReporte(fechaDesde, fechaDesde, 10),
         alertasStockBajo(),
         listarNotasCreditoDia(fechaDesde).catch(() => [] as NotaCreditoInfo[]),
       ]);
@@ -119,6 +124,7 @@ export default function VentasDia() {
       setTopProductos(top);
       setAlertas(a);
       setNotasCredito(ncs);
+      setTendencia([]);
     }
   };
 
@@ -216,6 +222,82 @@ export default function VentasDia() {
                   </div>
                 </div>
               </>
+            )}
+          </div>
+        )}
+
+        {/* Gráficas - solo admin con datos */}
+        {esAdmin && (tendencia.length > 1 || topProductos.length > 0 || (r && r.total_ventas > 0)) && (
+          <div style={{ display: "grid", gridTemplateColumns: tendencia.length > 1 ? "1fr 1fr" : "1fr 1fr", gap: 16, marginBottom: 20 }}>
+            {/* Tendencia de ventas diarias */}
+            {tendencia.length > 1 && (
+              <div className="card" style={{ padding: "16px 12px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Ventas por Dia</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={tendencia.map(d => ({ ...d, dia: d.fecha.slice(5) }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                    <Tooltip formatter={(value) => [`$${Number(value).toFixed(2)}`, "Total"]}
+                      labelFormatter={(label) => `Fecha: ${label}`} />
+                    <Line type="monotone" dataKey="total" stroke="#2563eb" strokeWidth={2}
+                      dot={{ fill: "#2563eb", r: 3 }} activeDot={{ r: 5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Top productos */}
+            {topProductos.length > 0 && (
+              <div className="card" style={{ padding: "16px 12px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Top Productos por Ingreso</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={topProductos.slice(0, 8).map(p => ({
+                    nombre: p.nombre.length > 15 ? p.nombre.slice(0, 15) + "…" : p.nombre,
+                    total: p.total_vendido,
+                    cantidad: p.cantidad_total,
+                  }))} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
+                    <YAxis type="category" dataKey="nombre" tick={{ fontSize: 10 }} width={110} />
+                    <Tooltip formatter={(value, name) => [
+                      name === "total" ? `$${Number(value).toFixed(2)}` : value,
+                      name === "total" ? "Ingreso" : "Cantidad"
+                    ]} />
+                    <Bar dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Distribución por método de pago */}
+            {r && r.total_ventas > 0 && (
+              <div className="card" style={{ padding: "16px 12px" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Metodos de Pago</div>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie
+                      data={[
+                        { name: "Efectivo", value: r.total_efectivo },
+                        { name: "Transferencia", value: r.total_transferencia },
+                        { name: "Fiado", value: r.total_fiado },
+                      ].filter(d => d.value > 0)}
+                      cx="50%" cy="50%" innerRadius={50} outerRadius={80}
+                      paddingAngle={2} dataKey="value"
+                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                    >
+                      {[
+                        { name: "Efectivo", value: r.total_efectivo },
+                        { name: "Transferencia", value: r.total_transferencia },
+                        { name: "Fiado", value: r.total_fiado },
+                      ].filter(d => d.value > 0).map((_, i) => (
+                        <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `$${Number(value).toFixed(2)}`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </div>
         )}

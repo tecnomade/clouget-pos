@@ -13,6 +13,7 @@ import CajaPage from "./pages/CajaPage";
 import GastosPage from "./pages/GastosPage";
 import CuentasPage from "./pages/CuentasPage";
 import Configuracion from "./pages/Configuracion";
+import InventarioPage from "./pages/InventarioPage";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
 import { obtenerEstadoLicencia, obtenerSesionActual } from "./services/api";
@@ -81,6 +82,7 @@ function AppGate() {
               <Route path="/clientes" element={<Clientes />} />
               <Route path="/gastos" element={<GastosPage />} />
               <Route path="/cuentas" element={<CuentasPage />} />
+              <Route path="/inventario" element={<InventarioPage />} />
               <Route path="/config" element={<Configuracion />} />
             </>
           )}

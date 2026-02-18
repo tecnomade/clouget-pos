@@ -162,6 +162,16 @@ export async function listarVentasPeriodo(fechaInicio: string, fechaFin: string)
   return invoke("listar_ventas_periodo", { fechaInicio, fechaFin });
 }
 
+export interface VentaDiaria {
+  fecha: string;
+  total: number;
+  num_ventas: number;
+}
+
+export async function ventasPorDia(fechaInicio: string, fechaFin: string): Promise<VentaDiaria[]> {
+  return invoke("ventas_por_dia", { fechaInicio, fechaFin });
+}
+
 // --- Caja ---
 
 export async function abrirCaja(montoInicial: number): Promise<Caja> {
@@ -429,6 +439,63 @@ export async function emitirNotaCreditoSri(ncId: number): Promise<ResultadoEmisi
 
 export async function generarRideNcPdf(ncId: number): Promise<string> {
   return invoke("generar_ride_nc_pdf", { ncId });
+}
+
+// --- Inventario / Kardex ---
+
+export interface MovimientoInventario {
+  id?: number;
+  producto_id: number;
+  producto_nombre?: string;
+  producto_codigo?: string;
+  tipo: string;
+  cantidad: number;
+  stock_anterior: number;
+  stock_nuevo: number;
+  costo_unitario?: number;
+  referencia_id?: number;
+  motivo?: string;
+  usuario?: string;
+  created_at?: string;
+}
+
+export interface ResumenInventario {
+  total_productos: number;
+  total_entradas_mes: number;
+  total_salidas_mes: number;
+  total_ajustes_mes: number;
+  valor_inventario: number;
+}
+
+export async function registrarMovimiento(
+  productoId: number,
+  tipo: string,
+  cantidad: number,
+  motivo?: string,
+  costoUnitario?: number,
+  usuario?: string,
+): Promise<MovimientoInventario> {
+  return invoke("registrar_movimiento", { productoId, tipo, cantidad, motivo, costoUnitario: costoUnitario ?? null, usuario: usuario ?? null });
+}
+
+export async function listarMovimientos(
+  productoId?: number,
+  fechaInicio?: string,
+  fechaFin?: string,
+  tipo?: string,
+  limite?: number,
+): Promise<MovimientoInventario[]> {
+  return invoke("listar_movimientos", {
+    productoId: productoId ?? null,
+    fechaInicio: fechaInicio ?? null,
+    fechaFin: fechaFin ?? null,
+    tipo: tipo ?? null,
+    limite: limite ?? null,
+  });
+}
+
+export async function resumenInventario(): Promise<ResumenInventario> {
+  return invoke("resumen_inventario");
 }
 
 // --- Listas de Precios ---

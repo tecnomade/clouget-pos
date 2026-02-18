@@ -115,6 +115,9 @@ export default function DashboardPage() {
               <button className="btn btn-outline" onClick={() => navigate("/productos")} style={{ justifyContent: "center" }}>
                 Productos (F2)
               </button>
+              <button className="btn btn-outline" onClick={() => navigate("/inventario")} style={{ justifyContent: "center" }}>
+                Inventario / Kardex
+              </button>
             </div>
           </div>
 

@@ -14,6 +14,7 @@ const navItems = [
   { path: "/caja", label: "Caja", icon: "$", shortcut: "F5", todos: true },
   { path: "/gastos", label: "Gastos", icon: "G", shortcut: "F7", todos: false },
   { path: "/cuentas", label: "Fiados", icon: "F", shortcut: "F8", todos: false },
+  { path: "/inventario", label: "Inventario", icon: "K", shortcut: "", todos: false },
   { path: "/config", label: "Configuracion", icon: "*", shortcut: "F6", todos: false },
 ];
 

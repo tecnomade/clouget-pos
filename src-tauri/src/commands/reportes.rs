@@ -323,6 +323,46 @@ pub fn resumen_periodo(
     })
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VentaDiaria {
+    pub fecha: String,
+    pub total: f64,
+    pub num_ventas: i64,
+}
+
+#[tauri::command]
+pub fn ventas_por_dia(
+    db: State<Database>,
+    fecha_inicio: String,
+    fecha_fin: String,
+) -> Result<Vec<VentaDiaria>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT date(fecha) as dia, COALESCE(SUM(total), 0), COUNT(*)
+             FROM ventas
+             WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND anulada = 0
+             GROUP BY dia
+             ORDER BY dia ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let ventas = stmt
+        .query_map(rusqlite::params![fecha_inicio, fecha_fin], |row| {
+            Ok(VentaDiaria {
+                fecha: row.get(0)?,
+                total: row.get(1)?,
+                num_ventas: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(ventas)
+}
+
 #[tauri::command]
 pub fn listar_ventas_periodo(
     db: State<Database>,

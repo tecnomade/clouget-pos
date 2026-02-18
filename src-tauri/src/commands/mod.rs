@@ -13,3 +13,4 @@ pub mod usuarios;
 pub mod exportar;
 pub mod sri;
 pub mod listas_precios;
+pub mod inventario;
