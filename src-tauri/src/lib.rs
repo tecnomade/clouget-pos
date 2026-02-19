@@ -75,6 +75,8 @@ pub fn run() {
             commands::reportes::resumen_periodo,
             commands::reportes::listar_ventas_periodo,
             commands::reportes::ventas_por_dia,
+            commands::reportes::resumen_diario_ayer,
+            commands::reportes::ultimas_ventas_dia,
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,

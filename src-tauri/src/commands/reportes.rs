@@ -413,3 +413,63 @@ pub fn listar_ventas_periodo(
 
     Ok(ventas)
 }
+
+// --- Dashboard: comparativo vs ayer ---
+
+#[tauri::command]
+pub fn resumen_diario_ayer(db: State<Database>) -> Result<ResumenDiario, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let ayer = conn
+        .query_row("SELECT date('now', '-1 day')", [], |row| row.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    drop(conn);
+    resumen_diario(db, ayer)
+}
+
+// --- Dashboard: últimas ventas del día ---
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UltimaVenta {
+    pub id: i64,
+    pub numero: String,
+    pub hora: String,
+    pub cliente_nombre: String,
+    pub total: f64,
+    pub forma_pago: String,
+}
+
+#[tauri::command]
+pub fn ultimas_ventas_dia(db: State<Database>, limite: i64) -> Result<Vec<UltimaVenta>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT v.id, v.numero,
+                    COALESCE(strftime('%H:%M', v.fecha), '') as hora,
+                    COALESCE(c.nombre, 'Consumidor Final') as cliente_nombre,
+                    v.total, v.forma_pago
+             FROM ventas v
+             LEFT JOIN clientes c ON v.cliente_id = c.id
+             WHERE date(v.fecha) = date('now') AND v.anulada = 0
+             ORDER BY v.fecha DESC
+             LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let ventas = stmt
+        .query_map(rusqlite::params![limite], |row| {
+            Ok(UltimaVenta {
+                id: row.get(0)?,
+                numero: row.get(1)?,
+                hora: row.get(2)?,
+                cliente_nombre: row.get(3)?,
+                total: row.get(4)?,
+                forma_pago: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(ventas)
+}

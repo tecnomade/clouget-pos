@@ -172,6 +172,23 @@ export async function ventasPorDia(fechaInicio: string, fechaFin: string): Promi
   return invoke("ventas_por_dia", { fechaInicio, fechaFin });
 }
 
+export async function resumenDiarioAyer(): Promise<ResumenDiario> {
+  return invoke("resumen_diario_ayer");
+}
+
+export interface UltimaVenta {
+  id: number;
+  numero: string;
+  hora: string;
+  cliente_nombre: string;
+  total: number;
+  forma_pago: string;
+}
+
+export async function ultimasVentasDia(limite: number = 5): Promise<UltimaVenta[]> {
+  return invoke("ultimas_ventas_dia", { limite });
+}
+
 // --- Caja ---
 
 export async function abrirCaja(montoInicial: number): Promise<Caja> {

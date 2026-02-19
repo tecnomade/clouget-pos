@@ -1051,5 +1051,21 @@ mod tests {
         let path_s = desktop.join("RIDE_sin_logo.pdf");
         std::fs::write(&path_s, result.unwrap()).expect("Error guardando PDF");
         println!("5. Sin logo:        {}", path_s.display());
+
+        // --- 6. PDF para PÁGINA WEB (logo real "Empresa de prueba") ---
+        config.insert("nombre_negocio".to_string(), "EMPRESA DE PRUEBA".to_string());
+        config.insert("ruc".to_string(), "0990012345001".to_string());
+        config.insert("direccion".to_string(), "Av. Principal 456 y Secundaria, Guayaquil".to_string());
+        config.insert("telefono".to_string(), "04-2567890".to_string());
+        let logo_web_path = std::path::PathBuf::from(std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string()))
+            .join("Downloads").join("Empresa de prueba.png");
+        let logo_web_bytes = std::fs::read(&logo_web_path).expect("No se encontró Empresa de prueba.png en Downloads");
+        config.insert("logo_negocio".to_string(), BASE64.encode(&logo_web_bytes));
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE web: {:?}", result.err());
+        let path_web = desktop.join("RIDE_web_demo.pdf");
+        std::fs::write(&path_web, result.unwrap()).expect("Error guardando PDF");
+        println!("6. Demo web:        {}", path_web.display());
     }
 }
