@@ -105,7 +105,7 @@ pub fn generar_ride_pdf(
 
     // Page margins
     let mut decorator = SimplePageDecorator::new();
-    decorator.set_margins(Margins::trbl(20, 25, 20, 25));
+    decorator.set_margins(Margins::trbl(15, 15, 15, 15));
     doc.set_page_decorator(decorator);
 
     // Estilos (tamaños aumentados para mejor legibilidad)
@@ -145,15 +145,22 @@ pub fn generar_ride_pdf(
     };
 
     // ===================================================================
-    // SECCION 1: ENCABEZADO - Dos recuadros lado a lado
+    // SECCION 1: ENCABEZADO
+    // Estructura: 1 fila, 2 columnas en TableLayout (alinea bordes abajo)
+    // Izq: Logo (framed, menos alto) + Datos emisor (framed) apilados
+    // Der: Una sola celda framed con RUC, FACTURA, barcode, clave
     // ===================================================================
     let mut header_table = TableLayout::new(vec![1, 1]);
+    // FrameCellDecorator dibuja bordes de celda que se extienden al alto completo de la fila
+    // => bordes inferiores de ambas columnas quedan alineados automáticamente
+    header_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
-    // --- Columna izquierda: Datos del emisor ---
+    // --- Columna izquierda: Logo arriba + Datos emisor abajo ---
+    // Sin logo: espacio vacío arriba para que datos emisor quede alineado abajo
+    // Con logo: logo framed arriba, datos emisor framed abajo
     let mut col_izq = LinearLayout::vertical();
-    col_izq.push(Break::new(0.5));
 
-    // Logo del negocio (si existe en config como base64) - formato horizontal
+    let mut tiene_logo = false;
     if let Some(logo_b64) = config.get("logo_negocio") {
         if !logo_b64.is_empty() {
             if let Ok(logo_bytes) = BASE64.decode(logo_b64) {
@@ -161,62 +168,72 @@ pub fn generar_ride_pdf(
                 if std::fs::write(&logo_temp, &logo_bytes).is_ok() {
                     if let Ok(mut logo_img) = genpdf::elements::Image::from_path(&logo_temp) {
                         logo_img = logo_img.with_alignment(Alignment::Center);
-                        logo_img = logo_img.with_scale(genpdf::Scale::new(0.6, 0.45));
-                        col_izq.push(logo_img);
-                        col_izq.push(Break::new(0.5));
+                        logo_img = logo_img.with_scale(genpdf::Scale::new(1.2, 0.9));
+                        col_izq.push(logo_img.padded(Margins::trbl(3, 5, 3, 5)));
+                        tiene_logo = true;
                     }
                     let _ = std::fs::remove_file(&logo_temp);
                 }
             }
         }
     }
+    // Sin logo: espacio vacío arriba (~30% del header) para que emisor quede abajo
+    if !tiene_logo {
+        col_izq.push(Break::new(8.0));
+    }
 
-    col_izq.push(pp(nombre_negocio, s_title));
-    col_izq.push(Break::new(0.5));
+    // Sub-seccion 2: Datos del emisor (con borde)
+    let mut datos_emisor = LinearLayout::vertical();
+    datos_emisor.push(Break::new(0.3));
+    datos_emisor.push(pp(nombre_negocio, s_title));
+    datos_emisor.push(Break::new(0.3));
     if !direccion_neg.is_empty() {
-        col_izq.push(pp(&format!("Direccion Matriz: {}", direccion_neg), s_normal));
-        col_izq.push(pp(&format!("Direccion Sucursal: {}", direccion_neg), s_normal));
+        datos_emisor.push(pp(&format!("Direccion Matriz: {}", direccion_neg), s_normal));
+        datos_emisor.push(pp(&format!("Direccion Sucursal: {}", direccion_neg), s_normal));
     }
     if !telefono_neg.is_empty() {
-        col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_normal));
+        datos_emisor.push(pp(&format!("Tel: {}", telefono_neg), s_normal));
     }
-    col_izq.push(Break::new(0.5));
-    col_izq.push(pp("OBLIGADO A LLEVAR CONTABILIDAD: NO", s_bold));
+    datos_emisor.push(Break::new(0.3));
+    datos_emisor.push(pp("OBLIGADO A LLEVAR CONTABILIDAD: NO", s_bold));
     if !regimen_label.is_empty() {
-        col_izq.push(Break::new(0.3));
-        col_izq.push(pp(regimen_label, s_regimen));
+        datos_emisor.push(Break::new(0.2));
+        datos_emisor.push(pp(regimen_label, s_regimen));
     }
-    // Espacio al final para igualar con columna derecha
-    col_izq.push(Break::new(1.0));
+    datos_emisor.push(Break::new(0.5));
+    col_izq.push(datos_emisor);
 
-    // --- Columna derecha: Datos del documento + clave de acceso ---
+    // --- Columna derecha: Una sola celda con todo ---
     let mut col_der = LinearLayout::vertical();
     col_der.push(Break::new(0.3));
     col_der.push(pp(&format!("R.U.C.:  {}", ruc), s_ruc));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     col_der.push(pp(tipo_doc, s_doc_type));
     let num_factura_ride = venta.venta.numero_factura.as_deref().unwrap_or(&venta.venta.numero);
     col_der.push(pp(&format!("No. {}", num_factura_ride), s_doc_no));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     col_der.push(pp("NUMERO DE AUTORIZACION", s_bold));
     col_der.push(pp(autorizacion, s_clave));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     col_der.push(pp("FECHA Y HORA DE AUTORIZACION", s_bold));
     col_der.push(pp(fecha_aut_str, s_normal));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     col_der.push(pp(&format!("AMBIENTE:    {}", ambiente_label), s_normal));
     col_der.push(pp("EMISION:     NORMAL", s_normal));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
 
-    // Clave de acceso + código de barras integrados en columna derecha
+    // Clave de acceso + código de barras
     col_der.push(pp("CLAVE DE ACCESO:", s_bold));
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     if !clave_acceso.is_empty() {
         match generar_barcode128_image(clave_acceso) {
             Ok(barcode_path) => {
                 if let Ok(mut barcode_img) = genpdf::elements::Image::from_path(&barcode_path) {
                     barcode_img = barcode_img.with_alignment(Alignment::Center);
-                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(2.3, 2.4));
+                    // PNG ~331px ancho (Code128 de 49 dígitos, scale_x=1, ~321 módulos + quiet_zone)
+                    // ancho: 25.4*(1.8*331)/300 = 50.4mm | alto: 25.4*(2.0*80)/300 = 13.5mm
+                    // Columna ~85mm útiles con márgenes 15mm => cabe bien
+                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(1.8, 2.0));
                     col_der.push(barcode_img);
                 }
                 let _ = std::fs::remove_file(&barcode_path);
@@ -226,15 +243,15 @@ pub fn generar_ride_pdf(
             }
         }
     }
-    col_der.push(Break::new(0.5));
+    col_der.push(Break::new(0.3));
     col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
     col_der.push(Break::new(0.3));
 
-    // Envolver cada columna en un borde (framed) con padding interno
+    // Una fila: FrameCellDecorator dibuja bordes alineados al alto de la fila
     header_table
         .row()
-        .element(col_izq.padded(Margins::trbl(2, 3, 2, 3)).framed())
-        .element(col_der.padded(Margins::trbl(2, 3, 2, 3)).framed())
+        .element(col_izq.padded(Margins::trbl(2, 3, 2, 3)))
+        .element(col_der.padded(Margins::trbl(2, 3, 2, 3)))
         .push()
         .map_err(|e| format!("Error tabla header: {}", e))?;
 
@@ -729,9 +746,10 @@ fn generar_barcode128_image(data: &str) -> Result<String, String> {
     let encoded: Vec<u8> = barcode.encode();
 
     // Generar imagen PNG manualmente (sin feature "image" de barcoders)
+    // scale_x=1: cada barra = 1 pixel (barcode compacto, genpdf escala después)
     let height = 80_u32;
-    let scale_x = 3_u32;
-    let quiet_zone = 10_u32; // margen lateral blanco
+    let scale_x = 1_u32;
+    let quiet_zone = 5_u32; // margen lateral blanco minimo
     let width = (encoded.len() as u32) * scale_x + quiet_zone * 2;
 
     let mut img_buf = vec![255u8; (width * height) as usize];
@@ -759,4 +777,141 @@ fn generar_barcode128_image(data: &str) -> Result<String, String> {
         .map_err(|e| format!("Error guardando barcode: {}", e))?;
 
     Ok(temp_path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Venta, VentaDetalle, VentaCompleta};
+
+    #[test]
+    fn test_generar_ride_prueba() {
+        let venta = VentaCompleta {
+            venta: Venta {
+                id: Some(1),
+                numero: "001-003-000000001".to_string(),
+                cliente_id: Some(2),
+                fecha: Some("2026-02-18 10:30:00".to_string()),
+                subtotal_sin_iva: 5.00,
+                subtotal_con_iva: 10.00,
+                descuento: 0.0,
+                iva: 1.50,
+                total: 16.50,
+                forma_pago: "EFECTIVO".to_string(),
+                monto_recibido: 20.00,
+                cambio: 3.50,
+                estado: "COMPLETADA".to_string(),
+                tipo_documento: "FACTURA".to_string(),
+                estado_sri: "AUTORIZADO".to_string(),
+                autorizacion_sri: Some("1802202601179245326800110010030000000011234567816".to_string()),
+                clave_acceso: Some("1802202601179245326800110010030000000011234567816".to_string()),
+                observacion: None,
+                numero_factura: Some("001-003-000000001".to_string()),
+            },
+            detalles: vec![
+                VentaDetalle {
+                    id: Some(1),
+                    venta_id: Some(1),
+                    producto_id: 1,
+                    nombre_producto: Some("Coca Cola 500ml".to_string()),
+                    cantidad: 2.0,
+                    precio_unitario: 1.25,
+                    descuento: 0.0,
+                    iva_porcentaje: 15.0,
+                    subtotal: 2.50,
+                },
+                VentaDetalle {
+                    id: Some(2),
+                    venta_id: Some(1),
+                    producto_id: 2,
+                    nombre_producto: Some("Pan de agua".to_string()),
+                    cantidad: 5.0,
+                    precio_unitario: 0.15,
+                    descuento: 0.0,
+                    iva_porcentaje: 0.0,
+                    subtotal: 0.75,
+                },
+                VentaDetalle {
+                    id: Some(3),
+                    venta_id: Some(1),
+                    producto_id: 3,
+                    nombre_producto: Some("Arroz Flor de Oro 1kg".to_string()),
+                    cantidad: 1.0,
+                    precio_unitario: 1.15,
+                    descuento: 0.0,
+                    iva_porcentaje: 0.0,
+                    subtotal: 1.15,
+                },
+            ],
+            cliente_nombre: Some("Juan Perez".to_string()),
+        };
+
+        let detalles_ride = vec![
+            DetalleRide {
+                codigo: "001".to_string(),
+                nombre: "Coca Cola 500ml".to_string(),
+                cantidad: 2.0,
+                precio_unitario: 1.25,
+                descuento: 0.0,
+                iva_porcentaje: 15.0,
+                precio_total_sin_impuesto: 2.50,
+            },
+            DetalleRide {
+                codigo: "002".to_string(),
+                nombre: "Pan de agua".to_string(),
+                cantidad: 5.0,
+                precio_unitario: 0.15,
+                descuento: 0.0,
+                iva_porcentaje: 0.0,
+                precio_total_sin_impuesto: 0.75,
+            },
+            DetalleRide {
+                codigo: "003".to_string(),
+                nombre: "Arroz Flor de Oro 1kg".to_string(),
+                cantidad: 1.0,
+                precio_unitario: 1.15,
+                descuento: 0.0,
+                iva_porcentaje: 0.0,
+                precio_total_sin_impuesto: 1.15,
+            },
+        ];
+
+        let cliente = ClienteRide {
+            nombre: "Juan Carlos Perez Lopez".to_string(),
+            identificacion: "0102030405".to_string(),
+            direccion: "Av. 10 de Agosto y Colon, Quito".to_string(),
+            email: "juan.perez@email.com".to_string(),
+            telefono: "0991234567".to_string(),
+            observacion: "Cliente frecuente".to_string(),
+        };
+
+        let mut config = HashMap::new();
+        config.insert("nombre_negocio".to_string(), "ABARROTES DON PEPE".to_string());
+        config.insert("ruc".to_string(), "1792453268001".to_string());
+        config.insert("direccion".to_string(), "Calle Sucre 123 y Bolivar, Ambato".to_string());
+        config.insert("telefono".to_string(), "032-456789".to_string());
+        config.insert("regimen".to_string(), "RIMPE_EMPRENDEDOR".to_string());
+        config.insert("sri_ambiente".to_string(), "pruebas".to_string());
+        // Sin logo para la prueba
+
+        let result = generar_ride_pdf(
+            &venta,
+            &detalles_ride,
+            &cliente,
+            &config,
+            Some("18/02/2026 10:35:00"),
+            "FACTURA",
+            None,
+        );
+
+        assert!(result.is_ok(), "Error generando RIDE: {:?}", result.err());
+        let pdf_bytes = result.unwrap();
+        assert!(pdf_bytes.len() > 100, "PDF muy pequeño: {} bytes", pdf_bytes.len());
+
+        // Guardar en escritorio para revisión visual
+        let userprofile = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
+        let output_path = std::path::PathBuf::from(userprofile).join("Desktop").join("RIDE_prueba.pdf");
+        std::fs::write(&output_path, &pdf_bytes).expect("Error guardando PDF de prueba");
+        println!("PDF de prueba guardado en: {}", output_path.display());
+    }
 }
