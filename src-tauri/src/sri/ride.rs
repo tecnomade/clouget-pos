@@ -156,11 +156,12 @@ pub fn generar_ride_pdf(
     header_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
     // --- Columna izquierda: Logo arriba + Datos emisor abajo ---
-    // Sin logo: espacio vacío arriba para que datos emisor quede alineado abajo
-    // Con logo: logo framed arriba, datos emisor framed abajo
+    // Estructura: [logo o espacio vacío] + [datos emisor]
+    // El espacio libre queda arriba (entre logo y datos) gracias al FrameCellDecorator
     let mut col_izq = LinearLayout::vertical();
 
-    let mut tiene_logo = false;
+    // Preparar logo si existe (se insertará después de los datos emisor, al final)
+    let mut logo_element: Option<genpdf::elements::PaddedElement<genpdf::elements::Image>> = None;
     if let Some(logo_b64) = config.get("logo_negocio") {
         if !logo_b64.is_empty() {
             if let Ok(logo_bytes) = BASE64.decode(logo_b64) {
@@ -168,17 +169,44 @@ pub fn generar_ride_pdf(
                 if std::fs::write(&logo_temp, &logo_bytes).is_ok() {
                     if let Ok(mut logo_img) = genpdf::elements::Image::from_path(&logo_temp) {
                         logo_img = logo_img.with_alignment(Alignment::Center);
-                        logo_img = logo_img.with_scale(genpdf::Scale::new(1.2, 0.9));
-                        col_izq.push(logo_img.padded(Margins::trbl(3, 5, 3, 5)));
-                        tiene_logo = true;
+                        // Escala dinámica: siempre llenar el ancho de la columna
+                        // Fórmula genpdf: rendered_mm = 25.4 * (scale * pixels) / 300
+                        // Despejando: scale = (target_mm * 300) / (25.4 * pixels)
+                        let max_width_mm = 84.0_f64; // ancho útil columna (~90mm - 6mm padding)
+                        // Leer dimensiones del PNG desde el header (bytes 16-23)
+                        let (img_w, img_h) = if logo_bytes.len() > 24 && &logo_bytes[0..4] == b"\x89PNG" {
+                            let w = u32::from_be_bytes([logo_bytes[16], logo_bytes[17], logo_bytes[18], logo_bytes[19]]) as f64;
+                            let h = u32::from_be_bytes([logo_bytes[20], logo_bytes[21], logo_bytes[22], logo_bytes[23]]) as f64;
+                            (w, h)
+                        } else {
+                            (200.0, 100.0)
+                        };
+                        // Escalar para llenar el ancho, pero limitar alto al espacio libre
+                        // La col derecha mide ~55mm; datos emisor ~25mm → espacio libre ~30mm
+                        let max_height_mm = 35.0_f64;
+                        let scale_by_w = (max_width_mm * 300.0) / (25.4 * img_w);
+                        let rendered_h = 25.4 * (scale_by_w * img_h) / 300.0;
+                        let final_scale = if rendered_h > max_height_mm {
+                            // Logo cuadrado/vertical: limitar por alto para no agrandar la fila
+                            (max_height_mm * 300.0) / (25.4 * img_h)
+                        } else {
+                            // Logo horizontal: llenar todo el ancho
+                            scale_by_w
+                        };
+                        logo_img = logo_img.with_scale(genpdf::Scale::new(final_scale, final_scale));
+                        // Sin padding lateral; solo 1mm arriba/abajo
+                        logo_element = Some(logo_img.padded(Margins::trbl(1, 0, 1, 0)));
                     }
                     let _ = std::fs::remove_file(&logo_temp);
                 }
             }
         }
     }
-    // Sin logo: espacio vacío arriba (~30% del header) para que emisor quede abajo
-    if !tiene_logo {
+
+    // Logo va primero arriba; si no hay logo, espacio vacío
+    if let Some(logo) = logo_element {
+        col_izq.push(logo);
+    } else {
         col_izq.push(Break::new(8.0));
     }
 
@@ -892,26 +920,136 @@ mod tests {
         config.insert("telefono".to_string(), "032-456789".to_string());
         config.insert("regimen".to_string(), "RIMPE_EMPRENDEDOR".to_string());
         config.insert("sri_ambiente".to_string(), "pruebas".to_string());
-        // Sin logo para la prueba
 
-        let result = generar_ride_pdf(
-            &venta,
-            &detalles_ride,
-            &cliente,
-            &config,
-            Some("18/02/2026 10:35:00"),
-            "FACTURA",
-            None,
-        );
-
-        assert!(result.is_ok(), "Error generando RIDE: {:?}", result.err());
-        let pdf_bytes = result.unwrap();
-        assert!(pdf_bytes.len() > 100, "PDF muy pequeño: {} bytes", pdf_bytes.len());
-
-        // Guardar en escritorio para revisión visual
         let userprofile = std::env::var("USERPROFILE").unwrap_or_else(|_| ".".to_string());
-        let output_path = std::path::PathBuf::from(userprofile).join("Desktop").join("RIDE_prueba.pdf");
-        std::fs::write(&output_path, &pdf_bytes).expect("Error guardando PDF de prueba");
-        println!("PDF de prueba guardado en: {}", output_path.display());
+        let desktop = std::path::PathBuf::from(&userprofile).join("Desktop");
+
+        // Helper: crear PNG sólido de color (sin dependencias externas)
+        fn crear_png_solido(ancho: u32, alto: u32, r: u8, g: u8, b: u8) -> Vec<u8> {
+            let mut buf = Vec::new();
+            // PNG signature
+            buf.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+            // IHDR chunk
+            let mut ihdr_data = Vec::new();
+            ihdr_data.extend_from_slice(&ancho.to_be_bytes());
+            ihdr_data.extend_from_slice(&alto.to_be_bytes());
+            ihdr_data.push(8); // bit depth
+            ihdr_data.push(2); // color type: RGB
+            ihdr_data.push(0); // compression
+            ihdr_data.push(0); // filter
+            ihdr_data.push(0); // interlace
+            let ihdr_crc = crc32_png(b"IHDR", &ihdr_data);
+            buf.extend_from_slice(&(13u32).to_be_bytes()); // length
+            buf.extend_from_slice(b"IHDR");
+            buf.extend_from_slice(&ihdr_data);
+            buf.extend_from_slice(&ihdr_crc.to_be_bytes());
+            // IDAT chunk - raw image data con zlib
+            let mut raw_data = Vec::new();
+            for _ in 0..alto {
+                raw_data.push(0); // filter: None
+                for _ in 0..ancho {
+                    raw_data.extend_from_slice(&[r, g, b]);
+                }
+            }
+            // zlib: deflate stored (no compression)
+            let mut zlib_data = Vec::new();
+            zlib_data.push(0x78); // CMF
+            zlib_data.push(0x01); // FLG
+            // Split raw_data into blocks of max 65535 bytes
+            let chunks: Vec<&[u8]> = raw_data.chunks(65535).collect();
+            for (i, chunk) in chunks.iter().enumerate() {
+                let is_last = i == chunks.len() - 1;
+                zlib_data.push(if is_last { 1 } else { 0 }); // BFINAL
+                let len = chunk.len() as u16;
+                zlib_data.extend_from_slice(&len.to_le_bytes());
+                zlib_data.extend_from_slice(&(!len).to_le_bytes());
+                zlib_data.extend_from_slice(chunk);
+            }
+            // Adler32 checksum
+            let adler = adler32(&raw_data);
+            zlib_data.extend_from_slice(&adler.to_be_bytes());
+            let idat_crc = crc32_png(b"IDAT", &zlib_data);
+            buf.extend_from_slice(&(zlib_data.len() as u32).to_be_bytes());
+            buf.extend_from_slice(b"IDAT");
+            buf.extend_from_slice(&zlib_data);
+            buf.extend_from_slice(&idat_crc.to_be_bytes());
+            // IEND chunk
+            let iend_crc = crc32_png(b"IEND", &[]);
+            buf.extend_from_slice(&0u32.to_be_bytes());
+            buf.extend_from_slice(b"IEND");
+            buf.extend_from_slice(&iend_crc.to_be_bytes());
+            buf
+        }
+        fn crc32_png(chunk_type: &[u8], data: &[u8]) -> u32 {
+            let mut crc: u32 = 0xFFFFFFFF;
+            for &byte in chunk_type.iter().chain(data.iter()) {
+                let idx = ((crc ^ byte as u32) & 0xFF) as usize;
+                let mut val = idx as u32;
+                for _ in 0..8 {
+                    if val & 1 != 0 { val = 0xEDB88320 ^ (val >> 1); }
+                    else { val >>= 1; }
+                }
+                crc = val ^ (crc >> 8);
+            }
+            crc ^ 0xFFFFFFFF
+        }
+        fn adler32(data: &[u8]) -> u32 {
+            let mut a: u32 = 1;
+            let mut b: u32 = 0;
+            for &byte in data {
+                a = (a + byte as u32) % 65521;
+                b = (b + a) % 65521;
+            }
+            (b << 16) | a
+        }
+
+        // --- 1. PDF con logo HORIZONTAL (300x100, azul) ---
+        let logo_h = crear_png_solido(300, 100, 41, 98, 255); // azul
+        config.insert("logo_negocio".to_string(), BASE64.encode(&logo_h));
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE logo horizontal: {:?}", result.err());
+        let path_h = desktop.join("RIDE_logo_horizontal.pdf");
+        std::fs::write(&path_h, result.unwrap()).expect("Error guardando PDF");
+        println!("1. Logo horizontal: {}", path_h.display());
+
+        // --- 2. PDF con logo CUADRADO (150x150, verde) ---
+        let logo_v = crear_png_solido(150, 150, 34, 197, 94); // verde
+        config.insert("logo_negocio".to_string(), BASE64.encode(&logo_v));
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE logo cuadrado: {:?}", result.err());
+        let path_v = desktop.join("RIDE_logo_cuadrado.pdf");
+        std::fs::write(&path_v, result.unwrap()).expect("Error guardando PDF");
+        println!("2. Logo cuadrado:   {}", path_v.display());
+
+        // --- 3. PDF con logo 300x150 (horizontal 2:1, rojo) ---
+        let logo_2_1 = crear_png_solido(300, 150, 220, 38, 38); // rojo
+        config.insert("logo_negocio".to_string(), BASE64.encode(&logo_2_1));
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE logo 300x150: {:?}", result.err());
+        let path_r = desktop.join("RIDE_logo_300x150.pdf");
+        std::fs::write(&path_r, result.unwrap()).expect("Error guardando PDF");
+        println!("3. Logo 300x150:    {}", path_r.display());
+
+        // --- 4. PDF con logo 512x512 (cuadrado grande, naranja) ---
+        let logo_512 = crear_png_solido(512, 512, 255, 152, 0); // naranja
+        config.insert("logo_negocio".to_string(), BASE64.encode(&logo_512));
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE logo 512x512: {:?}", result.err());
+        let path_512 = desktop.join("RIDE_logo_512x512.pdf");
+        std::fs::write(&path_512, result.unwrap()).expect("Error guardando PDF");
+        println!("4. Logo 512x512:    {}", path_512.display());
+
+        // --- 5. PDF SIN logo ---
+        config.remove("logo_negocio");
+        let result = generar_ride_pdf(&venta, &detalles_ride, &cliente, &config,
+            Some("18/02/2026 10:35:00"), "FACTURA", None);
+        assert!(result.is_ok(), "Error RIDE sin logo: {:?}", result.err());
+        let path_s = desktop.join("RIDE_sin_logo.pdf");
+        std::fs::write(&path_s, result.unwrap()).expect("Error guardando PDF");
+        println!("5. Sin logo:        {}", path_s.display());
     }
 }
