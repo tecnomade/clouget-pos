@@ -210,13 +210,13 @@ pub fn generar_ride_pdf(
 
     // Clave de acceso + código de barras integrados en columna derecha
     col_der.push(pp("CLAVE DE ACCESO:", s_bold));
-    col_der.push(Break::new(0.3));
+    col_der.push(Break::new(0.5));
     if !clave_acceso.is_empty() {
         match generar_barcode128_image(clave_acceso) {
             Ok(barcode_path) => {
                 if let Ok(mut barcode_img) = genpdf::elements::Image::from_path(&barcode_path) {
                     barcode_img = barcode_img.with_alignment(Alignment::Center);
-                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(0.55, 0.8));
+                    barcode_img = barcode_img.with_scale(genpdf::Scale::new(2.3, 2.4));
                     col_der.push(barcode_img);
                 }
                 let _ = std::fs::remove_file(&barcode_path);
@@ -226,9 +226,9 @@ pub fn generar_ride_pdf(
             }
         }
     }
-    col_der.push(Break::new(0.2));
-    col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
     col_der.push(Break::new(0.5));
+    col_der.push(p_aligned(clave_acceso, s_clave_small, Alignment::Center));
+    col_der.push(Break::new(0.3));
 
     // Envolver cada columna en un borde (framed) con padding interno
     header_table
