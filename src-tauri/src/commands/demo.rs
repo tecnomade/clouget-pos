@@ -183,7 +183,12 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         emitida: chrono::Local::now().format("%Y-%m-%d").to_string(),
         machine_id,
         activa: true,
-        modulos: vec![],
+        modulos: vec![
+            "multi_pos".to_string(),
+            "multi_almacen".to_string(),
+            "backup_cloud".to_string(),
+            "backup_premium".to_string(),
+        ],
     })
 }
 
