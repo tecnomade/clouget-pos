@@ -528,6 +528,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_access_token', '')", [])?;
     conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_refresh_token', '')", [])?;
     conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_folder_id', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_client_id', '419804426556-ple84m5nr8473fs32f9ma2a12gl2vcdl.apps.googleusercontent.com')", [])?;
 
     // Tabla stock por establecimiento
     conn.execute_batch(
