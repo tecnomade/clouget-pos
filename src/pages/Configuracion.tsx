@@ -1271,7 +1271,8 @@ export default function Configuracion() {
             </div>
           </div>
 
-          {/* Red y Multi-Terminal */}
+          {/* Red y Multi-Terminal — solo si tiene módulo multi_pos */}
+          {(config.licencia_modulos || "").includes("multi_pos") && (
           <div className="card">
             <div className="card-header">Red y Multi-Terminal</div>
             <div className="card-body">
@@ -1426,8 +1427,10 @@ export default function Configuracion() {
               </div>
             </div>
           </div>
+          )}
 
-          {/* Multi-Almacen */}
+          {/* Multi-Almacen — solo si tiene módulo multi_almacen */}
+          {(config.licencia_modulos || "").includes("multi_almacen") && (
           <div className="card">
             <div className="card-header">Multi-Almacen</div>
             <div className="card-body">
@@ -1470,8 +1473,10 @@ export default function Configuracion() {
               )}
             </div>
           </div>
+          )}
 
-          {/* Backup Cloud */}
+          {/* Backup Cloud — solo si tiene módulo backup_cloud */}
+          {(config.licencia_modulos || "").includes("backup_cloud") && (
           <div className="card">
             <div className="card-header">Respaldo en la Nube</div>
             <div className="card-body">
@@ -1550,9 +1555,31 @@ export default function Configuracion() {
                           Desconectar Google Drive
                         </button>
                       ) : (
-                        <p style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                          La conexion con Google Drive se configurara la primera vez que se ejecute un backup.
-                        </p>
+                        <div>
+                          <button
+                            className="btn btn-primary"
+                            style={{ fontSize: 12 }}
+                            onClick={async () => {
+                              // Abrir flujo OAuth2 de Google Drive
+                              // TODO: Reemplazar CLIENT_ID con el real de Google Cloud Console
+                              const clientId = config.gdrive_client_id || "";
+                              if (!clientId) {
+                                toastError("ID de cliente de Google Drive no configurado. Contacte soporte.");
+                                return;
+                              }
+                              const redirectUri = "http://localhost:8847/oauth/callback";
+                              const scope = "https://www.googleapis.com/auth/drive.file";
+                              const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
+                              await openUrl(authUrl);
+                              toastExito("Se abrio el navegador para conectar Google Drive. Complete la autorizacion.");
+                            }}
+                          >
+                            Conectar Google Drive
+                          </button>
+                          <p style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                            Se abrira el navegador para autorizar acceso a Google Drive.
+                          </p>
+                        </div>
                       )}
                     </div>
                   )}
@@ -1583,6 +1610,7 @@ export default function Configuracion() {
               )}
             </div>
           </div>
+          )}
 
           </div>{/* cierre columna derecha */}
         </div>

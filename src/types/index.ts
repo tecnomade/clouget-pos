@@ -241,6 +241,7 @@ export interface LicenciaInfo {
   emitida: string;    // fecha ISO
   machine_id: string;
   activa: boolean;
+  modulos: string[];  // ["multi_pos", "multi_almacen", "backup_cloud"]
 }
 
 // Usuarios / Sesión

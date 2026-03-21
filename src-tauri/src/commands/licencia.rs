@@ -14,6 +14,7 @@ pub struct LicenciaInfo {
     pub emitida: String,    // fecha ISO
     pub machine_id: String, // fingerprint del equipo
     pub activa: bool,
+    pub modulos: Vec<String>, // ["multi_pos", "multi_almacen", "backup_cloud"]
 }
 
 /// Respuesta del endpoint activar-licencia de Supabase
@@ -26,6 +27,7 @@ struct RespuestaActivacion {
     emitida: Option<String>,
     mensaje: Option<String>,
     sri_lifetime: Option<bool>,
+    modulos: Option<Vec<String>>,
 }
 
 /// Respuesta del endpoint validar-licencia de Supabase
@@ -38,6 +40,7 @@ struct RespuestaValidacion {
     emitida: Option<String>,
     #[allow(dead_code)]
     mensaje: Option<String>,
+    modulos: Option<Vec<String>>,
 }
 
 // ─── Machine ID ────────────────────────────────────────────
@@ -163,6 +166,8 @@ pub async fn verificar_licencia(
     let email = data.email.unwrap_or_default();
     let tipo = data.tipo.unwrap_or_else(|| "perpetua".to_string());
     let emitida = data.emitida.unwrap_or_default();
+    let modulos = data.modulos.unwrap_or_default();
+    let modulos_json = serde_json::to_string(&modulos).unwrap_or_else(|_| "[]".to_string());
     let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     // Guardar en config
@@ -177,6 +182,7 @@ pub async fn verificar_licencia(
             ("licencia_emitida", &emitida),
             ("licencia_machine_id", &machine_id),
             ("licencia_ultima_validacion", &hoy),
+            ("licencia_modulos", &modulos_json),
         ];
 
         for (key, value) in &configs {
@@ -221,6 +227,7 @@ pub async fn verificar_licencia(
         emitida,
         machine_id,
         activa: true,
+        modulos,
     })
 }
 
@@ -233,7 +240,7 @@ pub async fn obtener_estado_licencia(
     db: State<'_, Database>,
 ) -> Result<Option<LicenciaInfo>, String> {
     // Leer datos de cache
-    let (activada, codigo, negocio, email, tipo, emitida, machine_id_cache, ultima_validacion, api_url, api_key) = {
+    let (activada, codigo, negocio, email, tipo, emitida, machine_id_cache, ultima_validacion, api_url, api_key, modulos_cache) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let get = |key: &str| -> String {
             conn.query_row(
@@ -254,6 +261,7 @@ pub async fn obtener_estado_licencia(
             get("licencia_ultima_validacion"),
             get("licencia_api_url"),
             get("licencia_api_key"),
+            get("licencia_modulos"),
         )
     };
 
@@ -286,6 +294,7 @@ pub async fn obtener_estado_licencia(
                 emitida: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 machine_id: mi_machine_id,
                 activa: true,
+                modulos: vec![], // demo no tiene módulos avanzados
             }));
         }
         return Ok(None);
@@ -303,6 +312,7 @@ pub async fn obtener_estado_licencia(
     let mut email_actual = email.clone();
     let mut tipo_actual = tipo.clone();
     let mut emitida_actual = emitida.clone();
+    let mut modulos_actual: Vec<String> = serde_json::from_str(&modulos_cache).unwrap_or_default();
 
     if !api_url.is_empty() {
         match revalidar_online(&mi_machine_id, &api_url, &api_key).await {
@@ -312,9 +322,11 @@ pub async fn obtener_estado_licencia(
                 if let Some(e) = resp.email { email_actual = e; }
                 if let Some(t) = resp.tipo { tipo_actual = t; }
                 if let Some(em) = resp.emitida { emitida_actual = em; }
+                if let Some(m) = resp.modulos { modulos_actual = m; }
 
                 // Actualizar cache
                 let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+                let modulos_json = serde_json::to_string(&modulos_actual).unwrap_or_else(|_| "[]".to_string());
                 let conn = db.conn.lock().map_err(|e| e.to_string())?;
                 let configs = [
                     ("licencia_activada", if activa { "1" } else { "0" }),
@@ -323,6 +335,7 @@ pub async fn obtener_estado_licencia(
                     ("licencia_tipo", &tipo_actual),
                     ("licencia_emitida", &emitida_actual),
                     ("licencia_ultima_validacion", &hoy),
+                    ("licencia_modulos", &modulos_json),
                 ];
                 for (key, value) in &configs {
                     conn.execute(
@@ -352,6 +365,7 @@ pub async fn obtener_estado_licencia(
         emitida: emitida_actual,
         machine_id: mi_machine_id,
         activa: true,
+        modulos: modulos_actual,
     }))
 }
 
