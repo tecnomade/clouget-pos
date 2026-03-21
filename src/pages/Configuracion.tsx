@@ -1514,7 +1514,9 @@ export default function Configuracion() {
                       }}
                     >
                       <option value="">Seleccionar...</option>
-                      <option value="premium">Premium (servidor Clouget)</option>
+                      {(config.licencia_modulos || "").includes("backup_premium") && (
+                        <option value="premium">Premium (servidor Clouget)</option>
+                      )}
                       <option value="gdrive">Google Drive (cuenta propia)</option>
                     </select>
                   </div>
