@@ -35,8 +35,21 @@ function AppGate() {
         configurarModoRed('cliente', cfg.servidor_url, cfg.servidor_token);
         // Iniciar servicio de sincronización background
         iniciarSyncService(cfg.servidor_url, cfg.servidor_token);
-        // Sincronizar cache de productos y reservar secuenciales
+        // Obtener licencia y módulos del servidor + sincronizar cache
         try {
+          // Obtener módulos de la licencia del servidor
+          const resp = await fetch(`${cfg.servidor_url}/api/v1/invoke`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.servidor_token}` },
+            body: JSON.stringify({ command: 'obtener_licencia_servidor', args: {} }),
+          });
+          const licData = await resp.json();
+          if (licData.ok && licData.data?.modulos) {
+            // Guardar módulos del servidor en config local del cliente
+            const { guardarConfig: gc } = await import('./services/api');
+            await gc({ licencia_modulos: JSON.stringify(licData.data.modulos) });
+          }
+
           await sincronizarCacheProductos(cfg.servidor_url, cfg.servidor_token);
           const est = cfg.terminal_establecimiento || '001';
           const pe = cfg.terminal_punto_emision || '001';

@@ -701,6 +701,28 @@ pub async fn dispatch_command(
             }))
         }
 
+        // --- Licencia del servidor (para que clientes hereden módulos) ---
+        "obtener_licencia_servidor" => {
+            let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+            let get = |key: &str| -> String {
+                conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |row| row.get(0))
+                    .unwrap_or_default()
+            };
+
+            let modulos_json = get("licencia_modulos");
+            let modulos: Vec<String> = serde_json::from_str(&modulos_json).unwrap_or_default();
+
+            to_json(&serde_json::json!({
+                "negocio": get("licencia_negocio"),
+                "email": get("licencia_email"),
+                "tipo": get("licencia_tipo"),
+                "emitida": get("licencia_emitida"),
+                "activa": get("licencia_activada") == "1",
+                "machine_id": get("licencia_machine_id"),
+                "modulos": modulos,
+            }))
+        }
+
         _ => Err(format!("Comando '{}' no disponible en modo red", command)),
     }
 }
