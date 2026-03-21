@@ -758,3 +758,7 @@ export async function guardarGdriveTokens(accessToken: string, refreshToken: str
 export async function desconectarGdrive(): Promise<void> {
   return invoke("desconectar_gdrive");
 }
+
+export async function conectarGdrive(): Promise<string> {
+  return invoke("conectar_gdrive");
+}

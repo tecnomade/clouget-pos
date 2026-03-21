@@ -227,6 +227,7 @@ pub fn run() {
             backup::cloud::estado_backup_cloud,
             backup::cloud::guardar_gdrive_tokens,
             backup::cloud::desconectar_gdrive,
+            backup::cloud::conectar_gdrive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

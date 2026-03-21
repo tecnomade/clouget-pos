@@ -224,3 +224,125 @@ pub fn desconectar_gdrive(db: State<Database>) -> Result<(), String> {
     conn.execute("DELETE FROM config WHERE key IN ('gdrive_access_token', 'gdrive_refresh_token', 'gdrive_folder_id')", []).ok();
     Ok(())
 }
+
+/// Inicia el flujo OAuth2 de Google Drive:
+/// 1. Abre un mini-servidor HTTP temporal en puerto 8847 para capturar el callback
+/// 2. Abre el navegador con la URL de autorización
+/// 3. Espera que Google redirija con el código
+/// 4. Intercambia el código por tokens via la Edge Function gdrive-auth
+/// 5. Guarda los tokens en config
+#[tauri::command]
+pub async fn conectar_gdrive(db: State<'_, Database>) -> Result<String, String> {
+    let (client_id, api_url, api_key) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let get = |key: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |row| row.get(0))
+                .unwrap_or_default()
+        };
+        (get("gdrive_client_id"), get("licencia_api_url"), get("licencia_api_key"))
+    };
+
+    if client_id.is_empty() {
+        return Err("ID de cliente de Google Drive no configurado".to_string());
+    }
+
+    // Iniciar mini-servidor para capturar el callback OAuth
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+    let tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx)));
+
+    let tx_clone = tx.clone();
+    let server = tokio::spawn(async move {
+        let app = axum::Router::new().route("/oauth/callback", axum::routing::get(
+            move |query: axum::extract::Query<std::collections::HashMap<String, String>>| {
+                let tx = tx_clone.clone();
+                async move {
+                    let code = query.get("code").cloned().unwrap_or_default();
+                    if let Some(sender) = tx.lock().await.take() {
+                        sender.send(code).ok();
+                    }
+                    axum::response::Html(
+                        "<html><body style='font-family:sans-serif;text-align:center;padding:60px;'>\
+                        <h2>Google Drive conectado</h2>\
+                        <p>Puede cerrar esta ventana y volver a Clouget POS.</p>\
+                        </body></html>"
+                    )
+                }
+            },
+        ));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:8847").await
+            .expect("No se pudo iniciar servidor OAuth en puerto 8847");
+
+        // Servir solo una request y terminar
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+            })
+            .await
+            .ok();
+    });
+
+    // Abrir navegador con URL de autorización
+    let redirect_uri = "http://localhost:8847/oauth/callback";
+    let scope = "https://www.googleapis.com/auth/drive.file";
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        client_id,
+        urlencoding(&redirect_uri),
+        urlencoding(&scope),
+    );
+
+    // Abrir en el navegador del sistema
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("cmd").args(["/C", "start", &auth_url.replace("&", "^&")]).spawn().ok();
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open").arg(&auth_url).spawn().ok();
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg(&auth_url).spawn().ok();
+
+    // Esperar el código (timeout 2 minutos)
+    let code = tokio::time::timeout(std::time::Duration::from_secs(120), rx)
+        .await
+        .map_err(|_| "Tiempo agotado esperando autorización de Google Drive".to_string())?
+        .map_err(|_| "Error recibiendo código OAuth".to_string())?;
+
+    server.abort(); // Detener el mini-servidor
+
+    if code.is_empty() {
+        return Err("No se recibió código de autorización".to_string());
+    }
+
+    // Intercambiar código por tokens via Edge Function
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/gdrive-auth", api_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("apikey", &api_key)
+        .json(&serde_json::json!({ "code": code }))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("Error contactando servidor: {}", e))?;
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    if data["ok"].as_bool() != Some(true) {
+        return Err(format!("Error de Google: {}", data["error"].as_str().unwrap_or("desconocido")));
+    }
+
+    let access_token = data["access_token"].as_str().unwrap_or("").to_string();
+    let refresh_token = data["refresh_token"].as_str().unwrap_or("").to_string();
+
+    // Guardar tokens
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('gdrive_access_token', ?1)", rusqlite::params![access_token]).ok();
+        conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('gdrive_refresh_token', ?1)", rusqlite::params![refresh_token]).ok();
+    }
+
+    Ok("Google Drive conectado exitosamente".to_string())
+}
+
+fn urlencoding(s: &str) -> String {
+    s.replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D").replace("&", "%26")
+}

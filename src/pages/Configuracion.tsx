@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive } from "../services/api";
+import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
@@ -1560,18 +1560,15 @@ export default function Configuracion() {
                             className="btn btn-primary"
                             style={{ fontSize: 12 }}
                             onClick={async () => {
-                              // Abrir flujo OAuth2 de Google Drive
-                              // TODO: Reemplazar CLIENT_ID con el real de Google Cloud Console
-                              const clientId = config.gdrive_client_id || "";
-                              if (!clientId) {
-                                toastError("ID de cliente de Google Drive no configurado. Contacte soporte.");
-                                return;
+                              try {
+                                toastExito("Abriendo navegador para autorizar Google Drive...");
+                                const result = await conectarGdrive();
+                                toastExito(result);
+                                const bk = await estadoBackupCloud();
+                                setBackupEstado(bk);
+                              } catch (err) {
+                                toastError("" + err);
                               }
-                              const redirectUri = "http://localhost:8847/oauth/callback";
-                              const scope = "https://www.googleapis.com/auth/drive.file";
-                              const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&access_type=offline&prompt=consent`;
-                              await openUrl(authUrl);
-                              toastExito("Se abrio el navegador para conectar Google Drive. Complete la autorizacion.");
                             }}
                           >
                             Conectar Google Drive
