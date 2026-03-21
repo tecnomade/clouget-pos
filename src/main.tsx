@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { SesionProvider, useSesion } from "./contexts/SesionContext";
+import { DemoProvider } from "./contexts/DemoContext";
 import Layout from "./components/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import PuntoVenta from "./pages/PuntoVenta";
@@ -16,7 +17,9 @@ import Configuracion from "./pages/Configuracion";
 import InventarioPage from "./pages/InventarioPage";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
-import { obtenerEstadoLicencia, obtenerSesionActual } from "./services/api";
+import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarModoRed } from "./services/api";
+import { iniciarSyncService, sincronizarCacheProductos, reservarSecuenciales } from "./services/offlineSync";
+import ConnectionStatus from "./components/ConnectionStatus";
 import type { LicenciaInfo } from "./types";
 import "./styles/global.css";
 
@@ -26,15 +29,32 @@ function AppGate() {
   const { sesion, setSesion } = useSesion();
 
   useEffect(() => {
-    Promise.all([obtenerEstadoLicencia(), obtenerSesionActual()])
-      .then(([lic, ses]) => {
-        setLicencia(lic);
-        if (ses) setSesion(ses);
-        setVerificando(false);
-      })
-      .catch(() => {
-        setVerificando(false);
-      });
+    // Inicializar modo red antes de cualquier otra llamada
+    obtenerConfig().then(async (cfg) => {
+      if (cfg.modo_red === 'cliente' && cfg.servidor_url && cfg.servidor_token) {
+        configurarModoRed('cliente', cfg.servidor_url, cfg.servidor_token);
+        // Iniciar servicio de sincronización background
+        iniciarSyncService(cfg.servidor_url, cfg.servidor_token);
+        // Sincronizar cache de productos y reservar secuenciales
+        try {
+          await sincronizarCacheProductos(cfg.servidor_url, cfg.servidor_token);
+          const est = cfg.terminal_establecimiento || '001';
+          const pe = cfg.terminal_punto_emision || '001';
+          await reservarSecuenciales(cfg.servidor_url, cfg.servidor_token, est, pe, 'NOTA_VENTA', 50);
+        } catch { /* offline desde el inicio */ }
+      }
+    }).catch(() => {}).finally(() => {
+      // Luego verificar licencia y sesion
+      Promise.all([obtenerEstadoLicencia(), obtenerSesionActual()])
+        .then(([lic, ses]) => {
+          setLicencia(lic);
+          if (ses) setSesion(ses);
+          setVerificando(false);
+        })
+        .catch(() => {
+          setVerificando(false);
+        });
+    });
   }, []);
 
   if (verificando) {
@@ -63,32 +83,35 @@ function AppGate() {
   }
 
   if (!sesion) {
-    return <LoginPage onLogin={(s) => setSesion(s)} />;
+    return <LoginPage onLogin={(s) => setSesion(s)} esDemo={licencia.tipo === "demo"} />;
   }
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<Layout />}>
-          {/* Rutas disponibles para todos los roles */}
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/pos" element={<PuntoVenta />} />
-          <Route path="/caja" element={<CajaPage />} />
-          <Route path="/ventas" element={<VentasDia />} />
-          {/* Rutas solo para ADMIN */}
-          {sesion.rol === "ADMIN" && (
-            <>
-              <Route path="/productos" element={<Productos />} />
-              <Route path="/clientes" element={<Clientes />} />
-              <Route path="/gastos" element={<GastosPage />} />
-              <Route path="/cuentas" element={<CuentasPage />} />
-              <Route path="/inventario" element={<InventarioPage />} />
-              <Route path="/config" element={<Configuracion />} />
-            </>
-          )}
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <DemoProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route element={<Layout />}>
+            {/* Rutas disponibles para todos los roles */}
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/pos" element={<PuntoVenta />} />
+            <Route path="/caja" element={<CajaPage />} />
+            <Route path="/ventas" element={<VentasDia />} />
+            <Route path="/cuentas" element={<CuentasPage />} />
+            {/* Rutas solo para ADMIN */}
+            {sesion.rol === "ADMIN" && (
+              <>
+                <Route path="/productos" element={<Productos />} />
+                <Route path="/clientes" element={<Clientes />} />
+                <Route path="/gastos" element={<GastosPage />} />
+                <Route path="/inventario" element={<InventarioPage />} />
+                <Route path="/config" element={<Configuracion />} />
+              </>
+            )}
+          </Route>
+        </Routes>
+      </BrowserRouter>
+      <ConnectionStatus />
+    </DemoProvider>
   );
 }
 

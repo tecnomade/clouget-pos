@@ -103,13 +103,34 @@ export default function CajaPage() {
                   <div className="text-lg font-bold">{resumen.num_ventas}</div>
                 </div>
                 <div>
-                  <span className="text-secondary">Total efectivo:</span>
+                  <span className="text-secondary">Efectivo ventas:</span>
                   <div className="text-lg font-bold">${resumen.total_efectivo.toFixed(2)}</div>
                 </div>
                 <div>
                   <span className="text-secondary">Total gastos:</span>
                   <div className="text-lg font-bold">${resumen.total_gastos.toFixed(2)}</div>
                 </div>
+                {(resumen.total_cobros_efectivo > 0 || resumen.total_cobros_banco > 0) && (
+                  <>
+                    <div>
+                      <span className="text-secondary">Cobros en efectivo:</span>
+                      <div className="text-lg font-bold" style={{ color: "var(--color-success)" }}>
+                        ${resumen.total_cobros_efectivo.toFixed(2)}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-secondary">Cobros en banco:</span>
+                      <div className="text-lg font-bold" style={{ color: "#3b82f6" }}>
+                        ${resumen.total_cobros_banco.toFixed(2)}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div style={{
+                borderTop: "1px solid var(--color-border)", marginTop: 16, paddingTop: 16,
+                display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16,
+              }}>
                 <div>
                   <span className="text-secondary">Monto esperado:</span>
                   <div className="text-lg font-bold">${resumen.caja.monto_esperado.toFixed(2)}</div>

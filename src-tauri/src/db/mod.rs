@@ -3,14 +3,18 @@ pub mod schema;
 use crate::models::SesionActiva;
 use rusqlite::Connection;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+/// Base de datos SQLite compartida. Clonable gracias a Arc<Mutex<Connection>>.
+#[derive(Clone)]
 pub struct Database {
-    pub conn: Mutex<Connection>,
+    pub conn: Arc<Mutex<Connection>>,
 }
 
+/// Estado de sesión compartido. Clonable gracias a Arc<Mutex<...>>.
+#[derive(Clone)]
 pub struct SesionState {
-    pub sesion: Mutex<Option<SesionActiva>>,
+    pub sesion: Arc<Mutex<Option<SesionActiva>>>,
 }
 
 impl Database {
@@ -33,12 +37,17 @@ impl Database {
         )?;
 
         let db = Database {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         };
 
         db.run_migrations()?;
 
         Ok(db)
+    }
+
+    /// Retorna la ruta de la base de datos (accesible desde otros módulos)
+    pub fn get_db_path_pub() -> PathBuf {
+        Self::get_db_path()
     }
 
     fn get_db_path() -> PathBuf {

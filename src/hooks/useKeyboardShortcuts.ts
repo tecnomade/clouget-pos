@@ -26,7 +26,7 @@ export function useKeyboardShortcuts(rol?: string) {
       { key: "F4", description: "Ir a Ventas del dia", action: () => navigate("/ventas") },
       { key: "F6", description: "Ir a Configuracion", action: () => navigate("/config"), adminOnly: true },
       { key: "F7", description: "Ir a Gastos", action: () => navigate("/gastos"), adminOnly: true },
-      { key: "F8", description: "Ir a Fiados", action: () => navigate("/cuentas"), adminOnly: true },
+      { key: "F8", description: "Ir a Cuentas por cobrar", action: () => navigate("/cuentas"), adminOnly: false },
       // Acciones rapidas en POS - disponibles para todos
       // Usan CustomEvent para no depender del estado disabled del boton DOM
       { key: "F9", description: "Cobrar venta", action: () => {
@@ -78,7 +78,7 @@ export const SHORTCUTS_LIST = [
   { keys: "F5", description: "Caja" },
   { keys: "F6", description: "Configuracion" },
   { keys: "F7", description: "Gastos" },
-  { keys: "F8", description: "Fiados" },
+  { keys: "F8", description: "Por cobrar" },
   { keys: "F9", description: "Cobrar venta" },
   { keys: "F10", description: "Nueva venta" },
   { keys: "Ctrl+B", description: "Buscar producto" },

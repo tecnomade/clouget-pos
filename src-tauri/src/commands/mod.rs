@@ -14,3 +14,6 @@ pub mod exportar;
 pub mod sri;
 pub mod listas_precios;
 pub mod inventario;
+pub mod demo;
+pub mod establecimientos;
+pub mod transferencias;

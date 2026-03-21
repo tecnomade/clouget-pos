@@ -17,6 +17,19 @@ pub struct Producto {
     pub unidad_medida: String,
     pub es_servicio: bool,
     pub activo: bool,
+    pub imagen: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProductoTactil {
+    pub id: i64,
+    pub nombre: String,
+    pub precio_venta: f64,
+    pub iva_porcentaje: f64,
+    pub stock_actual: f64,
+    pub categoria_id: Option<i64>,
+    pub categoria_nombre: Option<String>,
+    pub imagen: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

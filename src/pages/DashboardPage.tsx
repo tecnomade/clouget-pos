@@ -125,7 +125,7 @@ export default function DashboardPage() {
           <KpiCard label="Utilidad Bruta" valor={resumen?.utilidad_bruta ?? 0} ayer={resumenAyer?.utilidad_bruta} prefix="$" color="var(--color-success)" />
           <KpiCard label="Efectivo" valor={resumen?.total_efectivo ?? 0} ayer={resumenAyer?.total_efectivo} prefix="$" />
           <KpiCard label="Transferencia" valor={resumen?.total_transferencia ?? 0} ayer={resumenAyer?.total_transferencia} prefix="$" />
-          <KpiCard label="Fiados Pendientes" valor={fiadosPendientes} prefix="$" color={fiadosPendientes > 0 ? "var(--color-warning)" : undefined} />
+          <KpiCard label="Por Cobrar" valor={fiadosPendientes} prefix="$" color={fiadosPendientes > 0 ? "var(--color-warning)" : undefined} />
         </div>
 
         {/* Fila 1: Gráfica + Caja/Acciones */}
@@ -277,7 +277,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Fila 3: Stock Bajo + Fiados */}
+        {/* Fila 3: Stock Bajo + Cuentas por cobrar */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {/* Stock Bajo con colores */}
           <div className="card" style={{ borderColor: alertas.length > 0 ? "#fbbf24" : undefined }}>
@@ -317,7 +317,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Resumen de fiados / deudores */}
+          {/* Resumen de cuentas por cobrar / deudores */}
           <div className="card" style={{ borderColor: deudores.length > 0 ? "#f87171" : undefined }}>
             <div className="card-header" style={deudores.length > 0 ? { background: "#fef2f2", color: "#991b1b" } : {}}>
               Cuentas por Cobrar ({deudores.length})

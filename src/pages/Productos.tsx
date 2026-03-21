@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto } from "../services/api";
-import { save } from "@tauri-apps/plugin-dialog";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto } from "../services/api";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 
@@ -212,6 +212,63 @@ function FormProducto({
           </span>
         </div>
       )}
+      {/* Imagen del producto */}
+      <div style={{ marginTop: 16, padding: 12, background: "#f8fafc", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+        <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
+          Imagen del producto
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {form.imagen ? (
+            <img
+              src={`data:image/png;base64,${form.imagen}`}
+              alt={form.nombre}
+              style={{ width: 80, height: 80, objectFit: "cover", border: "1px solid var(--color-border)", borderRadius: "var(--radius)" }}
+            />
+          ) : (
+            <div style={{ width: 80, height: 80, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 11 }}>
+              Sin imagen
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+              onClick={async () => {
+                try {
+                  const path = await open({
+                    filters: [{ name: "Imagenes", extensions: ["png", "jpg", "jpeg"] }],
+                    multiple: false,
+                  });
+                  if (!path) return;
+                  if (form.id) {
+                    const b64 = await cargarImagenProducto(form.id, path as string);
+                    setForm({ ...form, imagen: b64 });
+                  } else {
+                    toastError("Guarde el producto primero, luego agregue la imagen");
+                  }
+                } catch (err) {
+                  toastError("Error: " + err);
+                }
+              }}>
+              {form.imagen ? "Cambiar" : "Cargar imagen"}
+            </button>
+            {form.imagen && (
+              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "#ef4444" }}
+                onClick={async () => {
+                  try {
+                    if (form.id) await eliminarImagenProducto(form.id);
+                    setForm({ ...form, imagen: undefined });
+                  } catch (err) {
+                    toastError("Error: " + err);
+                  }
+                }}>
+                Quitar
+              </button>
+            )}
+          </div>
+        </div>
+        <span className="text-secondary" style={{ fontSize: 10, marginTop: 4, display: "block" }}>
+          PNG o JPG, max 500KB. Se muestra en modo tactil del POS.
+        </span>
+      </div>
       <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
         <button type="button" className="btn btn-outline" onClick={onCancelar}>
           Cancelar

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listarClientes, crearCliente, actualizarCliente, listarListasPrecios } from "../services/api";
+import { listarClientes, crearCliente, actualizarCliente, listarListasPrecios, consultarIdentificacion } from "../services/api";
 import { useToast } from "../components/Toast";
 import type { Cliente, ListaPrecio } from "../types";
 
@@ -14,6 +14,7 @@ export default function Clientes() {
     nombre: "",
     activo: true,
   });
+  const [consultandoSri, setConsultandoSri] = useState(false);
 
   const cargar = async () => {
     const [cls, listas] = await Promise.all([listarClientes(), listarListasPrecios().catch(() => [])]);
@@ -75,8 +76,37 @@ export default function Clientes() {
                   </div>
                   <div>
                     <label className="text-secondary" style={{ fontSize: 12 }}>Identificación</label>
-                    <input className="input" value={form.identificacion ?? ""}
-                      onChange={(e) => setForm({ ...form, identificacion: e.target.value || undefined })} />
+                    <div className="flex gap-1">
+                      <input className="input" style={{ flex: 1 }} value={form.identificacion ?? ""}
+                        onChange={(e) => setForm({ ...form, identificacion: e.target.value || undefined })} />
+                      {!editando && /^\d{10}(\d{3})?$/.test(form.identificacion ?? "") && (
+                        <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", whiteSpace: "nowrap" }}
+                          disabled={consultandoSri}
+                          onClick={async () => {
+                            setConsultandoSri(true);
+                            try {
+                              const cliente = await consultarIdentificacion(form.identificacion!);
+                              if (cliente.id) {
+                                // Ya existe en la BD
+                                toastExito(`Cliente encontrado: ${cliente.nombre}`);
+                                setMostrarForm(false);
+                                setEditando(cliente);
+                                setForm(cliente);
+                                setMostrarForm(true);
+                              } else {
+                                setForm({ ...form, nombre: cliente.nombre, direccion: cliente.direccion, tipo_identificacion: cliente.tipo_identificacion });
+                                toastExito(`Datos encontrados: ${cliente.nombre}`);
+                              }
+                            } catch (err: any) {
+                              toastError(err?.toString() || "No se encontró información");
+                            } finally {
+                              setConsultandoSri(false);
+                            }
+                          }}>
+                          {consultandoSri ? "..." : "🔍 SRI"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <label className="text-secondary" style={{ fontSize: 12 }}>Nombre *</label>

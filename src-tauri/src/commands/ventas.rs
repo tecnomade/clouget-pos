@@ -33,11 +33,35 @@ pub fn registrar_venta(
         return Err("Debe abrir la caja antes de realizar ventas".to_string());
     }
 
-    // Obtener secuencial interno (todas las ventas usan secuencial_nota_venta)
+    // Leer establecimiento y punto de emisión del terminal
+    let terminal_est: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+    let terminal_pe: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_punto_emision'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+
+    // Multi-almacén: obtener ID del establecimiento para descontar stock
+    let multi_almacen: bool = conn
+        .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let est_id: Option<i64> = if multi_almacen {
+        conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![terminal_est], |row| row.get(0)).ok()
+    } else {
+        None
+    };
+
+    // Obtener secuencial interno de tabla secuenciales
+    conn.execute(
+        "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, 'NOTA_VENTA', 1)",
+        rusqlite::params![terminal_est, terminal_pe],
+    ).map_err(|e| e.to_string())?;
+
     let secuencial: i64 = conn
         .query_row(
-            "SELECT CAST(value AS INTEGER) FROM config WHERE key = 'secuencial_nota_venta'",
-            [],
+            "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_VENTA'",
+            rusqlite::params![terminal_est, terminal_pe],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
@@ -77,8 +101,8 @@ pub fn registrar_venta(
     conn.execute(
         "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva,
          descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-         tipo_documento, estado_sri, observacion, usuario, usuario_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+         tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         rusqlite::params![
             numero,
             venta.cliente_id.unwrap_or(1),
@@ -96,6 +120,8 @@ pub fn registrar_venta(
             venta.observacion,
             usuario_nombre,
             usuario_id,
+            terminal_est,
+            terminal_pe,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -141,11 +167,22 @@ pub fn registrar_venta(
         )
         .map_err(|e| e.to_string())?;
 
+        // Multi-almacén: también descontar de stock_establecimiento
+        if let Some(eid) = est_id {
+            if !es_servicio {
+                conn.execute(
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
+                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                    rusqlite::params![item.cantidad, item.producto_id, eid],
+                ).ok();
+            }
+        }
+
         // Registrar movimiento de inventario (kardex) para productos físicos
         if !es_servicio {
             let _ = conn.execute(
-                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario)
-                 VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                 VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     item.producto_id,
                     -(item.cantidad),
@@ -154,6 +191,7 @@ pub fn registrar_venta(
                     item.precio_unitario,
                     venta_id,
                     usuario_nombre,
+                    est_id,
                 ],
             );
         }
@@ -180,10 +218,10 @@ pub fn registrar_venta(
         });
     }
 
-    // Actualizar secuencial interno
+    // Actualizar secuencial interno en tabla secuenciales
     conn.execute(
-        "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = 'secuencial_nota_venta'",
-        rusqlite::params![secuencial + 1],
+        "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_VENTA'",
+        rusqlite::params![terminal_est, terminal_pe],
     )
     .map_err(|e| e.to_string())?;
 
@@ -236,6 +274,8 @@ pub fn registrar_venta(
             clave_acceso: None,
             observacion: venta.observacion,
             numero_factura: None,
+            establecimiento: Some(terminal_est),
+            punto_emision: Some(terminal_pe),
         },
         detalles: detalles_guardados,
         cliente_nombre,
@@ -251,7 +291,7 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas
              WHERE date(fecha) = date(?1) AND anulada = 0
              ORDER BY fecha DESC",
@@ -280,6 +320,8 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 clave_acceso: row.get(16)?,
                 observacion: row.get(17)?,
                 numero_factura: row.get(18)?,
+                establecimiento: row.get(19).ok(),
+                punto_emision: row.get(20).ok(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -298,7 +340,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas WHERE id = ?1",
             rusqlite::params![id],
             |row| {
@@ -322,6 +364,8 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     clave_acceso: row.get(16)?,
                     observacion: row.get(17)?,
                     numero_factura: row.get(18)?,
+                    establecimiento: row.get(19).ok(),
+                    punto_emision: row.get(20).ok(),
                 })
             },
         )
@@ -403,7 +447,7 @@ pub fn listar_ventas_sesion_caja(
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas
              WHERE fecha >= ?1 AND anulada = 0
              ORDER BY fecha DESC",
@@ -432,6 +476,8 @@ pub fn listar_ventas_sesion_caja(
                 clave_acceso: row.get(16)?,
                 observacion: row.get(17)?,
                 numero_factura: row.get(18)?,
+                establecimiento: row.get(19).ok(),
+                punto_emision: row.get(20).ok(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -650,22 +696,27 @@ pub fn registrar_nota_credito(
         return Err("Debe ingresar un motivo para la nota de crédito".to_string());
     }
 
-    // Generar número secuencial
+    // Leer establecimiento y punto de emisión del terminal
+    let establecimiento: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+    let punto_emision: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_punto_emision'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+
+    // Generar número secuencial desde tabla secuenciales
+    conn.execute(
+        "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, 'NOTA_CREDITO', 1)",
+        rusqlite::params![establecimiento, punto_emision],
+    ).map_err(|e| e.to_string())?;
+
     let secuencial: i64 = conn
         .query_row(
-            "SELECT CAST(value AS INTEGER) FROM config WHERE key = 'secuencial_nota_credito'",
-            [],
+            "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_CREDITO'",
+            rusqlite::params![establecimiento, punto_emision],
             |row| row.get(0),
         )
         .unwrap_or(1);
-
-    let establecimiento: String = conn
-        .query_row("SELECT value FROM config WHERE key = 'establecimiento'", [], |row| row.get(0))
-        .unwrap_or_else(|_| "001".to_string());
-
-    let punto_emision: String = conn
-        .query_row("SELECT value FROM config WHERE key = 'punto_emision'", [], |row| row.get(0))
-        .unwrap_or_else(|_| "001".to_string());
 
     let numero = format!("{}-{}-{:09}", establecimiento, punto_emision, secuencial);
 
@@ -689,12 +740,12 @@ pub fn registrar_nota_credito(
     // Insertar nota de crédito
     conn.execute(
         "INSERT INTO notas_credito (numero, venta_id, cliente_id, motivo,
-         subtotal_sin_iva, subtotal_con_iva, iva, total, usuario, usuario_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         subtotal_sin_iva, subtotal_con_iva, iva, total, usuario, usuario_id, establecimiento, punto_emision)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         rusqlite::params![
             numero, nota.venta_id, cliente_id, nota.motivo.trim(),
             subtotal_sin_iva, subtotal_con_iva, iva_total, total,
-            usuario_nombre, usuario_id,
+            usuario_nombre, usuario_id, establecimiento, punto_emision,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -723,12 +774,24 @@ pub fn registrar_nota_credito(
             rusqlite::params![item.cantidad, item.producto_id],
         )
         .ok();
+
+        // Multi-almacén: devolver stock a stock_establecimiento
+        let nc_est_id: Option<i64> = conn
+            .query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![establecimiento], |row| row.get(0))
+            .ok();
+        if let Some(eid) = nc_est_id {
+            conn.execute(
+                "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                 WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                rusqlite::params![item.cantidad, item.producto_id, eid],
+            ).ok();
+        }
     }
 
-    // Incrementar secuencial
+    // Incrementar secuencial en tabla secuenciales
     conn.execute(
-        "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = 'secuencial_nota_credito'",
-        rusqlite::params![secuencial + 1],
+        "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_CREDITO'",
+        rusqlite::params![establecimiento, punto_emision],
     )
     .map_err(|e| e.to_string())?;
 

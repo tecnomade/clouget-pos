@@ -122,7 +122,29 @@ pub fn cerrar_caja(
         )
         .unwrap_or(0.0);
 
-    let monto_esperado = monto_inicial + total_efectivo - total_gastos;
+    // Cobros de cuentas por cobrar en EFECTIVO (cuenta para arqueo de caja)
+    let total_cobros_efectivo: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(p.monto), 0) FROM pagos_cuenta p
+             WHERE p.fecha >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND p.forma_pago = 'EFECTIVO' AND p.estado = 'CONFIRMADO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    // Cobros de cuentas por cobrar en TRANSFERENCIA/BANCO (NO cuenta para arqueo)
+    let total_cobros_banco: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(p.monto), 0) FROM pagos_cuenta p
+             WHERE p.fecha >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND p.forma_pago = 'TRANSFERENCIA' AND p.estado = 'CONFIRMADO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos;
     let diferencia = monto_real - monto_esperado;
 
     conn.execute(
@@ -160,6 +182,8 @@ pub fn cerrar_caja(
         num_ventas,
         total_efectivo,
         total_gastos,
+        total_cobros_efectivo,
+        total_cobros_banco,
     })
 }
 

@@ -1,8 +1,44 @@
 use crate::db::Database;
 use crate::sri::{clave_acceso, firma, soap, suscripcion, xml};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use x509_parser::prelude::FromDer;
+
+/// Obtiene el secuencial actual de la tabla `secuenciales` para un establecimiento, punto de emisión y tipo de documento.
+/// Si no existe el registro, lo crea con secuencial = 1.
+fn obtener_secuencial(
+    conn: &Connection,
+    establecimiento: &str,
+    punto_emision: &str,
+    tipo_documento: &str,
+) -> Result<i64, String> {
+    // Asegurar que exista el registro
+    conn.execute(
+        "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, ?3, 1)",
+        rusqlite::params![establecimiento, punto_emision, tipo_documento],
+    ).map_err(|e| format!("Error creando secuencial: {}", e))?;
+
+    conn.query_row(
+        "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+        rusqlite::params![establecimiento, punto_emision, tipo_documento],
+        |row| row.get(0),
+    ).map_err(|e| format!("Error obteniendo secuencial: {}", e))
+}
+
+/// Incrementa el secuencial en la tabla `secuenciales` para un establecimiento, punto de emisión y tipo de documento.
+fn incrementar_secuencial(
+    conn: &Connection,
+    establecimiento: &str,
+    punto_emision: &str,
+    tipo_documento: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+        rusqlite::params![establecimiento, punto_emision, tipo_documento],
+    ).map_err(|e| format!("Error incrementando secuencial: {}", e))?;
+    Ok(())
+}
 
 /// Resultado de emision para el frontend
 #[derive(Debug, Serialize, Deserialize)]
@@ -147,7 +183,7 @@ pub async fn emitir_factura_sri(
             .unwrap_or_default()
         };
 
-        let gratis: i64 = get_cfg("sri_facturas_gratis").parse().unwrap_or(10);
+        let gratis: i64 = get_cfg("sri_facturas_gratis").parse().unwrap_or(30);
         let usadas: i64 = get_cfg("sri_facturas_usadas").parse().unwrap_or(0);
 
         // Dentro del trial gratis: siempre permitir
@@ -221,6 +257,21 @@ pub async fn emitir_factura_sri(
         }
     }
     // Fin enforcement — continuar con emision normal
+
+    // Demo mode: emular autorización sin enviar al SRI
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let demo = conn
+            .query_row(
+                "SELECT value FROM config WHERE key = 'demo_activo'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+        if demo == "1" {
+            return emitir_factura_demo(&conn, venta_id);
+        }
+    }
 
     // 1. Leer datos de la venta, detalles, cliente y config
     let (venta_data, detalles_data, cliente_data, config_data, p12_data, p12_password) = {
@@ -333,11 +384,13 @@ pub async fn emitir_factura_sri(
         _ => "1", // pruebas por defecto
     };
 
-    let establecimiento = cfg("establecimiento");
-    let punto_emision = cfg("punto_emision");
+    let establecimiento = cfg("terminal_establecimiento");
+    let establecimiento = if establecimiento.is_empty() { cfg("establecimiento") } else { establecimiento };
+    let punto_emision = cfg("terminal_punto_emision");
+    let punto_emision = if punto_emision.is_empty() { cfg("punto_emision") } else { punto_emision };
     let regimen = cfg("regimen");
 
-    let config_key_sri = if ambiente == "1" { "secuencial_factura_pruebas" } else { "secuencial_factura" };
+    let tipo_doc_sec = if ambiente == "1" { "FACTURA_PRUEBAS" } else { "FACTURA" };
 
     // --- Logica de reenvio SRI ---
     // Si la factura ya tiene clave_acceso (estado PENDIENTE), primero consultar
@@ -384,14 +437,10 @@ pub async fn emitir_factura_sri(
         // Primera emision: generar nuevo XML, firmar y enviar
         es_primera_emision = true;
 
-        // Obtener secuencial SRI (solo se asigna en primera emision)
+        // Obtener secuencial SRI de tabla secuenciales (solo se asigna en primera emision)
         secuencial_sri = {
             let conn = db.conn.lock().map_err(|e| e.to_string())?;
-            conn.query_row(
-                "SELECT CAST(value AS INTEGER) FROM config WHERE key = ?1",
-                rusqlite::params![config_key_sri],
-                |row| row.get(0),
-            ).map_err(|e| format!("Error obteniendo secuencial SRI: {}", e))?
+            obtener_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_sec)?
         };
         let secuencial = format!("{:09}", secuencial_sri);
         numero_factura = format!("{}-{}-{}", establecimiento, punto_emision, secuencial);
@@ -409,15 +458,20 @@ pub async fn emitir_factura_sri(
             "1", // tipo emision normal
         );
 
-        let tipo_id_sri = match cliente_data.tipo_identificacion.as_str() {
-            "RUC" => "04",
-            "CEDULA" => "05",
-            "PASAPORTE" => "06",
-            _ => "07",
-        };
-
         let identificacion_comprador = cliente_data.identificacion.clone()
             .unwrap_or_else(|| "9999999999999".to_string());
+
+        // Consumidor Final (9999999999999) usa tipo "07" en el SRI
+        let tipo_id_sri = if identificacion_comprador == "9999999999999" {
+            "07"
+        } else {
+            match cliente_data.tipo_identificacion.as_str() {
+                "RUC" => "04",
+                "CEDULA" => "05",
+                "PASAPORTE" => "06",
+                _ => "07",
+            }
+        };
 
         let mut detalles_factura = Vec::new();
         let mut subtotal_iva_0 = 0.0_f64;
@@ -597,10 +651,7 @@ pub async fn emitir_factura_sri(
         // Si fue autorizada, incrementar secuencial SRI (solo en primera emision) y contador
         if resultado_sri.exito {
             if es_primera_emision {
-                conn.execute(
-                    "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = ?2",
-                    rusqlite::params![secuencial_sri + 1, config_key_sri],
-                ).ok();
+                incrementar_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_sec).ok();
             }
 
             conn.execute(
@@ -698,7 +749,7 @@ pub fn consultar_estado_sri(db: State<Database>) -> Result<EstadoSri, String> {
         certificado_cargado: get("sri_certificado_cargado") == "1",
         ambiente: get("sri_ambiente"),
         facturas_usadas: get("sri_facturas_usadas").parse().unwrap_or(0),
-        facturas_gratis: get("sri_facturas_gratis").parse().unwrap_or(10),
+        facturas_gratis: get("sri_facturas_gratis").parse().unwrap_or(30),
         suscripcion_autorizada: get("sri_suscripcion_autorizado") == "1",
         suscripcion_plan: get("sri_suscripcion_plan"),
         suscripcion_hasta: get("sri_suscripcion_hasta"),
@@ -846,7 +897,7 @@ pub async fn validar_suscripcion_sri(
     let certificado_cargado = get_config("sri_certificado_cargado") == "1";
     let ambiente = get_config("sri_ambiente");
     let facturas_usadas: i64 = get_config("sri_facturas_usadas").parse().unwrap_or(0);
-    let facturas_gratis: i64 = get_config("sri_facturas_gratis").parse().unwrap_or(10);
+    let facturas_gratis: i64 = get_config("sri_facturas_gratis").parse().unwrap_or(30);
 
     Ok(EstadoSri {
         modulo_activo,
@@ -1075,7 +1126,7 @@ pub fn generar_ride_pdf(
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             fecha_autorizacion, numero_factura
+             fecha_autorizacion, numero_factura, establecimiento, punto_emision
              FROM ventas WHERE id = ?1",
             rusqlite::params![venta_id],
             |row| {
@@ -1099,6 +1150,8 @@ pub fn generar_ride_pdf(
                     clave_acceso: row.get(16)?,
                     observacion: row.get(17)?,
                     numero_factura: row.get(19)?,
+                    establecimiento: row.get(20).ok(),
+                    punto_emision: row.get(21).ok(),
                 };
                 let fecha_aut: Option<String> = row.get(18).unwrap_or(None);
                 Ok((v, fecha_aut))
@@ -1363,6 +1416,17 @@ pub async fn enviar_notificacion_sri(
     venta_id: i64,
     email: String,
 ) -> Result<String, String> {
+    // Demo mode: no enviar emails
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let demo = conn
+            .query_row("SELECT value FROM config WHERE key = 'demo_activo'", [], |r| r.get::<_, String>(0))
+            .unwrap_or_default();
+        if demo == "1" {
+            return Err("Envio de email no disponible en modo demo".to_string());
+        }
+    }
+
     match enviar_email_interno(&db, venta_id, &email).await {
         Ok(msg) => {
             // Limpiar pendientes anteriores si los hay
@@ -1405,6 +1469,17 @@ pub async fn enviar_notificacion_sri(
 pub async fn procesar_emails_pendientes(
     db: State<'_, Database>,
 ) -> Result<serde_json::Value, String> {
+    // Demo mode: no procesar emails
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let demo = conn
+            .query_row("SELECT value FROM config WHERE key = 'demo_activo'", [], |r| r.get::<_, String>(0))
+            .unwrap_or_default();
+        if demo == "1" {
+            return Ok(serde_json::json!({"procesados": 0, "exitosos": 0}));
+        }
+    }
+
     let pendientes: Vec<(i64, i64, String, i64)> = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn.prepare(
@@ -1469,6 +1544,21 @@ pub async fn emitir_nota_credito_sri(
     db: State<'_, Database>,
     nc_id: i64,
 ) -> Result<ResultadoEmision, String> {
+    // Demo mode: emular autorización sin enviar al SRI
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let demo = conn
+            .query_row(
+                "SELECT value FROM config WHERE key = 'demo_activo'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .unwrap_or_default();
+        if demo == "1" {
+            return emitir_nota_credito_demo(&conn, nc_id);
+        }
+    }
+
     // 1. Leer NC, factura original, cliente, config, certificado
     let (nc_numero, nc_venta_id, nc_motivo, nc_fecha, factura_numero, factura_fecha,
          cliente_data, detalles_nc, config_data, p12_data, p12_password,
@@ -1572,11 +1662,13 @@ pub async fn emitir_nota_credito_sri(
         "produccion" => "2",
         _ => "1",
     };
-    let establecimiento = cfg("establecimiento");
-    let punto_emision = cfg("punto_emision");
+    let establecimiento = cfg("terminal_establecimiento");
+    let establecimiento = if establecimiento.is_empty() { cfg("establecimiento") } else { establecimiento };
+    let punto_emision = cfg("terminal_punto_emision");
+    let punto_emision = if punto_emision.is_empty() { cfg("punto_emision") } else { punto_emision };
     let regimen = cfg("regimen");
 
-    let config_key_nc = if ambiente == "1" { "secuencial_nota_credito_pruebas" } else { "secuencial_nota_credito" };
+    let tipo_doc_nc = if ambiente == "1" { "NOTA_CREDITO_PRUEBAS" } else { "NOTA_CREDITO" };
 
     // --- Lógica reenvío (similar a factura) ---
     let mut secuencial_nc: i64 = 0;
@@ -1606,11 +1698,7 @@ pub async fn emitir_nota_credito_sri(
 
         secuencial_nc = {
             let conn = db.conn.lock().map_err(|e| e.to_string())?;
-            conn.query_row(
-                "SELECT CAST(value AS INTEGER) FROM config WHERE key = ?1",
-                rusqlite::params![config_key_nc],
-                |row| row.get(0),
-            ).map_err(|e| format!("Error obteniendo secuencial NC: {}", e))?
+            obtener_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_nc)?
         };
         let secuencial = format!("{:09}", secuencial_nc);
         numero_nc_sri = format!("{}-{}-{}", establecimiento, punto_emision, secuencial);
@@ -1799,10 +1887,7 @@ pub async fn emitir_nota_credito_sri(
         ).map_err(|e| format!("Error actualizando NC: {}", e))?;
 
         if resultado_sri.exito && es_primera_emision {
-            conn.execute(
-                "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = ?2",
-                rusqlite::params![secuencial_nc + 1, config_key_nc],
-            ).ok();
+            incrementar_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_nc).ok();
         }
     }
 
@@ -1886,6 +1971,8 @@ pub fn generar_ride_nc_pdf(
         clave_acceso: nc_clave,
         observacion: Some(nc_motivo.clone()),
         numero_factura: nc_numero_factura_nc,
+        establecimiento: None,
+        punto_emision: None,
     };
 
     // Detalles
@@ -2014,6 +2101,161 @@ pub fn generar_ride_nc_pdf(
     }
 
     Ok(pdf_path.to_string_lossy().to_string())
+}
+
+// ─── Demo mode helpers ───────────────────────────────────
+
+/// Emite una factura demo (sin firmar ni enviar al SRI, simula AUTORIZADA)
+fn emitir_factura_demo(
+    conn: &std::sync::MutexGuard<rusqlite::Connection>,
+    venta_id: i64,
+) -> Result<ResultadoEmision, String> {
+    // Leer venta básica
+    let (tipo_doc, estado_sri, fecha): (String, String, String) = conn.query_row(
+        "SELECT tipo_documento, COALESCE(estado_sri, 'NO_APLICA'), fecha FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).map_err(|e| format!("Venta no encontrada: {}", e))?;
+
+    if tipo_doc != "FACTURA" {
+        return Err("Solo se pueden emitir facturas electronicas".to_string());
+    }
+    if estado_sri == "AUTORIZADA" {
+        return Err("Esta factura ya fue autorizada".to_string());
+    }
+
+    // Leer config necesaria
+    let get_cfg = |key: &str| -> String {
+        conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |r| r.get(0))
+            .unwrap_or_default()
+    };
+    let ruc = get_cfg("ruc");
+    let establecimiento = {
+        let v = get_cfg("terminal_establecimiento");
+        if v.is_empty() { get_cfg("establecimiento") } else { v }
+    };
+    let punto_emision = {
+        let v = get_cfg("terminal_punto_emision");
+        if v.is_empty() { get_cfg("punto_emision") } else { v }
+    };
+    let ambiente = "1"; // demo siempre pruebas
+
+    let secuencial_sri: i64 = obtener_secuencial(conn, &establecimiento, &punto_emision, "FACTURA_PRUEBAS")
+        .unwrap_or(1);
+
+    let secuencial = format!("{:09}", secuencial_sri);
+    let numero_factura = format!("{}-{}-{}", establecimiento, punto_emision, secuencial);
+
+    let fecha_emision = formatear_fecha_emision(&fecha)?;
+
+    let clave = clave_acceso::generar_clave_acceso(
+        &fecha_emision, "01", &ruc, ambiente,
+        &establecimiento, &punto_emision, &secuencial, "1",
+    );
+
+    let fecha_autorizacion = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    // Actualizar venta como AUTORIZADA
+    conn.execute(
+        "UPDATE ventas SET estado_sri = 'AUTORIZADA', clave_acceso = ?1,
+         autorizacion_sri = ?2, numero_factura = ?3, fecha_autorizacion = ?4
+         WHERE id = ?5",
+        rusqlite::params![clave, clave, numero_factura, fecha_autorizacion, venta_id],
+    ).map_err(|e| format!("Error actualizando venta: {}", e))?;
+
+    // Incrementar secuencial
+    incrementar_secuencial(conn, &establecimiento, &punto_emision, "FACTURA_PRUEBAS").ok();
+
+    // Incrementar contador de facturas usadas
+    conn.execute(
+        "UPDATE config SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'sri_facturas_usadas'",
+        [],
+    ).ok();
+
+    Ok(ResultadoEmision {
+        exito: true,
+        estado_sri: "AUTORIZADA".to_string(),
+        clave_acceso: Some(clave.clone()),
+        numero_autorizacion: Some(clave),
+        fecha_autorizacion: Some(fecha_autorizacion),
+        mensaje: "Factura autorizada correctamente (demo)".to_string(),
+        numero_factura: Some(numero_factura),
+    })
+}
+
+/// Emite una nota de crédito demo (sin firmar ni enviar al SRI)
+fn emitir_nota_credito_demo(
+    conn: &std::sync::MutexGuard<rusqlite::Connection>,
+    nc_id: i64,
+) -> Result<ResultadoEmision, String> {
+    // Leer NC básica
+    let (nc_estado_sri, nc_fecha): (String, String) = conn.query_row(
+        "SELECT COALESCE(estado_sri, 'PENDIENTE'), fecha FROM notas_credito WHERE id = ?1",
+        rusqlite::params![nc_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).map_err(|e| format!("Nota de credito no encontrada: {}", e))?;
+
+    if nc_estado_sri == "AUTORIZADA" {
+        return Err("Esta nota de credito ya fue autorizada".to_string());
+    }
+
+    // Leer config necesaria
+    let get_cfg = |key: &str| -> String {
+        conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |r| r.get(0))
+            .unwrap_or_default()
+    };
+    let ruc = get_cfg("ruc");
+    let establecimiento = {
+        let v = get_cfg("terminal_establecimiento");
+        if v.is_empty() { get_cfg("establecimiento") } else { v }
+    };
+    let punto_emision = {
+        let v = get_cfg("terminal_punto_emision");
+        if v.is_empty() { get_cfg("punto_emision") } else { v }
+    };
+    let ambiente = "1";
+
+    let secuencial_sri: i64 = obtener_secuencial(conn, &establecimiento, &punto_emision, "NOTA_CREDITO_PRUEBAS")
+        .unwrap_or(1);
+
+    let secuencial = format!("{:09}", secuencial_sri);
+    let numero_nc = format!("{}-{}-{}", establecimiento, punto_emision, secuencial);
+
+    let fecha_emision = formatear_fecha_emision(&nc_fecha)?;
+
+    let clave = clave_acceso::generar_clave_acceso(
+        &fecha_emision, "04", &ruc, ambiente,
+        &establecimiento, &punto_emision, &secuencial, "1",
+    );
+
+    let fecha_autorizacion = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    // Actualizar NC como AUTORIZADA
+    conn.execute(
+        "UPDATE notas_credito SET estado_sri = 'AUTORIZADA', clave_acceso = ?1,
+         autorizacion_sri = ?2, fecha_autorizacion = ?3
+         WHERE id = ?4",
+        rusqlite::params![clave, clave, fecha_autorizacion, nc_id],
+    ).map_err(|e| format!("Error actualizando nota de credito: {}", e))?;
+
+    // Verificar si tiene columna numero_factura_nc
+    let _ = conn.execute(
+        "UPDATE notas_credito SET numero_factura_nc = ?1 WHERE id = ?2",
+        rusqlite::params![numero_nc, nc_id],
+    );
+
+    // Incrementar secuencial
+    incrementar_secuencial(conn, &establecimiento, &punto_emision, "NOTA_CREDITO_PRUEBAS").ok();
+
+    Ok(ResultadoEmision {
+        exito: true,
+        estado_sri: "AUTORIZADA".to_string(),
+        clave_acceso: Some(clave.clone()),
+        numero_autorizacion: Some(clave),
+        fecha_autorizacion: Some(fecha_autorizacion),
+        mensaje: "Nota de credito autorizada correctamente (demo)".to_string(),
+        numero_factura: Some(numero_nc),
+    })
 }
 
 /// Formatea fecha de BD (yyyy-mm-dd HH:MM:SS) a formato SRI (dd/mm/yyyy)

@@ -23,6 +23,8 @@ pub struct ResumenCaja {
     pub num_ventas: i64,
     pub total_efectivo: f64,
     pub total_gastos: f64,
+    pub total_cobros_efectivo: f64,
+    pub total_cobros_banco: f64,
 }
 
 /// Resumen extendido para reporte de cierre de caja
@@ -35,6 +37,8 @@ pub struct ResumenCajaReporte {
     pub total_transferencia: f64,
     pub total_fiado: f64,
     pub total_gastos: f64,
+    pub total_cobros_efectivo: f64,
+    pub total_cobros_banco: f64,
     pub total_notas_credito: f64,
     pub num_notas_credito: i64,
     pub nombre_negocio: String,

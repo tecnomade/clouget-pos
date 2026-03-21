@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault } from "../services/api";
+import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
 import Modal from "../components/Modal";
-import type { Categoria, LicenciaInfo, UsuarioInfo, EstadoSri, PlanSri, ConfigContratacion, PedidoCreado, ListaPrecio } from "../types";
+import type { Categoria, LicenciaInfo, UsuarioInfo, EstadoSri, PlanSri, ConfigContratacion, PedidoCreado, ListaPrecio, CuentaBanco, Establecimiento, PuntoEmision } from "../types";
 
 export default function Configuracion() {
   const { toastExito, toastError } = useToast();
@@ -49,10 +49,31 @@ export default function Configuracion() {
   // Ambiente SRI confirmation
   const [mostrarConfirmAmbiente, setMostrarConfirmAmbiente] = useState(false);
   const [ambientePendiente, setAmbientePendiente] = useState("");
+  // Demo mode
+  const [modoDemo, setModoDemo] = useState(false);
+  // Cuentas bancarias
+  const [cuentasBanco, setCuentasBanco] = useState<CuentaBanco[]>([]);
+  const [nuevoBancoNombre, setNuevoBancoNombre] = useState("");
+  const [nuevoBancoTipo, setNuevoBancoTipo] = useState("");
+  const [nuevoBancoCuenta, setNuevoBancoCuenta] = useState("");
+  const [nuevoBancoTitular, setNuevoBancoTitular] = useState("");
+  const [editandoBancoId, setEditandoBancoId] = useState<number | null>(null);
+  const [editBancoNombre, setEditBancoNombre] = useState("");
+  const [editBancoTipo, setEditBancoTipo] = useState("");
+  const [editBancoCuenta, setEditBancoCuenta] = useState("");
+  const [editBancoTitular, setEditBancoTitular] = useState("");
+  // Red y Multi-Terminal
+  const [establecimientos, setEstablecimientos] = useState<Establecimiento[]>([]);
+  const [puntosEmision, setPuntosEmision] = useState<PuntoEmision[]>([]);
+  const [probandoConexion, setProbandoConexion] = useState(false);
+  const [generandoToken, setGenerandoToken] = useState(false);
+  // Backup Cloud
+  const [backupEstado, setBackupEstado] = useState<{ activo: boolean; tipo: string; frecuencia_horas: number; ultima: string; gdrive_conectado: boolean } | null>(null);
+  const [ejecutandoBackup, setEjecutandoBackup] = useState(false);
 
   const cargarDatos = async () => {
-    const [cfg, cats, imps, ruta, lic, usrs, sri, listas] = await Promise.all([
-      obtenerConfig(), listarCategorias(), listarImpresorasCached(), obtenerRutaDb(), obtenerEstadoLicencia(), listarUsuarios().catch(() => []), consultarEstadoSri().catch(() => null), listarListasPrecios().catch(() => [])
+    const [cfg, cats, imps, ruta, lic, usrs, sri, listas, bancos] = await Promise.all([
+      obtenerConfig(), listarCategorias(), listarImpresorasCached(), obtenerRutaDb(), obtenerEstadoLicencia(), listarUsuarios().catch(() => []), consultarEstadoSri().catch(() => null), listarListasPrecios().catch(() => []), listarCuentasBanco().catch(() => [] as CuentaBanco[])
     ]);
     setConfig(cfg);
     setCategorias(cats);
@@ -62,9 +83,34 @@ export default function Configuracion() {
     setUsuarios(usrs);
     setEstadoSri(sri);
     setListasPrecios(listas);
+    setCuentasBanco(bancos);
+
+    // Cargar establecimientos
+    try {
+      const ests = await listarEstablecimientos();
+      setEstablecimientos(ests);
+      if (ests.length > 0) {
+        const pes = await listarPuntosEmision(ests[0].id!);
+        setPuntosEmision(pes);
+      }
+    } catch {}
+
+    // Configurar modo red desde config
+    if (cfg.modo_red === 'cliente' && cfg.servidor_url && cfg.servidor_token) {
+      configurarModoRed('cliente', cfg.servidor_url, cfg.servidor_token);
+    }
+
+    // Cargar estado backup
+    try {
+      const bk = await estadoBackupCloud();
+      setBackupEstado(bk);
+    } catch {}
   };
 
-  useEffect(() => { cargarDatos(); }, []);
+  useEffect(() => {
+    cargarDatos();
+    checkEsDemo().then(setModoDemo).catch(() => {});
+  }, []);
 
   const handleGuardar = async () => {
     setGuardando(true);
@@ -199,8 +245,8 @@ export default function Configuracion() {
                     onChange={(e) => update("nombre_negocio", e.target.value)} />
                 </div>
                 <div>
-                  <label className="text-secondary" style={{ fontSize: 12 }}>RUC / RIMPE</label>
-                  <input className="input" value={config.ruc ?? ""}
+                  <label className="text-secondary" style={{ fontSize: 12 }}>RUC / RIMPE {modoDemo && "🔒"}</label>
+                  <input className="input" value={config.ruc ?? ""} disabled={modoDemo}
                     onChange={(e) => update("ruc", e.target.value)} />
                 </div>
                 <div>
@@ -214,8 +260,8 @@ export default function Configuracion() {
                     onChange={(e) => update("telefono", e.target.value)} />
                 </div>
                 <div>
-                  <label className="text-secondary" style={{ fontSize: 12 }}>Régimen tributario</label>
-                  <select className="input" value={config.regimen ?? "RIMPE_POPULAR"}
+                  <label className="text-secondary" style={{ fontSize: 12 }}>Régimen tributario {modoDemo && "🔒"}</label>
+                  <select className="input" value={config.regimen ?? "RIMPE_POPULAR"} disabled={modoDemo}
                     onChange={(e) => update("regimen", e.target.value)}>
                     <option value="RIMPE_POPULAR">RIMPE - Negocio Popular</option>
                     <option value="RIMPE_EMPRENDEDOR">RIMPE - Emprendedor</option>
@@ -224,13 +270,13 @@ export default function Configuracion() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                   <div>
-                    <label className="text-secondary" style={{ fontSize: 12 }}>Establecimiento</label>
-                    <input className="input" value={config.establecimiento ?? "001"}
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Establecimiento {modoDemo && "🔒"}</label>
+                    <input className="input" value={config.establecimiento ?? "001"} disabled={modoDemo}
                       onChange={(e) => update("establecimiento", e.target.value)} />
                   </div>
                   <div>
-                    <label className="text-secondary" style={{ fontSize: 12 }}>Punto de emisión</label>
-                    <input className="input" value={config.punto_emision ?? "001"}
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Punto de emisión {modoDemo && "🔒"}</label>
+                    <input className="input" value={config.punto_emision ?? "001"} disabled={modoDemo}
                       onChange={(e) => update("punto_emision", e.target.value)} />
                   </div>
                 </div>
@@ -239,8 +285,8 @@ export default function Configuracion() {
                     <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>Secuenciales</label>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                       <div>
-                        <label className="text-secondary" style={{ fontSize: 11 }}>Factura</label>
-                        <input className="input" type="number" min={1}
+                        <label className="text-secondary" style={{ fontSize: 11 }}>Factura {modoDemo && "🔒"}</label>
+                        <input className="input" type="number" min={1} disabled={modoDemo}
                           value={config.secuencial_factura ?? "1"}
                           onChange={(e) => update("secuencial_factura", e.target.value)} />
                         <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
@@ -248,8 +294,8 @@ export default function Configuracion() {
                         </div>
                       </div>
                       <div>
-                        <label className="text-secondary" style={{ fontSize: 11 }}>Nota de Crédito</label>
-                        <input className="input" type="number" min={1}
+                        <label className="text-secondary" style={{ fontSize: 11 }}>Nota de Crédito {modoDemo && "🔒"}</label>
+                        <input className="input" type="number" min={1} disabled={modoDemo}
                           value={config.secuencial_nota_credito ?? "1"}
                           onChange={(e) => update("secuencial_nota_credito", e.target.value)} />
                         <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
@@ -278,6 +324,137 @@ export default function Configuracion() {
 
           {/* Columna derecha */}
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+
+          {/* Punto de Venta */}
+          <div className="card">
+            <div className="card-header">Punto de Venta</div>
+            <div className="card-body">
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12 }}>Modo del POS</label>
+                <select className="input" value={config.modo_pos ?? "normal"}
+                  onChange={(e) => {
+                    update("modo_pos", e.target.value);
+                    guardarConfig({ modo_pos: e.target.value })
+                      .then(() => toastExito(`Modo POS: ${e.target.value === "tactil" ? "Tactil" : "Normal"}`))
+                      .catch((err: unknown) => toastError("Error: " + err));
+                  }}>
+                  <option value="normal">Normal (teclado + busqueda)</option>
+                  <option value="tactil">Tactil (grilla de productos)</option>
+                </select>
+                <span className="text-secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
+                  Modo tactil muestra productos como botones grandes con imagen para pantallas touch.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Cuentas Bancarias */}
+          <div className="card">
+            <div className="card-header">Cuentas Bancarias</div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
+                Para pagos por transferencia en cobros de cuentas por cobrar.
+              </p>
+              {/* Add form */}
+              <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+                <div className="flex gap-2">
+                  <input className="input" placeholder="Nombre del banco *" style={{ flex: 2 }}
+                    value={nuevoBancoNombre} onChange={(e) => setNuevoBancoNombre(e.target.value)} />
+                  <input className="input" placeholder="Tipo (Ahorros)" style={{ flex: 1 }}
+                    value={nuevoBancoTipo} onChange={(e) => setNuevoBancoTipo(e.target.value)} />
+                </div>
+                <div className="flex gap-2">
+                  <input className="input" placeholder="N. cuenta" style={{ flex: 1 }}
+                    value={nuevoBancoCuenta} onChange={(e) => setNuevoBancoCuenta(e.target.value)} />
+                  <input className="input" placeholder="Titular" style={{ flex: 1 }}
+                    value={nuevoBancoTitular} onChange={(e) => setNuevoBancoTitular(e.target.value)} />
+                  <button className="btn btn-primary" onClick={async () => {
+                    if (!nuevoBancoNombre.trim()) return;
+                    try {
+                      await crearCuentaBanco({
+                        nombre: nuevoBancoNombre.trim(),
+                        tipo_cuenta: nuevoBancoTipo.trim() || undefined,
+                        numero_cuenta: nuevoBancoCuenta.trim() || undefined,
+                        titular: nuevoBancoTitular.trim() || undefined,
+                        activa: true,
+                      });
+                      setNuevoBancoNombre(""); setNuevoBancoTipo("");
+                      setNuevoBancoCuenta(""); setNuevoBancoTitular("");
+                      setCuentasBanco(await listarCuentasBanco());
+                      toastExito("Cuenta bancaria creada");
+                    } catch (err) { toastError("Error: " + err); }
+                  }}>Agregar</button>
+                </div>
+              </div>
+              {/* List */}
+              {cuentasBanco.length === 0 ? (
+                <p className="text-secondary text-center" style={{ padding: 16, fontSize: 12 }}>
+                  No hay cuentas bancarias registradas
+                </p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {cuentasBanco.map((b) => (
+                    <div key={b.id} style={{
+                      padding: "8px 12px", background: "var(--color-bg)",
+                      borderRadius: "var(--radius)", display: "flex", alignItems: "center", gap: 8,
+                    }}>
+                      {editandoBancoId === b.id ? (
+                        <div style={{ flex: 1, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <input className="input" style={{ flex: 1, fontSize: 12, minWidth: 100 }}
+                            value={editBancoNombre} onChange={(e) => setEditBancoNombre(e.target.value)} />
+                          <input className="input" style={{ width: 80, fontSize: 12 }} placeholder="Tipo"
+                            value={editBancoTipo} onChange={(e) => setEditBancoTipo(e.target.value)} />
+                          <input className="input" style={{ width: 110, fontSize: 12 }} placeholder="N. cuenta"
+                            value={editBancoCuenta} onChange={(e) => setEditBancoCuenta(e.target.value)} />
+                          <input className="input" style={{ width: 110, fontSize: 12 }} placeholder="Titular"
+                            value={editBancoTitular} onChange={(e) => setEditBancoTitular(e.target.value)} />
+                          <button className="btn btn-primary" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={async () => {
+                              try {
+                                await actualizarCuentaBanco(b.id!, {
+                                  nombre: editBancoNombre.trim(), tipo_cuenta: editBancoTipo.trim() || undefined,
+                                  numero_cuenta: editBancoCuenta.trim() || undefined, titular: editBancoTitular.trim() || undefined, activa: true,
+                                });
+                                setEditandoBancoId(null);
+                                setCuentasBanco(await listarCuentasBanco());
+                                toastExito("Cuenta actualizada");
+                              } catch (err) { toastError("Error: " + err); }
+                            }}>OK</button>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => setEditandoBancoId(null)}>x</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ flex: 1 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{b.nombre}</span>
+                            {b.tipo_cuenta && <span className="text-secondary" style={{ fontSize: 11, marginLeft: 6 }}>{b.tipo_cuenta}</span>}
+                            {b.numero_cuenta && <span className="text-secondary" style={{ fontSize: 11, marginLeft: 6 }}>{b.numero_cuenta}</span>}
+                            {b.titular && <span className="text-secondary" style={{ fontSize: 10, marginLeft: 6 }}>({b.titular})</span>}
+                          </div>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10 }}
+                            onClick={() => {
+                              setEditandoBancoId(b.id!);
+                              setEditBancoNombre(b.nombre);
+                              setEditBancoTipo(b.tipo_cuenta || "");
+                              setEditBancoCuenta(b.numero_cuenta || "");
+                              setEditBancoTitular(b.titular || "");
+                            }}>Editar</button>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10, color: "#ef4444" }}
+                            onClick={async () => {
+                              try {
+                                await desactivarCuentaBanco(b.id!);
+                                setCuentasBanco(await listarCuentasBanco());
+                                toastExito("Cuenta desactivada");
+                              } catch (err) { toastError("Error: " + err); }
+                            }}>X</button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
 
           {/* Impresora */}
           <div className="card">
@@ -607,10 +784,10 @@ export default function Configuracion() {
           {/* Licencia */}
           {licencia && (
             <div className="card">
-              <div className="card-header" style={{ background: "#f0fdf4", color: "#166534" }}>
+              <div className="card-header" style={{ background: modoDemo ? "#fef3c7" : "#f0fdf4", color: modoDemo ? "#92400e" : "#166534" }}>
                 Licencia
-                <span style={{ marginLeft: 8, fontSize: 11, background: "#dcfce7", padding: "2px 8px", borderRadius: 4, color: "#166534", fontWeight: 600 }}>
-                  Activa
+                <span style={{ marginLeft: 8, fontSize: 11, background: modoDemo ? "#fde68a" : "#dcfce7", padding: "2px 8px", borderRadius: 4, color: modoDemo ? "#92400e" : "#166534", fontWeight: 600 }}>
+                  {modoDemo ? "DEMO" : "Activa"}
                 </span>
               </div>
               <div className="card-body">
@@ -995,9 +1172,10 @@ export default function Configuracion() {
                         <span style={{ color: "#16a34a", fontWeight: 600 }}>Cargado</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-secondary">Ambiente:</span>
+                        <span className="text-secondary">Ambiente: {modoDemo && "🔒"}</span>
                         <select className="input" style={{ width: 160, fontSize: 12 }}
                           value={estadoSri.ambiente}
+                          disabled={modoDemo}
                           onChange={(e) => {
                             if (e.target.value !== estadoSri.ambiente) {
                               setAmbientePendiente(e.target.value);
@@ -1089,6 +1267,319 @@ export default function Configuracion() {
                 <p style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 12, wordBreak: "break-all" }}>
                   📍 Ubicación BD: {rutaDb}
                 </p>
+              )}
+            </div>
+          </div>
+
+          {/* Red y Multi-Terminal */}
+          <div className="card">
+            <div className="card-header">Red y Multi-Terminal</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Conecte varios puntos de venta a una base de datos centralizada.
+              </p>
+
+              {/* Modo de red */}
+              <label className="form-label">Modo de operacion</label>
+              <select
+                className="form-input"
+                value={config.modo_red || "local"}
+                onChange={async (e) => {
+                  const nuevoModo = e.target.value;
+                  await guardarConfig({ modo_red: nuevoModo });
+                  setConfig({ ...config, modo_red: nuevoModo });
+                  if (nuevoModo === 'cliente' && config.servidor_url && config.servidor_token) {
+                    configurarModoRed('cliente', config.servidor_url, config.servidor_token);
+                  } else {
+                    configurarModoRed('local');
+                  }
+                  toastExito(`Modo cambiado a ${nuevoModo.toUpperCase()}. Reinicie la app para aplicar.`);
+                }}
+              >
+                <option value="local">Local (un solo equipo)</option>
+                <option value="servidor">Servidor (este equipo es el servidor)</option>
+                <option value="cliente">Cliente (conectar a otro servidor)</option>
+              </select>
+
+              {/* Configuracion de servidor */}
+              {config.modo_red === "servidor" && (
+                <div style={{ marginTop: 16, padding: 12, background: "var(--color-bg-secondary)", borderRadius: 8 }}>
+                  <label className="form-label">Puerto</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    value={config.servidor_puerto || "8847"}
+                    onChange={(e) => setConfig({ ...config, servidor_puerto: e.target.value })}
+                    onBlur={() => guardarConfig({ servidor_puerto: config.servidor_puerto || "8847" })}
+                  />
+
+                  <label className="form-label" style={{ marginTop: 8 }}>Token de acceso</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      className="form-input"
+                      value={config.servidor_token || ""}
+                      readOnly
+                      style={{ fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      disabled={generandoToken}
+                      onClick={async () => {
+                        setGenerandoToken(true);
+                        try {
+                          const token = await generarTokenServidor();
+                          setConfig({ ...config, servidor_token: token });
+                          toastExito("Token generado. Comparta este token con los terminales cliente.");
+                        } catch (err) { toastError("Error: " + err); }
+                        setGenerandoToken(false);
+                      }}
+                    >
+                      {generandoToken ? "..." : "Generar"}
+                    </button>
+                  </div>
+                  <p style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                    Comparta este token con los terminales que se conectaran como clientes. Reinicie la app despues de configurar.
+                  </p>
+                </div>
+              )}
+
+              {/* Configuracion de cliente */}
+              {config.modo_red === "cliente" && (
+                <div style={{ marginTop: 16, padding: 12, background: "var(--color-bg-secondary)", borderRadius: 8 }}>
+                  <label className="form-label">URL del servidor</label>
+                  <input
+                    className="form-input"
+                    placeholder="http://192.168.1.100:8847"
+                    value={config.servidor_url || ""}
+                    onChange={(e) => setConfig({ ...config, servidor_url: e.target.value })}
+                    onBlur={() => guardarConfig({ servidor_url: config.servidor_url || "" })}
+                  />
+
+                  <label className="form-label" style={{ marginTop: 8 }}>Token</label>
+                  <input
+                    className="form-input"
+                    placeholder="Token proporcionado por el servidor"
+                    value={config.servidor_token || ""}
+                    onChange={(e) => setConfig({ ...config, servidor_token: e.target.value })}
+                    onBlur={() => guardarConfig({ servidor_token: config.servidor_token || "" })}
+                    style={{ fontFamily: "monospace", fontSize: 12 }}
+                  />
+
+                  <button
+                    className="btn btn-primary"
+                    style={{ marginTop: 12, width: "100%" }}
+                    disabled={probandoConexion}
+                    onClick={async () => {
+                      setProbandoConexion(true);
+                      try {
+                        const resultado = await probarConexionServidor(
+                          config.servidor_url || "",
+                          config.servidor_token || ""
+                        );
+                        configurarModoRed('cliente', config.servidor_url, config.servidor_token);
+                        toastExito(resultado);
+                      } catch (err) { toastError("" + err); }
+                      setProbandoConexion(false);
+                    }}
+                  >
+                    {probandoConexion ? "Probando..." : "Probar conexion"}
+                  </button>
+                </div>
+              )}
+
+              {/* Establecimiento y Punto de Emision del terminal */}
+              <div style={{ marginTop: 16 }}>
+                <label className="form-label">Establecimiento de este terminal</label>
+                <select
+                  className="form-input"
+                  value={config.terminal_establecimiento || "001"}
+                  onChange={async (e) => {
+                    const est = e.target.value;
+                    await guardarConfig({ terminal_establecimiento: est });
+                    setConfig({ ...config, terminal_establecimiento: est });
+                    // Cargar puntos de emision del establecimiento seleccionado
+                    const estObj = establecimientos.find(es => es.codigo === est);
+                    if (estObj?.id) {
+                      const pes = await listarPuntosEmision(estObj.id);
+                      setPuntosEmision(pes);
+                    }
+                  }}
+                >
+                  {establecimientos.map(est => (
+                    <option key={est.id} value={est.codigo}>{est.codigo} - {est.nombre}</option>
+                  ))}
+                </select>
+
+                <label className="form-label" style={{ marginTop: 8 }}>Punto de emision de este terminal</label>
+                <select
+                  className="form-input"
+                  value={config.terminal_punto_emision || "001"}
+                  onChange={async (e) => {
+                    await guardarConfig({ terminal_punto_emision: e.target.value });
+                    setConfig({ ...config, terminal_punto_emision: e.target.value });
+                  }}
+                >
+                  {puntosEmision.map(pe => (
+                    <option key={pe.id} value={pe.codigo}>{pe.codigo}{pe.nombre ? ` - ${pe.nombre}` : ""}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Multi-Almacen */}
+          <div className="card">
+            <div className="card-header">Multi-Almacen</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Gestione stock por establecimiento y permita ventas cross-store.
+              </p>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={config.multi_almacen_activo === "1"}
+                    onChange={async (e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      await guardarConfig({ multi_almacen_activo: val });
+                      setConfig({ ...config, multi_almacen_activo: val });
+                      toastExito(e.target.checked ? "Multi-almacen activado" : "Multi-almacen desactivado");
+                    }}
+                  />
+                  Activar stock por establecimiento
+                </label>
+              </div>
+
+              {config.multi_almacen_activo === "1" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={config.venta_cross_store === "1"}
+                      onChange={async (e) => {
+                        const val = e.target.checked ? "1" : "0";
+                        await guardarConfig({ venta_cross_store: val });
+                        setConfig({ ...config, venta_cross_store: val });
+                        toastExito(e.target.checked ? "Venta cross-store activada" : "Venta cross-store desactivada");
+                      }}
+                    />
+                    Permitir vender stock de otros locales
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Backup Cloud */}
+          <div className="card">
+            <div className="card-header">Respaldo en la Nube</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Respalde automaticamente su base de datos en la nube.
+              </p>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={config.backup_cloud_activo === "1"}
+                    onChange={async (e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      await guardarConfig({ backup_cloud_activo: val });
+                      setConfig({ ...config, backup_cloud_activo: val });
+                      const bk = await estadoBackupCloud();
+                      setBackupEstado(bk);
+                    }}
+                  />
+                  Activar backup automatico
+                </label>
+              </div>
+
+              {config.backup_cloud_activo === "1" && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label className="form-label">Tipo de respaldo</label>
+                    <select
+                      className="form-input"
+                      value={config.backup_cloud_tipo || ""}
+                      onChange={async (e) => {
+                        await guardarConfig({ backup_cloud_tipo: e.target.value });
+                        setConfig({ ...config, backup_cloud_tipo: e.target.value });
+                      }}
+                    >
+                      <option value="">Seleccionar...</option>
+                      <option value="premium">Premium (servidor Clouget)</option>
+                      <option value="gdrive">Google Drive (cuenta propia)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="form-label">Frecuencia</label>
+                    <select
+                      className="form-input"
+                      value={config.backup_cloud_frecuencia || "6"}
+                      onChange={async (e) => {
+                        await guardarConfig({ backup_cloud_frecuencia: e.target.value });
+                        setConfig({ ...config, backup_cloud_frecuencia: e.target.value });
+                      }}
+                    >
+                      <option value="1">Cada hora</option>
+                      <option value="6">Cada 6 horas</option>
+                      <option value="12">Cada 12 horas</option>
+                      <option value="24">Cada 24 horas</option>
+                    </select>
+                  </div>
+
+                  {config.backup_cloud_tipo === "gdrive" && (
+                    <div style={{ padding: 12, background: "var(--color-bg-secondary)", borderRadius: 8 }}>
+                      <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+                        Google Drive: {backupEstado?.gdrive_conectado ? "Conectado" : "No conectado"}
+                      </p>
+                      {backupEstado?.gdrive_conectado ? (
+                        <button
+                          className="btn btn-outline"
+                          style={{ fontSize: 12 }}
+                          onClick={async () => {
+                            await desconectarGdrive();
+                            const bk = await estadoBackupCloud();
+                            setBackupEstado(bk);
+                            toastExito("Google Drive desconectado");
+                          }}
+                        >
+                          Desconectar Google Drive
+                        </button>
+                      ) : (
+                        <p style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                          La conexion con Google Drive se configurara la primera vez que se ejecute un backup.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    className="btn btn-primary"
+                    disabled={ejecutandoBackup || !config.backup_cloud_tipo}
+                    onClick={async () => {
+                      setEjecutandoBackup(true);
+                      try {
+                        const result = await ejecutarBackupCloud();
+                        toastExito(result);
+                        const bk = await estadoBackupCloud();
+                        setBackupEstado(bk);
+                      } catch (err) { toastError("" + err); }
+                      setEjecutandoBackup(false);
+                    }}
+                  >
+                    {ejecutandoBackup ? "Respaldando..." : "Respaldar ahora"}
+                  </button>
+
+                  {backupEstado?.ultima && (
+                    <p style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Ultimo respaldo: {backupEstado.ultima}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>

@@ -376,7 +376,7 @@ pub fn listar_ventas_periodo(
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas
              WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND anulada = 0
              ORDER BY fecha DESC",
@@ -405,6 +405,8 @@ pub fn listar_ventas_periodo(
                 clave_acceso: row.get(16)?,
                 observacion: row.get(17)?,
                 numero_factura: row.get(18)?,
+                establecimiento: row.get(19).ok(),
+                punto_emision: row.get(20).ok(),
             })
         })
         .map_err(|e| e.to_string())?

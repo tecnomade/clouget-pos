@@ -355,7 +355,7 @@ pub fn verificar_pin_admin(db: State<Database>, pin: String) -> Result<String, S
 }
 
 /// Helper: verifica que la sesión actual sea ADMIN
-fn verificar_admin(sesion: &State<SesionState>) -> Result<(), String> {
+pub(crate) fn verificar_admin(sesion: &State<SesionState>) -> Result<(), String> {
     let guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
     match guard.as_ref() {
         Some(s) if s.rol == "ADMIN" => Ok(()),

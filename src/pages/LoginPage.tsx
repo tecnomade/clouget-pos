@@ -4,9 +4,10 @@ import type { SesionActiva } from "../types";
 
 interface Props {
   onLogin: (sesion: SesionActiva) => void;
+  esDemo?: boolean;
 }
 
-export default function LoginPage({ onLogin }: Props) {
+export default function LoginPage({ onLogin, esDemo }: Props) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [shake, setShake] = useState(false);
@@ -175,6 +176,23 @@ export default function LoginPage({ onLogin }: Props) {
         >
           Ingrese su PIN para iniciar sesion
         </p>
+
+        {esDemo && (
+          <div
+            style={{
+              marginTop: 16,
+              padding: "10px 16px",
+              background: "rgba(245, 158, 11, 0.15)",
+              border: "1px solid rgba(245, 158, 11, 0.3)",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "#fbbf24",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>Demo:</strong> Admin PIN <strong>1234</strong> | Cajero PIN <strong>0000</strong>
+          </div>
+        )}
       </div>
 
       <style>{`

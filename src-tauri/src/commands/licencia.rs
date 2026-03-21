@@ -25,6 +25,7 @@ struct RespuestaActivacion {
     tipo: Option<String>,
     emitida: Option<String>,
     mensaje: Option<String>,
+    sri_lifetime: Option<bool>,
 }
 
 /// Respuesta del endpoint validar-licencia de Supabase
@@ -185,6 +186,32 @@ pub async fn verificar_licencia(
             )
             .map_err(|e| format!("Error guardando licencia: {}", e))?;
         }
+
+        // Si estaba en demo, desactivarlo
+        conn.execute(
+            "UPDATE config SET value = '0' WHERE key = 'demo_activo'",
+            [],
+        ).ok();
+
+        // Si es licencia ilimitada con SRI lifetime, activar cache local de suscripcion
+        if tipo == "ilimitada" && data.sri_lifetime.unwrap_or(false) {
+            let sri_configs = [
+                ("sri_suscripcion_autorizado", "1"),
+                ("sri_suscripcion_plan", "lifetime"),
+                ("sri_suscripcion_hasta", ""),
+                ("sri_suscripcion_docs_restantes", ""),
+                ("sri_suscripcion_es_lifetime", "1"),
+                ("sri_suscripcion_ultima_validacion", &hoy as &str),
+                ("sri_suscripcion_mensaje", "Suscripcion Lifetime activa — facturas ilimitadas"),
+            ];
+            for (key, value) in &sri_configs {
+                conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+                    rusqlite::params![key, value],
+                )
+                .ok(); // No fallar si esto no funciona
+            }
+        }
     }
 
     Ok(LicenciaInfo {
@@ -230,8 +257,37 @@ pub async fn obtener_estado_licencia(
         )
     };
 
-    // Si nunca se activó, no hay licencia
+    // Si nunca se activó, verificar si está en modo demo
     if activada != "1" || codigo.is_empty() {
+        let demo = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT value FROM config WHERE key = 'demo_activo'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_default()
+        };
+        if demo == "1" {
+            let mi_machine_id = obtener_machine_id().unwrap_or_default();
+            let nombre_negocio = {
+                let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                conn.query_row(
+                    "SELECT value FROM config WHERE key = 'nombre_negocio'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_else(|_| "Tienda Demo".to_string())
+            };
+            return Ok(Some(LicenciaInfo {
+                negocio: nombre_negocio,
+                email: "demo@clouget.com".to_string(),
+                tipo: "demo".to_string(),
+                emitida: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                machine_id: mi_machine_id,
+                activa: true,
+            }));
+        }
         return Ok(None);
     }
 

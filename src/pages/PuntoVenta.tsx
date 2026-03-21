@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
 import ModalEmailCliente from "../components/ModalEmailCliente";
-import type { ProductoBusqueda, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
+import PosGridTactil from "../components/PosGridTactil";
+import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
 
 export default function PuntoVenta() {
   const { toastExito, toastError, toastWarning } = useToast();
@@ -38,6 +39,11 @@ export default function PuntoVenta() {
   const [sriEmisionAutomatica, setSriEmisionAutomatica] = useState(false);
   const [ticketUsarPdf, setTicketUsarPdf] = useState(false);
 
+  // Modo tactil
+  const [modoPos, setModoPos] = useState<"normal" | "tactil">("normal");
+  const [productosTactil, setProductosTactil] = useState<ProductoTactil[]>([]);
+  const [categoriasTactil, setCategoriasTactil] = useState<Categoria[]>([]);
+
   // Cliente
   const [clienteSeleccionado, setClienteSeleccionado] = useState<Cliente | null>(null);
   const [busquedaCliente, setBusquedaCliente] = useState("");
@@ -47,6 +53,7 @@ export default function PuntoVenta() {
   const [nuevoClienteNombre, setNuevoClienteNombre] = useState("");
   const [nuevoClienteId, setNuevoClienteId] = useState("");
   const [creandoCliente, setCreandoCliente] = useState(false);
+  const [consultandoSri, setConsultandoSri] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -64,10 +71,21 @@ export default function PuntoVenta() {
     cargarAlertas();
     // Cargar regimen y estado ambiente confirmado
     obtenerConfig().then((cfg) => {
-      if (cfg.regimen) setRegimen(cfg.regimen);
+      if (cfg.regimen) {
+        setRegimen(cfg.regimen);
+        if (cfg.regimen !== "RIMPE_POPULAR") {
+          setTipoDocumento("FACTURA");
+        }
+      }
       setSriAmbienteConfirmado(cfg.sri_ambiente_confirmado === "1");
       setSriEmisionAutomatica(cfg.sri_emision_automatica === "1");
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
+      // Modo tactil
+      if (cfg.modo_pos === "tactil") {
+        setModoPos("tactil");
+        listarProductosTactil().then(setProductosTactil).catch(() => {});
+        listarCategorias().then(setCategoriasTactil).catch(() => {});
+      }
     }).catch(() => {});
     // Cargar estado SRI (incluyendo suscripcion y ambiente)
     consultarEstadoSri().then((estado) => {
@@ -241,11 +259,6 @@ export default function PuntoVenta() {
       toastError("Debe abrir la caja antes de realizar ventas");
       return;
     }
-    // Validar: FACTURA requiere cliente identificado (no Consumidor Final id=1)
-    if (tipoDocumento === "FACTURA" && (!clienteSeleccionado || clienteSeleccionado.id === 1)) {
-      toastError("Para emitir FACTURA debe seleccionar un cliente con identificacion");
-      return;
-    }
     // Verificar que el usuario ha confirmado el ambiente SRI
     if (tipoDocumento === "FACTURA" && sriModuloActivo && !sriAmbienteConfirmado) {
       setMostrarModalAmbiente(true);
@@ -353,9 +366,12 @@ export default function PuntoVenta() {
           setEmitiendo(false);
         }
       }
-      setTipoDocumento("NOTA_VENTA");
-      // Refrescar favoritos y alertas de stock
+      setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
+      // Refrescar favoritos, alertas de stock y productos tactil
       productosMasVendidos(12).then(setFavoritos).catch(() => {});
+      if (modoPos === "tactil") {
+        listarProductosTactil().then(setProductosTactil).catch(() => {});
+      }
       alertasStockBajo().then((a) => {
         setAlertas(a);
         if (a.length > 0) {
@@ -366,7 +382,7 @@ export default function PuntoVenta() {
     } catch (err) {
       toastError("Error al registrar venta: " + err);
     }
-  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, toastError, toastExito, toastWarning]);
+  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, modoPos, regimen, toastError, toastExito, toastWarning]);
 
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);
@@ -377,9 +393,9 @@ export default function PuntoVenta() {
     setFormaPago("EFECTIVO");
     setEsFiado(false);
     setClienteSeleccionado(null);
-    setTipoDocumento("NOTA_VENTA");
+    setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
     inputRef.current?.focus();
-  }, []);
+  }, [regimen]);
 
   // Recalcular precios del carrito al cambiar de cliente
   const recalcularPreciosCarrito = useCallback(async (clienteId: number | null) => {
@@ -676,9 +692,40 @@ export default function PuntoVenta() {
                   </div>
                 ))}
                 {busquedaCliente.length >= 2 && clientesResultados.length === 0 && !mostrarCrearCliente && (
-                  <div style={{ padding: "8px", textAlign: "center", fontSize: 12, color: "#94a3b8" }}>
-                    No encontrado. Use <strong>+</strong> para crear.
-                  </div>
+                  /^\d{10}(\d{3})?$/.test(busquedaCliente.trim()) ? (
+                    <div style={{ padding: "8px", textAlign: "center" }}>
+                      <button
+                        className="btn btn-outline"
+                        style={{ fontSize: 12, padding: "6px 16px", width: "100%", justifyContent: "center" }}
+                        disabled={consultandoSri}
+                        onClick={async () => {
+                          setConsultandoSri(true);
+                          try {
+                            const cliente = await consultarIdentificacion(busquedaCliente.trim());
+                            setClienteSeleccionado(cliente);
+                            setMostrarClientes(false);
+                            setBusquedaCliente("");
+                            setClientesResultados([]);
+                            recalcularPreciosCarrito(cliente.id ?? null);
+                            toastExito(`Cliente registrado: ${cliente.nombre}`);
+                          } catch (err: any) {
+                            toastError(err?.toString() || "No se encontró información");
+                          } finally {
+                            setConsultandoSri(false);
+                          }
+                        }}
+                      >
+                        {consultandoSri ? "Consultando..." : "🔍 Consultar en SRI"}
+                      </button>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                        Buscar datos por cédula/RUC en el SRI
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "8px", textAlign: "center", fontSize: 12, color: "#94a3b8" }}>
+                      No encontrado. Use <strong>+</strong> para crear.
+                    </div>
+                  )
                 )}
               </div>
             )}
@@ -687,7 +734,23 @@ export default function PuntoVenta() {
       </div>
 
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* Panel izquierdo */}
+        {/* Panel izquierdo - condicional normal/tactil */}
+        {modoPos === "tactil" ? (
+          <div style={{ flex: 1, position: "relative" }}>
+            <PosGridTactil
+              categorias={categoriasTactil}
+              productosTactil={productosTactil}
+              carrito={carrito}
+              onAgregarProducto={agregarAlCarrito}
+              onActualizarCantidad={actualizarCantidad}
+              onEliminarItem={eliminarItem}
+              busqueda={busqueda}
+              onBusquedaChange={handleBuscar}
+              resultados={resultados}
+              inputRef={inputRef}
+            />
+          </div>
+        ) : (
         <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Barra de busqueda */}
           <div style={{ position: "relative" }}>
@@ -723,6 +786,11 @@ export default function PuntoVenta() {
                     <div>
                       <strong>{p.nombre}</strong>
                       {p.codigo && <span className="text-secondary" style={{ marginLeft: 8 }}>({p.codigo})</span>}
+                      {p.categoria_nombre?.includes("[otro local]") && (
+                        <span style={{ marginLeft: 8, fontSize: 10, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4, fontWeight: 600 }}>
+                          Otro local
+                        </span>
+                      )}
                     </div>
                     <div className="flex gap-4">
                       <span style={{
@@ -900,6 +968,7 @@ export default function PuntoVenta() {
             </div>
           )}
         </div>
+        )}
 
         {/* Panel derecho - Totales y cobro */}
         <div style={{
@@ -945,11 +1014,6 @@ export default function PuntoVenta() {
                     </button>
                   ))}
                 </div>
-                {tipoDocumento === "FACTURA" && (!clienteSeleccionado || clienteSeleccionado.id === 1) && (
-                  <div style={{ fontSize: 11, color: "#d97706", marginTop: 4 }}>
-                    Factura requiere cliente con identificacion
-                  </div>
-                )}
                 {tipoDocumento === "FACTURA" && sriModuloActivo && sriAmbiente && (
                   <div style={{
                     fontSize: 11, marginTop: 4, display: "flex", alignItems: "center", gap: 6,
@@ -1016,7 +1080,7 @@ export default function PuntoVenta() {
 
           <button className="btn btn-success btn-lg" data-action="cobrar"
             style={{ width: "100%", justifyContent: "center", fontSize: 16 }}
-            disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado) || (tipoDocumento === "FACTURA" && (!clienteSeleccionado || clienteSeleccionado.id === 1))}
+            disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
             onClick={procesarVenta}>
             {esFiado ? `Fiar $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
           </button>

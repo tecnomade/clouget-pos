@@ -6,6 +6,7 @@ pub mod gasto;
 pub mod cuenta;
 pub mod usuario;
 pub mod lista_precio;
+pub mod establecimiento;
 
 pub use producto::*;
 pub use cliente::*;
@@ -15,3 +16,4 @@ pub use gasto::*;
 pub use cuenta::*;
 pub use usuario::*;
 pub use lista_precio::*;
+pub use establecimiento::*;

@@ -12,7 +12,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas WHERE id = ?1",
             rusqlite::params![venta_id],
             |row| {
@@ -36,6 +36,8 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     clave_acceso: row.get(16)?,
                     observacion: row.get(17)?,
                     numero_factura: row.get(18)?,
+                    establecimiento: row.get(19).ok(),
+                    punto_emision: row.get(20).ok(),
                 })
             },
         )
@@ -126,7 +128,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura
+             numero_factura, establecimiento, punto_emision
              FROM ventas WHERE id = ?1",
             rusqlite::params![venta_id],
             |row| {
@@ -150,6 +152,8 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     clave_acceso: row.get(16)?,
                     observacion: row.get(17)?,
                     numero_factura: row.get(18)?,
+                    establecimiento: row.get(19).ok(),
+                    punto_emision: row.get(20).ok(),
                 })
             },
         )
@@ -353,6 +357,25 @@ fn obtener_datos_reporte_caja(
         )
         .unwrap_or(0);
 
+    // Cobros de cuentas por cobrar
+    let total_cobros_efectivo: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_cuenta
+             WHERE fecha >= ?1 AND forma_pago = 'EFECTIVO' AND estado = 'CONFIRMADO'",
+            rusqlite::params![fecha_apertura],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let total_cobros_banco: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_cuenta
+             WHERE fecha >= ?1 AND forma_pago = 'TRANSFERENCIA' AND estado = 'CONFIRMADO'",
+            rusqlite::params![fecha_apertura],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
     // Config del negocio
     let nombre_negocio: String = conn
         .query_row(
@@ -384,6 +407,8 @@ fn obtener_datos_reporte_caja(
         total_transferencia,
         total_fiado,
         total_gastos,
+        total_cobros_efectivo,
+        total_cobros_banco,
         total_notas_credito,
         num_notas_credito,
         nombre_negocio,
@@ -536,6 +561,20 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
         t.push(b'\n');
     }
 
+    // Cobros de cuentas por cobrar
+    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"COBROS CUENTAS POR COBRAR\n");
+        t.extend_from_slice(esc_bold_off);
+        if r.total_cobros_efectivo > 0.0 {
+            t.extend_from_slice(linea_monto_r("En efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
+        }
+        if r.total_cobros_banco > 0.0 {
+            t.extend_from_slice(linea_monto_r("En banco:", &format!("${:.2}", r.total_cobros_banco), ancho).as_bytes());
+        }
+        t.push(b'\n');
+    }
+
     // Notas de credito
     if r.num_notas_credito > 0 {
         t.extend_from_slice(esc_bold_on);
@@ -553,7 +592,10 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
     t.extend_from_slice(b"CUADRE DE CAJA\n");
     t.extend_from_slice(esc_bold_off);
     t.extend_from_slice(linea_monto_r("Monto Inicial:", &format!("${:.2}", r.caja.monto_inicial), ancho).as_bytes());
-    t.extend_from_slice(linea_monto_r("(+) Efectivo:", &format!("${:.2}", r.total_efectivo), ancho).as_bytes());
+    t.extend_from_slice(linea_monto_r("(+) Efectivo ventas:", &format!("${:.2}", r.total_efectivo), ancho).as_bytes());
+    if r.total_cobros_efectivo > 0.0 {
+        t.extend_from_slice(linea_monto_r("(+) Cobros efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
+    }
     t.extend_from_slice(linea_monto_r("(-) Gastos:", &format!("${:.2}", r.total_gastos), ancho).as_bytes());
     t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
     t.extend_from_slice(esc_bold_on);
@@ -779,6 +821,39 @@ fn generar_reporte_caja_pdf(
         doc.push(Break::new(0.5));
     }
 
+    // Cobros de cuentas por cobrar
+    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
+        doc.push(Paragraph::new("COBROS CUENTAS POR COBRAR").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut cobros_table = TableLayout::new(vec![3, 2]);
+        if r.total_cobros_efectivo > 0.0 {
+            cobros_table
+                .row()
+                .element(Paragraph::new("En efectivo:").styled(s_normal))
+                .element(
+                    Paragraph::new(format!("${:.2}", r.total_cobros_efectivo))
+                        .aligned(Alignment::Right)
+                        .styled(s_normal),
+                )
+                .push()
+                .map_err(|e| format!("Error: {}", e))?;
+        }
+        if r.total_cobros_banco > 0.0 {
+            cobros_table
+                .row()
+                .element(Paragraph::new("En banco/transferencia:").styled(s_normal))
+                .element(
+                    Paragraph::new(format!("${:.2}", r.total_cobros_banco))
+                        .aligned(Alignment::Right)
+                        .styled(s_normal),
+                )
+                .push()
+                .map_err(|e| format!("Error: {}", e))?;
+        }
+        doc.push(cobros_table);
+        doc.push(Break::new(0.5));
+    }
+
     // Notas de credito
     if r.num_notas_credito > 0 {
         doc.push(Paragraph::new("DEVOLUCIONES").styled(s_subtitle));
@@ -825,7 +900,7 @@ fn generar_reporte_caja_pdf(
         .map_err(|e| format!("Error: {}", e))?;
     cuadre_table
         .row()
-        .element(Paragraph::new("(+) Efectivo:").styled(s_normal))
+        .element(Paragraph::new("(+) Efectivo ventas:").styled(s_normal))
         .element(
             Paragraph::new(format!("${:.2}", r.total_efectivo))
                 .aligned(Alignment::Right)
@@ -833,6 +908,18 @@ fn generar_reporte_caja_pdf(
         )
         .push()
         .map_err(|e| format!("Error: {}", e))?;
+    if r.total_cobros_efectivo > 0.0 {
+        cuadre_table
+            .row()
+            .element(Paragraph::new("(+) Cobros efectivo:").styled(s_normal))
+            .element(
+                Paragraph::new(format!("${:.2}", r.total_cobros_efectivo))
+                    .aligned(Alignment::Right)
+                    .styled(s_normal),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
     cuadre_table
         .row()
         .element(Paragraph::new("(-) Gastos:").styled(s_normal))

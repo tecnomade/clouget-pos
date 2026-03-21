@@ -71,3 +71,53 @@ pub fn eliminar_logo_negocio(db: State<Database>) -> Result<String, String> {
 
     Ok("Logo eliminado".to_string())
 }
+
+/// Genera un token aleatorio para el servidor de red y lo guarda en config.
+#[tauri::command]
+pub fn generar_token_servidor(db: State<Database>) -> Result<String, String> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let token: String = (0..32)
+        .map(|_| {
+            let idx = rng.gen_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect();
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES ('servidor_token', ?1)",
+        rusqlite::params![token],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(token)
+}
+
+/// Prueba la conexión a un servidor remoto de Clouget POS.
+#[tauri::command]
+pub async fn probar_conexion_servidor(url: String, token: String) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/api/v1/ping", url))
+        .header("Authorization", format!("Bearer {}", token))
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("No se pudo conectar: {}", e))?;
+
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Error leyendo respuesta: {}", e))?;
+
+    if body == "clouget-pos-server" {
+        Ok("Conexión exitosa".to_string())
+    } else {
+        Err(format!("Respuesta inesperada: {}", body))
+    }
+}

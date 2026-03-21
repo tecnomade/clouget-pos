@@ -15,6 +15,18 @@ export interface Producto {
   unidad_medida: string;
   es_servicio: boolean;
   activo: boolean;
+  imagen?: string;
+}
+
+export interface ProductoTactil {
+  id: number;
+  nombre: string;
+  precio_venta: number;
+  iva_porcentaje: number;
+  stock_actual: number;
+  categoria_id?: number;
+  categoria_nombre?: string;
+  imagen?: string;
 }
 
 export interface ProductoBusqueda {
@@ -93,6 +105,8 @@ export interface Venta {
   observacion?: string;
   numero_factura?: string;
   email_enviado?: number;
+  establecimiento?: string;
+  punto_emision?: string;
 }
 
 export interface VentaDetalle {
@@ -146,6 +160,8 @@ export interface ResumenCaja {
   num_ventas: number;
   total_efectivo: number;
   total_gastos: number;
+  total_cobros_efectivo: number;
+  total_cobros_banco: number;
 }
 
 // Gasto
@@ -178,6 +194,23 @@ export interface PagoCuenta {
   monto: number;
   fecha?: string;
   observacion?: string;
+  forma_pago: string;
+  banco_id?: number;
+  numero_comprobante?: string;
+  comprobante_imagen?: string;
+  banco_nombre?: string;
+  estado?: string;
+  confirmado_por?: number;
+  fecha_confirmacion?: string;
+}
+
+export interface CuentaBanco {
+  id?: number;
+  nombre: string;
+  tipo_cuenta?: string;
+  numero_cuenta?: string;
+  titular?: string;
+  activa: boolean;
 }
 
 export interface CuentaConCliente {
@@ -313,6 +346,49 @@ export interface NotaCreditoInfo {
   autorizacion_sri?: string;
   clave_acceso?: string;
   numero_factura_nc?: string;
+}
+
+// Establecimientos y Puntos de Emisión
+export interface Establecimiento {
+  id?: number;
+  codigo: string;
+  nombre: string;
+  direccion?: string;
+  telefono?: string;
+  es_propio: boolean;
+  activo: boolean;
+}
+
+export interface PuntoEmision {
+  id?: number;
+  establecimiento_id: number;
+  codigo: string;
+  nombre?: string;
+  activo: boolean;
+}
+
+// Transferencias y Stock Multi-almacén
+export interface TransferenciaStock {
+  id?: number;
+  producto_id: number;
+  producto_nombre?: string;
+  origen_establecimiento_id: number;
+  origen_nombre?: string;
+  destino_establecimiento_id: number;
+  destino_nombre?: string;
+  cantidad: number;
+  estado: string;
+  usuario?: string;
+  created_at?: string;
+  recibida_at?: string;
+}
+
+export interface StockEstablecimiento {
+  establecimiento_id: number;
+  establecimiento_nombre: string;
+  establecimiento_codigo: string;
+  stock_actual: number;
+  stock_minimo: number;
 }
 
 // Item del carrito (para la pantalla de venta)

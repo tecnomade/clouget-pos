@@ -196,7 +196,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         INSERT OR IGNORE INTO config (key, value) VALUES ('establecimiento', '001');
         INSERT OR IGNORE INTO config (key, value) VALUES ('punto_emision', '001');
         INSERT OR IGNORE INTO config (key, value) VALUES ('sri_modulo_activo', '0');
-        INSERT OR IGNORE INTO config (key, value) VALUES ('sri_facturas_gratis', '10');
+        INSERT OR IGNORE INTO config (key, value) VALUES ('sri_facturas_gratis', '30');
         INSERT OR IGNORE INTO config (key, value) VALUES ('sri_facturas_usadas', '0');
         INSERT OR IGNORE INTO config (key, value) VALUES ('timeout_inactividad', '15');
         INSERT OR IGNORE INTO config (key, value) VALUES ('sri_ambiente', 'pruebas');
@@ -325,6 +325,39 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_mov_inv_producto ON movimientos_inventario(producto_id);
         CREATE INDEX IF NOT EXISTS idx_mov_inv_fecha ON movimientos_inventario(created_at);
         CREATE INDEX IF NOT EXISTS idx_mov_inv_tipo ON movimientos_inventario(tipo);
+
+        -- Establecimientos (sucursales/locales)
+        CREATE TABLE IF NOT EXISTS establecimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT NOT NULL UNIQUE,
+            nombre TEXT NOT NULL,
+            direccion TEXT,
+            telefono TEXT,
+            es_propio INTEGER NOT NULL DEFAULT 1,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
+        -- Puntos de emisión (cajas/terminales dentro de cada establecimiento)
+        CREATE TABLE IF NOT EXISTS puntos_emision (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            establecimiento_id INTEGER NOT NULL,
+            codigo TEXT NOT NULL,
+            nombre TEXT,
+            activo INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (establecimiento_id) REFERENCES establecimientos(id),
+            UNIQUE(establecimiento_id, codigo)
+        );
+
+        -- Secuenciales por establecimiento + punto de emisión + tipo de documento
+        CREATE TABLE IF NOT EXISTS secuenciales (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            establecimiento_codigo TEXT NOT NULL,
+            punto_emision_codigo TEXT NOT NULL,
+            tipo_documento TEXT NOT NULL,
+            secuencial INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(establecimiento_codigo, punto_emision_codigo, tipo_documento)
+        );
         ",
     )?;
 
@@ -367,6 +400,190 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
              SELECT 1, id, precio_venta FROM productos",
             [],
         );
+    }
+
+    // --- Migración: Cuentas bancarias + forma de pago en cobros ---
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cuentas_banco (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            tipo_cuenta TEXT,
+            numero_cuenta TEXT,
+            titular TEXT,
+            activa INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );",
+    )?;
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO'", []);
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN banco_id INTEGER REFERENCES cuentas_banco(id)", []);
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN numero_comprobante TEXT", []);
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN comprobante_imagen TEXT", []);
+
+    // --- Migración: Imagen de productos ---
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN imagen TEXT", []);
+
+    // --- Migración: Estado de confirmación en pagos_cuenta ---
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN estado TEXT NOT NULL DEFAULT 'CONFIRMADO'", []);
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN confirmado_por INTEGER", []);
+    let _ = conn.execute("ALTER TABLE pagos_cuenta ADD COLUMN fecha_confirmacion TEXT", []);
+
+    // --- Migración: Modo demo ---
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('demo_activo', '0')", [])?;
+
+    // --- Migración: Aumentar facturas gratis de 10 a 30 ---
+    let _ = conn.execute(
+        "UPDATE config SET value = '30' WHERE key = 'sri_facturas_gratis' AND value = '10'",
+        [],
+    );
+
+    // --- Migración: Config de terminal (establecimiento y punto de emisión local) ---
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('terminal_establecimiento', '001')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('terminal_punto_emision', '001')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modo_red', 'local')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('servidor_puerto', '8847')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('servidor_token', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('servidor_url', '')", [])?;
+
+    // --- Migración: Poblar establecimientos y puntos_emision desde config existente ---
+    // Solo si la tabla está vacía (primera vez)
+    let est_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM establecimientos", [], |row| row.get(0))
+        .unwrap_or(0);
+    if est_count == 0 {
+        let nombre_negocio: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'nombre_negocio'", [], |row| row.get(0))
+            .unwrap_or_else(|_| "Mi Negocio".to_string());
+        let direccion: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'direccion'", [], |row| row.get(0))
+            .unwrap_or_default();
+        let telefono: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'telefono'", [], |row| row.get(0))
+            .unwrap_or_default();
+        let est_codigo: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'establecimiento'", [], |row| row.get(0))
+            .unwrap_or_else(|_| "001".to_string());
+        let pe_codigo: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'punto_emision'", [], |row| row.get(0))
+            .unwrap_or_else(|_| "001".to_string());
+
+        conn.execute(
+            "INSERT INTO establecimientos (codigo, nombre, direccion, telefono) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![est_codigo, nombre_negocio, direccion, telefono],
+        ).ok();
+
+        let est_id: i64 = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO puntos_emision (establecimiento_id, codigo, nombre) VALUES (?1, ?2, 'Caja Principal')",
+            rusqlite::params![est_id, pe_codigo],
+        ).ok();
+
+        // Migrar secuenciales desde config a tabla secuenciales
+        let tipos_config = [
+            ("NOTA_VENTA", "secuencial_nota_venta"),
+            ("FACTURA", "secuencial_factura"),
+            ("FACTURA_PRUEBAS", "secuencial_factura_pruebas"),
+            ("NOTA_CREDITO", "secuencial_nota_credito"),
+            ("NOTA_CREDITO_PRUEBAS", "secuencial_nota_credito_pruebas"),
+        ];
+        for (tipo, config_key) in &tipos_config {
+            let sec: i64 = conn
+                .query_row(
+                    "SELECT CAST(value AS INTEGER) FROM config WHERE key = ?1",
+                    rusqlite::params![config_key],
+                    |row| row.get(0),
+                )
+                .unwrap_or(1);
+            conn.execute(
+                "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![est_codigo, pe_codigo, tipo, sec],
+            ).ok();
+        }
+
+        // Actualizar config de terminal con los valores existentes
+        conn.execute(
+            "UPDATE config SET value = ?1 WHERE key = 'terminal_establecimiento'",
+            rusqlite::params![est_codigo],
+        ).ok();
+        conn.execute(
+            "UPDATE config SET value = ?1 WHERE key = 'terminal_punto_emision'",
+            rusqlite::params![pe_codigo],
+        ).ok();
+    }
+
+    // --- Migración: columnas establecimiento y punto_emision en ventas y notas_credito ---
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN establecimiento TEXT NOT NULL DEFAULT '001'", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN punto_emision TEXT NOT NULL DEFAULT '001'", []);
+    let _ = conn.execute("ALTER TABLE notas_credito ADD COLUMN establecimiento TEXT NOT NULL DEFAULT '001'", []);
+    let _ = conn.execute("ALTER TABLE notas_credito ADD COLUMN punto_emision TEXT NOT NULL DEFAULT '001'", []);
+
+    // --- Migración: Multi-almacén ---
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('multi_almacen_activo', '0')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('venta_cross_store', '0')", [])?;
+
+    // --- Migración: Backup Cloud ---
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('backup_cloud_activo', '0')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('backup_cloud_tipo', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('backup_cloud_frecuencia', '6')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('backup_cloud_ultima', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_access_token', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_refresh_token', '')", [])?;
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('gdrive_folder_id', '')", [])?;
+
+    // Tabla stock por establecimiento
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS stock_establecimiento (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            establecimiento_id INTEGER NOT NULL,
+            stock_actual REAL NOT NULL DEFAULT 0,
+            stock_minimo REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (producto_id) REFERENCES productos(id),
+            FOREIGN KEY (establecimiento_id) REFERENCES establecimientos(id),
+            UNIQUE(producto_id, establecimiento_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_est_producto ON stock_establecimiento(producto_id);
+        CREATE INDEX IF NOT EXISTS idx_stock_est_establecimiento ON stock_establecimiento(establecimiento_id);
+
+        -- Transferencias de stock entre establecimientos
+        CREATE TABLE IF NOT EXISTS transferencias_stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            origen_establecimiento_id INTEGER NOT NULL,
+            destino_establecimiento_id INTEGER NOT NULL,
+            cantidad REAL NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+            usuario TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            recibida_at TEXT,
+            FOREIGN KEY (producto_id) REFERENCES productos(id),
+            FOREIGN KEY (origen_establecimiento_id) REFERENCES establecimientos(id),
+            FOREIGN KEY (destino_establecimiento_id) REFERENCES establecimientos(id)
+        );",
+    )?;
+
+    // Columna establecimiento_origen en venta_detalles (para ventas cross-store)
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN establecimiento_origen_id INTEGER", []);
+
+    // Columna establecimiento_id en movimientos_inventario
+    let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
+
+    // Migrar stock existente a stock_establecimiento (solo una vez)
+    let stock_est_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM stock_establecimiento", [], |row| row.get(0))
+        .unwrap_or(0);
+    if stock_est_count == 0 {
+        // Obtener el primer establecimiento
+        let primer_est_id: Option<i64> = conn
+            .query_row("SELECT id FROM establecimientos ORDER BY id LIMIT 1", [], |row| row.get(0))
+            .ok();
+
+        if let Some(est_id) = primer_est_id {
+            conn.execute(
+                "INSERT INTO stock_establecimiento (producto_id, establecimiento_id, stock_actual, stock_minimo)
+                 SELECT id, ?1, stock_actual, stock_minimo FROM productos WHERE es_servicio = 0",
+                rusqlite::params![est_id],
+            ).ok();
+        }
     }
 
     Ok(())

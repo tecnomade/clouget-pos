@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useKeyboardShortcuts, SHORTCUTS_LIST } from "../hooks/useKeyboardShortcuts";
 import { useSesion } from "../contexts/SesionContext";
+import { useDemo } from "../contexts/DemoContext";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 
@@ -13,15 +14,17 @@ const navItems = [
   { path: "/ventas", label: "Ventas del dia", icon: "D", shortcut: "F4", todos: true },
   { path: "/caja", label: "Caja", icon: "$", shortcut: "F5", todos: true },
   { path: "/gastos", label: "Gastos", icon: "G", shortcut: "F7", todos: false },
-  { path: "/cuentas", label: "Fiados", icon: "F", shortcut: "F8", todos: false },
+  { path: "/cuentas", label: "Por cobrar", icon: "F", shortcut: "F8", todos: true },
   { path: "/inventario", label: "Inventario", icon: "K", shortcut: "", todos: false },
   { path: "/config", label: "Configuracion", icon: "*", shortcut: "F6", todos: false },
 ];
 
 export default function Layout() {
   const { sesion, cerrarSesion, esAdmin } = useSesion();
+  const { esDemo, salirDemo } = useDemo();
   useKeyboardShortcuts(sesion?.rol);
   const [mostrarAyuda, setMostrarAyuda] = useState(false);
+  const [saliendoDemo, setSaliendoDemo] = useState(false);
 
   const navFiltrados = esAdmin
     ? navItems
@@ -89,6 +92,45 @@ export default function Layout() {
       <main className="main-content">
         <UpdateChecker />
         <SuscripcionBanner />
+        {esDemo && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "8px 16px",
+              background: "linear-gradient(90deg, #fef3c7, #fde68a)",
+              borderBottom: "2px solid #f59e0b",
+              fontSize: 13,
+              color: "#92400e",
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>
+              MODO DEMO — Datos ficticios de ejemplo
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={async () => {
+                  setSaliendoDemo(true);
+                  try { await salirDemo(); } catch { setSaliendoDemo(false); }
+                }}
+                disabled={saliendoDemo}
+                style={{
+                  padding: "4px 12px",
+                  background: "white",
+                  border: "1px solid #d97706",
+                  borderRadius: 6,
+                  color: "#92400e",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: saliendoDemo ? "not-allowed" : "pointer",
+                }}
+              >
+                {saliendoDemo ? "Saliendo..." : "Salir del Demo"}
+              </button>
+            </div>
+          </div>
+        )}
         <Outlet />
       </main>
 

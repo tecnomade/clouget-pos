@@ -21,6 +21,8 @@ pub struct Venta {
     pub clave_acceso: Option<String>,
     pub observacion: Option<String>,
     pub numero_factura: Option<String>,
+    pub establecimiento: Option<String>,
+    pub punto_emision: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

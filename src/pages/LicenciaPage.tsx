@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { verificarLicencia, obtenerMachineId } from "../services/api";
+import { verificarLicencia, obtenerMachineId, activarDemo } from "../services/api";
 import type { LicenciaInfo } from "../types";
 
 interface Props {
@@ -10,6 +10,7 @@ export default function LicenciaPage({ onActivada }: Props) {
   const [codigo, setCodigo] = useState("");
   const [error, setError] = useState("");
   const [verificando, setVerificando] = useState(false);
+  const [activandoDemo, setActivandoDemo] = useState(false);
   const [machineId, setMachineId] = useState("");
   const [copiado, setCopiado] = useState(false);
 
@@ -36,6 +37,20 @@ export default function LicenciaPage({ onActivada }: Props) {
       setError(String(err));
     } finally {
       setVerificando(false);
+    }
+  };
+
+  const handleDemo = async () => {
+    setActivandoDemo(true);
+    setError("");
+
+    try {
+      const licencia = await activarDemo();
+      onActivada(licencia);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setActivandoDemo(false);
     }
   };
 
@@ -141,7 +156,7 @@ export default function LicenciaPage({ onActivada }: Props) {
             border: "1px solid #e2e8f0",
             borderRadius: 12,
             padding: 24,
-            marginBottom: 24,
+            marginBottom: 16,
           }}
         >
           <h3 style={{ margin: "0 0 8px 0", fontSize: 16, color: "#334155" }}>
@@ -187,7 +202,7 @@ export default function LicenciaPage({ onActivada }: Props) {
 
           <button
             onClick={handleActivar}
-            disabled={verificando}
+            disabled={verificando || activandoDemo}
             style={{
               width: "100%",
               marginTop: 16,
@@ -209,6 +224,51 @@ export default function LicenciaPage({ onActivada }: Props) {
               Conectando al servidor...
             </p>
           )}
+        </div>
+
+        {/* Separador */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}>
+          <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+          <span style={{ fontSize: 13, color: "#94a3b8", fontWeight: 500 }}>o</span>
+          <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+        </div>
+
+        {/* Demo */}
+        <div
+          style={{
+            background: "#f0fdf4",
+            border: "2px solid #bbf7d0",
+            borderRadius: 12,
+            padding: 20,
+            marginBottom: 24,
+            textAlign: "center",
+          }}
+        >
+          <h3 style={{ margin: "0 0 6px 0", fontSize: 15, color: "#166534" }}>
+            Probar Demo
+          </h3>
+          <p style={{ margin: "0 0 14px 0", fontSize: 13, color: "#4ade80", lineHeight: 1.4 }}>
+            Explore todas las funcionalidades con datos de ejemplo.
+            Sin compromiso, sin limite de tiempo.
+          </p>
+          <button
+            onClick={handleDemo}
+            disabled={activandoDemo || verificando}
+            style={{
+              width: "100%",
+              padding: "12px 24px",
+              background: activandoDemo ? "#94a3b8" : "#16a34a",
+              color: "white",
+              border: "none",
+              borderRadius: 8,
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: activandoDemo ? "not-allowed" : "pointer",
+              transition: "background 0.2s",
+            }}
+          >
+            {activandoDemo ? "Preparando demo..." : "Probar Demo Gratis"}
+          </button>
         </div>
 
         <div
