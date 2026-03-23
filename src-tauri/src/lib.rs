@@ -210,6 +210,8 @@ pub fn run() {
             commands::transferencias::listar_transferencias,
             commands::transferencias::stock_por_establecimiento,
             commands::transferencias::actualizar_stock_establecimiento,
+            // Etiquetas de productos
+            commands::etiquetas::generar_etiquetas_pdf,
             // Offline (cola y cache para modo cliente)
             offline::cache::encolar_operacion,
             offline::cache::listar_cola_offline,

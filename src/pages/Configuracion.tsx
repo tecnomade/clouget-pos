@@ -353,8 +353,21 @@ export default function Configuracion() {
             <div className="card-header">Cuentas Bancarias</div>
             <div className="card-body">
               <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
-                Para pagos por transferencia en cobros de cuentas por cobrar.
+                Para pagos por transferencia en ventas y cobros de cuentas por cobrar.
               </p>
+              {/* Reglas de transferencia */}
+              <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.transferencia_requiere_referencia === "1"}
+                    onChange={(e) => { update("transferencia_requiere_referencia", e.target.checked ? "1" : "0"); guardarConfig({ transferencia_requiere_referencia: e.target.checked ? "1" : "0" }); }} />
+                  Nro. referencia obligatorio
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.transferencia_requiere_comprobante === "1"}
+                    onChange={(e) => { update("transferencia_requiere_comprobante", e.target.checked ? "1" : "0"); guardarConfig({ transferencia_requiere_comprobante: e.target.checked ? "1" : "0" }); }} />
+                  Comprobante obligatorio
+                </label>
+              </div>
               {/* Add form */}
               <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
                 <div className="flex gap-2">

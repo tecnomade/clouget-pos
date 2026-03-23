@@ -21,6 +21,7 @@ import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarMo
 import { iniciarSyncService, sincronizarCacheProductos, reservarSecuenciales } from "./services/offlineSync";
 import ConnectionStatus from "./components/ConnectionStatus";
 import type { LicenciaInfo } from "./types";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles/global.css";
 
 function AppGate() {
@@ -130,10 +131,12 @@ function AppGate() {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <ToastProvider>
-      <SesionProvider>
-        <AppGate />
-      </SesionProvider>
-    </ToastProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <SesionProvider>
+          <AppGate />
+        </SesionProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

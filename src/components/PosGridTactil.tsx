@@ -157,11 +157,11 @@ export default function PosGridTactil({
                 <img
                   src={`data:image/png;base64,${p.imagen}`}
                   alt={p.nombre}
-                  style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 6 }}
+                  style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6 }}
                 />
               ) : (
                 <div style={{
-                  width: 64, height: 64, background: "#f1f5f9", borderRadius: 6,
+                  width: 80, height: 80, background: "#f1f5f9", borderRadius: 6,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   color: "#94a3b8", fontSize: 22, fontWeight: 700,
                 }}>
@@ -224,7 +224,12 @@ export default function PosGridTactil({
                   padding: "6px 12px", borderBottom: "1px solid #f1f5f9",
                   display: "flex", alignItems: "center", gap: 8, fontSize: 12,
                 }}>
-                  <span style={{ flex: 1, fontWeight: 500 }}>{item.nombre}</span>
+                  <span style={{ flex: 1, fontWeight: 500 }}>
+                    {item.nombre}
+                    {item.info_adicional && (
+                      <div style={{ fontSize: 9, color: "#1e40af", fontWeight: 400 }}>{item.info_adicional}</div>
+                    )}
+                  </span>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <button
                       className="btn btn-outline"

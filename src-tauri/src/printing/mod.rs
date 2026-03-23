@@ -114,6 +114,13 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
                 format!("  Desc: -{:.2}\n", det.descuento).as_bytes(),
             );
         }
+        if let Some(ref info) = det.info_adicional {
+            if !info.is_empty() {
+                ticket.extend_from_slice(
+                    format!("  {}\n", info).as_bytes(),
+                );
+            }
+        }
     }
 
     ticket.extend_from_slice(linea_separador(ancho, '=').as_bytes());

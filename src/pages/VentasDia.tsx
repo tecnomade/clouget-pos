@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -9,7 +9,7 @@ import ModalEmailCliente from "../components/ModalEmailCliente";
 import ModalNotaCredito from "../components/ModalNotaCredito";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { ResumenDiario, ResumenPeriodo, ProductoMasVendido, AlertaStock, VentaDiaria } from "../services/api";
-import type { Venta, NotaCreditoInfo } from "../types";
+import type { Venta, VentaCompleta, NotaCreditoInfo } from "../types";
 
 function fechaHoy(): string {
   const now = new Date();
@@ -54,6 +54,16 @@ export default function VentasDia() {
   const [ncVenta, setNcVenta] = useState<{ id: number; numero: string } | null>(null);
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
+  const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
+
+  const abrirDetalle = async (ventaId: number) => {
+    try {
+      const vc = await obtenerVenta(ventaId);
+      setVentaDetalle(vc);
+    } catch (err) {
+      toastError("Error al cargar detalle: " + err);
+    }
+  };
 
   const esRango = fechaDesde !== fechaHasta;
   const COLORES_PIE = ["#22c55e", "#3b82f6", "#f59e0b", "#8b5cf6"];
@@ -191,7 +201,7 @@ export default function VentasDia() {
             {esAdmin && (
               <>
                 <div className="card" style={{ padding: 14 }}>
-                  <div className="text-secondary" style={{ fontSize: 11 }}>Fiado</div>
+                  <div className="text-secondary" style={{ fontSize: 11 }}>Credito</div>
                   <div className="text-xl font-bold" style={{ color: r.total_fiado > 0 ? "var(--color-warning)" : undefined }}>
                     ${r.total_fiado.toFixed(2)}
                   </div>
@@ -280,7 +290,7 @@ export default function VentasDia() {
                       data={[
                         { name: "Efectivo", value: r.total_efectivo },
                         { name: "Transferencia", value: r.total_transferencia },
-                        { name: "Fiado", value: r.total_fiado },
+                        { name: "Credito", value: r.total_fiado },
                       ].filter(d => d.value > 0)}
                       cx="50%" cy="50%" innerRadius={50} outerRadius={80}
                       paddingAngle={2} dataKey="value"
@@ -289,7 +299,7 @@ export default function VentasDia() {
                       {[
                         { name: "Efectivo", value: r.total_efectivo },
                         { name: "Transferencia", value: r.total_transferencia },
-                        { name: "Fiado", value: r.total_fiado },
+                        { name: "Credito", value: r.total_fiado },
                       ].filter(d => d.value > 0).map((_, i) => (
                         <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
                       ))}
@@ -323,7 +333,8 @@ export default function VentasDia() {
                 </thead>
                 <tbody>
                   {ventas.map((v) => (
-                    <tr key={v.id}>
+                    <tr key={v.id} onClick={() => v.id && abrirDetalle(v.id)}
+                      style={{ cursor: "pointer" }} title="Ver detalle">
                       <td>
                         <strong>{v.numero}</strong>
                         {v.numero_factura && (
@@ -633,6 +644,119 @@ export default function VentasDia() {
           toastError={toastError}
           toastWarning={toastWarning}
         />
+      )}
+
+      {/* Modal detalle de venta */}
+      {ventaDetalle && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setVentaDetalle(null); }}>
+          <div className="card" style={{ width: 550, maxHeight: "85vh", overflow: "auto" }}>
+            <div className="card-header flex justify-between items-center">
+              <span>Detalle de Venta {ventaDetalle.venta.numero}</span>
+              <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setVentaDetalle(null)}>x</button>
+            </div>
+            <div className="card-body">
+              {/* Info general */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16, fontSize: 13 }}>
+                <div>
+                  <span className="text-secondary">Fecha: </span>
+                  {ventaDetalle.venta.fecha ? new Date(ventaDetalle.venta.fecha).toLocaleString("es-EC") : "-"}
+                </div>
+                <div>
+                  <span className="text-secondary">Cliente: </span>
+                  {ventaDetalle.cliente_nombre || "Consumidor Final"}
+                </div>
+                <div>
+                  <span className="text-secondary">Tipo: </span>
+                  {ventaDetalle.venta.tipo_documento === "FACTURA" ? "Factura" : "Nota de Venta"}
+                </div>
+                <div>
+                  <span className="text-secondary">Estado: </span>
+                  {ventaDetalle.venta.estado}
+                </div>
+                {ventaDetalle.venta.numero_factura && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <span className="text-secondary">Nro. Factura: </span>
+                    <strong style={{ color: "#166534" }}>{ventaDetalle.venta.numero_factura}</strong>
+                  </div>
+                )}
+                {ventaDetalle.venta.observacion && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <span className="text-secondary">Observacion: </span>
+                    {ventaDetalle.venta.observacion}
+                  </div>
+                )}
+              </div>
+
+              {/* Pago */}
+              <div style={{ background: "#f8fafc", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#475569" }}>Informacion de Pago</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
+                  <div><span className="text-secondary">Forma: </span>{ventaDetalle.venta.forma_pago}</div>
+                  <div><span className="text-secondary">Recibido: </span>${ventaDetalle.venta.monto_recibido.toFixed(2)}</div>
+                  {ventaDetalle.venta.cambio > 0 && (
+                    <div><span className="text-secondary">Cambio: </span>${ventaDetalle.venta.cambio.toFixed(2)}</div>
+                  )}
+                  {ventaDetalle.venta.banco_nombre && (
+                    <div><span className="text-secondary">Banco: </span><strong>{ventaDetalle.venta.banco_nombre}</strong></div>
+                  )}
+                  {ventaDetalle.venta.referencia_pago && (
+                    <div><span className="text-secondary">Referencia: </span><strong>{ventaDetalle.venta.referencia_pago}</strong></div>
+                  )}
+                </div>
+              </div>
+
+              {/* Items */}
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#475569" }}>Productos</div>
+              <table className="table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th className="text-right">Cant.</th>
+                    <th className="text-right">P.Unit</th>
+                    <th className="text-right">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ventaDetalle.detalles.map((d, i) => (
+                    <tr key={i}>
+                      <td>{d.nombre_producto || `Producto #${d.producto_id}`}</td>
+                      <td className="text-right">{d.cantidad}</td>
+                      <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
+                      <td className="text-right">${d.subtotal.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Totales */}
+              <div style={{ borderTop: "2px solid var(--color-border)", marginTop: 8, paddingTop: 8, fontSize: 13 }}>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Subtotal sin IVA:</span>
+                  <span>${ventaDetalle.venta.subtotal_sin_iva.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-secondary">Subtotal con IVA:</span>
+                  <span>${ventaDetalle.venta.subtotal_con_iva.toFixed(2)}</span>
+                </div>
+                {ventaDetalle.venta.descuento > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-secondary">Descuento:</span>
+                    <span>-${ventaDetalle.venta.descuento.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-secondary">IVA:</span>
+                  <span>${ventaDetalle.venta.iva.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between" style={{ fontWeight: 700, fontSize: 16, marginTop: 4 }}>
+                  <span>TOTAL:</span>
+                  <span className="text-success">${ventaDetalle.venta.total.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <ModalEmailCliente

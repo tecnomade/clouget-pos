@@ -612,6 +612,18 @@ pub fn generar_ticket_pdf(
             .element(p_aligned(&format_dinero(total), s_normal, Alignment::Right))
             .push()
             .map_err(|e| format!("Error ticket fila: {}", e))?;
+        if let Some(ref info) = det.info_adicional {
+            if !info.is_empty() {
+                let s_small = genpdf::style::Style::new().with_font_size(7);
+                prod_table
+                    .row()
+                    .element(p("", s_small))
+                    .element(p(info, s_small))
+                    .element(p("", s_small))
+                    .push()
+                    .map_err(|e| format!("Error ticket info: {}", e))?;
+            }
+        }
     }
     doc.push(prod_table);
 
@@ -847,6 +859,7 @@ mod tests {
                     descuento: 0.0,
                     iva_porcentaje: 15.0,
                     subtotal: 2.50,
+                    info_adicional: Some("S/N: ABC123456".to_string()),
                 },
                 VentaDetalle {
                     id: Some(2),
@@ -858,6 +871,7 @@ mod tests {
                     descuento: 0.0,
                     iva_porcentaje: 0.0,
                     subtotal: 0.75,
+                    info_adicional: None,
                 },
                 VentaDetalle {
                     id: Some(3),
@@ -869,6 +883,7 @@ mod tests {
                     descuento: 0.0,
                     iva_porcentaje: 0.0,
                     subtotal: 1.15,
+                    info_adicional: Some("Lote: L2026-03".to_string()),
                 },
             ],
             cliente_nombre: Some("Juan Perez".to_string()),

@@ -1,6 +1,32 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { iniciarSesion } from "../services/api";
 import type { SesionActiva } from "../types";
+
+interface Novedad {
+  titulo: string;
+  descripcion: string;
+  icono: string;
+}
+
+interface PromoData {
+  imagen_url?: string;
+  novedades: Novedad[];
+  links: { label: string; url: string }[];
+  version_actual?: string;
+}
+
+const NOVEDADES_DEFAULT: PromoData = {
+  novedades: [
+    { titulo: "Multi-Terminal en Red", descripcion: "Conecte varios puntos de venta a una base de datos centralizada", icono: "🖥️" },
+    { titulo: "Respaldo en la Nube", descripcion: "Respalde automaticamente su base de datos en Google Drive o servidor Clouget", icono: "☁️" },
+    { titulo: "Multi-Almacen", descripcion: "Gestione stock por establecimiento y venda entre locales", icono: "📦" },
+    { titulo: "Consulta Cedula/RUC", descripcion: "Busque datos de clientes automaticamente desde el SRI", icono: "🔍" },
+  ],
+  links: [
+    { label: "Ver todas las caracteristicas", url: "https://pos.clouget.com" },
+    { label: "Tutoriales y guias", url: "https://pos.clouget.com/tutoriales" },
+  ],
+};
 
 interface Props {
   onLogin: (sesion: SesionActiva) => void;
@@ -12,6 +38,30 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
   const [error, setError] = useState("");
   const [shake, setShake] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [promo, setPromo] = useState<PromoData>(NOVEDADES_DEFAULT);
+
+  useEffect(() => {
+    // Intentar cargar promo desde Supabase (si hay internet)
+    const SUPABASE_URL = "https://zakquzflkvfqflqnxpxj.supabase.co";
+    const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpha3F1emZsa3ZmcWZscW54cHhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY2MDcxNjQsImV4cCI6MjA1MjE4MzE2NH0.sxaKNMkNguqQnvmUXh2JVRjqXDDqgsKb2LKPSGFp9bE";
+    fetch(`${SUPABASE_URL}/rest/v1/configuracion_global?clave=eq.login_promo&select=valor`, {
+      headers: { apikey: SUPABASE_ANON, Authorization: `Bearer ${SUPABASE_ANON}` },
+    })
+      .then((r) => r.json())
+      .then((rows: { valor: string }[]) => {
+        if (rows?.[0]?.valor) {
+          const data = JSON.parse(rows[0].valor) as PromoData & { habilitado?: boolean };
+          if (data.habilitado === false) {
+            setPromo({ ...NOVEDADES_DEFAULT, novedades: [], links: [] }); // ocultar
+          } else if (data.novedades?.length) {
+            setPromo(data);
+          }
+        }
+      })
+      .catch(() => {
+        // Sin internet, usar default local
+      });
+  }, []);
 
   const handleDigit = (d: string) => {
     if (pin.length >= 6) return;
@@ -57,8 +107,6 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
       style={{
         minHeight: "100vh",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
         background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
         color: "white",
       }}
@@ -66,6 +114,17 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
       onKeyDown={handleKeyDown}
       autoFocus
     >
+      {/* Panel izquierdo - PIN */}
+      <div
+        style={{
+          width: promo.novedades.length > 0 ? 380 : "100%",
+          minWidth: promo.novedades.length > 0 ? 380 : undefined,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flexDirection: "column",
+        }}
+      >
       <div
         style={{
           width: 340,
@@ -194,6 +253,91 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           </div>
         )}
       </div>
+      </div>
+
+      {/* Panel derecho - Promociones y Novedades (solo si hay contenido) */}
+      {promo.novedades.length > 0 && (
+      <div
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          padding: "40px 48px",
+          background: "linear-gradient(135deg, rgba(37,99,235,0.08) 0%, rgba(59,130,246,0.04) 100%)",
+          borderLeft: "1px solid rgba(255,255,255,0.06)",
+          overflow: "auto",
+        }}
+      >
+        {/* Header */}
+        <div style={{ marginBottom: 32 }}>
+          <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 6px 0", color: "rgba(255,255,255,0.9)" }}>
+            Novedades
+          </h2>
+          <p style={{ fontSize: 13, opacity: 0.5, margin: 0 }}>
+            Ultimas mejoras de Clouget POS
+          </p>
+        </div>
+
+        {/* Novedades Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 28 }}>
+          {promo.novedades.map((n, i) => (
+            <div
+              key={i}
+              style={{
+                padding: "16px 14px",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 10,
+                transition: "background 0.2s",
+              }}
+            >
+              <div style={{ fontSize: 24, marginBottom: 8 }}>{n.icono}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)", marginBottom: 4 }}>
+                {n.titulo}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", lineHeight: 1.4 }}>
+                {n.descripcion}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Links */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {promo.links.map((link, i) => (
+            <a
+              key={i}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 14px",
+                background: "rgba(59,130,246,0.1)",
+                border: "1px solid rgba(59,130,246,0.2)",
+                borderRadius: 8,
+                color: "#93c5fd",
+                fontSize: 13,
+                fontWeight: 500,
+                textDecoration: "none",
+                transition: "background 0.2s",
+              }}
+            >
+              <span style={{ fontSize: 14 }}>→</span>
+              {link.label}
+            </a>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div style={{ marginTop: 32, fontSize: 11, opacity: 0.25 }}>
+          pos.clouget.com
+        </div>
+      </div>
+      )}
 
       <style>{`
         .login-key {

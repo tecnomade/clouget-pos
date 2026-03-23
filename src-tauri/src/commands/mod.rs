@@ -17,3 +17,4 @@ pub mod inventario;
 pub mod demo;
 pub mod establecimientos;
 pub mod transferencias;
+pub mod etiquetas;

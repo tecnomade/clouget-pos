@@ -234,6 +234,21 @@ export default function CajaPage() {
                 <span className="text-secondary">Monto inicial:</span>
                 <span className="font-bold" style={{ marginLeft: 8 }}>${cajaAbierta.monto_inicial.toFixed(2)}</span>
               </div>
+              <div className="mb-4" style={{
+                padding: "10px 14px", background: "#f0fdf4", borderRadius: 8,
+                border: "1px solid #bbf7d0",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span className="text-secondary">Ventas en efectivo:</span>
+                  <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
+                </div>
+                <div style={{ borderTop: "1px solid #bbf7d0", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600, color: "#166534" }}>Monto esperado en caja:</span>
+                  <span style={{ fontWeight: 700, color: "#166534", fontSize: 16 }}>
+                    ${(cajaAbierta.monto_inicial + (cajaAbierta.monto_ventas ?? 0)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12 }}>Monto real en caja</label>
                 <input

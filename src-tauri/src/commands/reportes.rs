@@ -373,13 +373,15 @@ pub fn listar_ventas_periodo(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
-             descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-             tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
-             FROM ventas
-             WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND anulada = 0
-             ORDER BY fecha DESC",
+            "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
+             v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
+             v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
+             v.numero_factura, v.establecimiento, v.punto_emision,
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+             FROM ventas v
+             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+             WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.anulada = 0
+             ORDER BY v.fecha DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -407,6 +409,9 @@ pub fn listar_ventas_periodo(
                 numero_factura: row.get(18)?,
                 establecimiento: row.get(19).ok(),
                 punto_emision: row.get(20).ok(),
+                banco_id: row.get(21).ok(),
+                referencia_pago: row.get(22).ok(),
+                banco_nombre: row.get(23).ok(),
             })
         })
         .map_err(|e| e.to_string())?

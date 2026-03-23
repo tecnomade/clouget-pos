@@ -87,6 +87,9 @@ export default function Layout() {
           >
             Cerrar Sesion
           </button>
+          <div style={{ textAlign: "center", fontSize: 9, opacity: 0.25, marginTop: 6 }}>
+            v{__APP_VERSION__}
+          </div>
         </div>
       </aside>
       <main className="main-content">

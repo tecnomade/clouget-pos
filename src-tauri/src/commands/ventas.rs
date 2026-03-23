@@ -101,8 +101,9 @@ pub fn registrar_venta(
     conn.execute(
         "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva,
          descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-         tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision,
+         banco_id, referencia_pago, comprobante_imagen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         rusqlite::params![
             numero,
             venta.cliente_id.unwrap_or(1),
@@ -122,6 +123,9 @@ pub fn registrar_venta(
             usuario_id,
             terminal_est,
             terminal_pe,
+            venta.banco_id,
+            venta.referencia_pago,
+            venta.comprobante_imagen,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -135,8 +139,8 @@ pub fn registrar_venta(
 
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
-             descuento, iva_porcentaje, subtotal)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             descuento, iva_porcentaje, subtotal, info_adicional)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -145,6 +149,7 @@ pub fn registrar_venta(
                 item.descuento,
                 item.iva_porcentaje,
                 subtotal,
+                item.info_adicional,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -215,6 +220,7 @@ pub fn registrar_venta(
             descuento: item.descuento,
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
+            info_adicional: item.info_adicional.clone(),
         });
     }
 
@@ -276,6 +282,9 @@ pub fn registrar_venta(
             numero_factura: None,
             establecimiento: Some(terminal_est),
             punto_emision: Some(terminal_pe),
+            banco_id: None,
+            referencia_pago: None,
+            banco_nombre: None,
         },
         detalles: detalles_guardados,
         cliente_nombre,
@@ -288,13 +297,15 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
-             descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-             tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
-             FROM ventas
-             WHERE date(fecha) = date(?1) AND anulada = 0
-             ORDER BY fecha DESC",
+            "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
+             v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
+             v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
+             v.numero_factura, v.establecimiento, v.punto_emision,
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+             FROM ventas v
+             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+             WHERE date(v.fecha) = date(?1) AND v.anulada = 0
+             ORDER BY v.fecha DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -322,6 +333,9 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 numero_factura: row.get(18)?,
                 establecimiento: row.get(19).ok(),
                 punto_emision: row.get(20).ok(),
+                banco_id: row.get(21).ok(),
+                referencia_pago: row.get(22).ok(),
+                banco_nombre: row.get(23).ok(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -337,11 +351,14 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
 
     let venta = conn
         .query_row(
-            "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
-             descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-             tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
-             FROM ventas WHERE id = ?1",
+            "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
+             v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
+             v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
+             v.numero_factura, v.establecimiento, v.punto_emision,
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+             FROM ventas v
+             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+             WHERE v.id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok(Venta {
@@ -366,6 +383,9 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     numero_factura: row.get(18)?,
                     establecimiento: row.get(19).ok(),
                     punto_emision: row.get(20).ok(),
+                    banco_id: row.get(21).ok(),
+                    referencia_pago: row.get(22).ok(),
+                    banco_nombre: row.get(23).ok(),
                 })
             },
         )
@@ -374,7 +394,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
-             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal
+             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
              FROM venta_detalles d
              JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
@@ -393,6 +413,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 descuento: row.get(6)?,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
+                info_adicional: row.get(9).ok(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -444,13 +465,15 @@ pub fn listar_ventas_sesion_caja(
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
-             descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-             tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
-             FROM ventas
-             WHERE fecha >= ?1 AND anulada = 0
-             ORDER BY fecha DESC",
+            "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
+             v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
+             v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
+             v.numero_factura, v.establecimiento, v.punto_emision,
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+             FROM ventas v
+             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+             WHERE v.fecha >= ?1 AND v.anulada = 0
+             ORDER BY v.fecha DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -478,6 +501,9 @@ pub fn listar_ventas_sesion_caja(
                 numero_factura: row.get(18)?,
                 establecimiento: row.get(19).ok(),
                 punto_emision: row.get(20).ok(),
+                banco_id: row.get(21).ok(),
+                referencia_pago: row.get(22).ok(),
+                banco_nombre: row.get(23).ok(),
             })
         })
         .map_err(|e| e.to_string())?

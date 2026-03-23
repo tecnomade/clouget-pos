@@ -23,19 +23,36 @@ pub struct Venta {
     pub numero_factura: Option<String>,
     pub establecimiento: Option<String>,
     pub punto_emision: Option<String>,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
+    #[serde(default)]
+    pub banco_nombre: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct VentaDetalle {
+    #[serde(default)]
     pub id: Option<i64>,
+    #[serde(default)]
     pub venta_id: Option<i64>,
+    #[serde(default)]
     pub producto_id: i64,
+    #[serde(default)]
     pub nombre_producto: Option<String>,
+    #[serde(default)]
     pub cantidad: f64,
+    #[serde(default)]
     pub precio_unitario: f64,
+    #[serde(default)]
     pub descuento: f64,
+    #[serde(default)]
     pub iva_porcentaje: f64,
+    #[serde(default)]
     pub subtotal: f64,
+    #[serde(default)]
+    pub info_adicional: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +65,12 @@ pub struct NuevaVenta {
     pub tipo_documento: String,
     pub observacion: Option<String>,
     pub es_fiado: bool,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
+    #[serde(default)]
+    pub comprobante_imagen: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

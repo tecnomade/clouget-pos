@@ -364,6 +364,26 @@ export async function desactivarCuentaBanco(id: number): Promise<void> {
   return smartInvoke("desactivar_cuenta_banco", { id });
 }
 
+// --- Etiquetas de productos ---
+
+export interface EtiquetaConfig {
+  producto_ids: number[];
+  cantidad_por_producto: number;
+  columnas: number;
+  mostrar_precio: boolean;
+  mostrar_codigo: boolean;
+  lista_precio_id?: number;
+  preset?: string;
+  ancho_mm?: number;
+  alto_mm?: number;
+  margen_top_mm?: number;
+  margen_left_mm?: number;
+}
+
+export async function generarEtiquetasPdf(config: EtiquetaConfig): Promise<string> {
+  return invoke("generar_etiquetas_pdf", { config });
+}
+
 // --- Confirmación de pagos ---
 
 export async function confirmarPagoCuenta(pagoId: number): Promise<CuentaDetalle> {

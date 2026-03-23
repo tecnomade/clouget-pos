@@ -45,11 +45,11 @@ export default function DashboardPage() {
     const hoy = fechaHoy();
     const hace7 = fechaHace7Dias();
     Promise.all([
-      resumenDiario(hoy),
+      resumenDiario(hoy).catch(() => null),
       resumenDiarioAyer().catch(() => null),
-      resumenFiadosPendientes(),
-      alertasStockBajo(),
-      obtenerCajaAbierta(),
+      resumenFiadosPendientes().catch(() => 0),
+      alertasStockBajo().catch(() => []),
+      obtenerCajaAbierta().catch(() => null),
       ventasPorDia(hace7, hoy).catch(() => []),
       productosMasVendidosReporte(hoy, hoy, 5).catch(() => []),
       ultimasVentasDia(5).catch(() => []),
@@ -265,7 +265,7 @@ export default function DashboardPage() {
                             background: v.forma_pago === "EFECTIVO" ? "#dcfce7" : v.forma_pago === "TRANSFER" ? "#dbeafe" : "#fef3c7",
                             color: v.forma_pago === "EFECTIVO" ? "#166534" : v.forma_pago === "TRANSFER" ? "#1e40af" : "#92400e",
                           }}>
-                            {v.forma_pago === "EFECTIVO" ? "Efectivo" : v.forma_pago === "TRANSFER" ? "Transfer" : "Fiado"}
+                            {v.forma_pago === "EFECTIVO" ? "Efectivo" : v.forma_pago === "TRANSFER" ? "Transfer" : "Credito"}
                           </span>
                         </td>
                       </tr>

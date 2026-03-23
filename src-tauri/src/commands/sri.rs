@@ -1152,6 +1152,9 @@ pub fn generar_ride_pdf(
                     numero_factura: row.get(19)?,
                     establecimiento: row.get(20).ok(),
                     punto_emision: row.get(21).ok(),
+                    banco_id: None,
+                    referencia_pago: None,
+                    banco_nombre: None,
                 };
                 let fecha_aut: Option<String> = row.get(18).unwrap_or(None);
                 Ok((v, fecha_aut))
@@ -1183,6 +1186,7 @@ pub fn generar_ride_pdf(
                 descuento: row.get(6)?,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
+                ..Default::default()
             };
             let codigo: String = row.get(9)?;
             Ok((det, codigo))
@@ -1973,6 +1977,9 @@ pub fn generar_ride_nc_pdf(
         numero_factura: nc_numero_factura_nc,
         establecimiento: None,
         punto_emision: None,
+        banco_id: None,
+        referencia_pago: None,
+        banco_nombre: None,
     };
 
     // Detalles
@@ -1996,6 +2003,7 @@ pub fn generar_ride_nc_pdf(
                 descuento: row.get(4)?,
                 iva_porcentaje: row.get(5)?,
                 subtotal: row.get(6)?,
+                ..Default::default()
             };
             let codigo: String = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SIN-COD".to_string());
             Ok((det, codigo))

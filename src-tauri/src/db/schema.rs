@@ -565,6 +565,18 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Columna establecimiento_origen en venta_detalles (para ventas cross-store)
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN establecimiento_origen_id INTEGER", []);
 
+    // Columna info_adicional en venta_detalles (número de serie, lote, observaciones por item)
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN info_adicional TEXT", []);
+
+    // Columnas de transferencia bancaria en ventas
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN banco_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN referencia_pago TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN comprobante_imagen TEXT", []);
+
+    // Config: reglas de comprobante para cajero
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_referencia', '0')", []);
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_comprobante', '0')", []);
+
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
 

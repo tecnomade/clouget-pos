@@ -107,6 +107,9 @@ export interface Venta {
   email_enviado?: number;
   establecimiento?: string;
   punto_emision?: string;
+  banco_id?: number;
+  referencia_pago?: string;
+  banco_nombre?: string;
 }
 
 export interface VentaDetalle {
@@ -130,6 +133,9 @@ export interface NuevaVenta {
   tipo_documento: string;
   observacion?: string;
   es_fiado: boolean;
+  banco_id?: number | null;
+  referencia_pago?: string | null;
+  comprobante_imagen?: string | null;
 }
 
 export interface VentaCompleta {
@@ -407,4 +413,5 @@ export interface ItemCarrito {
   precio_base: number;
   precios_disponibles?: PrecioProductoDetalle[];
   lista_seleccionada?: string;
+  info_adicional?: string;
 }

@@ -38,6 +38,9 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     numero_factura: row.get(18)?,
                     establecimiento: row.get(19).ok(),
                     punto_emision: row.get(20).ok(),
+                    banco_id: None,
+                    referencia_pago: None,
+                    banco_nombre: None,
                 })
             },
         )
@@ -46,7 +49,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
-             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal
+             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
              FROM venta_detalles d
              JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
@@ -65,6 +68,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 descuento: row.get(6)?,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
+                info_adicional: row.get(9).ok(),
             })
         })
         .map_err(|e| e.to_string())?
@@ -154,6 +158,9 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     numero_factura: row.get(18)?,
                     establecimiento: row.get(19).ok(),
                     punto_emision: row.get(20).ok(),
+                    banco_id: None,
+                    referencia_pago: None,
+                    banco_nombre: None,
                 })
             },
         )
@@ -162,7 +169,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
-             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal
+             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
              FROM venta_detalles d
              JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
@@ -181,6 +188,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 descuento: row.get(6)?,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
+                info_adicional: row.get(9).ok(),
             })
         })
         .map_err(|e| e.to_string())?

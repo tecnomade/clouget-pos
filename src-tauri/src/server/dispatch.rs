@@ -504,11 +504,14 @@ pub async fn dispatch_command(
             let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
-                     descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
-                     tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-                     numero_factura, establecimiento, punto_emision
-                     FROM ventas WHERE date(fecha) = date(?1) AND anulada = 0 ORDER BY fecha DESC",
+                    "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
+                     v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
+                     v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
+                     v.numero_factura, v.establecimiento, v.punto_emision,
+                     v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+                     FROM ventas v
+                     LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+                     WHERE date(v.fecha) = date(?1) AND v.anulada = 0 ORDER BY v.fecha DESC",
                 )
                 .map_err(|e| e.to_string())?;
 
@@ -536,6 +539,9 @@ pub async fn dispatch_command(
                         "numero_factura": row.get::<_, Option<String>>(18)?,
                         "establecimiento": row.get::<_, Option<String>>(19)?,
                         "punto_emision": row.get::<_, Option<String>>(20)?,
+                        "banco_id": row.get::<_, Option<i64>>(21)?,
+                        "referencia_pago": row.get::<_, Option<String>>(22)?,
+                        "banco_nombre": row.get::<_, Option<String>>(23)?,
                     }))
                 })
                 .map_err(|e| e.to_string())?

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -55,6 +55,13 @@ export default function PuntoVenta() {
   const [creandoCliente, setCreandoCliente] = useState(false);
   const [consultandoSri, setConsultandoSri] = useState(false);
 
+  // Transferencia bancaria
+  const [cuentasBanco, setCuentasBanco] = useState<{ id?: number; nombre: string; numero_cuenta?: string }[]>([]);
+  const [bancoSeleccionado, setBancoSeleccionado] = useState<number | null>(null);
+  const [referenciaPago, setReferenciaPago] = useState("");
+  const [requiereReferencia, setRequiereReferencia] = useState(false);
+  const [_requiereComprobante, setRequiereComprobante] = useState(false);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
   const cargarAlertas = useCallback(() => {
@@ -69,6 +76,7 @@ export default function PuntoVenta() {
       setVerificandoCaja(false);
     }).catch(() => setVerificandoCaja(false));
     cargarAlertas();
+    listarCuentasBanco().then(setCuentasBanco).catch(() => {});
     // Cargar regimen y estado ambiente confirmado
     obtenerConfig().then((cfg) => {
       if (cfg.regimen) {
@@ -80,6 +88,8 @@ export default function PuntoVenta() {
       setSriAmbienteConfirmado(cfg.sri_ambiente_confirmado === "1");
       setSriEmisionAutomatica(cfg.sri_emision_automatica === "1");
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
+      setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
+      setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
       // Modo tactil
       if (cfg.modo_pos === "tactil") {
         setModoPos("tactil");
@@ -148,7 +158,28 @@ export default function PuntoVenta() {
       setClientesResultados([]);
       toastExito(`Cliente ${nuevoCliente.nombre} creado`);
     } catch (err) {
-      toastError("Error al crear cliente: " + err);
+      const errorStr = String(err);
+      if (errorStr.includes("UNIQUE") && nuevoClienteId.trim()) {
+        try {
+          const existentes = await buscarClientes(nuevoClienteId.trim());
+          if (existentes.length >= 1) {
+            setClienteSeleccionado(existentes[0]);
+            setMostrarClientes(false);
+            setMostrarCrearCliente(false);
+            setNuevoClienteNombre("");
+            setNuevoClienteId("");
+            setBusquedaCliente("");
+            setClientesResultados([]);
+            toastWarning(`Cliente ya existe: ${existentes[0].nombre}`);
+          } else {
+            toastError("Cliente ya existe con esa identificacion");
+          }
+        } catch {
+          toastError("Cliente ya existe con esa identificacion");
+        }
+      } else {
+        toastError("Error al crear cliente: " + err);
+      }
     } finally {
       setCreandoCliente(false);
     }
@@ -259,6 +290,11 @@ export default function PuntoVenta() {
       toastError("Debe abrir la caja antes de realizar ventas");
       return;
     }
+    // Validar referencia obligatoria en transferencia
+    if (formaPago === "TRANSFER" && requiereReferencia && !referenciaPago.trim()) {
+      toastError("El numero de referencia es obligatorio para transferencias");
+      return;
+    }
     // Verificar que el usuario ha confirmado el ambiente SRI
     if (tipoDocumento === "FACTURA" && sriModuloActivo && !sriAmbienteConfirmado) {
       setMostrarModalAmbiente(true);
@@ -303,12 +339,15 @@ export default function PuntoVenta() {
         descuento: i.descuento,
         iva_porcentaje: i.iva_porcentaje,
         subtotal: i.subtotal,
+        info_adicional: i.info_adicional || null,
       })),
       forma_pago: formaPago,
       monto_recibido: esFiado ? 0 : parseFloat(montoRecibido || "0"),
       descuento: 0,
       tipo_documento: tipoDocumento,
       es_fiado: esFiado,
+      banco_id: formaPago === "TRANSFER" ? bancoSeleccionado : null,
+      referencia_pago: formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null,
     };
 
     try {
@@ -319,6 +358,8 @@ export default function PuntoVenta() {
       setFormaPago("EFECTIVO");
       setEsFiado(false);
       setClienteSeleccionado(null);
+      setBancoSeleccionado(null);
+      setReferenciaPago("");
       // Si fue FACTURA, modulo SRI activo y emision automatica activada, emitir al SRI
       if (tipoDocumento === "FACTURA" && sriModuloActivo && sriEmisionAutomatica && resultado.venta.id) {
         setEmitiendo(true);
@@ -862,15 +903,41 @@ export default function PuntoVenta() {
                   carrito.map((item) => (
                     <tr key={item.producto_id}>
                       <td>
-                        <strong>{item.nombre}</strong>
-                        {item.codigo && <span className="text-secondary" style={{ marginLeft: 8, fontSize: 12 }}>{item.codigo}</span>}
-                        <span style={{
-                          fontSize: 11, marginLeft: 6,
-                          color: item.stock_disponible <= 0 ? "#dc2626" : item.stock_disponible <= item.stock_minimo ? "#d97706" : "#94a3b8",
-                          fontWeight: item.stock_disponible <= item.stock_minimo ? 600 : undefined,
-                        }}>
-                          (stock: {item.stock_disponible})
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <strong>{item.nombre}</strong>
+                          {item.codigo && <span className="text-secondary" style={{ fontSize: 12 }}>{item.codigo}</span>}
+                          <span style={{
+                            fontSize: 11,
+                            color: item.stock_disponible <= 0 ? "#dc2626" : item.stock_disponible <= item.stock_minimo ? "#d97706" : "#94a3b8",
+                            fontWeight: item.stock_disponible <= item.stock_minimo ? 600 : undefined,
+                          }}>
+                            (stock: {item.stock_disponible})
+                          </span>
+                          <button
+                            title="Agregar info (S/N, lote, obs.)"
+                            style={{
+                              background: item.info_adicional ? "#dbeafe" : "none",
+                              border: item.info_adicional ? "1px solid #93c5fd" : "1px solid #e2e8f0",
+                              borderRadius: 4, cursor: "pointer", fontSize: 11, padding: "1px 5px",
+                              color: item.info_adicional ? "#1e40af" : "#94a3b8",
+                            }}
+                            onClick={() => {
+                              const valor = prompt("Info adicional (S/N, lote, observacion):", item.info_adicional || "");
+                              if (valor !== null) {
+                                setCarrito(prev => prev.map(i =>
+                                  i.producto_id === item.producto_id ? { ...i, info_adicional: valor || undefined } : i
+                                ));
+                              }
+                            }}
+                          >
+                            {item.info_adicional ? "📝" : "＋"}
+                          </button>
+                        </div>
+                        {item.info_adicional && (
+                          <div style={{ fontSize: 10, color: "#1e40af", marginTop: 2, paddingLeft: 2 }}>
+                            {item.info_adicional}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <input type="number" className="input" value={item.cantidad} min={1} step={1}
@@ -1047,10 +1114,41 @@ export default function PuntoVenta() {
                   className={`btn ${esFiado ? "btn-primary" : "btn-outline"}`}
                   style={{ flex: 1, fontSize: 12, justifyContent: "center" }}
                   onClick={() => setEsFiado(!esFiado)}>
-                  Fiado
+                  Credito
                 </button>
               </div>
             </div>
+
+            {/* Transferencia: cuenta bancaria + referencia */}
+            {!esFiado && formaPago === "TRANSFER" && (
+              <div className="mb-4" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {cuentasBanco.length > 0 && (
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Cuenta destino</label>
+                    <select
+                      className="input"
+                      value={bancoSeleccionado ?? ""}
+                      onChange={(e) => setBancoSeleccionado(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {cuentasBanco.map((cb) => (
+                        <option key={cb.id} value={cb.id}>
+                          {cb.nombre}{cb.numero_cuenta ? ` — ${cb.numero_cuenta}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                    Nro. referencia {requiereReferencia && <span style={{ color: "#ef4444" }}>*</span>}
+                  </label>
+                  <input className="input" placeholder="Ej: 123456789"
+                    value={referenciaPago}
+                    onChange={(e) => setReferenciaPago(e.target.value)} />
+                </div>
+              </div>
+            )}
 
             {/* Monto recibido - solo si no es fiado */}
             {!esFiado && formaPago === "EFECTIVO" && (
@@ -1082,7 +1180,7 @@ export default function PuntoVenta() {
             style={{ width: "100%", justifyContent: "center", fontSize: 16 }}
             disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
             onClick={procesarVenta}>
-            {esFiado ? `Fiar $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
+            {esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
           </button>
         </div>
       </div>
