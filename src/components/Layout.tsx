@@ -55,9 +55,9 @@ export default function Layout() {
     <div className="app-layout">
       {/* Top Header */}
       <header className="top-header">
-        <div className="top-header-logo">
+        <NavLink to="/" className="top-header-logo" style={{ textDecoration: "none", color: "inherit" }}>
           CLOUGET<span>POS</span>
-        </div>
+        </NavLink>
 
         <div className="top-header-right">
           {/* Nav items del header: Caja, Config */}
@@ -169,6 +169,9 @@ export default function Layout() {
       <nav className="bottom-bar" style={enPOS ? { justifyContent: "space-between", paddingRight: 324 } : {}}>
         {enPOS ? (
           <>
+            <NavLink to="/" style={{ textDecoration: "none", color: "inherit", display: "flex", alignItems: "center", gap: 4, fontSize: 12, opacity: 0.7 }}>
+              <span>🏠</span><span>Inicio</span>
+            </NavLink>
             <div style={{ display: "flex", gap: 6 }}>
               <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 14px" }}
                 onClick={() => window.dispatchEvent(new CustomEvent("pos-guardar-borrador"))}>
