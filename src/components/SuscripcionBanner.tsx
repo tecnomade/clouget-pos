@@ -110,13 +110,13 @@ export default function SuscripcionBanner() {
   return (
     <div style={{
       padding: "8px 16px",
-      background: urgente ? "#fef2f2" : "#fffbeb",
-      borderBottom: `2px solid ${urgente ? "#fca5a5" : "#fcd34d"}`,
+      background: urgente ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
+      borderBottom: `2px solid ${urgente ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)"}`,
       display: "flex",
       alignItems: "center",
       gap: 10,
       fontSize: 13,
-      color: urgente ? "#991b1b" : "#92400e",
+      color: urgente ? "#fca5a5" : "#fbbf24",
       animation: "banner-in 0.3s ease-out",
     }}>
       <span style={{ fontSize: 16 }}>{urgente ? "!" : "i"}</span>
@@ -128,7 +128,7 @@ export default function SuscripcionBanner() {
           border: "none",
           cursor: "pointer",
           fontSize: 16,
-          color: urgente ? "#991b1b" : "#92400e",
+          color: urgente ? "#fca5a5" : "#fbbf24",
           padding: "0 4px",
           lineHeight: 1,
           opacity: 0.6,

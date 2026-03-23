@@ -41,6 +41,8 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     banco_id: None,
                     referencia_pago: None,
                     banco_nombre: None,
+                    tipo_estado: None,
+                    guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 })
             },
         )
@@ -161,6 +163,8 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     banco_id: None,
                     referencia_pago: None,
                     banco_nombre: None,
+                    tipo_estado: None,
+                    guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 })
             },
         )
@@ -1072,4 +1076,582 @@ pub fn refrescar_impresoras(db: State<Database>) -> Result<Vec<String>, String> 
     ).ok();
 
     Ok(impresoras)
+}
+
+// ============================================
+// GUIA DE REMISION PDF
+// ============================================
+
+/// Genera PDF A4 de Guía de Remisión y lo abre con el visor del sistema.
+#[tauri::command]
+pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Cargar venta con campos de guía
+    let venta = conn
+        .query_row(
+            "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
+             descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
+             tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
+             numero_factura, establecimiento, punto_emision,
+             tipo_estado, guia_placa, guia_chofer, guia_direccion_destino
+             FROM ventas WHERE id = ?1",
+            rusqlite::params![venta_id],
+            |row| {
+                Ok(crate::models::Venta {
+                    id: Some(row.get(0)?),
+                    numero: row.get(1)?,
+                    cliente_id: row.get(2)?,
+                    fecha: row.get(3)?,
+                    subtotal_sin_iva: row.get(4)?,
+                    subtotal_con_iva: row.get(5)?,
+                    descuento: row.get(6)?,
+                    iva: row.get(7)?,
+                    total: row.get(8)?,
+                    forma_pago: row.get(9)?,
+                    monto_recibido: row.get(10)?,
+                    cambio: row.get(11)?,
+                    estado: row.get(12)?,
+                    tipo_documento: row.get(13)?,
+                    estado_sri: row.get::<_, String>(14).unwrap_or_else(|_| "NO_APLICA".to_string()),
+                    autorizacion_sri: row.get(15)?,
+                    clave_acceso: row.get(16)?,
+                    observacion: row.get(17)?,
+                    numero_factura: row.get(18)?,
+                    establecimiento: row.get(19).ok(),
+                    punto_emision: row.get(20).ok(),
+                    banco_id: None,
+                    referencia_pago: None,
+                    banco_nombre: None,
+                    tipo_estado: row.get(21).ok(),
+                    guia_placa: row.get(22).ok(),
+                    guia_chofer: row.get(23).ok(),
+                    guia_direccion_destino: row.get(24).ok(),
+                })
+            },
+        )
+        .map_err(|e| format!("Venta no encontrada: {}", e))?;
+
+    // Verificar que sea guía de remisión
+    let tipo_estado = venta.tipo_estado.as_deref().unwrap_or("");
+    if tipo_estado != "GUIA_REMISION" {
+        return Err("Esta venta no es una Guia de Remision".to_string());
+    }
+
+    // Cargar detalles con nombre de producto
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
+             FROM venta_detalles d
+             JOIN productos p ON d.producto_id = p.id
+             WHERE d.venta_id = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let detalles = stmt
+        .query_map(rusqlite::params![venta_id], |row| {
+            Ok(crate::models::VentaDetalle {
+                id: Some(row.get(0)?),
+                venta_id: Some(row.get(1)?),
+                producto_id: row.get(2)?,
+                nombre_producto: Some(row.get(3)?),
+                cantidad: row.get(4)?,
+                precio_unitario: row.get(5)?,
+                descuento: row.get(6)?,
+                iva_porcentaje: row.get(7)?,
+                subtotal: row.get(8)?,
+                info_adicional: row.get(9).ok(),
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Cargar datos del cliente
+    let (cliente_nombre, cliente_identificacion) =
+        if let Some(cid) = venta.cliente_id {
+            conn.query_row(
+                "SELECT nombre, identificacion FROM clientes WHERE id = ?1",
+                rusqlite::params![cid],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0).ok(),
+                        row.get::<_, Option<String>>(1).unwrap_or(None),
+                    ))
+                },
+            )
+            .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+
+    // Cargar config del negocio
+    let mut cfg_stmt = conn
+        .prepare("SELECT key, value FROM config")
+        .map_err(|e| e.to_string())?;
+
+    let config: std::collections::HashMap<String, String> = cfg_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    drop(stmt);
+    drop(cfg_stmt);
+    drop(conn);
+
+    // Generar PDF
+    let pdf_bytes = generar_guia_remision_pdf(
+        &venta,
+        &detalles,
+        &config,
+        cliente_nombre.as_deref(),
+        cliente_identificacion.as_deref(),
+    )?;
+
+    // Guardar en temp
+    let temp_dir = std::env::temp_dir();
+    let filename = format!(
+        "GuiaRemision-{}.pdf",
+        venta.numero.replace(['/', '\\', ':'], "-")
+    );
+    let pdf_path = temp_dir.join(&filename);
+    std::fs::write(&pdf_path, &pdf_bytes)
+        .map_err(|e| format!("Error guardando PDF: {}", e))?;
+
+    // Abrir con visor del sistema
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &pdf_path.to_string_lossy()])
+            .spawn()
+            .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&pdf_path.to_string_lossy().to_string())
+            .spawn()
+            .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+    }
+
+    Ok(pdf_path.to_string_lossy().to_string())
+}
+
+/// Genera los bytes del PDF A4 para Guía de Remisión
+fn generar_guia_remision_pdf(
+    venta: &crate::models::Venta,
+    detalles: &[crate::models::VentaDetalle],
+    config: &std::collections::HashMap<String, String>,
+    cliente_nombre: Option<&str>,
+    cliente_identificacion: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    use genpdf::elements::{Break, Paragraph, TableLayout};
+    use genpdf::style::Style;
+    use genpdf::{Alignment, Document, Element, Margins, SimplePageDecorator};
+
+    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let font_family = genpdf::fonts::from_files(
+        fonts_dir.to_str().unwrap_or("fonts"),
+        "LiberationSans",
+        None,
+    )
+    .map_err(|e| format!("Error cargando fuentes: {}", e))?;
+
+    let mut doc = Document::new(font_family);
+    doc.set_title("Guia de Remision");
+    doc.set_paper_size(genpdf::Size::new(210, 297)); // A4
+
+    let mut decorator = SimplePageDecorator::new();
+    decorator.set_margins(Margins::trbl(20, 20, 20, 20));
+    doc.set_page_decorator(decorator);
+
+    // Estilos
+    let s_title = Style::new().with_font_size(16).bold();
+    let s_subtitle = Style::new().with_font_size(12).bold();
+    let s_normal = Style::new().with_font_size(10);
+    let s_bold = Style::new().with_font_size(10).bold();
+    let s_small = Style::new().with_font_size(9);
+    let s_table_header = Style::new().with_font_size(9).bold();
+    let s_table_cell = Style::new().with_font_size(9);
+    let s_total_bold = Style::new().with_font_size(11).bold();
+    let s_firma = Style::new().with_font_size(9);
+    let s_nota = Style::new().with_font_size(8);
+
+    // --- Datos del negocio ---
+    let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
+    let ruc = config.get("ruc").map(|s| s.as_str()).unwrap_or("");
+    let direccion = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
+    let telefono = config.get("telefono").map(|s| s.as_str()).unwrap_or("");
+
+    // ===================================================================
+    // ENCABEZADO
+    // ===================================================================
+    doc.push(
+        Paragraph::new("GUIA DE REMISION")
+            .aligned(Alignment::Center)
+            .styled(s_title),
+    );
+    doc.push(Break::new(0.5));
+
+    doc.push(
+        Paragraph::new(nombre_negocio)
+            .aligned(Alignment::Center)
+            .styled(s_subtitle),
+    );
+    if !ruc.is_empty() {
+        doc.push(
+            Paragraph::new(format!("RUC: {}", ruc))
+                .aligned(Alignment::Center)
+                .styled(s_normal),
+        );
+    }
+    if !direccion.is_empty() {
+        doc.push(
+            Paragraph::new(format!("Direccion: {}", direccion))
+                .aligned(Alignment::Center)
+                .styled(s_small),
+        );
+    }
+    if !telefono.is_empty() {
+        doc.push(
+            Paragraph::new(format!("Telefono: {}", telefono))
+                .aligned(Alignment::Center)
+                .styled(s_small),
+        );
+    }
+
+    doc.push(Break::new(0.5));
+
+    // Número y fecha
+    let fecha = venta.fecha.as_deref().unwrap_or("-");
+    let mut nro_table = TableLayout::new(vec![1, 1]);
+    nro_table
+        .row()
+        .element(
+            Paragraph::new(format!("Nro: {}", venta.numero)).styled(s_bold),
+        )
+        .element(
+            Paragraph::new(format!("Fecha: {}", fecha))
+                .aligned(Alignment::Right)
+                .styled(s_bold),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    doc.push(nro_table);
+
+    doc.push(Break::new(0.3));
+    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
+    doc.push(Break::new(0.5));
+
+    // ===================================================================
+    // DATOS DEL CLIENTE
+    // ===================================================================
+    doc.push(Paragraph::new("CLIENTE").styled(s_subtitle));
+    doc.push(Break::new(0.3));
+
+    let mut cliente_table = TableLayout::new(vec![1, 3]);
+    cliente_table
+        .row()
+        .element(Paragraph::new("Nombre:").styled(s_bold))
+        .element(Paragraph::new(cliente_nombre.unwrap_or("Consumidor Final")).styled(s_normal))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    cliente_table
+        .row()
+        .element(Paragraph::new("Identificacion:").styled(s_bold))
+        .element(Paragraph::new(cliente_identificacion.unwrap_or("9999999999999")).styled(s_normal))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    doc.push(cliente_table);
+
+    doc.push(Break::new(0.5));
+
+    // ===================================================================
+    // DATOS DE TRANSPORTE
+    // ===================================================================
+    doc.push(Paragraph::new("TRANSPORTE").styled(s_subtitle));
+    doc.push(Break::new(0.3));
+
+    let placa = venta.guia_placa.as_deref().unwrap_or("-");
+    let chofer = venta.guia_chofer.as_deref().unwrap_or("-");
+    let destino = venta.guia_direccion_destino.as_deref().unwrap_or("-");
+
+    let mut transporte_table = TableLayout::new(vec![1, 3]);
+    transporte_table
+        .row()
+        .element(Paragraph::new("Placa:").styled(s_bold))
+        .element(Paragraph::new(placa).styled(s_normal))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    transporte_table
+        .row()
+        .element(Paragraph::new("Chofer:").styled(s_bold))
+        .element(Paragraph::new(chofer).styled(s_normal))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    transporte_table
+        .row()
+        .element(Paragraph::new("Destino:").styled(s_bold))
+        .element(Paragraph::new(destino).styled(s_normal))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+    doc.push(transporte_table);
+
+    doc.push(Break::new(0.3));
+    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
+    doc.push(Break::new(0.5));
+
+    // ===================================================================
+    // TABLA DE PRODUCTOS
+    // ===================================================================
+    doc.push(Paragraph::new("DETALLE DE PRODUCTOS").styled(s_subtitle));
+    doc.push(Break::new(0.3));
+
+    // Header: # | Producto | Cant | P.Unit | Subtotal
+    let mut items_table = TableLayout::new(vec![1, 6, 2, 2, 2]);
+
+    // Header row
+    items_table
+        .row()
+        .element(Paragraph::new("#").aligned(Alignment::Center).styled(s_table_header))
+        .element(Paragraph::new("Producto").styled(s_table_header))
+        .element(Paragraph::new("Cant").aligned(Alignment::Center).styled(s_table_header))
+        .element(Paragraph::new("P.Unit").aligned(Alignment::Right).styled(s_table_header))
+        .element(Paragraph::new("Subtotal").aligned(Alignment::Right).styled(s_table_header))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    // Separator row
+    items_table
+        .row()
+        .element(Paragraph::new("---").styled(s_small))
+        .element(Paragraph::new("------------------------------").styled(s_small))
+        .element(Paragraph::new("------").styled(s_small))
+        .element(Paragraph::new("--------").styled(s_small))
+        .element(Paragraph::new("--------").styled(s_small))
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    for (i, det) in detalles.iter().enumerate() {
+        let nombre = det.nombre_producto.as_deref().unwrap_or("Producto");
+        let cant_str = if det.cantidad == det.cantidad.floor() {
+            format!("{:.0}", det.cantidad)
+        } else {
+            format!("{:.2}", det.cantidad)
+        };
+
+        items_table
+            .row()
+            .element(
+                Paragraph::new(format!("{}", i + 1))
+                    .aligned(Alignment::Center)
+                    .styled(s_table_cell),
+            )
+            .element(Paragraph::new(nombre).styled(s_table_cell))
+            .element(
+                Paragraph::new(&cant_str)
+                    .aligned(Alignment::Center)
+                    .styled(s_table_cell),
+            )
+            .element(
+                Paragraph::new(format!("${:.2}", det.precio_unitario))
+                    .aligned(Alignment::Right)
+                    .styled(s_table_cell),
+            )
+            .element(
+                Paragraph::new(format!("${:.2}", det.subtotal))
+                    .aligned(Alignment::Right)
+                    .styled(s_table_cell),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+
+        // Info adicional (S/N, lote, observacion)
+        if let Some(ref info) = det.info_adicional {
+            if !info.is_empty() {
+                items_table
+                    .row()
+                    .element(Paragraph::new("").styled(s_small))
+                    .element(Paragraph::new(format!("  {}", info)).styled(s_small))
+                    .element(Paragraph::new("").styled(s_small))
+                    .element(Paragraph::new("").styled(s_small))
+                    .element(Paragraph::new("").styled(s_small))
+                    .push()
+                    .map_err(|e| format!("Error: {}", e))?;
+            }
+        }
+    }
+
+    doc.push(items_table);
+
+    doc.push(Break::new(0.3));
+    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
+    doc.push(Break::new(0.3));
+
+    // ===================================================================
+    // TOTALES
+    // ===================================================================
+    let mut totales_table = TableLayout::new(vec![5, 2]);
+    totales_table
+        .row()
+        .element(Paragraph::new("Subtotal:").aligned(Alignment::Right).styled(s_bold))
+        .element(
+            Paragraph::new(format!("${:.2}", venta.subtotal_sin_iva + venta.subtotal_con_iva))
+                .aligned(Alignment::Right)
+                .styled(s_normal),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    if venta.descuento > 0.0 {
+        totales_table
+            .row()
+            .element(Paragraph::new("Descuento:").aligned(Alignment::Right).styled(s_bold))
+            .element(
+                Paragraph::new(format!("-${:.2}", venta.descuento))
+                    .aligned(Alignment::Right)
+                    .styled(s_normal),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
+
+    totales_table
+        .row()
+        .element(Paragraph::new("IVA:").aligned(Alignment::Right).styled(s_bold))
+        .element(
+            Paragraph::new(format!("${:.2}", venta.iva))
+                .aligned(Alignment::Right)
+                .styled(s_normal),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    totales_table
+        .row()
+        .element(Paragraph::new("TOTAL:").aligned(Alignment::Right).styled(s_total_bold))
+        .element(
+            Paragraph::new(format!("${:.2}", venta.total))
+                .aligned(Alignment::Right)
+                .styled(s_total_bold),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    doc.push(totales_table);
+
+    doc.push(Break::new(3));
+
+    // ===================================================================
+    // FIRMAS
+    // ===================================================================
+    let mut firmas_table = TableLayout::new(vec![1, 1, 1]);
+    firmas_table
+        .row()
+        .element(
+            Paragraph::new("_________________________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .element(Paragraph::new("").styled(s_firma))
+        .element(
+            Paragraph::new("_________________________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    firmas_table
+        .row()
+        .element(
+            Paragraph::new("ENTREGADO POR")
+                .aligned(Alignment::Center)
+                .styled(s_bold),
+        )
+        .element(Paragraph::new("").styled(s_firma))
+        .element(
+            Paragraph::new("RECIBI CONFORME")
+                .aligned(Alignment::Center)
+                .styled(s_bold),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    firmas_table
+        .row()
+        .element(
+            Paragraph::new("Nombre: _______________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .element(Paragraph::new("").styled(s_firma))
+        .element(
+            Paragraph::new("Nombre: _______________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    firmas_table
+        .row()
+        .element(
+            Paragraph::new("Cedula: _______________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .element(Paragraph::new("").styled(s_firma))
+        .element(
+            Paragraph::new("Cedula: _______________")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    firmas_table
+        .row()
+        .element(
+            Paragraph::new("Firma")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .element(Paragraph::new("").styled(s_firma))
+        .element(
+            Paragraph::new("Firma")
+                .aligned(Alignment::Center)
+                .styled(s_firma),
+        )
+        .push()
+        .map_err(|e| format!("Error: {}", e))?;
+
+    doc.push(firmas_table);
+
+    doc.push(Break::new(2));
+
+    // Nota legal
+    doc.push(
+        Paragraph::new("Nota: Este documento NO tiene valor tributario. Es una guia de remision interna para control de mercaderia.")
+            .aligned(Alignment::Center)
+            .styled(s_nota),
+    );
+
+    doc.push(Break::new(1));
+    doc.push(
+        Paragraph::new("Generado con CLOUGET PUNTO DE VENTA")
+            .aligned(Alignment::Center)
+            .styled(s_nota),
+    );
+
+    let mut buffer = Vec::new();
+    doc.render(&mut buffer)
+        .map_err(|e| format!("Error generando PDF: {}", e))?;
+
+    Ok(buffer)
 }

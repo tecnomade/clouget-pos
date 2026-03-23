@@ -12,36 +12,13 @@ export default function UpdateChecker() {
   const [error, setError] = useState("");
   const [cerrado, setCerrado] = useState(false);
 
-  const verificarActualizacion = useCallback(async () => {
-    try {
-      console.log("[Updater] Verificando actualizaciones...");
-      const resultado = await check();
-      console.log("[Updater] Resultado:", resultado);
-      if (resultado) {
-        setUpdate(resultado);
-        setEstado("disponible");
-      } else {
-        console.log("[Updater] No hay actualizaciones disponibles (ya esta en la ultima version)");
-      }
-    } catch (e) {
-      console.error("[Updater] Error al verificar actualizacion:", e);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Verificar 5 segundos despues de montar para no bloquear el inicio
-    const timer = setTimeout(verificarActualizacion, 5000);
-    return () => clearTimeout(timer);
-  }, [verificarActualizacion]);
-
-  const descargarEInstalar = async () => {
-    if (!update) return;
+  const descargarEInstalar = useCallback(async (upd: Update) => {
     setEstado("descargando");
     setProgreso(0);
 
     try {
       let descargado = 0;
-      await update.downloadAndInstall((event) => {
+      await upd.downloadAndInstall((event) => {
         switch (event.event) {
           case "Started":
             if (event.data.contentLength) {
@@ -68,7 +45,31 @@ export default function UpdateChecker() {
       setEstado("error");
       setError(String(e));
     }
-  };
+  }, []);
+
+  const verificarActualizacion = useCallback(async () => {
+    try {
+      console.log("[Updater] Verificando actualizaciones...");
+      const resultado = await check();
+      console.log("[Updater] Resultado:", resultado);
+      if (resultado) {
+        setUpdate(resultado);
+        setEstado("disponible");
+        // Auto-descargar e instalar
+        descargarEInstalar(resultado);
+      } else {
+        console.log("[Updater] No hay actualizaciones disponibles (ya esta en la ultima version)");
+      }
+    } catch (e) {
+      console.error("[Updater] Error al verificar actualizacion:", e);
+    }
+  }, [descargarEInstalar]);
+
+  useEffect(() => {
+    // Verificar 5 segundos despues de montar para no bloquear el inicio
+    const timer = setTimeout(verificarActualizacion, 5000);
+    return () => clearTimeout(timer);
+  }, [verificarActualizacion]);
 
   if (estado === "idle" || cerrado) return null;
 
@@ -76,49 +77,18 @@ export default function UpdateChecker() {
     return (
       <div style={{
         padding: "8px 16px",
-        background: "#eff6ff",
-        borderBottom: "2px solid #93c5fd",
+        background: "rgba(59,130,246,0.15)",
+        borderBottom: "2px solid rgba(59,130,246,0.3)",
         display: "flex",
         alignItems: "center",
         gap: 10,
         fontSize: 13,
-        color: "#1e40af",
+        color: "var(--color-primary)",
       }}>
         <span style={{ fontSize: 16 }}>&#8593;</span>
         <span style={{ flex: 1 }}>
-          Nueva version <strong>{update?.version}</strong> disponible.
+          Nueva version <strong>{update?.version}</strong> disponible. Descargando...
         </span>
-        <button
-          onClick={descargarEInstalar}
-          style={{
-            background: "#2563eb",
-            color: "white",
-            border: "none",
-            borderRadius: 4,
-            padding: "4px 12px",
-            cursor: "pointer",
-            fontSize: 12,
-            fontWeight: 600,
-          }}
-        >
-          Actualizar ahora
-        </button>
-        <button
-          onClick={() => setCerrado(true)}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            fontSize: 16,
-            color: "#1e40af",
-            padding: "0 4px",
-            lineHeight: 1,
-            opacity: 0.6,
-          }}
-          title="Cerrar"
-        >
-          x
-        </button>
       </div>
     );
   }
@@ -127,25 +97,25 @@ export default function UpdateChecker() {
     return (
       <div style={{
         padding: "8px 16px",
-        background: "#eff6ff",
-        borderBottom: "2px solid #93c5fd",
+        background: "rgba(59,130,246,0.15)",
+        borderBottom: "2px solid rgba(59,130,246,0.3)",
         fontSize: 13,
-        color: "#1e40af",
+        color: "var(--color-primary)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span>Descargando actualizacion... {progreso}%</span>
+          <span>Descargando v{update?.version}... {progreso}%</span>
         </div>
         <div style={{
           marginTop: 4,
           height: 4,
-          background: "#dbeafe",
+          background: "rgba(59,130,246,0.2)",
           borderRadius: 2,
           overflow: "hidden",
         }}>
           <div style={{
             height: "100%",
             width: `${progreso}%`,
-            background: "#2563eb",
+            background: "var(--color-primary)",
             transition: "width 0.3s",
             borderRadius: 2,
           }} />
@@ -158,13 +128,13 @@ export default function UpdateChecker() {
     return (
       <div style={{
         padding: "8px 16px",
-        background: "#f0fdf4",
-        borderBottom: "2px solid #86efac",
+        background: "rgba(34,197,94,0.15)",
+        borderBottom: "2px solid rgba(34,197,94,0.3)",
         display: "flex",
         alignItems: "center",
         gap: 10,
         fontSize: 13,
-        color: "#166534",
+        color: "var(--color-success)",
       }}>
         <span>Actualizacion instalada. Reiniciando...</span>
       </div>
@@ -175,13 +145,13 @@ export default function UpdateChecker() {
     return (
       <div style={{
         padding: "8px 16px",
-        background: "#fef2f2",
-        borderBottom: "2px solid #fca5a5",
+        background: "rgba(239,68,68,0.15)",
+        borderBottom: "2px solid rgba(239,68,68,0.3)",
         display: "flex",
         alignItems: "center",
         gap: 10,
         fontSize: 13,
-        color: "#991b1b",
+        color: "var(--color-danger)",
       }}>
         <span style={{ flex: 1 }}>Error al actualizar: {error}</span>
         <button
@@ -191,7 +161,7 @@ export default function UpdateChecker() {
             border: "none",
             cursor: "pointer",
             fontSize: 16,
-            color: "#991b1b",
+            color: "var(--color-danger)",
             padding: "0 4px",
             lineHeight: 1,
             opacity: 0.6,

@@ -114,11 +114,11 @@ pub fn generar_etiquetas_pdf(
     let preset_info = resolver_preset(&config);
     let cols = preset_info.columnas.unwrap_or(config.columnas.max(1).min(6) as usize);
 
-    let font_family = genpdf::fonts::from_files("C:\\Windows\\Fonts", "arial", None)
-        .unwrap_or_else(|_| {
-            genpdf::fonts::from_files("C:\\Windows\\Fonts", "calibri", None)
-                .unwrap_or_else(|_| genpdf::fonts::from_files("C:\\Windows\\Fonts", "consola", None).unwrap())
-        });
+    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let font_family = genpdf::fonts::from_files(&fonts_dir, "LiberationSans", None)
+        .or_else(|_| genpdf::fonts::from_files("C:\\Windows\\Fonts", "arial", None))
+        .or_else(|_| genpdf::fonts::from_files("C:\\Windows\\Fonts", "calibri", None))
+        .map_err(|e| format!("No se encontro fuente para etiquetas: {}", e))?;
 
     let mut doc = genpdf::Document::new(font_family);
     let mut decorator = SimplePageDecorator::new();
@@ -154,10 +154,14 @@ pub fn generar_etiquetas_pdf(
 
             // Nombre: truncar según ancho disponible
             let max_chars = if cell_width_mm < 30.0 { 15 } else if cell_width_mm < 50.0 { 22 } else { 30 };
-            let nombre_corto = if prod.nombre.len() > max_chars {
-                format!("{}...", &prod.nombre[..max_chars.saturating_sub(3)])
-            } else {
-                prod.nombre.clone()
+            let nombre_corto = {
+                let chars: Vec<char> = prod.nombre.chars().collect();
+                if chars.len() > max_chars {
+                    let truncated: String = chars[..max_chars.saturating_sub(3)].iter().collect();
+                    format!("{}...", truncated)
+                } else {
+                    prod.nombre.clone()
+                }
             };
 
             all_cells.push(CeldaData {

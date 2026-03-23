@@ -182,7 +182,7 @@ export default function ModalNotaCredito({
             <h3>Autorizacion Requerida</h3>
           </div>
           <div className="modal-body">
-            <p style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>
+            <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 12 }}>
               Para crear una nota de credito de la factura <strong>{ventaNumero}</strong>,
               ingrese el PIN de administrador.
             </p>
@@ -197,7 +197,7 @@ export default function ModalNotaCredito({
               disabled={verificandoPin}
               style={{ textAlign: "center", fontSize: 18, letterSpacing: 8 }}
             />
-            {pinError && <div style={{ color: "#dc2626", fontSize: 12, marginTop: 6 }}>{pinError}</div>}
+            {pinError && <div style={{ color: "var(--color-danger)", fontSize: 12, marginTop: 6 }}>{pinError}</div>}
           </div>
           <div className="modal-footer">
             <button className="btn btn-outline" onClick={onClose} disabled={verificandoPin}>
@@ -305,7 +305,7 @@ export default function ModalNotaCredito({
           </div>
 
           {/* Totales */}
-          <div style={{ background: "#f8fafc", padding: 12, borderRadius: 6, fontSize: 13 }}>
+          <div style={{ background: "var(--color-surface-alt)", padding: 12, borderRadius: 6, fontSize: 13 }}>
             <div className="flex justify-between">
               <span>Subtotal 0%:</span>
               <span>${totalSinIva.toFixed(2)}</span>
@@ -320,11 +320,11 @@ export default function ModalNotaCredito({
             </div>
             <div className="flex justify-between font-bold" style={{ borderTop: "1px solid var(--color-border)", paddingTop: 6, marginTop: 6 }}>
               <span>TOTAL NC:</span>
-              <span style={{ color: "#dc2626" }}>${total.toFixed(2)}</span>
+              <span style={{ color: "var(--color-danger)" }}>${total.toFixed(2)}</span>
             </div>
           </div>
 
-          {error && <div style={{ color: "#dc2626", fontSize: 12, marginTop: 8 }}>{error}</div>}
+          {error && <div style={{ color: "var(--color-danger)", fontSize: 12, marginTop: 8 }}>{error}</div>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onClose} disabled={procesando}>
@@ -334,7 +334,7 @@ export default function ModalNotaCredito({
             className="btn btn-primary"
             onClick={handleCrear}
             disabled={procesando || itemsIncluidos.length === 0}
-            style={{ background: "#dc2626", borderColor: "#dc2626" }}
+            style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
           >
             {procesando ? "Procesando..." : "Crear Nota de Credito"}
           </button>

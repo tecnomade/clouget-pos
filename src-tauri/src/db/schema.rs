@@ -580,6 +580,27 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
 
+    // Migración: tipo_estado en ventas (COMPLETADA, BORRADOR, COTIZACION, CONVERTIDA)
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN tipo_estado TEXT NOT NULL DEFAULT 'COMPLETADA'", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ventas_tipo_estado ON ventas(tipo_estado)", []);
+
+    // Guías de Remisión
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_origen_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_placa TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_chofer TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_direccion_destino TEXT", []);
+
+    // Tabla de choferes/transportistas (autocompletar)
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS choferes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            placa TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(nombre)
+        );"
+    ).ok();
+
     // Migrar stock existente a stock_establecimiento (solo una vez)
     let stock_est_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM stock_establecimiento", [], |row| row.get(0))

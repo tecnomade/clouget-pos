@@ -110,6 +110,45 @@ export interface Venta {
   banco_id?: number;
   referencia_pago?: string;
   banco_nombre?: string;
+  tipo_estado?: string;
+  guia_placa?: string;
+  guia_chofer?: string;
+  guia_direccion_destino?: string;
+}
+
+export interface DocumentoReciente {
+  id: number;
+  numero: string;
+  tipo_estado: string;
+  tipo_documento: string;
+  cliente_nombre?: string;
+  total: number;
+  fecha: string;
+}
+
+export interface ResumenGuias {
+  abiertas: number;
+  cerradas: number;
+  total_pendiente: number;
+  total_cerrado: number;
+}
+
+// Reportes avanzados
+export interface ReporteUtilidad {
+  ventas_brutas: number; costo_ventas: number; utilidad_bruta: number; margen_bruto: number;
+  total_gastos: number; utilidad_neta: number; margen_neto: number; num_ventas: number;
+  promedio_por_venta: number; total_devoluciones: number;
+  por_categoria: { categoria: string; ventas: number; costo: number; utilidad: number }[];
+  gastos_por_categoria: { categoria: string; monto: number }[];
+}
+export interface ReporteBalance {
+  ingresos_efectivo: number; ingresos_transferencia: number; ingresos_credito_cobrado: number;
+  total_ingresos: number; gastos_por_categoria: { categoria: string; monto: number }[];
+  total_gastos: number; total_devoluciones: number; total_egresos: number; resultado: number;
+  cuentas_por_cobrar: number; valor_inventario: number;
+}
+export interface ProductoRentabilidad {
+  nombre: string; categoria: string; cantidad: number; ingreso: number; costo: number; utilidad: number; margen: number;
 }
 
 export interface VentaDetalle {
@@ -122,6 +161,7 @@ export interface VentaDetalle {
   descuento: number;
   iva_porcentaje: number;
   subtotal: number;
+  info_adicional?: string | null;
 }
 
 export interface NuevaVenta {
@@ -136,6 +176,9 @@ export interface NuevaVenta {
   banco_id?: number | null;
   referencia_pago?: string | null;
   comprobante_imagen?: string | null;
+  guia_placa?: string | null;
+  guia_chofer?: string | null;
+  guia_direccion_destino?: string | null;
 }
 
 export interface VentaCompleta {

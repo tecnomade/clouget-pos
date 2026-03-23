@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import PosGridTactil from "../components/PosGridTactil";
+import DocumentosRecientes from "../components/DocumentosRecientes";
 import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
 
 export default function PuntoVenta() {
@@ -14,7 +15,7 @@ export default function PuntoVenta() {
   const navigate = useNavigate();
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState<ProductoBusqueda[]>([]);
-  const [favoritos, setFavoritos] = useState<ProductoBusqueda[]>([]);
+  const [_favoritos, setFavoritos] = useState<ProductoBusqueda[]>([]);
   const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
   const [montoRecibido, setMontoRecibido] = useState("");
   const [ventaCompletada, setVentaCompletada] = useState<VentaCompleta | null>(null);
@@ -22,8 +23,8 @@ export default function PuntoVenta() {
   const [esFiado, setEsFiado] = useState(false);
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null);
   const [verificandoCaja, setVerificandoCaja] = useState(true);
-  const [alertas, setAlertas] = useState<AlertaStock[]>([]);
-  const [mostrarAlertas, setMostrarAlertas] = useState(false);
+  const [_alertas, setAlertas] = useState<AlertaStock[]>([]);
+  const [_mostrarAlertas, _setMostrarAlertas] = useState(false);
   const [tipoDocumento, setTipoDocumento] = useState("NOTA_VENTA");
   const [regimen, setRegimen] = useState("RIMPE_POPULAR");
   const [sriModuloActivo, setSriModuloActivo] = useState(false);
@@ -39,8 +40,7 @@ export default function PuntoVenta() {
   const [sriEmisionAutomatica, setSriEmisionAutomatica] = useState(false);
   const [ticketUsarPdf, setTicketUsarPdf] = useState(false);
 
-  // Modo tactil
-  const [modoPos, setModoPos] = useState<"normal" | "tactil">("normal");
+  // Productos grid
   const [productosTactil, setProductosTactil] = useState<ProductoTactil[]>([]);
   const [categoriasTactil, setCategoriasTactil] = useState<Categoria[]>([]);
 
@@ -61,6 +61,17 @@ export default function PuntoVenta() {
   const [referenciaPago, setReferenciaPago] = useState("");
   const [requiereReferencia, setRequiereReferencia] = useState(false);
   const [_requiereComprobante, setRequiereComprobante] = useState(false);
+
+  // Panel documentos recientes
+  const [mostrarRecientes, setMostrarRecientes] = useState(false);
+
+  // Modal guía de remisión
+  const [mostrarModalGuia, setMostrarModalGuia] = useState(false);
+  const [guiaPlaca, setGuiaPlaca] = useState("");
+  const [guiaChofer, setGuiaChofer] = useState("");
+  const [guiaDireccion, setGuiaDireccion] = useState("");
+  const [guardandoGuia, setGuardandoGuia] = useState(false);
+  const [choferesGuardados, setChoferesGuardados] = useState<[number, string, string | null][]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -90,12 +101,9 @@ export default function PuntoVenta() {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
-      // Modo tactil
-      if (cfg.modo_pos === "tactil") {
-        setModoPos("tactil");
-        listarProductosTactil().then(setProductosTactil).catch(() => {});
-        listarCategorias().then(setCategoriasTactil).catch(() => {});
-      }
+      // Cargar productos y categorias para grid
+      listarProductosTactil().then(setProductosTactil).catch(() => {});
+      listarCategorias().then(setCategoriasTactil).catch(() => {});
     }).catch(() => {});
     // Cargar estado SRI (incluyendo suscripcion y ambiente)
     consultarEstadoSri().then((estado) => {
@@ -108,7 +116,13 @@ export default function PuntoVenta() {
   const handleBuscar = async (termino: string) => {
     setBusqueda(termino);
     if (termino.length >= 1) {
-      setResultados(await buscarProductos(termino, clienteSeleccionado?.lista_precio_id));
+      const res = await buscarProductos(termino, clienteSeleccionado?.lista_precio_id);
+      // Si hay exactamente 1 resultado y el término parece código exacto (código de barras numérico o código de producto), agregar directamente
+      if (res.length === 1 && (res[0].codigo === termino || /^\d{4,}$/.test(termino))) {
+        agregarAlCarrito(res[0]);
+        return;
+      }
+      setResultados(res);
     } else {
       setResultados([]);
     }
@@ -250,33 +264,8 @@ export default function PuntoVenta() {
     );
   };
 
-  const actualizarDescuento = (productoId: number, descuento: number) => {
-    setCarrito((prev) =>
-      prev.map((i) =>
-        i.producto_id === productoId
-          ? { ...i, descuento, subtotal: i.cantidad * i.precio_unitario - descuento }
-          : i
-      )
-    );
-  };
-
   const eliminarItem = (productoId: number) => {
     setCarrito((prev) => prev.filter((i) => i.producto_id !== productoId));
-  };
-
-  const cambiarListaPrecioItem = (productoId: number, nuevoPrecio: number, listaNombre?: string) => {
-    setCarrito((prev) =>
-      prev.map((i) =>
-        i.producto_id === productoId
-          ? {
-              ...i,
-              precio_unitario: nuevoPrecio,
-              subtotal: i.cantidad * nuevoPrecio - i.descuento,
-              lista_seleccionada: listaNombre,
-            }
-          : i
-      )
-    );
   };
 
   const subtotal = carrito.reduce((sum, i) => sum + i.subtotal, 0);
@@ -408,11 +397,9 @@ export default function PuntoVenta() {
         }
       }
       setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
-      // Refrescar favoritos, alertas de stock y productos tactil
+      // Refrescar favoritos, alertas de stock y productos grid
       productosMasVendidos(12).then(setFavoritos).catch(() => {});
-      if (modoPos === "tactil") {
-        listarProductosTactil().then(setProductosTactil).catch(() => {});
-      }
+      listarProductosTactil().then(setProductosTactil).catch(() => {});
       alertasStockBajo().then((a) => {
         setAlertas(a);
         if (a.length > 0) {
@@ -423,7 +410,7 @@ export default function PuntoVenta() {
     } catch (err) {
       toastError("Error al registrar venta: " + err);
     }
-  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, modoPos, regimen, toastError, toastExito, toastWarning]);
+  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, toastError, toastExito, toastWarning]);
 
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);
@@ -466,16 +453,98 @@ export default function PuntoVenta() {
   }, [carrito]);
 
   // Escuchar F9 (cobrar) y F10 (nueva venta) via CustomEvent
+  const guardarComoDocumento = useCallback(async (tipo: "borrador" | "cotizacion") => {
+    if (carrito.length === 0) return;
+    const nueva: NuevaVenta = {
+      cliente_id: clienteSeleccionado?.id ?? 1,
+      items: carrito.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, descuento: i.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: i.subtotal, info_adicional: i.info_adicional || null } as any)),
+      forma_pago: formaPago, monto_recibido: 0, descuento: 0,
+      tipo_documento: tipoDocumento, es_fiado: false,
+    };
+    try {
+      if (tipo === "borrador") {
+        await guardarBorrador(nueva);
+        toastExito("Borrador guardado");
+      } else {
+        const res = await guardarCotizacion(nueva);
+        toastExito(`Cotizacion ${res.venta.numero} creada`);
+      }
+      setCarrito([]); setMontoRecibido("");
+    } catch (err) { toastError("Error: " + err); }
+  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, toastExito, toastError]);
+
+  const handleGuiaRemision = useCallback(() => {
+    if (carrito.length === 0) return;
+    // Prellenar dirección del cliente
+    setGuiaDireccion(clienteSeleccionado?.direccion || "");
+    // Cargar choferes guardados
+    listarChoferes().then(setChoferesGuardados).catch(() => {});
+    setMostrarModalGuia(true);
+  }, [carrito, clienteSeleccionado]);
+
+  const confirmarGuiaRemision = useCallback(async () => {
+    if (carrito.length === 0) return;
+    setGuardandoGuia(true);
+    const nueva: NuevaVenta = {
+      cliente_id: clienteSeleccionado?.id ?? 1,
+      items: carrito.map((i) => ({
+        producto_id: i.producto_id,
+        cantidad: i.cantidad,
+        precio_unitario: i.precio_unitario,
+        descuento: i.descuento,
+        iva_porcentaje: i.iva_porcentaje,
+        subtotal: i.subtotal,
+        info_adicional: i.info_adicional || null,
+      } as any)),
+      forma_pago: formaPago,
+      monto_recibido: 0,
+      descuento: 0,
+      tipo_documento: tipoDocumento,
+      es_fiado: false,
+      guia_placa: guiaPlaca.trim() || null,
+      guia_chofer: guiaChofer.trim() || null,
+      guia_direccion_destino: guiaDireccion.trim() || null,
+    };
+    try {
+      const res = await guardarGuiaRemision(nueva);
+      toastExito(`Guía ${res.venta.numero} creada - stock descontado`);
+      // Guardar chofer para autocompletar futuro
+      if (guiaChofer.trim()) {
+        guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});
+      }
+      setCarrito([]);
+      setMontoRecibido("");
+      setFormaPago("EFECTIVO");
+      setEsFiado(false);
+      setClienteSeleccionado(null);
+      setMostrarModalGuia(false);
+      setGuiaPlaca(""); setGuiaChofer(""); setGuiaDireccion("");
+    } catch (err) {
+      toastError("Error: " + err);
+    } finally {
+      setGuardandoGuia(false);
+    }
+  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, guiaPlaca, guiaChofer, guiaDireccion, toastExito, toastError]);
+
   useEffect(() => {
     const handleCobrar = () => procesarVenta();
     const handleNuevaVenta = () => nuevaVentaClick();
+    const handleBorrador = () => guardarComoDocumento("borrador");
+    const handleCotizacion = () => guardarComoDocumento("cotizacion");
+    const handleGuia = () => handleGuiaRemision();
     window.addEventListener("pos-cobrar", handleCobrar);
     window.addEventListener("pos-nueva-venta", handleNuevaVenta);
+    window.addEventListener("pos-guardar-borrador", handleBorrador);
+    window.addEventListener("pos-guardar-cotizacion", handleCotizacion);
+    window.addEventListener("pos-guardar-guia", handleGuia);
     return () => {
       window.removeEventListener("pos-cobrar", handleCobrar);
       window.removeEventListener("pos-nueva-venta", handleNuevaVenta);
+      window.removeEventListener("pos-guardar-borrador", handleBorrador);
+      window.removeEventListener("pos-guardar-cotizacion", handleCotizacion);
+      window.removeEventListener("pos-guardar-guia", handleGuia);
     };
-  }, [procesarVenta, nuevaVentaClick]);
+  }, [procesarVenta, nuevaVentaClick, guardarComoDocumento, handleGuiaRemision]);
 
   // Background: procesar emails pendientes cada 60 segundos
   useEffect(() => {
@@ -552,14 +621,14 @@ export default function PuntoVenta() {
                 </p>
               )}
               {emitiendo && (
-                <div style={{ marginTop: 12, color: "#2563eb", fontSize: 13 }}>
+                <div style={{ marginTop: 12, color: "var(--color-primary)", fontSize: 13 }}>
                   Enviando factura al SRI...
                 </div>
               )}
               {esFacturaAutorizada && (
                 <div style={{
                   marginTop: 12, padding: "8px 12px", borderRadius: "var(--radius)",
-                  background: "#dcfce7", color: "#166534", fontSize: 13,
+                  background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)", fontSize: 13,
                 }}>
                   Factura autorizada por el SRI
                 </div>
@@ -643,17 +712,17 @@ export default function PuntoVenta() {
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header" style={{ paddingRight: 340 }}>
         <h2>Punto de Venta</h2>
         <div className="flex gap-2 items-center">
           {/* Selector de cliente */}
           <div style={{ position: "relative" }}>
             {clienteSeleccionado ? (
               <div className="flex gap-2 items-center">
-                <span style={{ fontSize: 13, background: "#e0f2fe", padding: "4px 10px", borderRadius: 4 }}>
+                <span style={{ fontSize: 13, background: "rgba(59, 130, 246, 0.2)", padding: "4px 10px", borderRadius: 4 }}>
                   {clienteSeleccionado.nombre}
                   {clienteSeleccionado.lista_precio_nombre && (
-                    <span style={{ fontSize: 10, marginLeft: 6, background: "#dbeafe", padding: "1px 6px", borderRadius: 3, color: "#1e40af" }}>
+                    <span style={{ fontSize: 10, marginLeft: 6, background: "rgba(59, 130, 246, 0.15)", padding: "1px 6px", borderRadius: 3, color: "var(--color-primary)" }}>
                       {clienteSeleccionado.lista_precio_nombre}
                     </span>
                   )}
@@ -671,8 +740,8 @@ export default function PuntoVenta() {
             {mostrarClientes && !clienteSeleccionado && (
               <div style={{
                 position: "absolute", top: "100%", right: 0, width: 320,
-                background: "white", border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius)", boxShadow: "var(--shadow-md)", zIndex: 20, padding: 8,
+                background: "var(--color-surface)", border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius)", boxShadow: "var(--shadow-lg)", zIndex: 20, padding: 8,
               }}>
                 <div className="flex gap-1 mb-2">
                   <input
@@ -697,10 +766,10 @@ export default function PuntoVenta() {
                 </div>
                 {mostrarCrearCliente && (
                   <div style={{
-                    background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "var(--radius)",
+                    background: "rgba(34, 197, 94, 0.1)", border: "1px solid rgba(34, 197, 94, 0.3)", borderRadius: "var(--radius)",
                     padding: 8, marginBottom: 8,
                   }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: "#166534" }}>Nuevo cliente</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, color: "var(--color-success)" }}>Nuevo cliente</div>
                     <input className="input mb-1" placeholder="Cedula / RUC" value={nuevoClienteId}
                       onChange={(e) => setNuevoClienteId(e.target.value)}
                       style={{ fontSize: 13 }}
@@ -725,7 +794,7 @@ export default function PuntoVenta() {
                 {clientesResultados.map((c) => (
                   <div key={c.id} style={{ padding: "6px 8px", cursor: "pointer", borderRadius: 4, fontSize: 13 }}
                     onClick={() => { setClienteSeleccionado(c); setMostrarClientes(false); setBusquedaCliente(""); setClientesResultados([]); setMostrarCrearCliente(false); recalcularPreciosCarrito(c.id ?? null); }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surface-hover)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
                     <strong>{c.nombre}</strong>
@@ -758,12 +827,12 @@ export default function PuntoVenta() {
                       >
                         {consultandoSri ? "Consultando..." : "🔍 Consultar en SRI"}
                       </button>
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
                         Buscar datos por cédula/RUC en el SRI
                       </div>
                     </div>
                   ) : (
-                    <div style={{ padding: "8px", textAlign: "center", fontSize: 12, color: "#94a3b8" }}>
+                    <div style={{ padding: "8px", textAlign: "center", fontSize: 12, color: "var(--color-text-secondary)" }}>
                       No encontrado. Use <strong>+</strong> para crear.
                     </div>
                   )
@@ -774,276 +843,53 @@ export default function PuntoVenta() {
         </div>
       </div>
 
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* Panel izquierdo - condicional normal/tactil */}
-        {modoPos === "tactil" ? (
-          <div style={{ flex: 1, position: "relative" }}>
-            <PosGridTactil
-              categorias={categoriasTactil}
-              productosTactil={productosTactil}
-              carrito={carrito}
-              onAgregarProducto={agregarAlCarrito}
-              onActualizarCantidad={actualizarCantidad}
-              onEliminarItem={eliminarItem}
-              busqueda={busqueda}
-              onBusquedaChange={handleBuscar}
-              resultados={resultados}
-              inputRef={inputRef}
-            />
-          </div>
-        ) : (
-        <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
-          {/* Barra de busqueda */}
-          <div style={{ position: "relative" }}>
-            <input
-              ref={inputRef}
-              className="input input-lg"
-              data-action="busqueda"
-              placeholder="Buscar producto por nombre o codigo... (Ctrl+B)"
-              value={busqueda}
-              onChange={(e) => handleBuscar(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && resultados.length > 0) {
-                  agregarAlCarrito(resultados[0]);
-                }
-              }}
-            />
-            {resultados.length > 0 && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0,
-                background: "white", border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius)", boxShadow: "var(--shadow-md)",
-                zIndex: 10, maxHeight: 300, overflowY: "auto",
-              }}>
-                {resultados.map((p) => (
-                  <div key={p.id} style={{
-                    padding: "10px 16px", cursor: "pointer", display: "flex",
-                    justifyContent: "space-between", borderBottom: "1px solid var(--color-border)",
-                  }}
-                    onClick={() => agregarAlCarrito(p)}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#f1f5f9")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                  >
-                    <div>
-                      <strong>{p.nombre}</strong>
-                      {p.codigo && <span className="text-secondary" style={{ marginLeft: 8 }}>({p.codigo})</span>}
-                      {p.categoria_nombre?.includes("[otro local]") && (
-                        <span style={{ marginLeft: 8, fontSize: 10, background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4, fontWeight: 600 }}>
-                          Otro local
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex gap-4">
-                      <span style={{
-                        color: p.stock_actual <= 0 ? "#dc2626" : p.stock_actual <= p.stock_minimo ? "#d97706" : undefined,
-                        fontWeight: p.stock_actual <= p.stock_minimo ? 600 : undefined,
-                      }}>
-                        Stock: {p.stock_actual}{p.stock_actual <= p.stock_minimo && p.stock_minimo > 0 ? ` (min: ${p.stock_minimo})` : ""}
-                      </span>
-                      {p.precio_lista != null && p.precio_lista !== p.precio_venta ? (
-                        <span>
-                          <strong style={{ color: "#1e40af" }}>${p.precio_lista.toFixed(2)}</strong>
-                          <span style={{ fontSize: 11, color: "#94a3b8", marginLeft: 4, textDecoration: "line-through" }}>${p.precio_venta.toFixed(2)}</span>
-                        </span>
-                      ) : (
-                        <strong>${p.precio_venta.toFixed(2)}</strong>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Favoritos - productos mas vendidos */}
-          {carrito.length === 0 && favoritos.length > 0 && (
-            <div>
-              <span className="text-secondary" style={{ fontSize: 12, marginBottom: 6, display: "block" }}>
-                Productos frecuentes
-              </span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {favoritos.map((p) => (
-                  <button key={p.id} className="btn btn-outline"
-                    style={{ fontSize: 12, padding: "6px 12px" }}
-                    onClick={() => agregarAlCarrito(p)}>
-                    {p.nombre} - ${p.precio_venta.toFixed(2)}
-                    <span style={{
-                      fontSize: 10, marginLeft: 4,
-                      color: p.stock_actual <= 0 ? "#dc2626" : p.stock_actual <= p.stock_minimo ? "#d97706" : "#64748b",
-                    }}>
-                      ({p.stock_actual})
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Tabla del carrito */}
-          <div className="card" style={{ flex: 1, overflow: "auto" }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th style={{ width: 80 }}>Cant.</th>
-                  <th style={{ width: 90 }} className="text-right">P. Unit.</th>
-                  <th style={{ width: 80 }} className="text-right">Desc.</th>
-                  <th style={{ width: 100 }} className="text-right">Subtotal</th>
-                  <th style={{ width: 40 }}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {carrito.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="text-center text-secondary" style={{ padding: 40 }}>
-                      Busca un producto para comenzar la venta
-                    </td>
-                  </tr>
-                ) : (
-                  carrito.map((item) => (
-                    <tr key={item.producto_id}>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <strong>{item.nombre}</strong>
-                          {item.codigo && <span className="text-secondary" style={{ fontSize: 12 }}>{item.codigo}</span>}
-                          <span style={{
-                            fontSize: 11,
-                            color: item.stock_disponible <= 0 ? "#dc2626" : item.stock_disponible <= item.stock_minimo ? "#d97706" : "#94a3b8",
-                            fontWeight: item.stock_disponible <= item.stock_minimo ? 600 : undefined,
-                          }}>
-                            (stock: {item.stock_disponible})
-                          </span>
-                          <button
-                            title="Agregar info (S/N, lote, obs.)"
-                            style={{
-                              background: item.info_adicional ? "#dbeafe" : "none",
-                              border: item.info_adicional ? "1px solid #93c5fd" : "1px solid #e2e8f0",
-                              borderRadius: 4, cursor: "pointer", fontSize: 11, padding: "1px 5px",
-                              color: item.info_adicional ? "#1e40af" : "#94a3b8",
-                            }}
-                            onClick={() => {
-                              const valor = prompt("Info adicional (S/N, lote, observacion):", item.info_adicional || "");
-                              if (valor !== null) {
-                                setCarrito(prev => prev.map(i =>
-                                  i.producto_id === item.producto_id ? { ...i, info_adicional: valor || undefined } : i
-                                ));
-                              }
-                            }}
-                          >
-                            {item.info_adicional ? "📝" : "＋"}
-                          </button>
-                        </div>
-                        {item.info_adicional && (
-                          <div style={{ fontSize: 10, color: "#1e40af", marginTop: 2, paddingLeft: 2 }}>
-                            {item.info_adicional}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <input type="number" className="input" value={item.cantidad} min={1} step={1}
-                          style={{ width: 60, textAlign: "center", padding: "4px" }}
-                          onChange={(e) => actualizarCantidad(item.producto_id, parseFloat(e.target.value) || 0)} />
-                      </td>
-                      <td className="text-right">
-                        {item.precios_disponibles && item.precios_disponibles.length > 0 ? (
-                          <div style={{ position: "relative" }}>
-                            <select
-                              className="input"
-                              style={{ width: 90, fontSize: 11, padding: "3px 2px", textAlign: "right", appearance: "auto" }}
-                              value={item.lista_seleccionada ?? "base"}
-                              onChange={(e) => {
-                                const key = e.target.value;
-                                if (key === "base") {
-                                  cambiarListaPrecioItem(item.producto_id, item.precio_base, undefined);
-                                } else {
-                                  const match = item.precios_disponibles?.find(p => p.lista_nombre === key);
-                                  if (match) {
-                                    cambiarListaPrecioItem(item.producto_id, match.precio, match.lista_nombre);
-                                  }
-                                }
-                              }}
-                            >
-                              <option value="base">
-                                ${item.precio_base.toFixed(2)} (Base)
-                              </option>
-                              {item.precios_disponibles.map((pp) => (
-                                <option key={pp.lista_precio_id} value={pp.lista_nombre}>
-                                  ${pp.precio.toFixed(2)} ({pp.lista_nombre})
-                                </option>
-                              ))}
-                            </select>
-                            {item.lista_seleccionada && (
-                              <div style={{ fontSize: 9, color: "#1e40af", textAlign: "right" }}>{item.lista_seleccionada}</div>
-                            )}
-                          </div>
-                        ) : (
-                          <span>${item.precio_unitario.toFixed(2)}</span>
-                        )}
-                      </td>
-                      <td className="text-right">
-                        <input type="number" className="input" value={item.descuento} min={0} step={0.1}
-                          style={{ width: 65, textAlign: "center", padding: "4px" }}
-                          onChange={(e) => actualizarDescuento(item.producto_id, parseFloat(e.target.value) || 0)} />
-                      </td>
-                      <td className="text-right font-bold">${item.subtotal.toFixed(2)}</td>
-                      <td>
-                        <button className="btn btn-danger" style={{ padding: "2px 6px", fontSize: 11 }}
-                          onClick={() => eliminarItem(item.producto_id)}>x</button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Panel de alertas de stock bajo */}
-          {alertas.length > 0 && (
-            <div style={{
-              border: "1px solid #fbbf24",
-              borderRadius: "var(--radius)",
-              background: "#fffbeb",
-              overflow: "hidden",
-            }}>
-              <button
-                onClick={() => setMostrarAlertas(!mostrarAlertas)}
-                style={{
-                  width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "6px 12px", background: "transparent", border: "none", cursor: "pointer",
-                  color: "#92400e", fontSize: 12, fontWeight: 600,
-                }}
-              >
-                <span>! Stock Bajo ({alertas.length} producto{alertas.length > 1 ? "s" : ""})</span>
-                <span>{mostrarAlertas ? "\u25B2" : "\u25BC"}</span>
-              </button>
-              {mostrarAlertas && (
-                <div style={{ maxHeight: 150, overflowY: "auto" }}>
-                  {alertas.map((a) => (
-                    <div key={a.id} className="flex justify-between"
-                      style={{ padding: "4px 12px", borderTop: "1px solid #fde68a", fontSize: 12 }}>
-                      <span style={{ color: "#78350f" }}>{a.nombre}</span>
-                      <span style={{
-                        fontWeight: 600,
-                        color: a.stock_actual <= 0 ? "#dc2626" : "#d97706",
-                      }}>
-                        {a.stock_actual} / {a.stock_minimo}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
+        {/* Panel izquierdo - Grid de productos (con margen para columna fixed) */}
+        <div style={{ flex: 1, position: "relative", marginRight: 324 }}>
+          <PosGridTactil
+            categorias={categoriasTactil}
+            productosTactil={productosTactil}
+            carrito={carrito}
+            onAgregarProducto={agregarAlCarrito}
+            onActualizarCantidad={actualizarCantidad}
+            onEliminarItem={eliminarItem}
+            onEditarInfoAdicional={(productoId, info) => {
+              setCarrito(prev => prev.map(i =>
+                i.producto_id === productoId ? { ...i, info_adicional: info } : i
+              ));
+            }}
+            busqueda={busqueda}
+            onBusquedaChange={handleBuscar}
+            resultados={resultados}
+            inputRef={inputRef}
+          />
         </div>
-        )}
+        {/* Código de modo normal eliminado - ahora siempre usa grid */}
 
-        {/* Panel derecho - Totales y cobro */}
+        {/* Botón Recientes - solo zona superior */}
+        <button
+          onClick={() => setMostrarRecientes(true)}
+          style={{
+            position: "fixed", right: 300, top: "50%", transform: "translateY(-50%)", height: 120,
+            writingMode: "vertical-rl", textOrientation: "mixed",
+            padding: "0 5px", background: "rgba(96, 165, 250, 0.15)",
+            border: "none", borderLeft: "2px solid var(--color-primary)",
+            borderRadius: "8px 0 0 8px",
+            cursor: "pointer", fontSize: 11, fontWeight: 700, letterSpacing: 1,
+            color: "var(--color-primary)", zIndex: 5, width: 24,
+          }}
+        >
+          RECIENTES
+        </button>
+
+        {/* Panel derecho - Totales y cobro - fixed hasta el fondo */}
         <div style={{
-          width: 300, background: "var(--color-surface)",
-          borderLeft: "1px solid var(--color-border)", padding: 16,
-          display: "flex", flexDirection: "column",
+          position: "fixed", right: 0, top: 44, bottom: 0, width: 300,
+          background: "var(--color-surface)",
+          borderLeft: "2px solid var(--color-border-strong, var(--color-border))",
+          display: "flex", flexDirection: "column", zIndex: 5,
         }}>
-          <div style={{ flex: 1 }}>
+          <div style={{ flex: 1, padding: "12px 16px" }}>
             <div className="flex justify-between mb-2">
               <span className="text-secondary">Items:</span>
               <span>{carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
@@ -1084,35 +930,54 @@ export default function PuntoVenta() {
                 {tipoDocumento === "FACTURA" && sriModuloActivo && sriAmbiente && (
                   <div style={{
                     fontSize: 11, marginTop: 4, display: "flex", alignItems: "center", gap: 6,
-                    color: sriAmbiente === "produccion" ? "#dc2626" : "#2563eb",
+                    color: sriAmbiente === "produccion" ? "var(--color-danger)" : "var(--color-primary)",
                   }}>
                     <span style={{
                       width: 8, height: 8, borderRadius: "50%",
-                      background: sriAmbiente === "produccion" ? "#dc2626" : "#3b82f6",
+                      background: sriAmbiente === "produccion" ? "var(--color-danger)" : "var(--color-primary)",
                       display: "inline-block",
                     }} />
                     Ambiente: {sriAmbiente.toUpperCase()}
-                    {!sriAmbienteConfirmado && <span style={{ color: "#d97706" }}>(sin confirmar)</span>}
+                    {!sriAmbienteConfirmado && <span style={{ color: "var(--color-warning)" }}>(sin confirmar)</span>}
                   </div>
                 )}
               </div>
             )}
 
-            {/* Forma de pago */}
+            {/* Forma de pago - como la referencia: todos coloridos, mismo tamaño */}
             <div className="mb-4">
               <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Forma de pago</label>
-              <div className="flex gap-2">
-                {["EFECTIVO", "TRANSFER"].map((fp) => (
-                  <button key={fp}
-                    className={`btn ${formaPago === fp ? "btn-primary" : "btn-outline"}`}
-                    style={{ flex: 1, fontSize: 12, justifyContent: "center" }}
-                    onClick={() => { setFormaPago(fp); setEsFiado(false); }}>
-                    {fp === "EFECTIVO" ? "Efectivo" : "Transfer."}
-                  </button>
-                ))}
+              <div style={{ display: "flex", gap: 6 }}>
                 <button
-                  className={`btn ${esFiado ? "btn-primary" : "btn-outline"}`}
-                  style={{ flex: 1, fontSize: 12, justifyContent: "center" }}
+                  className="btn"
+                  style={{
+                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
+                    background: formaPago === "EFECTIVO" && !esFiado ? "#16a34a" : "#22c55e",
+                    color: "white", border: "none", borderRadius: 8,
+                    opacity: formaPago === "EFECTIVO" && !esFiado ? 1 : 0.6,
+                  }}
+                  onClick={() => { setFormaPago("EFECTIVO"); setEsFiado(false); }}>
+                  Efectivo
+                </button>
+                <button
+                  className="btn"
+                  style={{
+                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
+                    background: formaPago === "TRANSFER" && !esFiado ? "#1d4ed8" : "#3b82f6",
+                    color: "white", border: "none", borderRadius: 8,
+                    opacity: formaPago === "TRANSFER" && !esFiado ? 1 : 0.6,
+                  }}
+                  onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
+                  Transferencia
+                </button>
+                <button
+                  className="btn"
+                  style={{
+                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
+                    background: esFiado ? "#b45309" : "#f59e0b",
+                    color: "white", border: "none", borderRadius: 8,
+                    opacity: esFiado ? 1 : 0.6,
+                  }}
                   onClick={() => setEsFiado(!esFiado)}>
                   Credito
                 </button>
@@ -1141,7 +1006,7 @@ export default function PuntoVenta() {
                 )}
                 <div>
                   <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
-                    Nro. referencia {requiereReferencia && <span style={{ color: "#ef4444" }}>*</span>}
+                    Nro. referencia {requiereReferencia && <span style={{ color: "var(--color-danger)" }}>*</span>}
                   </label>
                   <input className="input" placeholder="Ej: 123456789"
                     value={referenciaPago}
@@ -1169,7 +1034,7 @@ export default function PuntoVenta() {
             )}
 
             {esFiado && (
-              <div style={{ background: "#fef3c7", padding: 10, borderRadius: "var(--radius)", fontSize: 13, color: "#92400e" }}>
+              <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 10, borderRadius: "var(--radius)", fontSize: 13, color: "var(--color-warning)" }}>
                 Se registrara como cuenta por cobrar
                 {clienteSeleccionado ? ` a ${clienteSeleccionado.nombre}` : ". Seleccione un cliente arriba."}
               </div>
@@ -1177,7 +1042,7 @@ export default function PuntoVenta() {
           </div>
 
           <button className="btn btn-success btn-lg" data-action="cobrar"
-            style={{ width: "100%", justifyContent: "center", fontSize: 16 }}
+            style={{ width: "100%", justifyContent: "center", fontSize: 16, marginBottom: 6, borderRadius: 10 }}
             disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
             onClick={procesarVenta}>
             {esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
@@ -1199,26 +1064,26 @@ export default function PuntoVenta() {
               <div style={{
                 padding: "12px 16px",
                 borderRadius: "var(--radius)",
-                background: sriAmbiente === "produccion" ? "#fef2f2" : "#eff6ff",
-                border: `2px solid ${sriAmbiente === "produccion" ? "#ef4444" : "#3b82f6"}`,
+                background: sriAmbiente === "produccion" ? "rgba(239, 68, 68, 0.1)" : "rgba(59, 130, 246, 0.1)",
+                border: `2px solid ${sriAmbiente === "produccion" ? "var(--color-danger)" : "var(--color-primary)"}`,
                 textAlign: "center",
                 marginBottom: 12,
               }}>
                 <span style={{
                   fontSize: 18,
                   fontWeight: 700,
-                  color: sriAmbiente === "produccion" ? "#dc2626" : "#2563eb",
+                  color: sriAmbiente === "produccion" ? "var(--color-danger)" : "var(--color-primary)",
                 }}>
                   {sriAmbiente === "produccion" ? "PRODUCCION" : "PRUEBAS"}
                 </span>
-                <div style={{ fontSize: 12, marginTop: 4, color: "#64748b" }}>
+                <div style={{ fontSize: 12, marginTop: 4, color: "var(--color-text-secondary)" }}>
                   {sriAmbiente === "produccion"
                     ? "Las facturas tendran validez tributaria real"
                     : "Las facturas NO tendran validez tributaria"}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, color: "#64748b" }}>Cambiar a:</span>
+                <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Cambiar a:</span>
                 <button className="btn btn-outline" style={{ fontSize: 12, padding: "4px 12px" }}
                   disabled={cambiandoAmbiente}
                   onClick={async () => {
@@ -1246,6 +1111,98 @@ export default function PuntoVenta() {
                 toastExito(`Ambiente confirmado: ${sriAmbiente.toUpperCase()}`);
               }}>
                 Confirmar y continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Panel de documentos recientes */}
+      <DocumentosRecientes
+        abierto={mostrarRecientes}
+        onCerrar={() => setMostrarRecientes(false)}
+        ticketUsarPdf={ticketUsarPdf}
+        onCargarDocumento={(ventaCompleta) => {
+          // Restaurar carrito desde borrador/cotización
+          setCarrito(ventaCompleta.detalles.map(d => ({
+            producto_id: d.producto_id,
+            codigo: undefined,
+            nombre: d.nombre_producto || "",
+            cantidad: d.cantidad,
+            precio_unitario: d.precio_unitario,
+            descuento: d.descuento,
+            iva_porcentaje: d.iva_porcentaje,
+            subtotal: d.subtotal,
+            stock_disponible: 999,
+            stock_minimo: 0,
+            precio_base: d.precio_unitario,
+            info_adicional: d.info_adicional || undefined,
+          })));
+          // Restaurar cliente si no es consumidor final
+          if (ventaCompleta.venta.cliente_id && ventaCompleta.venta.cliente_id !== 1) {
+            setClienteSeleccionado({
+              id: ventaCompleta.venta.cliente_id,
+              nombre: ventaCompleta.cliente_nombre || "",
+              tipo_identificacion: "CONSUMIDOR_FINAL",
+              activo: true,
+            });
+          }
+          setFormaPago(ventaCompleta.venta.forma_pago);
+          setTipoDocumento(ventaCompleta.venta.tipo_documento);
+          setMontoRecibido("");
+        }}
+      />
+
+      {/* Modal datos de Guía de Remisión */}
+      {mostrarModalGuia && (
+        <div className="modal-overlay" onClick={() => setMostrarModalGuia(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3>Guía de Remisión</h3>
+            </div>
+            <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <p className="text-secondary" style={{ fontSize: 12, margin: 0 }}>
+                Se descontará stock al crear la guía. Todos los campos son opcionales.
+              </p>
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Placa del vehículo</label>
+                <input className="input" placeholder="Ej: ABC-1234" value={guiaPlaca}
+                  onChange={(e) => setGuiaPlaca(e.target.value.toUpperCase())} autoFocus />
+              </div>
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Chofer / Transportista</label>
+                <input className="input" placeholder="Nombre del chofer" value={guiaChofer}
+                  list="choferes-list"
+                  onChange={(e) => {
+                    setGuiaChofer(e.target.value);
+                    // Si selecciona un chofer guardado, prellenar placa
+                    const match = choferesGuardados.find(c => c[1] === e.target.value);
+                    if (match && match[2] && !guiaPlaca) setGuiaPlaca(match[2]);
+                  }} />
+                <datalist id="choferes-list">
+                  {choferesGuardados.map(c => (
+                    <option key={c[0]} value={c[1]}>{c[2] ? `Placa: ${c[2]}` : ""}</option>
+                  ))}
+                </datalist>
+              </div>
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Dirección de destino</label>
+                <input className="input" placeholder="Dirección de entrega" value={guiaDireccion}
+                  onChange={(e) => setGuiaDireccion(e.target.value)} />
+              </div>
+              <div style={{ fontSize: 12, padding: 8, borderRadius: "var(--radius)", background: "rgba(251, 146, 60, 0.1)", color: "var(--color-warning)" }}>
+                {carrito.length} producto(s) — Total: ${total.toFixed(2)}
+                {clienteSeleccionado && ` — ${clienteSeleccionado.nombre}`}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setMostrarModalGuia(false)}>
+                Cancelar
+              </button>
+              <button className="btn" disabled={guardandoGuia}
+                style={{ background: "rgba(251, 146, 60, 0.2)", color: "#fb923c", border: "1px solid rgba(251, 146, 60, 0.4)", fontWeight: 600 }}
+                onClick={confirmarGuiaRemision}>
+                {guardandoGuia ? "Guardando..." : "Crear Guía de Remisión"}
               </button>
             </div>
           </div>

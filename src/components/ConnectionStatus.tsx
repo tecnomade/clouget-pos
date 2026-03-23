@@ -33,10 +33,10 @@ export default function ConnectionStatus() {
         display: "flex",
         alignItems: "center",
         gap: 8,
-        background: online ? "#dcfce7" : "#fef2f2",
-        color: online ? "#166534" : "#991b1b",
-        border: `1px solid ${online ? "#86efac" : "#fca5a5"}`,
-        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+        background: online ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+        color: online ? "#4ade80" : "#fca5a5",
+        border: `1px solid ${online ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
       }}
     >
       <span

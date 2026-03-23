@@ -1,22 +1,29 @@
-import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useKeyboardShortcuts, SHORTCUTS_LIST } from "../hooks/useKeyboardShortcuts";
 import { useSesion } from "../contexts/SesionContext";
 import { useDemo } from "../contexts/DemoContext";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 
+// Items principales en bottom bar
 const navItems = [
-  { path: "/", label: "Inicio", icon: "I", shortcut: "", todos: true },
-  { path: "/pos", label: "Venta", icon: "V", shortcut: "F1", todos: true },
-  { path: "/productos", label: "Productos", icon: "P", shortcut: "F2", todos: false },
-  { path: "/clientes", label: "Clientes", icon: "C", shortcut: "F3", todos: false },
-  { path: "/ventas", label: "Ventas del dia", icon: "D", shortcut: "F4", todos: true },
-  { path: "/caja", label: "Caja", icon: "$", shortcut: "F5", todos: true },
-  { path: "/gastos", label: "Gastos", icon: "G", shortcut: "F7", todos: false },
-  { path: "/cuentas", label: "Por cobrar", icon: "F", shortcut: "F8", todos: true },
-  { path: "/inventario", label: "Inventario", icon: "K", shortcut: "", todos: false },
-  { path: "/config", label: "Configuracion", icon: "*", shortcut: "F6", todos: false },
+  { path: "/", label: "Inicio", icon: "🏠", shortcut: "", todos: true },
+  { path: "/pos", label: "Venta", icon: "💰", shortcut: "F1", todos: true },
+  { path: "/productos", label: "Productos", icon: "📦", shortcut: "F2", todos: false },
+  { path: "/clientes", label: "Clientes", icon: "👥", shortcut: "F3", todos: false },
+  { path: "/ventas", label: "Ventas", icon: "📋", shortcut: "F4", todos: true },
+  { path: "/guias", label: "Guías", icon: "🚚", shortcut: "", todos: false },
+  { path: "/gastos", label: "Gastos", icon: "💸", shortcut: "F7", todos: false },
+  { path: "/cuentas", label: "Cobrar", icon: "💵", shortcut: "F8", todos: true },
+  { path: "/inventario", label: "Inventario", icon: "📑", shortcut: "", todos: false },
+  { path: "/reportes", label: "Reportes", icon: "📊", shortcut: "", todos: false },
+];
+
+// Items en el header superior (iconos)
+const headerNavItems = [
+  { path: "/caja", label: "$", title: "Caja (F5)", shortcut: "F5", todos: true },
+  { path: "/config", label: "⚙", title: "Configuración (F6)", shortcut: "F6", todos: false },
 ];
 
 export default function Layout() {
@@ -25,20 +32,166 @@ export default function Layout() {
   useKeyboardShortcuts(sesion?.rol);
   const [mostrarAyuda, setMostrarAyuda] = useState(false);
   const [saliendoDemo, setSaliendoDemo] = useState(false);
+  const location = useLocation();
+  const enPOS = location.pathname === "/pos";
+
+  // Tema claro/oscuro
+  const [tema, setTema] = useState(() => localStorage.getItem("clouget-theme") || "light");
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", tema);
+    localStorage.setItem("clouget-theme", tema);
+  }, [tema]);
+  const toggleTema = () => setTema(t => t === "dark" ? "light" : "dark");
 
   const navFiltrados = esAdmin
     ? navItems
     : navItems.filter((item) => item.todos);
 
+  const headerNavFiltrados = esAdmin
+    ? headerNavItems
+    : headerNavItems.filter((item) => item.todos);
+
   return (
     <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <h1>CLOUGET</h1>
-          <span>Punto de Venta</span>
+      {/* Top Header */}
+      <header className="top-header">
+        <div className="top-header-logo">
+          CLOUGET<span>POS</span>
         </div>
-        <nav className="sidebar-nav">
-          {navFiltrados.map((item) => (
+
+        <div className="top-header-right">
+          {/* Nav items del header: Caja, Config */}
+          <div style={{ display: "flex", gap: 4, marginRight: 8, paddingRight: 12, borderRight: "1px solid rgba(255,255,255,0.1)" }}>
+            {headerNavFiltrados.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) => (isActive ? "active" : "")}
+                style={({ isActive }) => ({
+                  padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  textDecoration: "none", transition: "all 0.15s",
+                  background: isActive ? "rgba(96, 165, 250, 0.15)" : "transparent",
+                  color: isActive ? "var(--color-primary)" : "rgba(255,255,255,0.5)",
+                  border: isActive ? "none" : "1px solid rgba(255,255,255,0.08)",
+                })}
+              title={item.title}
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+          {sesion && (
+            <>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.9)", fontWeight: 500 }}>
+                {sesion.nombre}
+              </span>
+              <span style={{
+                fontSize: 10, padding: "2px 8px", borderRadius: 4,
+                background: sesion.rol === "ADMIN" ? "#3b82f6" : "rgba(255,255,255,0.15)",
+                color: "white", fontWeight: 600,
+              }}>
+                {sesion.rol}
+              </span>
+            </>
+          )}
+          <button
+            onClick={toggleTema}
+            title={tema === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+            style={{
+              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 6, cursor: "pointer", color: "rgba(255,255,255,0.6)",
+              fontSize: 14, padding: "4px 8px", lineHeight: 1,
+            }}
+          >
+            {tema === "dark" ? "☀" : "🌙"}
+          </button>
+          <button
+            onClick={() => setMostrarAyuda(!mostrarAyuda)}
+            style={{
+              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 6, cursor: "pointer", color: "rgba(255,255,255,0.6)",
+              fontSize: 13, padding: "4px 10px", fontWeight: 600,
+            }}
+          >
+            ?
+          </button>
+          <button
+            onClick={cerrarSesion}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "rgba(255,255,255,0.5)", fontSize: 12,
+            }}
+          >
+            Salir
+          </button>
+          <span style={{ fontSize: 9, opacity: 0.35, color: "white" }}>v{__APP_VERSION__}</span>
+        </div>
+      </header>
+
+      {/* Banners */}
+      <UpdateChecker />
+      <SuscripcionBanner />
+      {esDemo && (
+        <div
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "6px 16px",
+            background: "rgba(245, 158, 11, 0.15)",
+            borderBottom: "1px solid rgba(245, 158, 11, 0.3)",
+            fontSize: 12, color: "var(--color-warning)",
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>MODO DEMO</span>
+          <button
+            onClick={async () => {
+              setSaliendoDemo(true);
+              try { await salirDemo(); } catch { setSaliendoDemo(false); }
+            }}
+            disabled={saliendoDemo}
+            style={{
+              padding: "2px 10px", background: "rgba(245, 158, 11, 0.2)",
+              border: "1px solid rgba(245, 158, 11, 0.4)", borderRadius: 4,
+              color: "var(--color-warning)", fontSize: 11, fontWeight: 600,
+              cursor: saliendoDemo ? "not-allowed" : "pointer",
+            }}
+          >
+            {saliendoDemo ? "..." : "Salir Demo"}
+          </button>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="main-content">
+        <Outlet />
+      </main>
+
+      {/* Bottom Navigation Bar */}
+      <nav className="bottom-bar" style={enPOS ? { justifyContent: "space-between", paddingRight: 324 } : {}}>
+        {enPOS ? (
+          <>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 14px" }}
+                onClick={() => window.dispatchEvent(new CustomEvent("pos-guardar-borrador"))}>
+                Borrador
+              </button>
+              <button className="btn" style={{ fontSize: 11, padding: "4px 14px", fontWeight: 600,
+                background: "rgba(251, 146, 60, 0.2)", color: "#fb923c",
+                border: "1px solid rgba(251, 146, 60, 0.4)",
+              }}
+                onClick={() => window.dispatchEvent(new CustomEvent("pos-guardar-guia"))}>
+                Guia R.
+              </button>
+              <button className="btn" style={{ fontSize: 11, padding: "4px 14px", fontWeight: 600,
+                background: "rgba(96, 165, 250, 0.15)", color: "var(--color-primary)",
+                border: "1px solid rgba(96, 165, 250, 0.3)",
+              }}
+                onClick={() => window.dispatchEvent(new CustomEvent("pos-guardar-cotizacion"))}>
+                Cotizacion
+              </button>
+            </div>
+          </>
+        ) : (
+          navFiltrados.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -46,107 +199,18 @@ export default function Layout() {
               className={({ isActive }) => (isActive ? "active" : "")}
             >
               <span className="nav-icon">{item.icon}</span>
-              <span style={{ flex: 1 }}>{item.label}</span>
-              <span style={{ fontSize: 10, opacity: 0.5 }}>{item.shortcut}</span>
+              <span>{item.label}</span>
             </NavLink>
-          ))}
-        </nav>
-
-        {/* Info de sesion */}
-        <div style={{ padding: 8, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-          {sesion && (
-            <div style={{ padding: "8px 4px", marginBottom: 8 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>
-                {sesion.nombre}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                <span style={{
-                  fontSize: 10,
-                  padding: "1px 6px",
-                  borderRadius: 3,
-                  background: sesion.rol === "ADMIN" ? "#3b82f6" : "#64748b",
-                  color: "white",
-                  fontWeight: 600,
-                }}>
-                  {sesion.rol}
-                </span>
-              </div>
-            </div>
-          )}
-          <button
-            className="btn btn-outline"
-            style={{ width: "100%", color: "rgba(255,255,255,0.5)", borderColor: "rgba(255,255,255,0.1)", fontSize: 12, marginBottom: 4 }}
-            onClick={() => setMostrarAyuda(!mostrarAyuda)}
-          >
-            ? Atajos de teclado
-          </button>
-          <button
-            className="btn btn-outline"
-            style={{ width: "100%", color: "rgba(255,255,255,0.4)", borderColor: "rgba(255,255,255,0.08)", fontSize: 11 }}
-            onClick={cerrarSesion}
-          >
-            Cerrar Sesion
-          </button>
-          <div style={{ textAlign: "center", fontSize: 9, opacity: 0.25, marginTop: 6 }}>
-            v{__APP_VERSION__}
-          </div>
-        </div>
-      </aside>
-      <main className="main-content">
-        <UpdateChecker />
-        <SuscripcionBanner />
-        {esDemo && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "8px 16px",
-              background: "linear-gradient(90deg, #fef3c7, #fde68a)",
-              borderBottom: "2px solid #f59e0b",
-              fontSize: 13,
-              color: "#92400e",
-            }}
-          >
-            <span style={{ fontWeight: 600 }}>
-              MODO DEMO — Datos ficticios de ejemplo
-            </span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                onClick={async () => {
-                  setSaliendoDemo(true);
-                  try { await salirDemo(); } catch { setSaliendoDemo(false); }
-                }}
-                disabled={saliendoDemo}
-                style={{
-                  padding: "4px 12px",
-                  background: "white",
-                  border: "1px solid #d97706",
-                  borderRadius: 6,
-                  color: "#92400e",
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: saliendoDemo ? "not-allowed" : "pointer",
-                }}
-              >
-                {saliendoDemo ? "Saliendo..." : "Salir del Demo"}
-              </button>
-            </div>
-          </div>
+          ))
         )}
-        <Outlet />
-      </main>
+      </nav>
 
+      {/* Modal de atajos de teclado */}
       {mostrarAyuda && (
         <div
           style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
           }}
           onClick={() => setMostrarAyuda(false)}
         >
@@ -171,12 +235,10 @@ export default function Layout() {
                   <span>{s.description}</span>
                   <kbd
                     style={{
-                      background: "#f1f5f9",
-                      border: "1px solid #cbd5e1",
-                      borderRadius: 4,
-                      padding: "2px 8px",
-                      fontSize: 12,
-                      fontFamily: "monospace",
+                      background: "var(--color-surface-hover)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 4, padding: "2px 8px",
+                      fontSize: 12, fontFamily: "monospace",
                     }}
                   >
                     {s.keys}

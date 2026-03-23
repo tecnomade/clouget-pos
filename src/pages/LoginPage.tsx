@@ -164,7 +164,7 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
                 height: 16,
                 borderRadius: "50%",
                 border: "2px solid rgba(255,255,255,0.3)",
-                background: i < pin.length ? "#3b82f6" : "transparent",
+                background: i < pin.length ? "var(--color-primary)" : "transparent",
                 transition: "background 0.15s",
               }}
             />
@@ -176,7 +176,7 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           style={{
             height: 24,
             fontSize: 13,
-            color: "#ef4444",
+            color: "var(--color-danger)",
             marginBottom: 16,
           }}
         >
@@ -245,7 +245,7 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
               border: "1px solid rgba(245, 158, 11, 0.3)",
               borderRadius: 8,
               fontSize: 12,
-              color: "#fbbf24",
+              color: "var(--color-warning)",
               lineHeight: 1.5,
             }}
           >
@@ -319,7 +319,7 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
                 background: "rgba(59,130,246,0.1)",
                 border: "1px solid rgba(59,130,246,0.2)",
                 borderRadius: 8,
-                color: "#93c5fd",
+                color: "var(--color-primary-light, #93c5fd)",
                 fontSize: 13,
                 fontWeight: 500,
                 textDecoration: "none",
@@ -372,13 +372,13 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           color: rgba(255,255,255,0.6);
         }
         .login-key-enter {
-          background: #3b82f6;
-          border-color: #3b82f6;
+          background: var(--color-primary);
+          border-color: var(--color-primary);
           font-size: 16px;
         }
         .login-key-enter:hover:not(:disabled) {
-          background: #2563eb;
-          border-color: #2563eb;
+          background: var(--color-primary-hover, #2563eb);
+          border-color: var(--color-primary-hover, #2563eb);
         }
         .login-key-enter:disabled {
           background: rgba(59,130,246,0.3);

@@ -15,6 +15,8 @@ import GastosPage from "./pages/GastosPage";
 import CuentasPage from "./pages/CuentasPage";
 import Configuracion from "./pages/Configuracion";
 import InventarioPage from "./pages/InventarioPage";
+import GuiasRemisionPage from "./pages/GuiasRemisionPage";
+import ReportesPage from "./pages/ReportesPage";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
 import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarModoRed } from "./services/api";
@@ -116,8 +118,10 @@ function AppGate() {
               <>
                 <Route path="/productos" element={<Productos />} />
                 <Route path="/clientes" element={<Clientes />} />
+                <Route path="/guias" element={<GuiasRemisionPage />} />
                 <Route path="/gastos" element={<GastosPage />} />
                 <Route path="/inventario" element={<InventarioPage />} />
+                <Route path="/reportes" element={<ReportesPage />} />
                 <Route path="/config" element={<Configuracion />} />
               </>
             )}

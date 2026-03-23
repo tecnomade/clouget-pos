@@ -44,7 +44,7 @@ export default function ModalEmailCliente({
           <h3>Enviar Factura por Email</h3>
         </div>
         <div className="modal-body">
-          <p style={{ fontSize: 13, color: "#64748b", marginBottom: 12 }}>
+          <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 12 }}>
             Factura <strong>{ventaNumero}</strong> autorizada por el SRI.
             {clienteNombre && <> Cliente: <strong>{clienteNombre}</strong>.</>}
           </p>
@@ -61,7 +61,7 @@ export default function ModalEmailCliente({
             autoFocus
             disabled={enviando}
           />
-          {error && <div style={{ color: "#dc2626", fontSize: 12, marginTop: 4 }}>{error}</div>}
+          {error && <div style={{ color: "var(--color-danger)", fontSize: 12, marginTop: 4 }}>{error}</div>}
         </div>
         <div className="modal-footer">
           <button className="btn btn-outline" onClick={onOmitir} disabled={enviando}>

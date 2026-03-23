@@ -93,6 +93,8 @@ import type {
   PuntoEmision,
   TransferenciaStock,
   StockEstablecimiento,
+  DocumentoReciente,
+  ResumenGuias,
 } from "../types";
 
 // --- Productos ---
@@ -169,6 +171,52 @@ export async function consultarIdentificacion(identificacion: string): Promise<C
 
 export async function registrarVenta(venta: NuevaVenta): Promise<VentaCompleta> {
   return smartInvoke("registrar_venta", { venta });
+}
+
+export async function guardarBorrador(venta: NuevaVenta): Promise<VentaCompleta> {
+  return smartInvoke("guardar_borrador", { venta });
+}
+
+export async function guardarCotizacion(venta: NuevaVenta): Promise<VentaCompleta> {
+  return smartInvoke("guardar_cotizacion", { venta });
+}
+
+export async function eliminarBorrador(id: number): Promise<void> {
+  return smartInvoke("eliminar_borrador", { id });
+}
+
+export async function listarDocumentosRecientes(limite?: number): Promise<DocumentoReciente[]> {
+  return smartInvoke("listar_documentos_recientes", { limite });
+}
+
+export async function guardarGuiaRemision(venta: NuevaVenta): Promise<VentaCompleta> {
+  return smartInvoke("guardar_guia_remision", { venta });
+}
+
+export async function listarGuiasRemision(filtros: {
+  fechaDesde?: string; fechaHasta?: string;
+  clienteId?: number; estado?: string;
+}): Promise<any[]> {
+  return smartInvoke("listar_guias_remision", filtros);
+}
+
+export async function resumenGuiasRemision(fechaDesde: string, fechaHasta: string): Promise<ResumenGuias> {
+  return smartInvoke("resumen_guias_remision", { fechaDesde, fechaHasta });
+}
+
+export async function convertirGuiaAVenta(params: {
+  guiaId: number; formaPago: string; montoRecibido: number;
+  esFiado?: boolean; bancoId?: number; referenciaPago?: string;
+}): Promise<VentaCompleta> {
+  return smartInvoke("convertir_guia_a_venta", params);
+}
+
+export async function listarChoferes(): Promise<[number, string, string | null][]> {
+  return smartInvoke("listar_choferes", {});
+}
+
+export async function guardarChofer(nombre: string, placa?: string): Promise<void> {
+  return smartInvoke("guardar_chofer", { nombre, placa: placa || null });
 }
 
 export async function listarVentasDia(fecha: string): Promise<Venta[]> {
@@ -300,6 +348,10 @@ export async function imprimirReporteCaja(cajaId: number): Promise<string> {
 
 export async function imprimirReporteCajaPdf(cajaId: number): Promise<string> {
   return invoke("imprimir_reporte_caja_pdf", { cajaId });
+}
+
+export async function imprimirGuiaRemisionPdf(ventaId: number): Promise<string> {
+  return invoke("imprimir_guia_remision_pdf", { ventaId });
 }
 
 export async function listarImpresoras(): Promise<string[]> {
@@ -781,4 +833,16 @@ export async function desconectarGdrive(): Promise<void> {
 
 export async function conectarGdrive(): Promise<string> {
   return invoke("conectar_gdrive");
+}
+
+// --- Reportes avanzados ---
+import type { ReporteUtilidad, ReporteBalance, ProductoRentabilidad } from "../types";
+export async function reporteUtilidad(fechaInicio: string, fechaHasta: string): Promise<ReporteUtilidad> {
+  return smartInvoke("reporte_utilidad", { fechaInicio, fechaHasta });
+}
+export async function reporteBalance(fechaInicio: string, fechaHasta: string): Promise<ReporteBalance> {
+  return smartInvoke("reporte_balance", { fechaInicio, fechaHasta });
+}
+export async function reporteProductosRentabilidad(fechaInicio: string, fechaHasta: string, limite: number = 50): Promise<ProductoRentabilidad[]> {
+  return smartInvoke("reporte_productos_rentabilidad", { fechaInicio, fechaHasta, limite });
 }

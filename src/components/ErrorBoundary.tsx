@@ -31,7 +31,7 @@ export default class ErrorBoundary extends React.Component<
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "#0f172a",
+            background: "var(--color-bg, #0f172a)",
             color: "white",
             padding: 32,
           }}
@@ -40,19 +40,19 @@ export default class ErrorBoundary extends React.Component<
             <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 12 }}>
               CLOUGET
             </h1>
-            <p style={{ color: "#f87171", fontSize: 16, marginBottom: 16 }}>
+            <p style={{ color: "var(--color-danger)", fontSize: 16, marginBottom: 16 }}>
               Ocurrio un error inesperado
             </p>
             <pre
               style={{
-                background: "#1e293b",
+                background: "var(--color-surface, #1e293b)",
                 padding: 16,
                 borderRadius: 8,
                 fontSize: 12,
                 textAlign: "left",
                 overflow: "auto",
                 maxHeight: 200,
-                color: "#fca5a5",
+                color: "var(--color-danger)",
                 marginBottom: 16,
               }}
             >
@@ -62,7 +62,7 @@ export default class ErrorBoundary extends React.Component<
               onClick={() => window.location.reload()}
               style={{
                 padding: "8px 24px",
-                background: "#2563eb",
+                background: "var(--color-primary)",
                 color: "white",
                 border: "none",
                 borderRadius: 6,

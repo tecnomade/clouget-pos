@@ -15,6 +15,7 @@ export default function Clientes() {
     activo: true,
   });
   const [consultandoSri, setConsultandoSri] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
 
   const cargar = async () => {
     const [cls, listas] = await Promise.all([listarClientes(), listarListasPrecios().catch(() => [])]);
@@ -147,6 +148,18 @@ export default function Clientes() {
             </div>
           </div>
         ) : (
+          <>
+          <div className="mb-4">
+            <input
+              className="input"
+              data-action="busqueda"
+              placeholder="Buscar por cédula, RUC o nombre... (Ctrl+B)"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              style={{ maxWidth: 400 }}
+              autoFocus
+            />
+          </div>
           <div className="card">
             <table className="table">
               <thead>
@@ -160,7 +173,14 @@ export default function Clientes() {
                 </tr>
               </thead>
               <tbody>
-                {clientes.map((c) => (
+                {clientes.filter((c) => {
+                  if (!busqueda.trim()) return true;
+                  const q = busqueda.toLowerCase();
+                  return (c.nombre?.toLowerCase().includes(q)) ||
+                    (c.identificacion?.toLowerCase().includes(q)) ||
+                    (c.email?.toLowerCase().includes(q)) ||
+                    (c.telefono?.toLowerCase().includes(q));
+                }).map((c) => (
                   <tr key={c.id}>
                     <td>{c.identificacion ?? "-"}</td>
                     <td><strong>{c.nombre}</strong></td>
@@ -182,6 +202,7 @@ export default function Clientes() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </>

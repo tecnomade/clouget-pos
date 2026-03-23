@@ -192,11 +192,11 @@ export default function Configuracion() {
                         <img
                           src={`data:image/png;base64,${config.logo_negocio}`}
                           alt="Logo"
-                          style={{ maxWidth: 120, maxHeight: 60, objectFit: "contain", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", padding: 4, background: "white" }}
+                          style={{ maxWidth: 120, maxHeight: 60, objectFit: "contain", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", padding: 4, background: "var(--color-surface)" }}
                         />
                       </div>
                     ) : (
-                      <div style={{ width: 120, height: 60, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 11 }}>
+                      <div style={{ width: 120, height: 60, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 11 }}>
                         Sin logo
                       </div>
                     )}
@@ -220,7 +220,7 @@ export default function Configuracion() {
                         {config.logo_negocio ? "Cambiar" : "Cargar logo"}
                       </button>
                       {config.logo_negocio && (
-                        <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "#ef4444" }}
+                        <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)" }}
                           onClick={async () => {
                             try {
                               await eliminarLogoNegocio();
@@ -281,7 +281,7 @@ export default function Configuracion() {
                   </div>
                 </div>
                 {(config.regimen === "RIMPE_EMPRENDEDOR" || config.regimen === "GENERAL") && (
-                  <div style={{ background: "#f8fafc", padding: 12, borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+                  <div style={{ background: "var(--color-surface-alt)", padding: 12, borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
                     <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>Secuenciales</label>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                       <div>
@@ -289,7 +289,7 @@ export default function Configuracion() {
                         <input className="input" type="number" min={1} disabled={modoDemo}
                           value={config.secuencial_factura ?? "1"}
                           onChange={(e) => update("secuencial_factura", e.target.value)} />
-                        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
                           {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(config.secuencial_factura ?? "1").padStart(9, "0")}
                         </div>
                       </div>
@@ -298,7 +298,7 @@ export default function Configuracion() {
                         <input className="input" type="number" min={1} disabled={modoDemo}
                           value={config.secuencial_nota_credito ?? "1"}
                           onChange={(e) => update("secuencial_nota_credito", e.target.value)} />
-                        <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
                           {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(config.secuencial_nota_credito ?? "1").padStart(9, "0")}
                         </div>
                       </div>
@@ -329,22 +329,7 @@ export default function Configuracion() {
           <div className="card">
             <div className="card-header">Punto de Venta</div>
             <div className="card-body">
-              <div>
-                <label className="text-secondary" style={{ fontSize: 12 }}>Modo del POS</label>
-                <select className="input" value={config.modo_pos ?? "normal"}
-                  onChange={(e) => {
-                    update("modo_pos", e.target.value);
-                    guardarConfig({ modo_pos: e.target.value })
-                      .then(() => toastExito(`Modo POS: ${e.target.value === "tactil" ? "Tactil" : "Normal"}`))
-                      .catch((err: unknown) => toastError("Error: " + err));
-                  }}>
-                  <option value="normal">Normal (teclado + busqueda)</option>
-                  <option value="tactil">Tactil (grilla de productos)</option>
-                </select>
-                <span className="text-secondary" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
-                  Modo tactil muestra productos como botones grandes con imagen para pantallas touch.
-                </span>
-              </div>
+              {/* Modo POS eliminado - ahora siempre es grid visual */}
             </div>
           </div>
 
@@ -356,7 +341,7 @@ export default function Configuracion() {
                 Para pagos por transferencia en ventas y cobros de cuentas por cobrar.
               </p>
               {/* Reglas de transferencia */}
-              <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "10px 12px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+              <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, border: "1px solid var(--color-border)" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
                   <input type="checkbox" checked={config.transferencia_requiere_referencia === "1"}
                     onChange={(e) => { update("transferencia_requiere_referencia", e.target.checked ? "1" : "0"); guardarConfig({ transferencia_requiere_referencia: e.target.checked ? "1" : "0" }); }} />
@@ -452,7 +437,7 @@ export default function Configuracion() {
                               setEditBancoCuenta(b.numero_cuenta || "");
                               setEditBancoTitular(b.titular || "");
                             }}>Editar</button>
-                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10, color: "#ef4444" }}
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 10, color: "var(--color-danger)" }}
                             onClick={async () => {
                               try {
                                 await desactivarCuentaBanco(b.id!);
@@ -647,7 +632,7 @@ export default function Configuracion() {
                             )}
                           </div>
                           {lp.es_default && (
-                            <span style={{ fontSize: 10, background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
+                            <span style={{ fontSize: 10, background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)", padding: "2px 8px", borderRadius: 4, fontWeight: 600 }}>
                               Por defecto
                             </span>
                           )}
@@ -691,7 +676,7 @@ export default function Configuracion() {
             </div>
             <div className="card-body" style={{ padding: 0 }}>
               {mostrarFormCajero && (
-                <div style={{ padding: 12, borderBottom: "1px solid var(--color-border)", background: "#f8fafc" }}>
+                <div style={{ padding: 12, borderBottom: "1px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
                   <div style={{ display: "grid", gap: 8 }}>
                     <input className="input" placeholder="Nombre del cajero"
                       value={nuevoNombre} onChange={(e) => setNuevoNombre(e.target.value)} />
@@ -732,12 +717,12 @@ export default function Configuracion() {
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{u.nombre}</div>
                       <span style={{
                         fontSize: 10, padding: "1px 6px", borderRadius: 3,
-                        background: u.rol === "ADMIN" ? "#dbeafe" : "#f1f5f9",
-                        color: u.rol === "ADMIN" ? "#1e40af" : "#475569",
+                        background: u.rol === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-hover)",
+                        color: u.rol === "ADMIN" ? "var(--color-primary)" : "var(--color-text-secondary)",
                       }}>
                         {u.rol}
                       </span>
-                      {!u.activo && <span style={{ fontSize: 10, color: "#ef4444", marginLeft: 6 }}>INACTIVO</span>}
+                      {!u.activo && <span style={{ fontSize: 10, color: "var(--color-danger)", marginLeft: 6 }}>INACTIVO</span>}
                     </div>
                     {editandoId === u.id ? (
                       <div className="flex gap-2 items-center">
@@ -764,7 +749,7 @@ export default function Configuracion() {
                           PIN
                         </button>
                         {u.activo ? (
-                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "#ef4444" }}
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-danger)" }}
                             onClick={async () => {
                               try {
                                 await eliminarUsuario(u.id);
@@ -775,7 +760,7 @@ export default function Configuracion() {
                             Desactivar
                           </button>
                         ) : (
-                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "#22c55e" }}
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-success)" }}
                             onClick={async () => {
                               try {
                                 await actualizarUsuario(u.id, undefined, undefined, undefined, true);
@@ -797,9 +782,9 @@ export default function Configuracion() {
           {/* Licencia */}
           {licencia && (
             <div className="card">
-              <div className="card-header" style={{ background: modoDemo ? "#fef3c7" : "#f0fdf4", color: modoDemo ? "#92400e" : "#166534" }}>
+              <div className="card-header" style={{ background: modoDemo ? "rgba(245, 158, 11, 0.15)" : "rgba(34, 197, 94, 0.1)", color: modoDemo ? "var(--color-warning)" : "var(--color-success)" }}>
                 Licencia
-                <span style={{ marginLeft: 8, fontSize: 11, background: modoDemo ? "#fde68a" : "#dcfce7", padding: "2px 8px", borderRadius: 4, color: modoDemo ? "#92400e" : "#166534", fontWeight: 600 }}>
+                <span style={{ marginLeft: 8, fontSize: 11, background: modoDemo ? "rgba(245, 158, 11, 0.2)" : "rgba(34, 197, 94, 0.15)", padding: "2px 8px", borderRadius: 4, color: modoDemo ? "var(--color-warning)" : "var(--color-success)", fontWeight: 600 }}>
                   {modoDemo ? "DEMO" : "Activa"}
                 </span>
               </div>
@@ -818,8 +803,8 @@ export default function Configuracion() {
                   <div className="flex justify-between">
                     <span className="text-secondary">Tipo:</span>
                     <span style={{
-                      background: "#dcfce7",
-                      color: "#166534",
+                      background: "rgba(34, 197, 94, 0.15)",
+                      color: "var(--color-success)",
                       padding: "2px 8px",
                       borderRadius: 4,
                       fontSize: 12,
@@ -846,14 +831,14 @@ export default function Configuracion() {
 
           {/* Facturacion Electronica - solo si regimen no es RIMPE_POPULAR */}
           {config.regimen && config.regimen !== "RIMPE_POPULAR" && estadoSri && (
-            <div className="card" style={{ borderColor: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "#16a34a" : estadoSri.modulo_activo ? "#3b82f6" : undefined }}>
+            <div className="card" style={{ borderColor: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "var(--color-success)" : estadoSri.modulo_activo ? "var(--color-primary)" : undefined }}>
               <div className="card-header" style={{
-                background: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "#f0fdf4" : "#eff6ff",
-                color: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "#166534" : "#1e40af",
+                background: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "rgba(34, 197, 94, 0.1)" : "rgba(59, 130, 246, 0.1)",
+                color: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "var(--color-success)" : "var(--color-primary)",
               }}>
                 Facturacion Electronica
                 {estadoSri.suscripcion_autorizada && (
-                  <span style={{ marginLeft: 8, fontSize: 11, background: "#dcfce7", padding: "2px 8px", borderRadius: 4, color: "#166534" }}>
+                  <span style={{ marginLeft: 8, fontSize: 11, background: "rgba(34, 197, 94, 0.15)", padding: "2px 8px", borderRadius: 4, color: "var(--color-success)" }}>
                     {estadoSri.suscripcion_es_lifetime ? "Lifetime" : `Plan ${estadoSri.suscripcion_plan}`}
                   </span>
                 )}
@@ -863,45 +848,45 @@ export default function Configuracion() {
 
                   {/* Seccion 1: Estado de suscripcion */}
                   {estadoSri.suscripcion_autorizada ? (
-                    <div style={{ background: "#f0fdf4", padding: 10, borderRadius: "var(--radius)", border: "1px solid #bbf7d0" }}>
+                    <div style={{ background: "rgba(34, 197, 94, 0.1)", padding: 10, borderRadius: "var(--radius)", border: "1px solid rgba(34, 197, 94, 0.3)" }}>
                       <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-                        <span style={{ fontWeight: 600, color: "#166534" }}>Suscripcion activa</span>
-                        <span style={{ fontSize: 11, background: "#dcfce7", padding: "2px 8px", borderRadius: 4, color: "#166534", fontWeight: 600 }}>
+                        <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Suscripcion activa</span>
+                        <span style={{ fontSize: 11, background: "rgba(34, 197, 94, 0.15)", padding: "2px 8px", borderRadius: 4, color: "var(--color-success)", fontWeight: 600 }}>
                           {estadoSri.suscripcion_es_lifetime ? "Lifetime" :
                            estadoSri.suscripcion_plan === "paquete" ? "Paquete" :
                            estadoSri.suscripcion_plan.charAt(0).toUpperCase() + estadoSri.suscripcion_plan.slice(1)}
                         </span>
                       </div>
                       {!estadoSri.suscripcion_es_lifetime && estadoSri.suscripcion_plan !== "paquete" && estadoSri.suscripcion_hasta && (
-                        <div className="flex justify-between" style={{ fontSize: 12, color: "#15803d" }}>
+                        <div className="flex justify-between" style={{ fontSize: 12, color: "var(--color-success)" }}>
                           <span>Valida hasta:</span>
                           <span style={{ fontWeight: 600 }}>{estadoSri.suscripcion_hasta}</span>
                         </div>
                       )}
                       {estadoSri.suscripcion_plan === "paquete" && estadoSri.suscripcion_docs_restantes != null && (
-                        <div className="flex justify-between" style={{ fontSize: 12, color: "#15803d" }}>
+                        <div className="flex justify-between" style={{ fontSize: 12, color: "var(--color-success)" }}>
                           <span>Documentos restantes:</span>
                           <span style={{ fontWeight: 600 }}>{estadoSri.suscripcion_docs_restantes}</span>
                         </div>
                       )}
                       {estadoSri.suscripcion_es_lifetime && (
-                        <div style={{ fontSize: 12, color: "#15803d" }}>Facturas ilimitadas, sin fecha de expiracion</div>
+                        <div style={{ fontSize: 12, color: "var(--color-success)" }}>Facturas ilimitadas, sin fecha de expiracion</div>
                       )}
                     </div>
                   ) : (
-                    <div style={{ background: estadoSri.facturas_usadas < estadoSri.facturas_gratis ? "#eff6ff" : "#fef2f2", padding: 10, borderRadius: "var(--radius)", border: `1px solid ${estadoSri.facturas_usadas < estadoSri.facturas_gratis ? "#bfdbfe" : "#fecaca"}` }}>
+                    <div style={{ background: estadoSri.facturas_usadas < estadoSri.facturas_gratis ? "rgba(59, 130, 246, 0.1)" : "rgba(239, 68, 68, 0.1)", padding: 10, borderRadius: "var(--radius)", border: `1px solid ${estadoSri.facturas_usadas < estadoSri.facturas_gratis ? "rgba(59, 130, 246, 0.3)" : "rgba(239, 68, 68, 0.2)"}` }}>
                       {estadoSri.facturas_usadas < estadoSri.facturas_gratis ? (
                         <>
-                          <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: 4 }}>
+                          <div style={{ fontWeight: 600, color: "var(--color-primary)", marginBottom: 4 }}>
                             Prueba gratuita
                           </div>
-                          <div style={{ fontSize: 12, color: "#3b82f6" }}>
+                          <div style={{ fontSize: 12, color: "var(--color-primary)" }}>
                             {estadoSri.facturas_gratis - estadoSri.facturas_usadas} de {estadoSri.facturas_gratis} facturas gratis restantes
                           </div>
-                          <div style={{ background: "#e2e8f0", borderRadius: 4, height: 6, overflow: "hidden", marginTop: 6 }}>
+                          <div style={{ background: "var(--color-border)", borderRadius: 4, height: 6, overflow: "hidden", marginTop: 6 }}>
                             <div style={{
                               width: `${(estadoSri.facturas_usadas / Math.max(1, estadoSri.facturas_gratis)) * 100}%`,
-                              height: "100%", background: "#3b82f6", borderRadius: 4,
+                              height: "100%", background: "var(--color-primary)", borderRadius: 4,
                             }} />
                           </div>
                           {!mostrarPlanes && (
@@ -928,10 +913,10 @@ export default function Configuracion() {
                         </>
                       ) : (
                         <>
-                          <div style={{ fontWeight: 600, color: "#991b1b", marginBottom: 4 }}>
+                          <div style={{ fontWeight: 600, color: "var(--color-danger)", marginBottom: 4 }}>
                             {estadoSri.suscripcion_mensaje || "Prueba gratuita agotada"}
                           </div>
-                          <div style={{ fontSize: 12, color: "#b91c1c", marginBottom: 8 }}>
+                          <div style={{ fontSize: 12, color: "var(--color-danger)", marginBottom: 8 }}>
                             Adquiera una suscripcion para continuar emitiendo facturas electronicas.
                           </div>
                           {!mostrarPlanes && (
@@ -970,23 +955,23 @@ export default function Configuracion() {
                             onClick={() => setPlanSeleccionado(plan)}
                             style={{
                               padding: 12,
-                              border: `2px solid ${planSeleccionado?.clave === plan.clave ? "#3b82f6" : plan.popular ? "#93c5fd" : "var(--color-border)"}`,
+                              border: `2px solid ${planSeleccionado?.clave === plan.clave ? "var(--color-primary)" : plan.popular ? "rgba(59, 130, 246, 0.3)" : "var(--color-border)"}`,
                               borderRadius: "var(--radius)",
                               cursor: "pointer",
                               position: "relative",
-                              background: planSeleccionado?.clave === plan.clave ? "#eff6ff" : "white",
+                              background: planSeleccionado?.clave === plan.clave ? "rgba(59, 130, 246, 0.1)" : "var(--color-surface)",
                               transition: "all 0.15s",
                             }}>
                             {plan.popular && (
-                              <span style={{ position: "absolute", top: -8, right: 8, background: "#3b82f6", color: "white", fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700 }}>
+                              <span style={{ position: "absolute", top: -8, right: 8, background: "var(--color-primary)", color: "var(--color-surface)", fontSize: 9, padding: "1px 6px", borderRadius: 3, fontWeight: 700 }}>
                                 Recomendado
                               </span>
                             )}
-                            <div style={{ fontWeight: 800, fontSize: 18, color: "#0f172a" }}>${plan.precio}</div>
+                            <div style={{ fontWeight: 800, fontSize: 18, color: "var(--color-text)" }}>${plan.precio}</div>
                             <div style={{ fontWeight: 600, fontSize: 13 }}>{plan.nombre}</div>
-                            <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{plan.descripcion}</div>
+                            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>{plan.descripcion}</div>
                             {plan.ahorro && (
-                              <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700 }}>{plan.ahorro}</span>
+                              <span style={{ fontSize: 10, color: "var(--color-success)", fontWeight: 700 }}>{plan.ahorro}</span>
                             )}
                           </div>
                         ))}
@@ -1050,44 +1035,44 @@ export default function Configuracion() {
 
                   {/* Confirmacion de pedido / datos bancarios */}
                   {pedidoCreado && configContratacion && (
-                    <div style={{ background: "#eff6ff", padding: 12, borderRadius: "var(--radius)", border: "1px solid #bfdbfe" }}>
-                      <div style={{ fontWeight: 700, color: "#1e40af", marginBottom: 8, fontSize: 14 }}>
+                    <div style={{ background: "rgba(59, 130, 246, 0.1)", padding: 12, borderRadius: "var(--radius)", border: "1px solid rgba(59, 130, 246, 0.3)" }}>
+                      <div style={{ fontWeight: 700, color: "var(--color-primary)", marginBottom: 8, fontSize: 14 }}>
                         Pedido registrado
                       </div>
-                      <div style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 20, letterSpacing: 2, color: "#0c4a6e", background: "#f0f9ff", padding: "8px 12px", borderRadius: 6, textAlign: "center", border: "2px solid #bae6fd", marginBottom: 8 }}>
+                      <div style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 20, letterSpacing: 2, color: "var(--color-primary)", background: "rgba(59, 130, 246, 0.1)", padding: "8px 12px", borderRadius: 6, textAlign: "center", border: "2px solid rgba(59, 130, 246, 0.3)", marginBottom: 8 }}>
                         {pedidoCreado.referencia}
                       </div>
-                      <div style={{ fontSize: 12, color: "#1e40af", marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, color: "var(--color-primary)", marginBottom: 8 }}>
                         Incluya esta referencia en el detalle de su transferencia.
                       </div>
                       <div style={{ display: "grid", gap: 4, fontSize: 12 }}>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#64748b" }}>Banco:</span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>Banco:</span>
                           <span style={{ fontWeight: 600 }}>{configContratacion.banco_nombre}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#64748b" }}>Cuenta:</span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>Cuenta:</span>
                           <span style={{ fontWeight: 600 }}>{configContratacion.banco_tipo_cuenta} - {configContratacion.banco_numero_cuenta}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#64748b" }}>Titular:</span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>Titular:</span>
                           <span style={{ fontWeight: 600 }}>{configContratacion.banco_titular}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#64748b" }}>CI/RUC:</span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>CI/RUC:</span>
                           <span style={{ fontWeight: 600 }}>{configContratacion.banco_cedula_ruc}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
-                          <span style={{ color: "#64748b" }}>Monto:</span>
-                          <span style={{ fontWeight: 700, color: "#0f172a" }}>${planSeleccionado?.precio?.toFixed(2)}</span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>Monto:</span>
+                          <span style={{ fontWeight: 700, color: "var(--color-text)" }}>${planSeleccionado?.precio?.toFixed(2)}</span>
                         </div>
                       </div>
                       {configContratacion.mensaje_transferencia && (
-                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 8, fontStyle: "italic" }}>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, fontStyle: "italic" }}>
                           {configContratacion.mensaje_transferencia}
                         </div>
                       )}
-                      <div style={{ fontSize: 12, color: "#1e40af", marginTop: 8, fontWeight: 600 }}>
+                      <div style={{ fontSize: 12, color: "var(--color-primary)", marginTop: 8, fontWeight: 600 }}>
                         Una vez realizado el deposito, su suscripcion se activara en maximo 24 horas.
                       </div>
                       <button className="btn btn-outline" style={{ width: "100%", justifyContent: "center", fontSize: 12, marginTop: 8 }}
@@ -1136,8 +1121,8 @@ export default function Configuracion() {
                   {/* Seccion 2: Certificado P12 */}
                   {(estadoSri.suscripcion_autorizada || estadoSri.facturas_usadas < estadoSri.facturas_gratis) && !estadoSri.certificado_cargado && (
                     <>
-                      <hr style={{ border: "none", borderTop: "1px solid #e2e8f0", margin: "4px 0" }} />
-                      <div style={{ background: "#fef3c7", padding: 10, borderRadius: "var(--radius)", color: "#92400e", fontSize: 12 }}>
+                      <hr style={{ border: "none", borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />
+                      <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 10, borderRadius: "var(--radius)", color: "var(--color-warning)", fontSize: 12 }}>
                         Cargue su certificado digital (.p12) emitido por una entidad autorizada (Security Data, Uanataca, etc.)
                       </div>
                       <div>
@@ -1169,7 +1154,7 @@ export default function Configuracion() {
                         {cargandoP12 ? "Validando..." : "Seleccionar archivo .p12"}
                       </button>
                       {!p12Password && (
-                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4, textAlign: "center" }}>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4, textAlign: "center" }}>
                           Ingrese la password del certificado para habilitar
                         </div>
                       )}
@@ -1179,10 +1164,10 @@ export default function Configuracion() {
                   {/* Seccion 3: Configuracion completa (certificado + ambiente) */}
                   {estadoSri.certificado_cargado && (
                     <>
-                      <hr style={{ border: "none", borderTop: "1px solid #e2e8f0", margin: "4px 0" }} />
+                      <hr style={{ border: "none", borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />
                       <div className="flex justify-between items-center">
                         <span className="text-secondary">Certificado:</span>
-                        <span style={{ color: "#16a34a", fontWeight: 600 }}>Cargado</span>
+                        <span style={{ color: "var(--color-success)", fontWeight: 600 }}>Cargado</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-secondary">Ambiente: {modoDemo && "🔒"}</span>

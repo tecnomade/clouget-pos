@@ -73,8 +73,8 @@ export default function CajaPage() {
             <span style={{
               padding: "4px 12px",
               borderRadius: 4,
-              background: "#dcfce7",
-              color: "#166534",
+              background: "rgba(34, 197, 94, 0.15)",
+              color: "var(--color-success)",
               fontSize: 13,
               fontWeight: 600,
             }}>
@@ -120,7 +120,7 @@ export default function CajaPage() {
                     </div>
                     <div>
                       <span className="text-secondary">Cobros en banco:</span>
-                      <div className="text-lg font-bold" style={{ color: "#3b82f6" }}>
+                      <div className="text-lg font-bold" style={{ color: "var(--color-primary)" }}>
                         ${resumen.total_cobros_banco.toFixed(2)}
                       </div>
                     </div>
@@ -235,16 +235,16 @@ export default function CajaPage() {
                 <span className="font-bold" style={{ marginLeft: 8 }}>${cajaAbierta.monto_inicial.toFixed(2)}</span>
               </div>
               <div className="mb-4" style={{
-                padding: "10px 14px", background: "#f0fdf4", borderRadius: 8,
-                border: "1px solid #bbf7d0",
+                padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
+                border: "1px solid rgba(34, 197, 94, 0.3)",
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
                   <span className="text-secondary">Ventas en efectivo:</span>
                   <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
                 </div>
-                <div style={{ borderTop: "1px solid #bbf7d0", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                  <span style={{ fontWeight: 600, color: "#166534" }}>Monto esperado en caja:</span>
-                  <span style={{ fontWeight: 700, color: "#166534", fontSize: 16 }}>
+                <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                  <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja:</span>
+                  <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
                     ${(cajaAbierta.monto_inicial + (cajaAbierta.monto_ventas ?? 0)).toFixed(2)}
                   </span>
                 </div>

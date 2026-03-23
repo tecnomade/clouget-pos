@@ -143,14 +143,14 @@ export default function DashboardPage() {
                     total: Number(v.total.toFixed(2)),
                     ventas: v.num_ventas,
                   }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                     <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
                     <Tooltip
                       formatter={(value) => [`$${Number(value).toFixed(2)}`, "Total"]}
                       labelFormatter={(label) => `Fecha: ${label}`}
                     />
-                    <Bar dataKey="total" fill="#2563eb" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -167,8 +167,8 @@ export default function DashboardPage() {
                   fontWeight: 600,
                   padding: "2px 10px",
                   borderRadius: 12,
-                  background: cajaAbierta ? "#dcfce7" : "#fee2e2",
-                  color: cajaAbierta ? "#166534" : "#991b1b",
+                  background: cajaAbierta ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.1)",
+                  color: cajaAbierta ? "var(--color-success)" : "var(--color-danger)",
                 }}>
                   {cajaAbierta ? `CAJA ABIERTA — ${cajaAbierta.usuario ?? ""}` : "CAJA CERRADA"}
                 </span>
@@ -178,7 +178,7 @@ export default function DashboardPage() {
               {cajaAbierta && (
                 <div style={{
                   display: "flex", justifyContent: "space-between", padding: "6px 12px",
-                  background: "#f0fdf4", borderRadius: 6, fontSize: 12, marginBottom: 4,
+                  background: "rgba(34, 197, 94, 0.1)", borderRadius: 6, fontSize: 12, marginBottom: 4,
                 }}>
                   <span>Monto inicial: <b>${cajaAbierta.monto_inicial.toFixed(2)}</b></span>
                   <span>Ventas: <b>${cajaAbierta.monto_ventas.toFixed(2)}</b></span>
@@ -219,10 +219,10 @@ export default function DashboardPage() {
                         <span style={{ color: "var(--color-success)", fontWeight: 600 }}>${p.total_vendido.toFixed(2)}</span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ flex: 1, height: 6, background: "#e5e7eb", borderRadius: 3 }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: "#2563eb", borderRadius: 3 }} />
+                        <div style={{ flex: 1, height: 6, background: "var(--color-border)", borderRadius: 3 }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: "var(--color-primary)", borderRadius: 3 }} />
                         </div>
-                        <span style={{ fontSize: 10, color: "#6b7280", minWidth: 40, textAlign: "right" }}>
+                        <span style={{ fontSize: 10, color: "var(--color-text-secondary)", minWidth: 40, textAlign: "right" }}>
                           {p.cantidad_total} uds
                         </span>
                       </div>
@@ -262,8 +262,8 @@ export default function DashboardPage() {
                         <td style={{ padding: "6px 12px", textAlign: "center" }}>
                           <span style={{
                             fontSize: 10, padding: "1px 6px", borderRadius: 4,
-                            background: v.forma_pago === "EFECTIVO" ? "#dcfce7" : v.forma_pago === "TRANSFER" ? "#dbeafe" : "#fef3c7",
-                            color: v.forma_pago === "EFECTIVO" ? "#166534" : v.forma_pago === "TRANSFER" ? "#1e40af" : "#92400e",
+                            background: v.forma_pago === "EFECTIVO" ? "rgba(34, 197, 94, 0.15)" : v.forma_pago === "TRANSFER" ? "rgba(59, 130, 246, 0.15)" : "rgba(245, 158, 11, 0.15)",
+                            color: v.forma_pago === "EFECTIVO" ? "var(--color-success)" : v.forma_pago === "TRANSFER" ? "var(--color-primary)" : "var(--color-warning)",
                           }}>
                             {v.forma_pago === "EFECTIVO" ? "Efectivo" : v.forma_pago === "TRANSFER" ? "Transfer" : "Credito"}
                           </span>
@@ -280,8 +280,8 @@ export default function DashboardPage() {
         {/* Fila 3: Stock Bajo + Cuentas por cobrar */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {/* Stock Bajo con colores */}
-          <div className="card" style={{ borderColor: alertas.length > 0 ? "#fbbf24" : undefined }}>
-            <div className="card-header" style={alertas.length > 0 ? { background: "#fffbeb", color: "#92400e" } : {}}>
+          <div className="card" style={{ borderColor: alertas.length > 0 ? "var(--color-warning)" : undefined }}>
+            <div className="card-header" style={alertas.length > 0 ? { background: "rgba(245, 158, 11, 0.1)", color: "var(--color-warning)" } : {}}>
               Stock Bajo ({alertas.length})
             </div>
             <div className="card-body" style={{ padding: 0 }}>
@@ -296,18 +296,18 @@ export default function DashboardPage() {
                   return (
                     <div key={a.id} style={{
                       padding: "6px 12px", borderBottom: "1px solid var(--color-border)",
-                      background: esAgotado ? "#fef2f2" : undefined,
+                      background: esAgotado ? "rgba(239, 68, 68, 0.1)" : undefined,
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
                         <span>{a.nombre}</span>
-                        <span style={{ fontWeight: 600, color: esAgotado ? "#dc2626" : "#d97706" }}>
+                        <span style={{ fontWeight: 600, color: esAgotado ? "var(--color-danger)" : "var(--color-warning)" }}>
                           {a.stock_actual} / {a.stock_minimo}
                         </span>
                       </div>
-                      <div style={{ height: 4, background: "#e5e7eb", borderRadius: 2 }}>
+                      <div style={{ height: 4, background: "var(--color-border)", borderRadius: 2 }}>
                         <div style={{
                           width: `${pct}%`, height: "100%", borderRadius: 2,
-                          background: esAgotado ? "#dc2626" : pct < 50 ? "#f59e0b" : "#22c55e",
+                          background: esAgotado ? "var(--color-danger)" : pct < 50 ? "var(--color-warning)" : "var(--color-success)",
                         }} />
                       </div>
                     </div>
@@ -318,8 +318,8 @@ export default function DashboardPage() {
           </div>
 
           {/* Resumen de cuentas por cobrar / deudores */}
-          <div className="card" style={{ borderColor: deudores.length > 0 ? "#f87171" : undefined }}>
-            <div className="card-header" style={deudores.length > 0 ? { background: "#fef2f2", color: "#991b1b" } : {}}>
+          <div className="card" style={{ borderColor: deudores.length > 0 ? "var(--color-danger)" : undefined }}>
+            <div className="card-header" style={deudores.length > 0 ? { background: "rgba(239, 68, 68, 0.1)", color: "var(--color-danger)" } : {}}>
               Cuentas por Cobrar ({deudores.length})
             </div>
             <div className="card-body" style={{ padding: 0 }}>
@@ -335,9 +335,9 @@ export default function DashboardPage() {
                   }}>
                     <div>
                       <div style={{ fontWeight: 500 }}>{d.cliente_nombre}</div>
-                      <div style={{ fontSize: 10, color: "#6b7280" }}>{d.num_cuentas} cuenta{d.num_cuentas !== 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{d.num_cuentas} cuenta{d.num_cuentas !== 1 ? "s" : ""}</div>
                     </div>
-                    <span style={{ fontWeight: 700, color: "#dc2626", fontSize: 13 }}>
+                    <span style={{ fontWeight: 700, color: "var(--color-danger)", fontSize: 13 }}>
                       ${d.total_deuda.toFixed(2)}
                     </span>
                   </div>
@@ -373,7 +373,7 @@ function KpiCard({ label, valor, ayer, prefix, color }: {
       {diff !== null && diffPct !== null && (
         <div style={{
           fontSize: 10, marginTop: 2,
-          color: diff > 0 ? "#16a34a" : diff < 0 ? "#dc2626" : "#6b7280",
+          color: diff > 0 ? "var(--color-success)" : diff < 0 ? "var(--color-danger)" : "var(--color-text-secondary)",
         }}>
           {diff > 0 ? "▲" : diff < 0 ? "▼" : "="}{" "}
           {Math.abs(diffPct).toFixed(0)}% vs ayer

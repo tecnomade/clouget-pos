@@ -377,7 +377,8 @@ pub fn listar_ventas_periodo(
              v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
              v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
              v.numero_factura, v.establecimiento, v.punto_emision,
-             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre,
+             COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
              WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.anulada = 0
@@ -412,6 +413,8 @@ pub fn listar_ventas_periodo(
                 banco_id: row.get(21).ok(),
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
+                tipo_estado: row.get(24).ok(),
+                guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -479,4 +482,90 @@ pub fn ultimas_ventas_dia(db: State<Database>, limite: i64) -> Result<Vec<Ultima
         .map_err(|e| e.to_string())?;
 
     Ok(ventas)
+}
+
+// --- Reportes avanzados ---
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CategoriaUtilidad { pub categoria: String, pub ventas: f64, pub costo: f64, pub utilidad: f64 }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GastoCategoria { pub categoria: String, pub monto: f64 }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReporteUtilidad {
+    pub ventas_brutas: f64, pub costo_ventas: f64, pub utilidad_bruta: f64, pub margen_bruto: f64,
+    pub total_gastos: f64, pub utilidad_neta: f64, pub margen_neto: f64, pub num_ventas: i64,
+    pub promedio_por_venta: f64, pub total_devoluciones: f64,
+    pub por_categoria: Vec<CategoriaUtilidad>, pub gastos_por_categoria: Vec<GastoCategoria>,
+}
+
+#[tauri::command]
+pub fn reporte_utilidad(db: State<Database>, fecha_inicio: String, fecha_hasta: String) -> Result<ReporteUtilidad, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let vf = "date(fecha) BETWEEN date(?1) AND date(?2) AND anulada = 0 AND COALESCE(tipo_estado, 'COMPLETADA') IN ('COMPLETADA', 'CONVERTIDA')";
+
+    let ventas_brutas: f64 = conn.query_row(&format!("SELECT COALESCE(SUM(total), 0) FROM ventas WHERE {}", vf), rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let num_ventas: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM ventas WHERE {}", vf), rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0);
+    let costo_ventas: f64 = conn.query_row(&format!("SELECT COALESCE(SUM(p.precio_costo * vd.cantidad), 0) FROM venta_detalles vd JOIN ventas v ON vd.venta_id = v.id JOIN productos p ON vd.producto_id = p.id WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.anulada = 0 AND COALESCE(v.tipo_estado, 'COMPLETADA') IN ('COMPLETADA', 'CONVERTIDA')"), rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let total_gastos: f64 = conn.query_row("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE date(fecha) BETWEEN date(?1) AND date(?2)", rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let total_devoluciones: f64 = conn.query_row("SELECT COALESCE(SUM(total), 0) FROM notas_credito WHERE date(fecha) BETWEEN date(?1) AND date(?2)", rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+
+    let utilidad_bruta = ventas_brutas - costo_ventas;
+    let utilidad_neta = utilidad_bruta - total_gastos - total_devoluciones;
+    let margen_bruto = if ventas_brutas > 0.0 { (utilidad_bruta / ventas_brutas) * 100.0 } else { 0.0 };
+    let margen_neto = if ventas_brutas > 0.0 { (utilidad_neta / ventas_brutas) * 100.0 } else { 0.0 };
+    let promedio_por_venta = if num_ventas > 0 { ventas_brutas / num_ventas as f64 } else { 0.0 };
+
+    let mut sc = conn.prepare("SELECT COALESCE(cat.nombre, 'Sin categoría'), COALESCE(SUM(vd.subtotal), 0), COALESCE(SUM(p.precio_costo * vd.cantidad), 0) FROM venta_detalles vd JOIN ventas v ON vd.venta_id = v.id JOIN productos p ON vd.producto_id = p.id LEFT JOIN categorias cat ON p.categoria_id = cat.id WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.anulada = 0 AND COALESCE(v.tipo_estado, 'COMPLETADA') IN ('COMPLETADA', 'CONVERTIDA') GROUP BY COALESCE(cat.nombre, 'Sin categoría') ORDER BY SUM(vd.subtotal) DESC LIMIT 10").map_err(|e| e.to_string())?;
+    let por_categoria = sc.query_map(rusqlite::params![fecha_inicio, fecha_hasta], |r| { let v: f64 = r.get(1)?; let c: f64 = r.get(2)?; Ok(CategoriaUtilidad { categoria: r.get(0)?, ventas: v, costo: c, utilidad: v - c }) }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let mut sg = conn.prepare("SELECT COALESCE(categoria, 'Sin categoría'), SUM(monto) FROM gastos WHERE date(fecha) BETWEEN date(?1) AND date(?2) GROUP BY COALESCE(categoria, 'Sin categoría') ORDER BY SUM(monto) DESC").map_err(|e| e.to_string())?;
+    let gastos_por_categoria = sg.query_map(rusqlite::params![fecha_inicio, fecha_hasta], |r| Ok(GastoCategoria { categoria: r.get(0)?, monto: r.get(1)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    Ok(ReporteUtilidad { ventas_brutas, costo_ventas, utilidad_bruta, margen_bruto, total_gastos, utilidad_neta, margen_neto, num_ventas, promedio_por_venta, total_devoluciones, por_categoria, gastos_por_categoria })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReporteBalance {
+    pub ingresos_efectivo: f64, pub ingresos_transferencia: f64, pub ingresos_credito_cobrado: f64,
+    pub total_ingresos: f64, pub gastos_por_categoria: Vec<GastoCategoria>, pub total_gastos: f64,
+    pub total_devoluciones: f64, pub total_egresos: f64, pub resultado: f64,
+    pub cuentas_por_cobrar: f64, pub valor_inventario: f64,
+}
+
+#[tauri::command]
+pub fn reporte_balance(db: State<Database>, fecha_inicio: String, fecha_hasta: String) -> Result<ReporteBalance, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let bf = "date(fecha) BETWEEN date(?1) AND date(?2) AND anulada = 0 AND COALESCE(tipo_estado, 'COMPLETADA') IN ('COMPLETADA', 'CONVERTIDA')";
+
+    let ingresos_efectivo: f64 = conn.query_row(&format!("SELECT COALESCE(SUM(total), 0) FROM ventas WHERE {} AND forma_pago = 'EFECTIVO'", bf), rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let ingresos_transferencia: f64 = conn.query_row(&format!("SELECT COALESCE(SUM(total), 0) FROM ventas WHERE {} AND forma_pago = 'TRANSFER'", bf), rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let ingresos_credito_cobrado: f64 = conn.query_row("SELECT COALESCE(SUM(monto), 0) FROM pagos_cuenta WHERE date(fecha) BETWEEN date(?1) AND date(?2)", rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let total_ingresos = ingresos_efectivo + ingresos_transferencia + ingresos_credito_cobrado;
+    let total_gastos: f64 = conn.query_row("SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE date(fecha) BETWEEN date(?1) AND date(?2)", rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+    let total_devoluciones: f64 = conn.query_row("SELECT COALESCE(SUM(total), 0) FROM notas_credito WHERE date(fecha) BETWEEN date(?1) AND date(?2)", rusqlite::params![fecha_inicio, fecha_hasta], |r| r.get(0)).unwrap_or(0.0);
+
+    let mut sg = conn.prepare("SELECT COALESCE(categoria, 'Sin categoría'), SUM(monto) FROM gastos WHERE date(fecha) BETWEEN date(?1) AND date(?2) GROUP BY COALESCE(categoria, 'Sin categoría') ORDER BY SUM(monto) DESC").map_err(|e| e.to_string())?;
+    let gastos_por_categoria = sg.query_map(rusqlite::params![fecha_inicio, fecha_hasta], |r| Ok(GastoCategoria { categoria: r.get(0)?, monto: r.get(1)? })).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let total_egresos = total_gastos + total_devoluciones;
+    let resultado = total_ingresos - total_egresos;
+    let cuentas_por_cobrar: f64 = conn.query_row("SELECT COALESCE(SUM(saldo), 0) FROM cuentas_por_cobrar WHERE estado = 'PENDIENTE'", [], |r| r.get(0)).unwrap_or(0.0);
+    let valor_inventario: f64 = conn.query_row("SELECT COALESCE(SUM(stock_actual * precio_costo), 0) FROM productos WHERE activo = 1 AND es_servicio = 0", [], |r| r.get(0)).unwrap_or(0.0);
+
+    Ok(ReporteBalance { ingresos_efectivo, ingresos_transferencia, ingresos_credito_cobrado, total_ingresos, gastos_por_categoria, total_gastos, total_devoluciones, total_egresos, resultado, cuentas_por_cobrar, valor_inventario })
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProductoRentabilidad { pub nombre: String, pub categoria: String, pub cantidad: f64, pub ingreso: f64, pub costo: f64, pub utilidad: f64, pub margen: f64 }
+
+#[tauri::command]
+pub fn reporte_productos_rentabilidad(db: State<Database>, fecha_inicio: String, fecha_hasta: String, limite: i64) -> Result<Vec<ProductoRentabilidad>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT p.nombre, COALESCE(cat.nombre, 'Sin categoría'), SUM(vd.cantidad), SUM(vd.subtotal), SUM(p.precio_costo * vd.cantidad) FROM venta_detalles vd JOIN ventas v ON vd.venta_id = v.id JOIN productos p ON vd.producto_id = p.id LEFT JOIN categorias cat ON p.categoria_id = cat.id WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.anulada = 0 AND COALESCE(v.tipo_estado, 'COMPLETADA') IN ('COMPLETADA', 'CONVERTIDA') GROUP BY p.id ORDER BY SUM(vd.subtotal) - SUM(p.precio_costo * vd.cantidad) DESC LIMIT ?3").map_err(|e| e.to_string())?;
+    let productos = stmt.query_map(rusqlite::params![fecha_inicio, fecha_hasta, limite], |r| {
+        let i: f64 = r.get(3)?; let c: f64 = r.get(4)?; let u = i - c;
+        Ok(ProductoRentabilidad { nombre: r.get(0)?, categoria: r.get(1)?, cantidad: r.get(2)?, ingreso: i, costo: c, utilidad: u, margen: if i > 0.0 { (u / i) * 100.0 } else { 0.0 } })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(productos)
 }

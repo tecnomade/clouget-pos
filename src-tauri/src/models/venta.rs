@@ -29,6 +29,14 @@ pub struct Venta {
     pub referencia_pago: Option<String>,
     #[serde(default)]
     pub banco_nombre: Option<String>,
+    #[serde(default)]
+    pub tipo_estado: Option<String>,
+    #[serde(default)]
+    pub guia_placa: Option<String>,
+    #[serde(default)]
+    pub guia_chofer: Option<String>,
+    #[serde(default)]
+    pub guia_direccion_destino: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -71,6 +79,27 @@ pub struct NuevaVenta {
     pub referencia_pago: Option<String>,
     #[serde(default)]
     pub comprobante_imagen: Option<String>,
+    #[serde(default)]
+    pub tipo_estado: Option<String>,
+    #[serde(default)]
+    pub guia_placa: Option<String>,
+    #[serde(default)]
+    pub guia_chofer: Option<String>,
+    #[serde(default)]
+    pub guia_direccion_destino: Option<String>,
+}
+
+// --- Documentos Recientes ---
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DocumentoReciente {
+    pub id: i64,
+    pub numero: String,
+    pub tipo_estado: String,
+    pub tipo_documento: String,
+    pub cliente_nombre: Option<String>,
+    pub total: f64,
+    pub fecha: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,6 +107,16 @@ pub struct VentaCompleta {
     pub venta: Venta,
     pub detalles: Vec<VentaDetalle>,
     pub cliente_nombre: Option<String>,
+}
+
+// --- Guías de Remisión ---
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResumenGuias {
+    pub abiertas: i64,
+    pub cerradas: i64,
+    pub total_pendiente: f64,
+    pub total_cerrado: f64,
 }
 
 // --- Notas de Crédito ---

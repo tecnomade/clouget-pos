@@ -183,7 +183,7 @@ function FormProducto({
       </div>
       {/* Precios por lista */}
       {listasPrecios.length > 0 && (
-        <div style={{ marginTop: 16, padding: 12, background: "#f8fafc", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+        <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
           <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
             Precios por lista
           </label>
@@ -192,7 +192,7 @@ function FormProducto({
               <div key={lp.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 12, flex: 1 }}>
                   {lp.nombre}
-                  {lp.es_default && <span style={{ fontSize: 10, color: "#16a34a", marginLeft: 4 }}>(defecto)</span>}
+                  {lp.es_default && <span style={{ fontSize: 10, color: "var(--color-success)", marginLeft: 4 }}>(defecto)</span>}
                 </span>
                 <input
                   className="input"
@@ -213,7 +213,7 @@ function FormProducto({
         </div>
       )}
       {/* Imagen del producto */}
-      <div style={{ marginTop: 16, padding: 12, background: "#f8fafc", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+      <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
         <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
           Imagen del producto
         </label>
@@ -225,7 +225,7 @@ function FormProducto({
               style={{ width: 80, height: 80, objectFit: "cover", border: "1px solid var(--color-border)", borderRadius: "var(--radius)" }}
             />
           ) : (
-            <div style={{ width: 80, height: 80, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", fontSize: 11 }}>
+            <div style={{ width: 80, height: 80, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 11 }}>
               Sin imagen
             </div>
           )}
@@ -251,7 +251,7 @@ function FormProducto({
               {form.imagen ? "Cambiar" : "Cargar imagen"}
             </button>
             {form.imagen && (
-              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "#ef4444" }}
+              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)" }}
                 onClick={async () => {
                   try {
                     if (form.id) await eliminarImagenProducto(form.id);
@@ -621,8 +621,8 @@ export default function Productos() {
                 {productosEtiqueta.map((p) => (
                   <label key={p.id} style={{
                     display: "flex", alignItems: "center", gap: 8, padding: "5px 10px",
-                    borderBottom: "1px solid #f1f5f9", cursor: "pointer", fontSize: 12,
-                    background: etiquetaIds.has(p.id) ? "#eff6ff" : undefined,
+                    borderBottom: "1px solid var(--color-border)", cursor: "pointer", fontSize: 12,
+                    background: etiquetaIds.has(p.id) ? "rgba(59, 130, 246, 0.1)" : undefined,
                   }}>
                     <input type="checkbox" checked={etiquetaIds.has(p.id)}
                       onChange={() => toggleEtiquetaId(p.id)} />

@@ -55,6 +55,7 @@ export default function VentasDia() {
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
+  const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
 
   const abrirDetalle = async (ventaId: number) => {
     try {
@@ -66,7 +67,7 @@ export default function VentasDia() {
   };
 
   const esRango = fechaDesde !== fechaHasta;
-  const COLORES_PIE = ["#22c55e", "#3b82f6", "#f59e0b", "#8b5cf6"];
+  const COLORES_PIE = ["var(--color-success)", "var(--color-primary)", "var(--color-warning)", "#8b5cf6"];
 
   const handleExportarCSV = async () => {
     try {
@@ -215,7 +216,7 @@ export default function VentasDia() {
             {r.total_notas_credito > 0 && (
               <div className="card" style={{ padding: 14 }}>
                 <div className="text-secondary" style={{ fontSize: 11 }}>Devoluciones ({r.num_notas_credito})</div>
-                <div className="text-xl font-bold" style={{ color: "#dc2626" }}>-${r.total_notas_credito.toFixed(2)}</div>
+                <div className="text-xl font-bold" style={{ color: "var(--color-danger)" }}>-${r.total_notas_credito.toFixed(2)}</div>
               </div>
             )}
             {/* Cards adicionales para rango - solo admin */}
@@ -227,7 +228,7 @@ export default function VentasDia() {
                 </div>
                 <div className="card" style={{ padding: 14 }}>
                   <div className="text-secondary" style={{ fontSize: 11 }}>Total Gastos</div>
-                  <div className="text-xl font-bold" style={{ color: resumenRango.total_gastos > 0 ? "#ef4444" : undefined }}>
+                  <div className="text-xl font-bold" style={{ color: resumenRango.total_gastos > 0 ? "var(--color-danger)" : undefined }}>
                     ${resumenRango.total_gastos.toFixed(2)}
                   </div>
                 </div>
@@ -242,16 +243,16 @@ export default function VentasDia() {
             {/* Tendencia de ventas diarias */}
             {tendencia.length > 1 && (
               <div className="card" style={{ padding: "16px 12px" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Ventas por Dia</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>Ventas por Dia</div>
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={tendencia.map(d => ({ ...d, dia: d.fecha.slice(5) }))}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                     <XAxis dataKey="dia" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
                     <Tooltip formatter={(value) => [`$${Number(value).toFixed(2)}`, "Total"]}
                       labelFormatter={(label) => `Fecha: ${label}`} />
-                    <Line type="monotone" dataKey="total" stroke="#2563eb" strokeWidth={2}
-                      dot={{ fill: "#2563eb", r: 3 }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="total" stroke="var(--color-primary)" strokeWidth={2}
+                      dot={{ fill: "var(--color-primary)", r: 3 }} activeDot={{ r: 5 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -260,21 +261,21 @@ export default function VentasDia() {
             {/* Top productos */}
             {topProductos.length > 0 && (
               <div className="card" style={{ padding: "16px 12px" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Top Productos por Ingreso</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>Top Productos por Ingreso</div>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={topProductos.slice(0, 8).map(p => ({
                     nombre: p.nombre.length > 15 ? p.nombre.slice(0, 15) + "…" : p.nombre,
                     total: p.total_vendido,
                     cantidad: p.cantidad_total,
                   }))} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                     <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${v}`} />
                     <YAxis type="category" dataKey="nombre" tick={{ fontSize: 10 }} width={110} />
                     <Tooltip formatter={(value, name) => [
                       name === "total" ? `$${Number(value).toFixed(2)}` : value,
                       name === "total" ? "Ingreso" : "Cantidad"
                     ]} />
-                    <Bar dataKey="total" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                    <Bar dataKey="total" fill="var(--color-primary)" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -283,7 +284,7 @@ export default function VentasDia() {
             {/* Distribución por método de pago */}
             {r && r.total_ventas > 0 && (
               <div className="card" style={{ padding: "16px 12px" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#334155" }}>Metodos de Pago</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>Metodos de Pago</div>
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
                     <Pie
@@ -316,8 +317,25 @@ export default function VentasDia() {
           {/* Tabla de ventas */}
           <div className="card">
             <div className="card-header flex justify-between items-center">
-              <span>Detalle de Ventas</span>
-              <span className="text-secondary" style={{ fontSize: 12 }}>{ventas.length} registro{ventas.length !== 1 ? "s" : ""}</span>
+              <div className="flex gap-2 items-center">
+                {[
+                  { key: "COMPLETADA", label: "Ventas" },
+                  { key: "BORRADOR", label: "Borradores" },
+                  { key: "COTIZACION", label: "Cotizaciones" },
+                  { key: "GUIA_REMISION", label: "Guías" },
+                  { key: "TODOS", label: "Todos" },
+                ].map(f => (
+                  <button key={f.key}
+                    className={`btn ${filtroTipo === f.key ? "btn-primary" : "btn-outline"}`}
+                    style={{ fontSize: 10, padding: "3px 10px" }}
+                    onClick={() => setFiltroTipo(f.key)}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-secondary" style={{ fontSize: 12 }}>
+                {ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length} registro{ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length !== 1 ? "s" : ""}
+              </span>
             </div>
             <div style={{ maxHeight: 400, overflow: "auto" }}>
               <table className="table">
@@ -332,13 +350,13 @@ export default function VentasDia() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ventas.map((v) => (
+                  {ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).map((v) => (
                     <tr key={v.id} onClick={() => v.id && abrirDetalle(v.id)}
                       style={{ cursor: "pointer" }} title="Ver detalle">
                       <td>
                         <strong>{v.numero}</strong>
                         {v.numero_factura && (
-                          <div style={{ fontSize: 10, color: "#166534" }}>{v.numero_factura}</div>
+                          <div style={{ fontSize: 10, color: "var(--color-success)" }}>{v.numero_factura}</div>
                         )}
                       </td>
                       <td className="text-secondary" style={{ fontSize: 12 }}>
@@ -355,8 +373,8 @@ export default function VentasDia() {
                           padding: "2px 6px",
                           borderRadius: 3,
                           fontWeight: 600,
-                          background: v.tipo_documento === "FACTURA" ? "#dbeafe" : "#f1f5f9",
-                          color: v.tipo_documento === "FACTURA" ? "#1e40af" : "#64748b",
+                          background: v.tipo_documento === "FACTURA" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-alt)",
+                          color: v.tipo_documento === "FACTURA" ? "var(--color-primary)" : "var(--color-text-secondary)",
                         }}>
                           {v.tipo_documento === "FACTURA" ? "FAC" : "NV"}
                         </span>
@@ -369,14 +387,14 @@ export default function VentasDia() {
                             marginLeft: 4,
                             fontWeight: 600,
                             cursor: v.clave_acceso ? "help" : undefined,
-                            background: v.estado_sri === "AUTORIZADA" ? "#dcfce7"
-                              : v.estado_sri === "PENDIENTE" ? "#fef3c7"
-                              : v.estado_sri === "RECHAZADA" ? "#fee2e2"
-                              : "#f1f5f9",
-                            color: v.estado_sri === "AUTORIZADA" ? "#166534"
-                              : v.estado_sri === "PENDIENTE" ? "#92400e"
-                              : v.estado_sri === "RECHAZADA" ? "#dc2626"
-                              : "#94a3b8",
+                            background: v.estado_sri === "AUTORIZADA" ? "rgba(34, 197, 94, 0.15)"
+                              : v.estado_sri === "PENDIENTE" ? "rgba(245, 158, 11, 0.15)"
+                              : v.estado_sri === "RECHAZADA" ? "rgba(239, 68, 68, 0.1)"
+                              : "var(--color-surface-alt)",
+                            color: v.estado_sri === "AUTORIZADA" ? "var(--color-success)"
+                              : v.estado_sri === "PENDIENTE" ? "var(--color-warning)"
+                              : v.estado_sri === "RECHAZADA" ? "var(--color-danger)"
+                              : "var(--color-text-secondary)",
                           }}>
                             {v.estado_sri}
                           </span>
@@ -389,7 +407,7 @@ export default function VentasDia() {
                           {v.tipo_documento === "FACTURA" && (v.estado_sri === "PENDIENTE" || v.estado_sri === "RECHAZADA") && (
                             <button className="btn btn-outline" style={{
                               padding: "2px 6px", fontSize: 10,
-                              color: "#2563eb", borderColor: "#93c5fd",
+                              color: "var(--color-primary)", borderColor: "rgba(59, 130, 246, 0.3)",
                             }}
                               disabled={reintentandoSri === v.id}
                               onClick={async () => {
@@ -418,14 +436,14 @@ export default function VentasDia() {
                               {v.email_enviado === 1 ? (
                                 <span style={{
                                   fontSize: 9, padding: "2px 5px", borderRadius: 3,
-                                  background: "#dcfce7", color: "#166534", fontWeight: 600,
+                                  background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)", fontWeight: 600,
                                 }} title="Email enviado">
                                   Enviado
                                 </span>
                               ) : (
                                 <button className="btn btn-outline" style={{
                                   padding: "2px 6px", fontSize: 10,
-                                  color: "#d97706", borderColor: "#fbbf24",
+                                  color: "var(--color-warning)", borderColor: "var(--color-warning)",
                                 }}
                                   title="Enviar por email"
                                   disabled={reintentandoEmail === v.id}
@@ -482,7 +500,7 @@ export default function VentasDia() {
                               {!notasCredito.some(nc => nc.venta_id === v.id) ? (
                                 <button className="btn btn-outline" style={{
                                   padding: "2px 6px", fontSize: 10,
-                                  color: "#dc2626", borderColor: "#fca5a5",
+                                  color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
                                 }}
                                   title="Crear Nota de Credito"
                                   onClick={() => v.id && setNcVenta({ id: v.id, numero: v.numero_factura || v.numero })}>
@@ -491,7 +509,7 @@ export default function VentasDia() {
                               ) : (
                                 <span style={{
                                   fontSize: 9, padding: "2px 5px", borderRadius: 3,
-                                  background: "#fef2f2", color: "#dc2626", fontWeight: 600,
+                                  background: "rgba(239, 68, 68, 0.1)", color: "var(--color-danger)", fontWeight: 600,
                                 }} title="Ya tiene nota de credito">
                                   NC
                                 </span>
@@ -528,8 +546,8 @@ export default function VentasDia() {
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Notas de Crédito */}
             {notasCredito.length > 0 && (
-              <div className="card" style={{ borderColor: "#fca5a5" }}>
-                <div className="card-header" style={{ background: "#fef2f2", color: "#dc2626" }}>
+              <div className="card" style={{ borderColor: "rgba(239, 68, 68, 0.4)" }}>
+                <div className="card-header" style={{ background: "rgba(239, 68, 68, 0.1)", color: "var(--color-danger)" }}>
                   Notas de Credito ({notasCredito.length})
                 </div>
                 <div className="card-body" style={{ padding: 0 }}>
@@ -541,11 +559,11 @@ export default function VentasDia() {
                           <div className="text-secondary" style={{ fontSize: 10 }}>Ref: {nc.factura_numero}</div>
                         </div>
                         <div className="text-right">
-                          <div className="font-bold" style={{ color: "#dc2626" }}>-${nc.total.toFixed(2)}</div>
+                          <div className="font-bold" style={{ color: "var(--color-danger)" }}>-${nc.total.toFixed(2)}</div>
                           <span style={{
                             fontSize: 9, padding: "1px 4px", borderRadius: 3, fontWeight: 600,
-                            background: nc.estado_sri === "AUTORIZADA" ? "#dcfce7" : nc.estado_sri === "PENDIENTE" ? "#fef3c7" : "#fee2e2",
-                            color: nc.estado_sri === "AUTORIZADA" ? "#166534" : nc.estado_sri === "PENDIENTE" ? "#92400e" : "#dc2626",
+                            background: nc.estado_sri === "AUTORIZADA" ? "rgba(34, 197, 94, 0.15)" : nc.estado_sri === "PENDIENTE" ? "rgba(245, 158, 11, 0.15)" : "rgba(239, 68, 68, 0.1)",
+                            color: nc.estado_sri === "AUTORIZADA" ? "var(--color-success)" : nc.estado_sri === "PENDIENTE" ? "var(--color-warning)" : "var(--color-danger)",
                           }}>
                             {nc.estado_sri}
                           </span>
@@ -556,7 +574,7 @@ export default function VentasDia() {
                         {(nc.estado_sri === "PENDIENTE" || nc.estado_sri === "RECHAZADA") && (
                           <button className="btn btn-outline" style={{
                             padding: "1px 5px", fontSize: 9,
-                            color: "#2563eb", borderColor: "#93c5fd",
+                            color: "var(--color-primary)", borderColor: "rgba(59, 130, 246, 0.3)",
                           }}
                             disabled={reintentandoNcSri === nc.id}
                             onClick={async () => {
@@ -613,8 +631,8 @@ export default function VentasDia() {
 
             {/* Alertas de stock - solo admin */}
             {esAdmin && alertas.length > 0 && (
-              <div className="card" style={{ borderColor: "#fbbf24" }}>
-                <div className="card-header" style={{ background: "#fffbeb", color: "#92400e" }}>
+              <div className="card" style={{ borderColor: "var(--color-warning)" }}>
+                <div className="card-header" style={{ background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)" }}>
                   Stock Bajo ({alertas.length})
                 </div>
                 <div className="card-body" style={{ padding: 0 }}>
@@ -677,7 +695,7 @@ export default function VentasDia() {
                 {ventaDetalle.venta.numero_factura && (
                   <div style={{ gridColumn: "1 / -1" }}>
                     <span className="text-secondary">Nro. Factura: </span>
-                    <strong style={{ color: "#166534" }}>{ventaDetalle.venta.numero_factura}</strong>
+                    <strong style={{ color: "var(--color-success)" }}>{ventaDetalle.venta.numero_factura}</strong>
                   </div>
                 )}
                 {ventaDetalle.venta.observacion && (
@@ -689,8 +707,8 @@ export default function VentasDia() {
               </div>
 
               {/* Pago */}
-              <div style={{ background: "#f8fafc", borderRadius: 8, padding: 12, marginBottom: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#475569" }}>Informacion de Pago</div>
+              <div style={{ background: "var(--color-surface-alt)", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Informacion de Pago</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
                   <div><span className="text-secondary">Forma: </span>{ventaDetalle.venta.forma_pago}</div>
                   <div><span className="text-secondary">Recibido: </span>${ventaDetalle.venta.monto_recibido.toFixed(2)}</div>
@@ -707,7 +725,7 @@ export default function VentasDia() {
               </div>
 
               {/* Items */}
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#475569" }}>Productos</div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos</div>
               <table className="table" style={{ fontSize: 12 }}>
                 <thead>
                   <tr>
