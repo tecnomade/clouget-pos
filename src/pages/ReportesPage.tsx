@@ -104,7 +104,7 @@ export default function ReportesPage() {
                         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
                         <XAxis type="number" tickFormatter={v => `$${v}`} style={{ fontSize: 11 }} />
                         <YAxis type="category" dataKey="categoria" style={{ fontSize: 11 }} width={75} />
-                        <Tooltip formatter={(v: number) => fmt(v)} />
+                        <Tooltip formatter={(v: unknown) => fmt(Number(v))} />
                         <Bar dataKey="utilidad" fill="var(--color-success)" radius={[0, 4, 4, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -119,10 +119,10 @@ export default function ReportesPage() {
                   <div className="card-body" style={{ height: 250 }}>
                     <ResponsiveContainer>
                       <PieChart>
-                        <Pie data={utilidad.gastos_por_categoria} dataKey="monto" nameKey="categoria" cx="50%" cy="50%" outerRadius={80} label={({ categoria, percent }) => `${categoria} ${(percent * 100).toFixed(0)}%`} labelLine={{ stroke: "var(--color-text-secondary)" }}>
+                        <Pie data={utilidad.gastos_por_categoria} dataKey="monto" nameKey="categoria" cx="50%" cy="50%" outerRadius={80} label={({ name, percent }: { name?: string; percent?: number }) => `${name || ""} ${((percent || 0) * 100).toFixed(0)}%`} labelLine={{ stroke: "var(--color-text-secondary)" }}>
                           {utilidad.gastos_por_categoria.map((_, i) => <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />)}
                         </Pie>
-                        <Tooltip formatter={(v: number) => fmt(v)} />
+                        <Tooltip formatter={(v: unknown) => fmt(Number(v))} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
