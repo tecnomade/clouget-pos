@@ -1206,7 +1206,8 @@ pub fn generar_ride_pdf(
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal,
-             COALESCE(p.codigo, CAST(d.producto_id AS TEXT)) as codigo
+             COALESCE(p.codigo, CAST(d.producto_id AS TEXT)) as codigo,
+             d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
              JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
@@ -1225,6 +1226,8 @@ pub fn generar_ride_pdf(
                 descuento: row.get(6)?,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
+                unidad_nombre: row.get(10).ok(),
+                factor_unidad: row.get(11).ok(),
                 ..Default::default()
             };
             let codigo: String = row.get(9)?;
@@ -1236,14 +1239,21 @@ pub fn generar_ride_pdf(
 
     let detalles: Vec<crate::models::VentaDetalle> = rows.iter().map(|(d, _)| d.clone()).collect();
 
-    // Construir DetalleRide con codigo de producto
+    // Construir DetalleRide con codigo de producto, incluyendo presentacion/unidad
     let detalles_ride: Vec<crate::sri::ride::DetalleRide> = rows
         .iter()
         .map(|(det, codigo)| {
             let precio_total = det.cantidad * det.precio_unitario - det.descuento;
+            let nombre_base = det.nombre_producto.clone().unwrap_or_else(|| "?".to_string());
+            // Agregar presentacion al nombre si aplica
+            let nombre = match (det.unidad_nombre.as_deref(), det.factor_unidad) {
+                (Some(u), Some(f)) if !u.is_empty() && f > 1.0 => format!("{} ({} x{})", nombre_base, u, f),
+                (Some(u), _) if !u.is_empty() => format!("{} ({})", nombre_base, u),
+                _ => nombre_base,
+            };
             crate::sri::ride::DetalleRide {
                 codigo: codigo.clone(),
-                nombre: det.nombre_producto.clone().unwrap_or_else(|| "?".to_string()),
+                nombre,
                 cantidad: det.cantidad,
                 precio_unitario: det.precio_unitario,
                 descuento: det.descuento,

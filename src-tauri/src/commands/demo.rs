@@ -37,6 +37,7 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         ("sri_facturas_usadas", "0"),
         ("demo_activo", "1"),
         ("caducidad_dias_alerta", "7"),
+        ("auto_imprimir", "1"),
     ];
     for (key, value) in &configs {
         conn.execute(

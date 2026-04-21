@@ -117,12 +117,18 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
 
     // Detalles
     for det in &venta.detalles {
-        let nombre_prod = det.nombre_producto.as_deref().unwrap_or("?");
+        let nombre_base = det.nombre_producto.as_deref().unwrap_or("?");
+        // Si vendio en presentacion (SIXPACK, JABA), agregar al nombre
+        let nombre_prod: String = match (det.unidad_nombre.as_deref(), det.factor_unidad) {
+            (Some(u), Some(f)) if !u.is_empty() && f > 1.0 => format!("{} ({})", nombre_base, u),
+            (Some(u), _) if !u.is_empty() => format!("{} ({})", nombre_base, u),
+            _ => nombre_base.to_string(),
+        };
         // Si el nombre es muy largo, truncar
         let nombre_corto: String = if nombre_prod.len() > 22 {
             nombre_prod[..22].to_string()
         } else {
-            nombre_prod.to_string()
+            nombre_prod.clone()
         };
 
         ticket.extend_from_slice(

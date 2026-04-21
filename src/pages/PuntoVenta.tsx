@@ -63,6 +63,7 @@ export default function PuntoVenta() {
   const [requiereComprobante, setRequiereComprobante] = useState(false);
   const [comprobanteImagen, setComprobanteImagen] = useState<string | null>(null);
   const [autoImprimirTicket, setAutoImprimirTicket] = useState(false);
+  const [autoImprimirSri, setAutoImprimirSri] = useState(false);
 
   // Panel documentos recientes
   const [mostrarRecientes, setMostrarRecientes] = useState(false);
@@ -203,6 +204,7 @@ export default function PuntoVenta() {
       setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
       setAutoImprimirTicket(cfg.auto_imprimir === "1");
+      setAutoImprimirSri(cfg.auto_imprimir_sri === "1");
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
@@ -579,13 +581,22 @@ export default function PuntoVenta() {
       setComprobanteImagen(null);
       setPagosMixtos([]);
       setModoPagoMixto(false);
+      // IMPRESION AUTOMATICA AL REGISTRAR: si esta activa, imprime ANTES de enviar al SRI
+      // Esto asegura que el cliente se lleve su ticket sin esperar al SRI
+      if (autoImprimirTicket && resultado.venta.id) {
+        const fn = ticketUsarPdf ? imprimirTicketPdf : imprimirTicket;
+        fn(resultado.venta.id).catch(() => {});
+      }
+
       // Si fue FACTURA, modulo SRI activo y emision automatica activada, emitir al SRI
+      let ventaAutorizada = false;
       if (tipoDocumento === "FACTURA" && sriModuloActivo && sriEmisionAutomatica && resultado.venta.id) {
         setEmitiendo(true);
         try {
           const res = await emitirFacturaSri(resultado.venta.id);
           setResultadoSri(res);
           if (res.exito) {
+            ventaAutorizada = true;
             toastExito("Factura autorizada por el SRI");
             // Actualizar ventaCompletada con numero_factura y estado SRI
             setVentaCompletada(prev => prev ? {
@@ -626,8 +637,9 @@ export default function PuntoVenta() {
           setEmitiendo(false);
         }
       }
-      // Auto-imprimir ticket si está configurado
-      if (autoImprimirTicket && resultado.venta.id) {
+
+      // IMPRESION AUTOMATICA AL AUTORIZAR SRI: solo si se autorizo con exito
+      if (autoImprimirSri && ventaAutorizada && resultado.venta.id) {
         const fn = ticketUsarPdf ? imprimirTicketPdf : imprimirTicket;
         fn(resultado.venta.id).catch(() => {});
       }
@@ -645,7 +657,7 @@ export default function PuntoVenta() {
     } catch (err) {
       toastError("Error al registrar venta: " + err);
     }
-  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning]);
+  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, autoImprimirSri, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning]);
 
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);
@@ -1293,7 +1305,7 @@ export default function PuntoVenta() {
                   {/* Una sola fila compacta */}
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-                      title="Click para agregar información adicional"
+                      title={`${item.nombre}${item.unidad_nombre ? ` — ${item.unidad_nombre} (×${item.factor_unidad})` : ""}\nClick para agregar informacion adicional`}
                       onClick={() => {
                         setInfoAdicionalProductoId(idx as any);
                         // Parsear info existente
@@ -1309,8 +1321,20 @@ export default function PuntoVenta() {
                           setInfoObservacion(info);
                         }
                       }}>
-                      <div style={{ fontWeight: 600, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {item.nombre}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                          {item.nombre}
+                        </span>
+                        {item.unidad_nombre && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
+                            background: "rgba(59,130,246,0.15)", color: "var(--color-primary)",
+                            border: "1px solid rgba(59,130,246,0.3)", flexShrink: 0,
+                            whiteSpace: "nowrap",
+                          }} title={`Presentacion: ${item.unidad_nombre} = ${item.factor_unidad} unidades base`}>
+                            ×{item.factor_unidad}
+                          </span>
+                        )}
                       </div>
                       {item.info_adicional && <div style={{ fontSize: 10, color: "var(--color-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.info_adicional}</div>}
                     </div>
@@ -2166,11 +2190,28 @@ export default function PuntoVenta() {
           setCarrito(prev => prev.map((i, k) => k === infoAdicionalProductoId ? { ...i, info_adicional: valor } : i));
           setInfoAdicionalProductoId(null);
         };
+        const itemActual = carrito[infoAdicionalProductoId as number];
         return (
           <div className="modal-overlay" onClick={() => setInfoAdicionalProductoId(null)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
-              <div className="modal-header">
-                <h3>Información adicional</h3>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+              <div className="modal-header" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                <h3 style={{ margin: 0 }}>Informacion adicional</h3>
+                {itemActual && (
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", fontWeight: 400 }}>
+                    📦 <strong style={{ color: "var(--color-text)" }}>{itemActual.nombre}</strong>
+                    {itemActual.unidad_nombre && (
+                      <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 3,
+                        background: "rgba(59,130,246,0.15)", color: "var(--color-primary)",
+                        fontWeight: 700, fontSize: 11,
+                      }}>
+                        {itemActual.unidad_nombre} ×{itemActual.factor_unidad}
+                      </span>
+                    )}
+                    <span style={{ marginLeft: 8, fontSize: 11 }}>
+                      Cant: {itemActual.cantidad} · ${itemActual.precio_unitario.toFixed(2)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="modal-body">
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

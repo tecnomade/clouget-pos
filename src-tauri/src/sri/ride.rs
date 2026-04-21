@@ -605,7 +605,7 @@ pub fn generar_ticket_pdf(
         doc.push(p(&format!("Cliente: {}", cliente), s_normal));
     }
 
-    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Productos
@@ -619,12 +619,18 @@ pub fn generar_ticket_pdf(
         .map_err(|e| format!("Error ticket header: {}", e))?;
 
     for det in &venta.detalles {
-        let nombre = det.nombre_producto.as_deref().unwrap_or("?");
+        let nombre_base = det.nombre_producto.as_deref().unwrap_or("?");
+        // Si el item se vendio en una presentacion (SIXPACK, JABA, etc), mostrarla
+        let nombre = match (det.unidad_nombre.as_deref(), det.factor_unidad) {
+            (Some(u), Some(f)) if !u.is_empty() && f > 1.0 => format!("{} ({} x{})", nombre_base, u, format_cantidad(f)),
+            (Some(u), _) if !u.is_empty() => format!("{} ({})", nombre_base, u),
+            _ => nombre_base.to_string(),
+        };
         let total = det.cantidad * det.precio_unitario - det.descuento;
         prod_table
             .row()
             .element(p(&format_cantidad(det.cantidad), s_normal))
-            .element(p(nombre, s_normal))
+            .element(p(&nombre, s_normal))
             .element(p_aligned(&format_dinero(total), s_normal, Alignment::Right))
             .push()
             .map_err(|e| format!("Error ticket fila: {}", e))?;
@@ -643,7 +649,7 @@ pub fn generar_ticket_pdf(
     }
     doc.push(prod_table);
 
-    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Totales
@@ -680,7 +686,7 @@ pub fn generar_ticket_pdf(
 
     doc.push(total_table);
 
-    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Forma de pago (solo para ventas reales)

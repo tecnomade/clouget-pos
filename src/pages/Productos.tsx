@@ -636,7 +636,7 @@ function FormProducto({
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
           <input type="checkbox" checked={form.es_servicio ?? false}
             onChange={(e) => setForm({ ...form, es_servicio: e.target.checked, no_controla_stock: e.target.checked || (form.no_controla_stock ?? false) })} />
-          Es un servicio (no se imprime ni se controla stock)
+          Es un servicio (no se controla stock; SI se incluye en tickets y facturas)
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: form.es_servicio ? "not-allowed" : "pointer", marginTop: 8, opacity: form.es_servicio ? 0.6 : 1 }}>
           <input type="checkbox" checked={form.no_controla_stock ?? false}

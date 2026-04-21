@@ -596,13 +596,44 @@ export default function Configuracion() {
                   </button>
                 </div>
               </div>
-              <div className="mt-2">
-                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                  <input type="checkbox"
+              <div className="mt-2" style={{ padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Cuando imprimir automaticamente:</div>
+
+                {/* Opcion 1: al vender (antes de SRI) */}
+                <label style={{ fontSize: 13, display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 8 }}>
+                  <input type="checkbox" style={{ marginTop: 2 }}
                     checked={config.auto_imprimir === "1"}
                     onChange={(e) => update("auto_imprimir", e.target.checked ? "1" : "0")} />
-                  Imprimir ticket automaticamente al vender
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Imprimir al registrar la venta</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      Imprime inmediatamente despues de cobrar, sin esperar al SRI.
+                      Aplica a NOTAS DE VENTA, BORRADORES y FACTURAS (incluso si no se autorizan).
+                    </div>
+                  </div>
                 </label>
+
+                {/* Opcion 2: al autorizar SRI - solo si modulo SRI activo */}
+                {config.sri_modulo_activo === "1" && (
+                  <label style={{ fontSize: 13, display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+                    <input type="checkbox" style={{ marginTop: 2 }}
+                      checked={config.auto_imprimir_sri === "1"}
+                      onChange={(e) => update("auto_imprimir_sri", e.target.checked ? "1" : "0")} />
+                    <div>
+                      <div style={{ fontWeight: 600 }}>Imprimir (o re-imprimir) al autorizar en SRI</div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        Cuando una factura es autorizada por el SRI, imprime la version con el numero de autorizacion.
+                        Util si necesitas ambas impresiones: la ticketera primero, el RIDE despues.
+                      </div>
+                    </div>
+                  </label>
+                )}
+
+                <div style={{ marginTop: 10, padding: 8, background: "rgba(59, 130, 246, 0.08)", borderRadius: 4, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  💡 <strong>Recomendado:</strong> Si autorizas automaticamente en SRI, desmarca "al registrar"
+                  y solo activa "al autorizar" para imprimir una sola vez con el numero de autorizacion.
+                  Si autorizas manualmente, marca "al registrar" para el ticket del cliente.
+                </div>
               </div>
               <div className="mt-2">
                 <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>

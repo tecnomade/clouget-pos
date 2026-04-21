@@ -583,6 +583,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Config: por defecto el precio de venta de un producto incluye IVA (true por default)
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('producto_incluye_iva_default', '1')", []);
 
+    // Config: auto-imprimir ticket despues de cada venta (ON por defecto para flujo mas rapido)
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('auto_imprimir', '1')", []);
+    // Config: auto-imprimir ticket al autorizar en SRI (OFF por defecto, evita imprimir 2 veces)
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('auto_imprimir_sri', '0')", []);
+
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
 
