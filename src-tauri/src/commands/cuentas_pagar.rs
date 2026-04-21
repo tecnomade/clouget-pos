@@ -336,7 +336,9 @@ pub fn listar_movimientos_bancarios(
             let tipo: String = row.get(0)?;
             let monto_raw: f64 = row.get(2)?;
             // Egresos son negativos (retiros y pagos proveedor)
-            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" { monto_raw } else { -monto_raw };
+            // INGRESOS al banco (positivos): VENTA por transfer, COBRO de credito, RETIRO de caja depositado al banco
+            // EGRESOS del banco (negativos): PAGO a proveedor por transferencia
+            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" || tipo == "RETIRO_CAJA" { monto_raw } else { -monto_raw };
             Ok(serde_json::json!({
                 "tipo": tipo,
                 "referencia": row.get::<_, String>(1)?,
@@ -353,7 +355,9 @@ pub fn listar_movimientos_bancarios(
         stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], |row| {
             let tipo: String = row.get(0)?;
             let monto_raw: f64 = row.get(2)?;
-            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" { monto_raw } else { -monto_raw };
+            // INGRESOS al banco (positivos): VENTA por transfer, COBRO de credito, RETIRO de caja depositado al banco
+            // EGRESOS del banco (negativos): PAGO a proveedor por transferencia
+            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" || tipo == "RETIRO_CAJA" { monto_raw } else { -monto_raw };
             Ok(serde_json::json!({
                 "tipo": tipo,
                 "referencia": row.get::<_, String>(1)?,
