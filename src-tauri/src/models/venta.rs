@@ -63,6 +63,18 @@ pub struct VentaDetalle {
     pub info_adicional: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PagoMixto {
+    pub forma_pago: String,
+    pub monto: f64,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia: Option<String>,
+    #[serde(default)]
+    pub comprobante_imagen: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NuevaVenta {
     pub cliente_id: Option<i64>,
@@ -87,6 +99,11 @@ pub struct NuevaVenta {
     pub guia_chofer: Option<String>,
     #[serde(default)]
     pub guia_direccion_destino: Option<String>,
+    /// Pagos multiples (opcional). Si presente y no vacio, se usa en lugar de forma_pago/banco_id.
+    /// La suma de pagos debe igualar el total de la venta.
+    /// Si hay un pago tipo CREDITO, ese monto crea cuenta_por_cobrar.
+    #[serde(default)]
+    pub pagos: Option<Vec<PagoMixto>>,
 }
 
 // --- Documentos Recientes ---

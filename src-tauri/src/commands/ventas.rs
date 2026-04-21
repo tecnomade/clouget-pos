@@ -272,7 +272,7 @@ pub fn registrar_venta(
     )
     .ok();
 
-    // Si es fiado, crear cuenta por cobrar
+    // Si es fiado, crear cuenta por cobrar (legacy: forma_pago unica = CREDITO)
     if venta.es_fiado {
         conn.execute(
             "INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, monto_total, saldo, estado)
@@ -280,6 +280,57 @@ pub fn registrar_venta(
             rusqlite::params![venta.cliente_id.unwrap_or(1), venta_id, total],
         )
         .map_err(|e| e.to_string())?;
+    }
+
+    // --- PAGO MIXTO ---
+    // Si el frontend mando un array de pagos, los registramos individualmente.
+    // Tambien si hay un pago tipo CREDITO, creamos la cuenta por cobrar parcial.
+    if let Some(pagos) = &venta.pagos {
+        if !pagos.is_empty() {
+            // Validar que la suma de pagos sea igual al total (con tolerancia 0.01)
+            let suma: f64 = pagos.iter().map(|p| p.monto).sum();
+            if (suma - total).abs() > 0.02 {
+                return Err(format!("La suma de pagos (${:.2}) no coincide con el total (${:.2})", suma, total));
+            }
+
+            // Insertar cada pago en pagos_venta
+            for p in pagos {
+                conn.execute(
+                    "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia, comprobante_imagen)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![venta_id, p.forma_pago, p.monto, p.banco_id, p.referencia, p.comprobante_imagen],
+                ).map_err(|e| format!("Error guardando pago: {}", e))?;
+            }
+
+            // Si hay un pago tipo CREDITO y no se creo CXC arriba (es_fiado=false), crearla por el monto credito
+            if !venta.es_fiado {
+                let monto_credito: f64 = pagos.iter()
+                    .filter(|p| p.forma_pago.eq_ignore_ascii_case("CREDITO"))
+                    .map(|p| p.monto).sum();
+                if monto_credito > 0.01 {
+                    conn.execute(
+                        "INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, monto_total, saldo, estado)
+                         VALUES (?1, ?2, ?3, ?3, 'PENDIENTE')",
+                        rusqlite::params![venta.cliente_id.unwrap_or(1), venta_id, monto_credito],
+                    ).map_err(|e| e.to_string())?;
+                }
+            }
+
+            // Si hay mas de 1 pago o el unico pago es distinto al forma_pago de la venta, marcar la venta como MIXTO
+            let formas_unicas: std::collections::HashSet<String> = pagos.iter().map(|p| p.forma_pago.to_uppercase()).collect();
+            if formas_unicas.len() > 1 {
+                conn.execute(
+                    "UPDATE ventas SET forma_pago = 'MIXTO' WHERE id = ?1",
+                    rusqlite::params![venta_id],
+                ).ok();
+            } else if let Some(unica) = formas_unicas.iter().next() {
+                // Solo una forma → usar esa
+                conn.execute(
+                    "UPDATE ventas SET forma_pago = ?1 WHERE id = ?2",
+                    rusqlite::params![unica, venta_id],
+                ).ok();
+            }
+        }
     }
 
     // Obtener nombre del cliente
@@ -323,6 +374,35 @@ pub fn registrar_venta(
         detalles: detalles_guardados,
         cliente_nombre,
     })
+}
+
+/// Lista todos los pagos asociados a una venta (pago mixto)
+#[tauri::command]
+pub fn listar_pagos_venta(db: State<Database>, venta_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT pv.id, pv.forma_pago, pv.monto, pv.banco_id, pv.referencia, pv.comprobante_imagen, cb.nombre as banco_nombre
+         FROM pagos_venta pv
+         LEFT JOIN cuentas_banco cb ON pv.banco_id = cb.id
+         WHERE pv.venta_id = ?1
+         ORDER BY pv.id"
+    ).map_err(|e| e.to_string())?;
+
+    let pagos = stmt.query_map(rusqlite::params![venta_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "forma_pago": row.get::<_, String>(1)?,
+            "monto": row.get::<_, f64>(2)?,
+            "banco_id": row.get::<_, Option<i64>>(3)?,
+            "referencia": row.get::<_, Option<String>>(4)?,
+            "comprobante_imagen": row.get::<_, Option<String>>(5)?,
+            "banco_nombre": row.get::<_, Option<String>>(6)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+
+    Ok(pagos)
 }
 
 #[tauri::command]

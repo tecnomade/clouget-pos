@@ -170,6 +170,14 @@ export interface VentaDetalle {
   info_adicional?: string | null;
 }
 
+export interface PagoMixto {
+  forma_pago: string;
+  monto: number;
+  banco_id?: number | null;
+  referencia?: string | null;
+  comprobante_imagen?: string | null;
+}
+
 export interface NuevaVenta {
   cliente_id?: number;
   items: VentaDetalle[];
@@ -185,6 +193,8 @@ export interface NuevaVenta {
   guia_placa?: string | null;
   guia_chofer?: string | null;
   guia_direccion_destino?: string | null;
+  /** Si presente y no vacio: pagos multiples (la suma debe igualar el total) */
+  pagos?: PagoMixto[];
 }
 
 export interface VentaCompleta {

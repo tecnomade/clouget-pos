@@ -56,7 +56,7 @@ export default function PuntoVenta() {
   const [consultandoSri, setConsultandoSri] = useState(false);
 
   // Transferencia bancaria
-  const [cuentasBanco, setCuentasBanco] = useState<{ id?: number; nombre: string; numero_cuenta?: string }[]>([]);
+  const [cuentasBanco, setCuentasBanco] = useState<{ id?: number; nombre: string; numero_cuenta?: string; tipo_cuenta?: string; activa?: boolean }[]>([]);
   const [bancoSeleccionado, setBancoSeleccionado] = useState<number | null>(null);
   const [referenciaPago, setReferenciaPago] = useState("");
   const [requiereReferencia, setRequiereReferencia] = useState(false);
@@ -104,6 +104,15 @@ export default function PuntoVenta() {
   const [descuentoItemId, setDescuentoItemId] = useState<number | null>(null);
   const [descuentoTipo, setDescuentoTipo] = useState<"monto" | "porcentaje">("porcentaje");
   const [descuentoValor, setDescuentoValor] = useState("");
+
+  // Pago mixto: lista de pagos y modal para agregar
+  const [pagosMixtos, setPagosMixtos] = useState<{ forma_pago: string; monto: number; banco_id?: number | null; referencia?: string | null }[]>([]);
+  const [modoPagoMixto, setModoPagoMixto] = useState(false);
+  const [mostrarAddPago, setMostrarAddPago] = useState(false);
+  const [addPagoForma, setAddPagoForma] = useState<"EFECTIVO" | "TRANSFER" | "CREDITO" | "TARJETA">("EFECTIVO");
+  const [addPagoMonto, setAddPagoMonto] = useState("");
+  const [addPagoBancoId, setAddPagoBancoId] = useState<number | null>(null);
+  const [addPagoReferencia, setAddPagoReferencia] = useState("");
 
   // Cart slide-in panel
   const [carritoAbierto, setCarritoAbierto] = useState(false);
@@ -475,6 +484,23 @@ export default function PuntoVenta() {
       return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
     };
 
+    // Validacion de pago mixto antes de enviar
+    if (modoPagoMixto && pagosMixtos.length > 0) {
+      const sumaPagos = pagosMixtos.reduce((s, p) => s + p.monto, 0);
+      if (Math.abs(sumaPagos - total) > 0.02) {
+        toastError(`La suma de pagos ($${sumaPagos.toFixed(2)}) no coincide con el total ($${total.toFixed(2)})`);
+        return;
+      }
+      // Si hay pago tipo CREDITO pero no hay cliente, error
+      const tieneCredito = pagosMixtos.some(p => p.forma_pago === "CREDITO");
+      if (tieneCredito && (!clienteSeleccionado || clienteSeleccionado.id === 1)) {
+        toastError("Para pago mixto con CREDITO seleccione un cliente identificado");
+        return;
+      }
+    }
+
+    const usarMixto = modoPagoMixto && pagosMixtos.length > 0;
+
     const nuevaVenta: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
       items: carrito.map((i) => {
@@ -489,14 +515,22 @@ export default function PuntoVenta() {
           info_adicional: i.info_adicional || null,
         };
       }),
-      forma_pago: formaPago,
-      monto_recibido: esFiado ? 0 : parseFloat(montoRecibido || "0"),
+      forma_pago: usarMixto ? "MIXTO" : formaPago,
+      monto_recibido: usarMixto ? total : (esFiado ? 0 : parseFloat(montoRecibido || "0")),
       descuento: 0,
       tipo_documento: tipoDocumento,
-      es_fiado: esFiado,
-      banco_id: formaPago === "TRANSFER" ? bancoSeleccionado : null,
-      referencia_pago: formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null,
-      comprobante_imagen: formaPago === "TRANSFER" ? (comprobanteImagen || null) : null,
+      // es_fiado solo cuando NO es mixto y es CREDITO; en mixto, el credito se maneja por pagos[]
+      es_fiado: usarMixto ? false : esFiado,
+      banco_id: usarMixto ? null : (formaPago === "TRANSFER" ? bancoSeleccionado : null),
+      referencia_pago: usarMixto ? null : (formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null),
+      comprobante_imagen: usarMixto ? null : (formaPago === "TRANSFER" ? (comprobanteImagen || null) : null),
+      pagos: usarMixto ? pagosMixtos.map(p => ({
+        forma_pago: p.forma_pago,
+        monto: p.monto,
+        banco_id: p.banco_id ?? null,
+        referencia: p.referencia ?? null,
+        comprobante_imagen: null,
+      })) : undefined,
     };
 
     try {
@@ -510,6 +544,8 @@ export default function PuntoVenta() {
       setBancoSeleccionado(null);
       setReferenciaPago("");
       setComprobanteImagen(null);
+      setPagosMixtos([]);
+      setModoPagoMixto(false);
       // Si fue FACTURA, modulo SRI activo y emision automatica activada, emitir al SRI
       if (tipoDocumento === "FACTURA" && sriModuloActivo && sriEmisionAutomatica && resultado.venta.id) {
         setEmitiendo(true);
@@ -587,6 +623,8 @@ export default function PuntoVenta() {
     setFormaPago("EFECTIVO");
     setEsFiado(false);
     setClienteSeleccionado(null);
+    setPagosMixtos([]);
+    setModoPagoMixto(false);
     setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
     inputRef.current?.focus();
   }, [regimen]);
@@ -1343,27 +1381,138 @@ export default function PuntoVenta() {
 
             {/* Forma de pago */}
             <div style={{ marginBottom: 8 }}>
-              <label className="text-secondary" style={{ fontSize: 11 }}>Forma de pago</label>
-              <div style={{ marginTop: 4 }}>
-                <button className="btn" style={{ width: "100%", justifyContent: "center", fontSize: 13, padding: "8px 0", marginBottom: 4, background: formaPago === "EFECTIVO" && !esFiado ? "#16a34a" : "var(--color-surface)", color: formaPago === "EFECTIVO" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                  onClick={() => { setFormaPago("EFECTIVO"); setEsFiado(false); }}>
-                  Efectivo
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <label className="text-secondary" style={{ fontSize: 11 }}>
+                  {modoPagoMixto ? "Pagos mixtos" : "Forma de pago"}
+                </label>
+                <button type="button"
+                  title={modoPagoMixto ? "Volver a un solo metodo de pago" : "Combinar varios metodos (ej: efectivo + transferencia + credito)"}
+                  style={{
+                    background: modoPagoMixto ? "var(--color-primary)" : "transparent",
+                    color: modoPagoMixto ? "#fff" : "var(--color-primary)",
+                    border: "1px solid var(--color-primary)",
+                    borderRadius: 4, fontSize: 10, padding: "2px 8px", cursor: "pointer", fontWeight: 600,
+                  }}
+                  onClick={() => {
+                    setModoPagoMixto(!modoPagoMixto);
+                    if (!modoPagoMixto) { setEsFiado(false); }
+                    else { setPagosMixtos([]); }
+                  }}>
+                  {modoPagoMixto ? "← Pago simple" : "+ Pago mixto"}
                 </button>
-                <div className="flex gap-2">
-                  <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                    onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
-                    Transferencia
-                  </button>
-                  <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                    onClick={() => setEsFiado(!esFiado)}>
-                    Credito
-                  </button>
-                </div>
               </div>
+
+              {!modoPagoMixto ? (
+                <div style={{ marginTop: 4 }}>
+                  <button className="btn" style={{ width: "100%", justifyContent: "center", fontSize: 13, padding: "8px 0", marginBottom: 4, background: formaPago === "EFECTIVO" && !esFiado ? "#16a34a" : "var(--color-surface)", color: formaPago === "EFECTIVO" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                    onClick={() => { setFormaPago("EFECTIVO"); setEsFiado(false); }}>
+                    Efectivo
+                  </button>
+                  <div className="flex gap-2">
+                    <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                      onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
+                      Transferencia
+                    </button>
+                    <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                      onClick={() => setEsFiado(!esFiado)}>
+                      Credito
+                    </button>
+                  </div>
+                </div>
+              ) : (() => {
+                const sumaPagos = pagosMixtos.reduce((s, p) => s + p.monto, 0);
+                const falta = total - sumaPagos;
+                return (
+                  <div style={{ marginTop: 4 }}>
+                    {/* Lista de pagos agregados */}
+                    {pagosMixtos.length === 0 ? (
+                      <div style={{ padding: 8, fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center", fontStyle: "italic" }}>
+                        Sin pagos. Agregue al menos uno.
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
+                        {pagosMixtos.map((p, idx) => {
+                          const colorBg = p.forma_pago === "EFECTIVO" ? "rgba(22,163,74,0.12)"
+                            : p.forma_pago === "TRANSFER" ? "rgba(37,99,235,0.12)"
+                            : p.forma_pago === "CREDITO" ? "rgba(217,119,6,0.12)"
+                            : "rgba(148,163,184,0.12)";
+                          const colorTxt = p.forma_pago === "EFECTIVO" ? "#16a34a"
+                            : p.forma_pago === "TRANSFER" ? "#2563eb"
+                            : p.forma_pago === "CREDITO" ? "#d97706"
+                            : "var(--color-text-secondary)";
+                          return (
+                            <div key={idx} style={{
+                              display: "flex", alignItems: "center", gap: 6,
+                              padding: "4px 8px", background: colorBg, borderRadius: 4,
+                              border: `1px solid ${colorTxt}33`,
+                            }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: colorTxt, minWidth: 65 }}>{p.forma_pago}</span>
+                              {p.referencia && <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{p.referencia}</span>}
+                              <span style={{ flex: 1, textAlign: "right", fontSize: 12, fontWeight: 700 }}>${p.monto.toFixed(2)}</span>
+                              <button type="button" title="Quitar pago"
+                                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 14, padding: 0 }}
+                                onClick={() => setPagosMixtos(prev => prev.filter((_, i) => i !== idx))}>×</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Resumen */}
+                    <div style={{ padding: "6px 8px", borderRadius: 4, background: "var(--color-surface-alt)", marginBottom: 6 }}>
+                      <div className="flex justify-between" style={{ fontSize: 11 }}>
+                        <span>Pagado:</span>
+                        <span style={{ fontWeight: 600 }}>${sumaPagos.toFixed(2)} de ${total.toFixed(2)}</span>
+                      </div>
+                      {Math.abs(falta) > 0.01 ? (
+                        <div className="flex justify-between" style={{ fontSize: 11, marginTop: 2,
+                          color: falta > 0 ? "var(--color-warning)" : "var(--color-danger)",
+                          fontWeight: 700 }}>
+                          <span>{falta > 0 ? "Falta:" : "Excede por:"}</span>
+                          <span>${Math.abs(falta).toFixed(2)}</span>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, marginTop: 2, color: "var(--color-success)", fontWeight: 700, textAlign: "center" }}>
+                          ✓ Pago completo
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Botones de agregar pago */}
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button type="button" className="btn"
+                        style={{ flex: 1, fontSize: 11, padding: "5px 0", background: "rgba(22,163,74,0.15)", color: "#16a34a", border: "1px solid rgba(22,163,74,0.4)", fontWeight: 600 }}
+                        onClick={() => {
+                          setAddPagoForma("EFECTIVO");
+                          setAddPagoMonto(falta > 0 ? falta.toFixed(2) : "");
+                          setAddPagoBancoId(null); setAddPagoReferencia("");
+                          setMostrarAddPago(true);
+                        }}>+ Efectivo</button>
+                      <button type="button" className="btn"
+                        style={{ flex: 1, fontSize: 11, padding: "5px 0", background: "rgba(37,99,235,0.15)", color: "#2563eb", border: "1px solid rgba(37,99,235,0.4)", fontWeight: 600 }}
+                        onClick={() => {
+                          setAddPagoForma("TRANSFER");
+                          setAddPagoMonto(falta > 0 ? falta.toFixed(2) : "");
+                          setAddPagoBancoId(cuentasBanco[0]?.id || null);
+                          setAddPagoReferencia("");
+                          setMostrarAddPago(true);
+                        }}>+ Transfer</button>
+                      <button type="button" className="btn"
+                        style={{ flex: 1, fontSize: 11, padding: "5px 0", background: "rgba(217,119,6,0.15)", color: "#d97706", border: "1px solid rgba(217,119,6,0.4)", fontWeight: 600 }}
+                        onClick={() => {
+                          setAddPagoForma("CREDITO");
+                          setAddPagoMonto(falta > 0 ? falta.toFixed(2) : "");
+                          setAddPagoBancoId(null); setAddPagoReferencia("");
+                          setMostrarAddPago(true);
+                        }}>+ Credito</button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Transferencia: cuenta bancaria + referencia */}
-            {!esFiado && formaPago === "TRANSFER" && (
+            {!modoPagoMixto && !esFiado && formaPago === "TRANSFER" && (
               <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                 {cuentasBanco.length > 0 && (
                   <div>
@@ -1412,7 +1561,7 @@ export default function PuntoVenta() {
             )}
 
             {/* Monto recibido - solo si no es fiado y es efectivo */}
-            {!esFiado && formaPago === "EFECTIVO" && (
+            {!modoPagoMixto && !esFiado && formaPago === "EFECTIVO" && (
               <div style={{ marginBottom: 8 }}>
                 <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Monto recibido</label>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -1474,14 +1623,14 @@ export default function PuntoVenta() {
               </div>
             )}
 
-            {!esFiado && formaPago === "EFECTIVO" && cambio >= 0 && montoRecibido && (
+            {!modoPagoMixto && !esFiado && formaPago === "EFECTIVO" && cambio >= 0 && montoRecibido && (
               <div className="flex justify-between" style={{ fontSize: 14, marginBottom: 8 }}>
                 <span>Cambio:</span>
                 <span className="font-bold" style={{ color: "var(--color-success)" }}>${cambio.toFixed(2)}</span>
               </div>
             )}
 
-            {esFiado && (
+            {!modoPagoMixto && esFiado && (
               <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 8, borderRadius: "var(--radius)", fontSize: 12, color: "var(--color-warning)", marginBottom: 8 }}>
                 Se registrara como cuenta por cobrar
                 {clienteSeleccionado ? ` a ${clienteSeleccionado.nombre}` : ". Seleccione un cliente arriba."}
@@ -1491,9 +1640,15 @@ export default function PuntoVenta() {
             {/* Cobrar button */}
             <button className="btn btn-success" data-action="cobrar"
               style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0", marginTop: 8 }}
-              disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
+              disabled={
+                carrito.length === 0
+                || (esFiado && !clienteSeleccionado)
+                || (modoPagoMixto && (pagosMixtos.length === 0 || Math.abs(pagosMixtos.reduce((s, p) => s + p.monto, 0) - total) > 0.02))
+              }
               onClick={procesarVenta}>
-              {esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
+              {modoPagoMixto
+                ? `Cobrar mixto $${total.toFixed(2)}`
+                : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)} (F9)
             </button>
 
             {/* Botones movidos al footer del área central */}
@@ -1768,6 +1923,72 @@ export default function PuntoVenta() {
           </div>
         </div>
       )}
+
+      {/* Modal: Agregar pago a la lista de pago mixto */}
+      {mostrarAddPago && (() => {
+        const monto = parseFloat(addPagoMonto || "0");
+        const aplicar = () => {
+          if (monto <= 0) { toastError("Monto debe ser mayor a 0"); return; }
+          if (addPagoForma === "TRANSFER" && !addPagoBancoId) { toastError("Seleccione cuenta bancaria"); return; }
+          setPagosMixtos(prev => [...prev, {
+            forma_pago: addPagoForma,
+            monto,
+            banco_id: addPagoForma === "TRANSFER" ? addPagoBancoId : null,
+            referencia: addPagoForma === "TRANSFER" ? (addPagoReferencia.trim() || null) : null,
+          }]);
+          setMostrarAddPago(false);
+          setAddPagoMonto(""); setAddPagoReferencia(""); setAddPagoBancoId(null);
+        };
+        const sumaActual = pagosMixtos.reduce((s, p) => s + p.monto, 0);
+        const faltaActual = total - sumaActual;
+        return (
+          <div className="modal-overlay" onClick={() => setMostrarAddPago(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380 }}>
+              <div className="modal-header"><h3>Agregar pago: {addPagoForma}</h3></div>
+              <div className="modal-body">
+                <div style={{ padding: 8, background: "var(--color-surface-alt)", borderRadius: 4, marginBottom: 10, fontSize: 11 }}>
+                  Total venta: <strong>${total.toFixed(2)}</strong> · Ya pagado: <strong>${sumaActual.toFixed(2)}</strong> · Falta: <strong style={{ color: "var(--color-warning)" }}>${faltaActual.toFixed(2)}</strong>
+                </div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Monto</label>
+                <input className="input" type="number" step="0.01" min="0" autoFocus
+                  value={addPagoMonto}
+                  onChange={(e) => setAddPagoMonto(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") aplicar(); }} />
+                {addPagoForma === "TRANSFER" && (
+                  <>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginTop: 10, marginBottom: 4 }}>Cuenta bancaria</label>
+                    <select className="input" value={addPagoBancoId ?? ""}
+                      onChange={(e) => setAddPagoBancoId(e.target.value ? Number(e.target.value) : null)}>
+                      <option value="">Seleccione...</option>
+                      {cuentasBanco.filter(b => b.activa !== false).map(b => (
+                        <option key={b.id} value={b.id ?? ""}>{b.nombre}{b.tipo_cuenta ? ` (${b.tipo_cuenta})` : ""}</option>
+                      ))}
+                    </select>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginTop: 10, marginBottom: 4 }}>Referencia (opcional)</label>
+                    <input className="input" placeholder="Nro. comprobante / referencia"
+                      value={addPagoReferencia}
+                      onChange={(e) => setAddPagoReferencia(e.target.value)} />
+                  </>
+                )}
+                {addPagoForma === "CREDITO" && (
+                  <div style={{ marginTop: 10, padding: 8, background: "rgba(217,119,6,0.1)", borderRadius: 4, fontSize: 11, color: "var(--color-warning)" }}>
+                    Se creara cuenta por cobrar a {clienteSeleccionado?.nombre || "..."} por este monto.
+                    {(!clienteSeleccionado || clienteSeleccionado.id === 1) && (
+                      <div style={{ marginTop: 4, fontWeight: 700 }}>
+                        ⚠ Debe seleccionar un cliente identificado primero
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button className="btn btn-outline" onClick={() => setMostrarAddPago(false)}>Cancelar</button>
+                <button className="btn btn-primary" onClick={aplicar}>Agregar pago</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Descuento por item */}
       {descuentoItemId !== null && (() => {

@@ -121,6 +121,7 @@ pub fn run() {
             commands::clientes::consultar_identificacion,
             // Ventas
             commands::ventas::registrar_venta,
+            commands::ventas::listar_pagos_venta,
             commands::ventas::listar_ventas_dia,
             commands::ventas::obtener_venta,
             commands::ventas::registrar_nota_credito,

@@ -235,6 +235,10 @@ export async function registrarVenta(venta: NuevaVenta): Promise<VentaCompleta> 
   return smartInvoke("registrar_venta", { venta });
 }
 
+export async function listarPagosVenta(ventaId: number): Promise<any[]> {
+  return smartInvoke("listar_pagos_venta", { ventaId });
+}
+
 export async function guardarBorrador(venta: NuevaVenta): Promise<VentaCompleta> {
   return smartInvoke("guardar_borrador", { venta });
 }

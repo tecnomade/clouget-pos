@@ -865,5 +865,23 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_imagenes_orden ON ordenes_servicio_imagenes(orden_id);
     ");
 
+    // --- Migracion: Pagos multiples por venta (pago mixto) ---
+    // Una venta puede tener varios pagos: ej $100 EFECTIVO + $20 TRANSFER + $30 CREDITO
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS pagos_venta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id INTEGER NOT NULL,
+            forma_pago TEXT NOT NULL,
+            monto REAL NOT NULL,
+            banco_id INTEGER,
+            referencia TEXT,
+            comprobante_imagen TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+            FOREIGN KEY (banco_id) REFERENCES cuentas_banco(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pagos_venta_venta ON pagos_venta(venta_id);
+    ");
+
     Ok(())
 }
