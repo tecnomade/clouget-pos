@@ -192,6 +192,8 @@ pub fn run() {
             commands::reportes::reporte_cxp_detalle_proveedor,
             commands::reportes::reporte_inventario_valorizado,
             commands::reportes::reporte_kardex_producto,
+            commands::reportes::reporte_kardex_multi,
+            commands::reportes::listar_categorias_simple,
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,

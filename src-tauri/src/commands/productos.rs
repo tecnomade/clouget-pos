@@ -173,7 +173,7 @@ pub fn buscar_productos(
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.iva_porcentaje,
+            "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.precio_costo, p.iva_porcentaje,
                     p.incluye_iva, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
                     pp.precio as precio_lista
              FROM productos p
@@ -194,12 +194,13 @@ pub fn buscar_productos(
                 codigo_barras: row.get(2)?,
                 nombre: row.get(3)?,
                 precio_venta: row.get(4)?,
-                iva_porcentaje: row.get(5)?,
-                incluye_iva: row.get::<_, i32>(6)? != 0,
-                stock_actual: row.get(7)?,
-                stock_minimo: row.get(8)?,
-                categoria_nombre: row.get(9)?,
-                precio_lista: row.get(10)?,
+                precio_costo: row.get(5)?,
+                iva_porcentaje: row.get(6)?,
+                incluye_iva: row.get::<_, i32>(7)? != 0,
+                stock_actual: row.get(8)?,
+                stock_minimo: row.get(9)?,
+                categoria_nombre: row.get(10)?,
+                precio_lista: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -247,7 +248,7 @@ fn buscar_productos_multi_almacen(
                 codigo: row.get(1)?,
                 codigo_barras: None,
                 nombre: row.get(2)?,
-                precio_venta: row.get(3)?,
+                precio_venta: row.get(3)?, precio_costo: 0.0,
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,
@@ -334,7 +335,7 @@ pub fn listar_productos(
                 codigo: row.get(1)?,
                 codigo_barras: None,
                 nombre: row.get(2)?,
-                precio_venta: row.get(3)?,
+                precio_venta: row.get(3)?, precio_costo: 0.0,
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,
@@ -375,7 +376,7 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 codigo: row.get(1)?,
                 codigo_barras: None,
                 nombre: row.get(2)?,
-                precio_venta: row.get(3)?,
+                precio_venta: row.get(3)?, precio_costo: 0.0,
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,

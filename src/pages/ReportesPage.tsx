@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, exportarVentasCsv, reporteIvaMensual,
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
-  reporteInventarioValorizado, reporteKardexProducto } from "../services/api";
+  reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -30,7 +30,12 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex">("utilidad");
+  // Kardex multi-categoria
+  const [kardexMultiData, setKardexMultiData] = useState<any | null>(null);
+  const [categoriasMaestro, setCategoriasMaestro] = useState<Array<{ id: number; nombre: string }>>([]);
+  const [kardexCatsSeleccionadas, setKardexCatsSeleccionadas] = useState<number[]>([]);
+  const [kardexCargando, setKardexCargando] = useState(false);
   // CXC/CXP
   const [cxcResumen, setCxcResumen] = useState<any[]>([]);
   const [cxcClienteDetalle, setCxcClienteDetalle] = useState<{ cliente: any; cuentas: any[] } | null>(null);
@@ -86,6 +91,36 @@ export default function ReportesPage() {
   };
 
   useEffect(() => { cargar(); }, [tab, desde, hasta]);
+
+  // Cargar maestro de categorías al montar
+  useEffect(() => {
+    listarCategoriasSimple().then(setCategoriasMaestro).catch(() => {});
+  }, []);
+
+  const cargarKardexMulti = async () => {
+    setKardexCargando(true);
+    try {
+      const cats = kardexCatsSeleccionadas.length > 0 ? kardexCatsSeleccionadas : null;
+      const data = await reporteKardexMulti(cats, null, desde, hasta);
+      setKardexMultiData(data);
+    } catch (err) { toastError("Error: " + err); }
+    setKardexCargando(false);
+  };
+
+  const exportarKardexMultiCsv = () => {
+    if (!kardexMultiData) return;
+    exportarCsvGeneric(
+      `kardex-multi-${desde}-${hasta}.csv`,
+      ["Fecha", "Producto", "Codigo", "Categoria", "Tipo", "Cantidad", "Stock Anterior", "Stock Nuevo", "Costo Un.", "Motivo", "Usuario"],
+      kardexMultiData.movimientos.map((m: any) => [
+        m.fecha?.slice(0, 19).replace("T", " ") || "",
+        m.nombre, m.codigo || "", m.categoria || "",
+        m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo,
+        m.costo_unitario != null ? m.costo_unitario.toFixed(2) : "",
+        m.motivo || "", m.usuario || "",
+      ])
+    );
+  };
 
   const verDetalleCxc = async (cliente: any) => {
     try {
@@ -274,6 +309,70 @@ export default function ReportesPage() {
     }
   };
 
+  const exportarUtilidadCsv = () => {
+    if (!utilidad) return;
+    const u: any = utilidad;
+    exportarCsvGeneric(
+      `estado-resultados-${desde}-${hasta}.csv`,
+      ["Concepto", "Monto USD"],
+      [
+        [`Estado de Resultados (${desde} a ${hasta})`, ""],
+        ["", ""],
+        ["Ventas brutas", (u.ventas_brutas ?? 0).toFixed(2)],
+        ["(-) Costo de ventas", (u.costo_ventas ?? 0).toFixed(2)],
+        ["= Utilidad bruta", (u.utilidad_bruta ?? 0).toFixed(2)],
+        ["Margen bruto (%)", (u.margen_bruto ?? 0).toFixed(2)],
+        ["", ""],
+        ["(-) Gastos totales", (u.total_gastos ?? 0).toFixed(2)],
+        ["(-) Devoluciones/NC", (u.total_devoluciones ?? 0).toFixed(2)],
+        ["", ""],
+        ["= UTILIDAD NETA", (u.utilidad_neta ?? 0).toFixed(2)],
+        ["Margen neto (%)", (u.margen_neto ?? 0).toFixed(2)],
+        ["", ""],
+        ["Num transacciones", u.num_ventas ?? 0],
+        ["Promedio por venta", (u.promedio_por_venta ?? 0).toFixed(2)],
+      ]
+    );
+  };
+
+  const exportarBalanceCsv = () => {
+    if (!balance) return;
+    const b: any = balance;
+    exportarCsvGeneric(
+      `balance-${desde}-${hasta}.csv`,
+      ["Concepto", "Monto USD"],
+      [
+        [`Balance (${desde} a ${hasta})`, ""],
+        ["", ""],
+        ["ENTRADAS", ""],
+        ["Ventas totales", (b.total_ventas ?? 0).toFixed(2)],
+        ["Cobros de credito", (b.total_cobros_credito ?? 0).toFixed(2)],
+        ["", ""],
+        ["SALIDAS", ""],
+        ["Gastos", (b.total_gastos ?? 0).toFixed(2)],
+        ["Pagos a proveedores", (b.total_pagos_proveedor ?? 0).toFixed(2)],
+        ["Retiros de caja", (b.total_retiros ?? 0).toFixed(2)],
+        ["", ""],
+        ["UTILIDAD NETA", (b.utilidad_neta ?? 0).toFixed(2)],
+      ]
+    );
+  };
+
+  const exportarProductosCsv = () => {
+    exportarCsvGeneric(
+      `rentabilidad-productos-${desde}-${hasta}.csv`,
+      ["Producto", "Unidades vendidas", "Ingresos", "Costo", "Utilidad", "Margen %"],
+      productos.map((p: any) => [
+        p.nombre,
+        p.unidades_vendidas ?? p.cantidad_vendida ?? 0,
+        (p.total_vendido ?? p.ingresos ?? 0).toFixed(2),
+        (p.costo_total ?? p.costo ?? 0).toFixed(2),
+        (p.utilidad ?? 0).toFixed(2),
+        `${(p.margen ?? 0).toFixed(2)}%`,
+      ])
+    );
+  };
+
   return (
     <>
       <div className="page-header">
@@ -287,13 +386,23 @@ export default function ReportesPage() {
           <input type="date" className="input" style={{ fontSize: 12, padding: "4px 8px", width: 130 }} value={desde} onChange={e => setDesde(e.target.value)} />
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>a</span>
           <input type="date" className="input" style={{ fontSize: 12, padding: "4px 8px", width: 130 }} value={hasta} onChange={e => setHasta(e.target.value)} />
-          <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+          {/* Boton export contextual segun el tab activo */}
+          <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 14px", fontWeight: 600 }}
             onClick={async () => {
               try {
+                if (tab === "utilidad") { exportarUtilidadCsv(); return; }
+                if (tab === "balance") { exportarBalanceCsv(); return; }
+                if (tab === "productos") { exportarProductosCsv(); return; }
+                if (tab === "cxc") { exportarCxcCsv(); return; }
+                if (tab === "cxp") { exportarCxpCsv(); return; }
+                if (tab === "inventario") { exportarInventarioCsvFn(); return; }
+                if (tab === "kardex") { exportarKardexMultiCsv(); return; }
+                if (tab === "iva") { exportarIvaCsv(); return; }
+                // Fallback: export de ventas
                 const ruta = await save({ defaultPath: `reporte-ventas-${desde}-${hasta}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
                 if (ruta) { await exportarVentasCsv(desde, hasta, ruta); toastExito("CSV exportado"); }
               } catch (e) { toastError("Error: " + e); }
-            }}>Exportar CSV</button>
+            }}>📥 Exportar CSV</button>
         </div>
       </div>
 
@@ -308,6 +417,7 @@ export default function ReportesPage() {
             ["cxc", "Cuentas por Cobrar"],
             ["cxp", "Cuentas por Pagar"],
             ["inventario", "Inventario"],
+            ["kardex", "Kardex Multi"],
           ] as const).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
               style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
@@ -936,6 +1046,108 @@ export default function ReportesPage() {
               </div>
             </div>
           )
+        )}
+
+        {/* TAB KARDEX MULTI */}
+        {tab === "kardex" && (
+          <div>
+            <div style={{ marginBottom: 12, padding: 12, background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+                Filtros (selecciona categorias o deja vacio para todas)
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                {categoriasMaestro.map(c => (
+                  <button key={c.id} type="button"
+                    onClick={() => {
+                      setKardexCatsSeleccionadas(prev =>
+                        prev.includes(c.id) ? prev.filter(x => x !== c.id) : [...prev, c.id]
+                      );
+                    }}
+                    style={{
+                      padding: "4px 10px", borderRadius: 4,
+                      border: `1px solid ${kardexCatsSeleccionadas.includes(c.id) ? "var(--color-primary)" : "var(--color-border)"}`,
+                      background: kardexCatsSeleccionadas.includes(c.id) ? "var(--color-primary)" : "transparent",
+                      color: kardexCatsSeleccionadas.includes(c.id) ? "#fff" : "var(--color-text)",
+                      fontSize: 11, fontWeight: 600, cursor: "pointer",
+                    }}>{c.nombre}</button>
+                ))}
+                {kardexCatsSeleccionadas.length > 0 && (
+                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                    onClick={() => setKardexCatsSeleccionadas([])}>
+                    Limpiar
+                  </button>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  Periodo: {desde} a {hasta}
+                </span>
+                <button className="btn btn-primary" style={{ marginLeft: "auto" }}
+                  onClick={cargarKardexMulti} disabled={kardexCargando}>
+                  {kardexCargando ? "Cargando..." : "Generar Kardex"}
+                </button>
+              </div>
+            </div>
+
+            {kardexMultiData && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+                  <KpiCard label="Movimientos" valor={String(kardexMultiData.total_movimientos)} />
+                  <KpiCard label="Total Entradas" valor={kardexMultiData.total_entradas.toFixed(2)} sub={fmt(kardexMultiData.valor_entradas)} color="var(--color-success)" />
+                  <KpiCard label="Total Salidas" valor={kardexMultiData.total_salidas.toFixed(2)} sub={fmt(kardexMultiData.valor_salidas)} color="var(--color-danger)" />
+                  <KpiCard label="Movimiento neto" valor={(kardexMultiData.total_entradas - kardexMultiData.total_salidas).toFixed(2)} />
+                </div>
+                <div className="card">
+                  <table className="table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Fecha</th><th>Producto</th><th>Categoria</th><th>Tipo</th>
+                        <th className="text-right">Cant.</th><th className="text-right">Stock Ant.</th>
+                        <th className="text-right">Stock Nuevo</th><th className="text-right">Costo Un.</th>
+                        <th>Motivo</th><th>Usuario</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {kardexMultiData.movimientos.length === 0 ? (
+                        <tr><td colSpan={10} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin movimientos en este periodo y filtros</td></tr>
+                      ) : kardexMultiData.movimientos.map((m: any) => (
+                        <tr key={m.id}>
+                          <td style={{ fontSize: 11 }}>{m.fecha?.slice(0, 16).replace("T", " ")}</td>
+                          <td style={{ fontWeight: 600, fontSize: 11 }}>{m.nombre}</td>
+                          <td style={{ fontSize: 10 }}>{m.categoria || "-"}</td>
+                          <td><span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                            background: m.tipo === "VENTA" ? "rgba(239,68,68,0.15)"
+                              : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") ? "rgba(34,197,94,0.15)"
+                              : m.tipo === "ANULACION_VENTA" ? "rgba(34,197,94,0.15)"
+                              : "rgba(148,163,184,0.15)",
+                            color: m.tipo === "VENTA" ? "var(--color-danger)"
+                              : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") || m.tipo === "ANULACION_VENTA" ? "var(--color-success)"
+                              : "var(--color-text-secondary)"
+                          }}>{m.tipo}</span></td>
+                          <td className="text-right" style={{ color: m.cantidad < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 600 }}>
+                            {m.cantidad > 0 ? "+" : ""}{m.cantidad}
+                          </td>
+                          <td className="text-right">{m.stock_anterior}</td>
+                          <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
+                          <td className="text-right">{m.costo_unitario != null ? fmt(m.costo_unitario) : "-"}</td>
+                          <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
+                          <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {!kardexMultiData && !kardexCargando && (
+              <div className="card">
+                <div className="card-body" style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)" }}>
+                  Selecciona filtros y presiona <strong>Generar Kardex</strong>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </>

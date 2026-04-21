@@ -228,6 +228,7 @@ pub fn registrar_venta(
         }
 
         // Registrar movimiento de inventario (kardex) para productos físicos
+        // costo_unitario = precio_costo snapshot del momento de la venta (NO precio de venta)
         if !omite_stock {
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
@@ -237,7 +238,7 @@ pub fn registrar_venta(
                     -(cantidad_base),
                     stock_antes,
                     stock_antes - cantidad_base,
-                    item.precio_unitario,
+                    precio_costo_prod,
                     venta_id,
                     usuario_nombre,
                     est_id,
@@ -1535,7 +1536,13 @@ pub fn guardar_guia_remision(
         }
 
         // Registrar movimiento de inventario (kardex) para productos físicos
+        // costo_unitario = precio_costo snapshot, NO precio de venta
         if !omite_stock {
+            let costo_snap: f64 = conn.query_row(
+                "SELECT precio_costo FROM productos WHERE id = ?1",
+                rusqlite::params![item.producto_id],
+                |row| row.get(0)
+            ).unwrap_or(0.0);
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
                  VALUES (?1, 'GUIA_REMISION', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1544,7 +1551,7 @@ pub fn guardar_guia_remision(
                     -(item.cantidad),
                     stock_antes,
                     stock_antes - item.cantidad,
-                    item.precio_unitario,
+                    costo_snap,
                     venta_id,
                     usuario_nombre,
                     est_id,

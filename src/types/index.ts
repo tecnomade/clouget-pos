@@ -39,6 +39,7 @@ export interface ProductoBusqueda {
   codigo_barras?: string;
   nombre: string;
   precio_venta: number;
+  precio_costo?: number;
   iva_porcentaje: number;
   incluye_iva?: boolean;
   stock_actual: number;

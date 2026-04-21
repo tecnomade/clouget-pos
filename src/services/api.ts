@@ -1008,6 +1008,14 @@ export const reporteInventarioValorizado = () =>
 export const reporteKardexProducto = (productoId: number, fechaDesde?: string, fechaHasta?: string) =>
   smartInvoke<{ producto: any; movimientos: any[]; total_movimientos: number }>(
     "reporte_kardex_producto", { productoId, fechaDesde, fechaHasta });
+export const reporteKardexMulti = (categorias: number[] | null, productos: number[] | null, fechaDesde?: string, fechaHasta?: string) =>
+  smartInvoke<{
+    movimientos: any[]; total_movimientos: number;
+    total_entradas: number; total_salidas: number;
+    valor_entradas: number; valor_salidas: number;
+  }>("reporte_kardex_multi", { categorias, productos, fechaDesde, fechaHasta });
+export const listarCategoriasSimple = () =>
+  smartInvoke<Array<{ id: number; nombre: string }>>("listar_categorias_simple");
 
 // --- Proveedores ---
 

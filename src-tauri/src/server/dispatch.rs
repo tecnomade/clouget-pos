@@ -38,6 +38,7 @@ pub async fn dispatch_command(
                         codigo_barras: None,
                         nombre: row.get(2)?,
                         precio_venta: row.get(3)?,
+                        precio_costo: 0.0,
                         iva_porcentaje: row.get(4)?,
                         incluye_iva: row.get::<_, i32>(5)? != 0,
                         stock_actual: row.get(6)?,

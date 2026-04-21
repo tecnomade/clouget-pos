@@ -1048,6 +1048,119 @@ pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::
     }))
 }
 
+/// Kardex AGRUPADO por multiples categorias/productos.
+/// Permite filtrar movimientos por:
+/// - categorias: lista de IDs de categorias
+/// - productos: lista de IDs de productos (opcional, sobre-filtra)
+/// - fecha_desde / fecha_hasta
+#[tauri::command]
+pub fn reporte_kardex_multi(
+    db: State<Database>,
+    categorias: Option<Vec<i64>>,
+    productos: Option<Vec<i64>>,
+    fecha_desde: Option<String>,
+    fecha_hasta: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
+
+    // Construir query dinamico
+    let mut sql = String::from(
+        "SELECT m.id, m.producto_id, p.codigo, p.nombre, c.nombre as categoria,
+                m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo, m.costo_unitario,
+                m.motivo, m.usuario, m.created_at
+         FROM movimientos_inventario m
+         INNER JOIN productos p ON m.producto_id = p.id
+         LEFT JOIN categorias c ON p.categoria_id = c.id
+         WHERE date(m.created_at) >= date(?1) AND date(m.created_at) <= date(?2)"
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(desde), Box::new(hasta)];
+
+    if let Some(cats) = &categorias {
+        if !cats.is_empty() {
+            let placeholders: Vec<String> = (0..cats.len()).map(|i| format!("?{}", i + 3)).collect();
+            sql.push_str(&format!(" AND p.categoria_id IN ({})", placeholders.join(",")));
+            for c in cats { params.push(Box::new(*c)); }
+        }
+    }
+
+    if let Some(prods) = &productos {
+        if !prods.is_empty() {
+            let start = params.len() + 1;
+            let placeholders: Vec<String> = (0..prods.len()).map(|i| format!("?{}", i + start)).collect();
+            sql.push_str(&format!(" AND m.producto_id IN ({})", placeholders.join(",")));
+            for p in prods { params.push(Box::new(*p)); }
+        }
+    }
+
+    sql.push_str(" ORDER BY m.created_at DESC, m.id DESC LIMIT 5000");
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let mut total_entradas = 0.0_f64;
+    let mut total_salidas = 0.0_f64;
+    let mut total_valor_entradas = 0.0_f64;
+    let mut total_valor_salidas = 0.0_f64;
+
+    let movimientos: Vec<serde_json::Value> = stmt.query_map(params_refs.as_slice(), |row| {
+        let cantidad: f64 = row.get(6)?;
+        let costo: Option<f64> = row.get(9)?;
+        let valor = costo.unwrap_or(0.0) * cantidad.abs();
+        if cantidad > 0.0 {
+            total_entradas += cantidad;
+            total_valor_entradas += valor;
+        } else {
+            total_salidas += cantidad.abs();
+            total_valor_salidas += valor;
+        }
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "producto_id": row.get::<_, i64>(1)?,
+            "codigo": row.get::<_, Option<String>>(2)?,
+            "nombre": row.get::<_, String>(3)?,
+            "categoria": row.get::<_, Option<String>>(4)?,
+            "tipo": row.get::<_, String>(5)?,
+            "cantidad": cantidad,
+            "stock_anterior": row.get::<_, f64>(7)?,
+            "stock_nuevo": row.get::<_, f64>(8)?,
+            "costo_unitario": costo,
+            "motivo": row.get::<_, Option<String>>(10)?,
+            "usuario": row.get::<_, Option<String>>(11)?,
+            "fecha": row.get::<_, String>(12)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "movimientos": movimientos,
+        "total_movimientos": movimientos.len(),
+        "total_entradas": total_entradas,
+        "total_salidas": total_salidas,
+        "valor_entradas": total_valor_entradas,
+        "valor_salidas": total_valor_salidas,
+    }))
+}
+
+/// Lista de categorías (para filtros)
+#[tauri::command]
+pub fn listar_categorias_simple(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre FROM categorias WHERE activo = 1 ORDER BY nombre"
+    ).map_err(|e| e.to_string())?;
+    let cats = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "nombre": row.get::<_, String>(1)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(cats)
+}
+
 /// Kardex: movimientos detallados de un producto
 #[tauri::command]
 pub fn reporte_kardex_producto(db: State<Database>, producto_id: i64, fecha_desde: Option<String>, fecha_hasta: Option<String>) -> Result<serde_json::Value, String> {

@@ -412,7 +412,8 @@ export default function ComprasPage() {
       producto_id: prod.id,
       nombre_display: prod.nombre,
       descripcion: prod.nombre,
-      precio_unitario: prod.precio_venta,
+      // Precio de COMPRA = precio_costo actual del producto (no precio de venta)
+      precio_unitario: prod.precio_costo ?? 0,
       iva_porcentaje: prod.iva_porcentaje,
     };
     setItems(newItems);
