@@ -167,8 +167,8 @@ export const devolverSerie = (serieId: number) =>
   smartInvoke<void>("devolver_serie", { serieId });
 
 // --- Caducidad ---
-export const registrarLoteCaducidad = (productoId: number, lote: string | null, fechaCaducidad: string, cantidad: number, compraId?: number, observacion?: string) =>
-  smartInvoke<number>("registrar_lote_caducidad", { productoId, lote, fechaCaducidad, cantidad, compraId: compraId ?? null, observacion: observacion ?? null });
+export const registrarLoteCaducidad = (productoId: number, lote: string | null, fechaCaducidad: string, cantidad: number, compraId?: number, observacion?: string, fechaElaboracion?: string) =>
+  smartInvoke<number>("registrar_lote_caducidad", { productoId, lote, fechaCaducidad, cantidad, compraId: compraId ?? null, observacion: observacion ?? null, fechaElaboracion: fechaElaboracion ?? null });
 
 export const listarLotesProducto = (productoId: number) =>
   smartInvoke<any[]>("listar_lotes_producto", { productoId });

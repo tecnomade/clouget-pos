@@ -48,7 +48,7 @@ export default function ReportesPage() {
   const [inventario, setInventario] = useState<any | null>(null);
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
   const [busquedaInv, setBusquedaInv] = useState("");
-  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK">("TODOS");
+  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK" | "STOCK_NEGATIVO">("TODOS");
   const [filtroCategoriaInv, setFiltroCategoriaInv] = useState<string>("TODAS");
   const [desde, setDesde] = useState(inicioMes());
   const [hasta, setHasta] = useState(hoy());
@@ -566,7 +566,7 @@ export default function ReportesPage() {
 
             {/* Charts */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              {/* Utilidad por categoría */}
+              {/* Utilidad por categoría (cada barra con color distinto) */}
               {utilidad.por_categoria.length > 0 && (
                 <div className="card">
                   <div className="card-header">Utilidad por Categoria</div>
@@ -577,7 +577,11 @@ export default function ReportesPage() {
                         <XAxis type="number" tickFormatter={v => `$${v}`} style={{ fontSize: 11 }} />
                         <YAxis type="category" dataKey="categoria" style={{ fontSize: 11 }} width={75} />
                         <Tooltip formatter={(v: unknown) => fmt(Number(v))} />
-                        <Bar dataKey="utilidad" fill="var(--color-success)" radius={[0, 4, 4, 0]} />
+                        <Bar dataKey="utilidad" radius={[0, 4, 4, 0]}>
+                          {utilidad.por_categoria.map((_, i) => (
+                            <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -887,9 +891,10 @@ export default function ReportesPage() {
                         <td className="text-right">{fmt(c.monto_total)}</td>
                         <td className="text-right">{fmt(c.monto_pagado)}</td>
                         <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo)}</td>
-                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                          background: c.estado === "VENCIDA" ? "rgba(239,68,68,0.15)" : c.estado === "ABONADA" ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)",
-                          color: c.estado === "VENCIDA" ? "var(--color-danger)" : c.estado === "ABONADA" ? "var(--color-warning)" : "var(--color-primary)"
+                        <td><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 4, fontWeight: 700, letterSpacing: 0.3,
+                          background: c.estado === "VENCIDA" ? "#dc2626" : c.estado === "ABONADA" ? "#d97706" : c.estado === "PAGADA" ? "#16a34a" : "#2563eb",
+                          color: "#ffffff",
+                          border: c.estado === "VENCIDA" ? "1px solid #991b1b" : c.estado === "ABONADA" ? "1px solid #92400e" : c.estado === "PAGADA" ? "1px solid #166534" : "1px solid #1e40af",
                         }}>{c.estado}</span></td>
                         <td>{c.fecha_vencimiento}</td>
                         <td className="text-right" style={{ color: c.dias_atraso > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.dias_atraso > 0 ? 700 : 400 }}>
@@ -979,9 +984,10 @@ export default function ReportesPage() {
                         <td className="text-right">{fmt(c.monto_total)}</td>
                         <td className="text-right">{fmt(c.monto_pagado)}</td>
                         <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo)}</td>
-                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                          background: c.estado === "VENCIDA" ? "rgba(239,68,68,0.15)" : c.estado === "ABONADA" ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)",
-                          color: c.estado === "VENCIDA" ? "var(--color-danger)" : c.estado === "ABONADA" ? "var(--color-warning)" : "var(--color-primary)"
+                        <td><span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 4, fontWeight: 700, letterSpacing: 0.3,
+                          background: c.estado === "VENCIDA" ? "#dc2626" : c.estado === "ABONADA" ? "#d97706" : c.estado === "PAGADA" ? "#16a34a" : "#2563eb",
+                          color: "#ffffff",
+                          border: c.estado === "VENCIDA" ? "1px solid #991b1b" : c.estado === "ABONADA" ? "1px solid #92400e" : c.estado === "PAGADA" ? "1px solid #166534" : "1px solid #1e40af",
                         }}>{c.estado}</span></td>
                         <td>{c.fecha_vencimiento}</td>
                         <td className="text-right" style={{ color: c.dias_atraso > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.dias_atraso > 0 ? 700 : 400 }}>
@@ -1098,8 +1104,14 @@ export default function ReportesPage() {
                 <KpiCard label="Valor al precio venta" valor={fmt(inventario.valor_total_venta)} color="var(--color-primary)" />
                 <KpiCard label="Utilidad potencial" valor={fmt(inventario.utilidad_potencial)} sub={fmtPct(inventario.valor_total_costo > 0 ? (inventario.utilidad_potencial / inventario.valor_total_costo * 100) : 0)} color="var(--color-success)" />
               </div>
-              {(inventario.productos_sin_stock > 0 || inventario.productos_stock_bajo > 0) && (
-                <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+              {(inventario.productos_sin_stock > 0 || inventario.productos_stock_bajo > 0 || ((inventario as any).productos_stock_negativo ?? 0) > 0) && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+                  {((inventario as any).productos_stock_negativo ?? 0) > 0 && (
+                    <div style={{ padding: "8px 14px", background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.5)", borderRadius: 6, fontSize: 12, color: "var(--color-danger)", fontWeight: 600 }}
+                         title="Productos con stock negativo (se vendieron mas de los que habia). Cuentan como 0 en el calculo del valor.">
+                      ⚠ <strong>{(inventario as any).productos_stock_negativo}</strong> productos con stock NEGATIVO (contabilidad sucia - revisar)
+                    </div>
+                  )}
                   {inventario.productos_sin_stock > 0 && (
                     <div style={{ padding: "8px 14px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6, fontSize: 12, color: "var(--color-danger)" }}>
                       <strong>{inventario.productos_sin_stock}</strong> productos sin stock
@@ -1110,6 +1122,9 @@ export default function ReportesPage() {
                       <strong>{inventario.productos_stock_bajo}</strong> productos con stock bajo
                     </div>
                   )}
+                  <div style={{ padding: "8px 14px", background: "rgba(59,130,246,0.08)", borderRadius: 6, fontSize: 11, color: "var(--color-text-secondary)", flex: 1, minWidth: 240 }}>
+                    💡 El valor del inventario excluye productos con stock negativo (cuentan como 0).
+                  </div>
                 </div>
               )}
               <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
@@ -1127,7 +1142,8 @@ export default function ReportesPage() {
                   <option value="TODOS">Todos los estados</option>
                   <option value="OK">Stock OK</option>
                   <option value="BAJO">Stock bajo</option>
-                  <option value="SIN_STOCK">Sin stock</option>
+                  <option value="SIN_STOCK">Sin stock (=0)</option>
+                  <option value="STOCK_NEGATIVO">Stock negativo (&lt;0)</option>
                 </select>
                 {(filtroCategoriaInv !== "TODAS" || filtroEstado !== "TODOS" || busquedaInv) && (
                   <button className="btn btn-outline" style={{ fontSize: 11 }}
@@ -1161,10 +1177,10 @@ export default function ReportesPage() {
                         <td className="text-right">{fmt(p.valor_costo)}</td>
                         <td className="text-right">{fmt(p.valor_venta)}</td>
                         <td className="text-right" style={{ color: "var(--color-success)" }}>{fmt(p.utilidad_potencial)}</td>
-                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                          background: p.estado_stock === "SIN_STOCK" ? "rgba(239,68,68,0.15)" : p.estado_stock === "BAJO" ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)",
-                          color: p.estado_stock === "SIN_STOCK" ? "var(--color-danger)" : p.estado_stock === "BAJO" ? "var(--color-warning)" : "var(--color-success)"
-                        }}>{p.estado_stock === "SIN_STOCK" ? "Sin stock" : p.estado_stock === "BAJO" ? "Bajo" : "OK"}</span></td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 700,
+                          background: p.estado_stock === "STOCK_NEGATIVO" ? "#dc2626" : p.estado_stock === "SIN_STOCK" ? "rgba(239,68,68,0.15)" : p.estado_stock === "BAJO" ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)",
+                          color: p.estado_stock === "STOCK_NEGATIVO" ? "#fff" : p.estado_stock === "SIN_STOCK" ? "var(--color-danger)" : p.estado_stock === "BAJO" ? "var(--color-warning)" : "var(--color-success)"
+                        }}>{p.estado_stock === "STOCK_NEGATIVO" ? "⚠ Negativo" : p.estado_stock === "SIN_STOCK" ? "Sin stock" : p.estado_stock === "BAJO" ? "Bajo" : "OK"}</span></td>
                         <td><button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }} onClick={() => verKardex(p.id)}>Kardex</button></td>
                       </tr>
                     ))}

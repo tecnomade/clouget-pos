@@ -3,8 +3,8 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { obtenerConfig } from "../services/api";
 
-// Endpoint del canal beta (consulta manual via fetch)
-const ENDPOINT_BETA = "https://github.com/tecnomade/clouget-pos/releases/download/beta-channel/latest.json";
+// Endpoint de manifest controlado por admin (Supabase edge function)
+const ENDPOINT_MANIFEST = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest";
 
 type Estado = "idle" | "disponible" | "descargando" | "instalado" | "error";
 
@@ -61,21 +61,21 @@ export default function UpdateChecker() {
       } catch { /* fallback a stable */ }
 
       if (canal === "beta") {
-        // Canal beta: verificar manualmente el endpoint beta via fetch
-        // (el plugin no soporta endpoints dinamicos en runtime)
+        // Canal BETA: consulta al edge function Supabase con canal=beta
+        // (el plugin de Tauri solo soporta endpoints estaticos, asi que para beta
+        // consultamos manualmente; el user puede descargar la nueva version si quiere)
         try {
-          const resp = await fetch(ENDPOINT_BETA);
-          if (resp.ok) {
+          const resp = await fetch(`${ENDPOINT_MANIFEST}?canal=beta`);
+          if (resp.ok && resp.status !== 204) {
             const betaManifest = await resp.json();
             const current = __APP_VERSION__;
-            console.log(`[Updater] Canal BETA. Version actual: ${current}, beta disponible: ${betaManifest.version}`);
+            console.log(`[Updater] Canal BETA. Actual: ${current}, disponible: ${betaManifest.version}`);
             if (betaManifest.version && betaManifest.version !== current) {
-              // Hay una beta mas nueva. El usuario debe descargarla manualmente desde GitHub.
               setUpdate({ version: betaManifest.version } as any);
               setEstado("disponible");
-              // Abrir URL de release en navegador
-              console.log(`[Updater] Nueva beta disponible: ${betaManifest.version}`);
             }
+          } else if (resp.status === 204) {
+            console.log("[Updater] Canal BETA sin version configurada en admin");
           }
         } catch (e) {
           console.warn("[Updater] No se pudo consultar canal beta:", e);
@@ -83,8 +83,9 @@ export default function UpdateChecker() {
         return;
       }
 
-      // Canal STABLE: usa el plugin estandar (lee endpoint de tauri.conf.json)
-      console.log("[Updater] Canal: stable, verificando...");
+      // Canal STABLE: usa el plugin estandar con el endpoint configurado en tauri.conf.json
+      // (apunta primero a Supabase edge function con canal=stable, fallback a GitHub)
+      console.log("[Updater] Canal: stable, verificando via endpoint configurado...");
       const resultado = await check();
       console.log("[Updater] Resultado:", resultado);
       if (resultado) {

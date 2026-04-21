@@ -6,6 +6,7 @@ interface Lote {
   id: number;
   lote: string | null;
   fecha_caducidad: string;
+  fecha_elaboracion?: string | null;
   cantidad: number;
   producto_id: number;
   producto_nombre: string;
@@ -106,6 +107,7 @@ export default function CaducidadPage() {
                 <th>Producto</th>
                 <th>Lote</th>
                 <th className="text-right">Cantidad</th>
+                <th>Elaboracion</th>
                 <th>Caducidad</th>
                 <th className="text-right">Días restantes</th>
                 <th>Estado</th>
@@ -114,7 +116,7 @@ export default function CaducidadPage() {
             </thead>
             <tbody>
               {lotesFiltrados.length === 0 ? (
-                <tr><td colSpan={7} className="text-center text-secondary" style={{ padding: 30 }}>No hay lotes en alerta</td></tr>
+                <tr><td colSpan={8} className="text-center text-secondary" style={{ padding: 30 }}>No hay lotes en alerta</td></tr>
               ) : lotesFiltrados.map(l => (
                 <tr key={l.id}>
                   <td>
@@ -140,6 +142,7 @@ export default function CaducidadPage() {
                       </span>
                     )}
                   </td>
+                  <td style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{l.fecha_elaboracion || "—"}</td>
                   <td>{l.fecha_caducidad}</td>
                   <td className="text-right" style={{ color: l.dias_restantes < 0 ? "var(--color-danger)" : "var(--color-warning)", fontWeight: 600 }}>
                     {l.dias_restantes < 0 ? `-${Math.abs(l.dias_restantes)}` : l.dias_restantes} días

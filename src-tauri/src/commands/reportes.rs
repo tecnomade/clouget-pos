@@ -977,14 +977,17 @@ pub fn reporte_cxp_detalle_proveedor(db: State<Database>, proveedor_id: i64) -> 
 #[tauri::command]
 pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::Value, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // Usamos MAX(stock, 0) para el calculo de valores (productos con stock negativo = 0 de valor).
+    // El stock real se sigue mostrando tal cual en la tabla para visibilidad.
     let mut stmt = conn.prepare(
         "SELECT p.id, p.codigo, p.nombre, c.nombre as categoria,
                 p.stock_actual, p.stock_minimo,
                 p.precio_costo, p.precio_venta,
-                (p.stock_actual * p.precio_costo) as valor_costo,
-                (p.stock_actual * p.precio_venta) as valor_venta,
+                (MAX(p.stock_actual, 0) * p.precio_costo) as valor_costo,
+                (MAX(p.stock_actual, 0) * p.precio_venta) as valor_venta,
                 CASE
-                    WHEN p.stock_actual <= 0 THEN 'SIN_STOCK'
+                    WHEN p.stock_actual < 0 THEN 'STOCK_NEGATIVO'
+                    WHEN p.stock_actual = 0 THEN 'SIN_STOCK'
                     WHEN p.stock_actual <= p.stock_minimo THEN 'BAJO'
                     ELSE 'OK'
                 END as estado_stock
@@ -1000,6 +1003,7 @@ pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::
     let mut total_unidades = 0.0_f64;
     let mut sin_stock = 0_i64;
     let mut bajo_stock = 0_i64;
+    let mut stock_negativo = 0_i64;
 
     let rows = stmt.query_map([], |row| {
         let v_costo: f64 = row.get(8)?;
@@ -1029,8 +1033,10 @@ pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::
         if let Ok((p, vc, vv, st, est)) = r {
             total_costo += vc;
             total_venta += vv;
-            total_unidades += st;
+            // Solo sumar unidades positivas al total
+            if st > 0.0 { total_unidades += st; }
             if est == "SIN_STOCK" { sin_stock += 1; }
+            else if est == "STOCK_NEGATIVO" { stock_negativo += 1; }
             else if est == "BAJO" { bajo_stock += 1; }
             productos.push(p);
         }
@@ -1045,6 +1051,7 @@ pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::
         "utilidad_potencial": total_venta - total_costo,
         "productos_sin_stock": sin_stock,
         "productos_stock_bajo": bajo_stock,
+        "productos_stock_negativo": stock_negativo,
     }))
 }
 

@@ -1065,11 +1065,12 @@ pub fn registrar_lote_caducidad(
     cantidad: f64,
     compra_id: Option<i64>,
     observacion: Option<String>,
+    fecha_elaboracion: Option<String>,
 ) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, compra_id, observacion) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6)",
-        rusqlite::params![producto_id, lote, fecha_caducidad, cantidad, compra_id, observacion],
+        "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, compra_id, observacion, fecha_elaboracion) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
+        rusqlite::params![producto_id, lote, fecha_caducidad, cantidad, compra_id, observacion, fecha_elaboracion],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
 }
@@ -1078,7 +1079,7 @@ pub fn registrar_lote_caducidad(
 pub fn listar_lotes_producto(db: State<Database>, producto_id: i64) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, lote, fecha_caducidad, cantidad, cantidad_inicial, observacion, fecha_ingreso
+        "SELECT id, lote, fecha_caducidad, cantidad, cantidad_inicial, observacion, fecha_ingreso, fecha_elaboracion
          FROM lotes_caducidad WHERE producto_id = ?1 AND cantidad > 0 ORDER BY fecha_caducidad ASC"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map(rusqlite::params![producto_id], |row| {
@@ -1089,7 +1090,8 @@ pub fn listar_lotes_producto(db: State<Database>, producto_id: i64) -> Result<Ve
             "cantidad": row.get::<_, f64>(3)?,
             "cantidad_inicial": row.get::<_, f64>(4)?,
             "observacion": row.get::<_, Option<String>>(5)?,
-            "fecha_ingreso": row.get::<_, String>(6)?
+            "fecha_ingreso": row.get::<_, String>(6)?,
+            "fecha_elaboracion": row.get::<_, Option<String>>(7)?,
         }))
     }).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
@@ -1108,7 +1110,8 @@ pub fn alertas_caducidad(db: State<Database>) -> Result<serde_json::Value, Strin
                     WHEN date(l.fecha_caducidad) <= date('now', 'localtime', '+' || ?1 || ' days') THEN 'POR_VENCER'
                     ELSE 'OK'
                 END as estado,
-                CAST(julianday(l.fecha_caducidad) - julianday(date('now','localtime')) AS INTEGER) as dias_restantes
+                CAST(julianday(l.fecha_caducidad) - julianday(date('now','localtime')) AS INTEGER) as dias_restantes,
+                l.fecha_elaboracion
          FROM lotes_caducidad l
          JOIN productos p ON l.producto_id = p.id
          WHERE l.cantidad > 0
@@ -1126,7 +1129,8 @@ pub fn alertas_caducidad(db: State<Database>) -> Result<serde_json::Value, Strin
             "producto_nombre": row.get::<_, String>(5)?,
             "producto_codigo": row.get::<_, Option<String>>(6)?,
             "estado": row.get::<_, String>(7)?,
-            "dias_restantes": row.get::<_, i64>(8)?
+            "dias_restantes": row.get::<_, i64>(8)?,
+            "fecha_elaboracion": row.get::<_, Option<String>>(9)?,
         }))
     }).map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;

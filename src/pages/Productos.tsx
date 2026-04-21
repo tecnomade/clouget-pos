@@ -69,6 +69,7 @@ function FormProducto({
   const [nuevoLote, setNuevoLote] = useState("");
   const [nuevoLoteFecha, setNuevoLoteFecha] = useState("");
   const [nuevoLoteCantidad, setNuevoLoteCantidad] = useState("");
+  const [nuevoLoteFechaElab, setNuevoLoteFechaElab] = useState("");
 
   // Cargar config global (para detectar modulo_caducidad y default incluye_iva)
   useEffect(() => {
@@ -713,6 +714,7 @@ function FormProducto({
               <thead>
                 <tr style={{ textAlign: "left" }}>
                   <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Lote</th>
+                  <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Elaboracion</th>
                   <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Fecha caducidad</th>
                   <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Cantidad</th>
                   <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}></th>
@@ -722,6 +724,7 @@ function FormProducto({
                 {lotes.map((l) => (
                   <tr key={l.id}>
                     <td style={{ padding: "4px 8px" }}>{l.lote || "-"}</td>
+                    <td style={{ padding: "4px 8px" }}>{l.fecha_elaboracion || "-"}</td>
                     <td style={{ padding: "4px 8px" }}>{l.fecha_caducidad}</td>
                     <td style={{ padding: "4px 8px" }}>{l.cantidad}</td>
                     <td style={{ padding: "4px 8px", textAlign: "right" }}>
@@ -743,10 +746,14 @@ function FormProducto({
           ) : (
             <div className="text-secondary" style={{ fontSize: 11, marginBottom: 8 }}>No hay lotes registrados.</div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
             <div>
               <label className="text-secondary" style={{ fontSize: 11 }}>Lote (opcional)</label>
               <input className="input" value={nuevoLote} onChange={(e) => setNuevoLote(e.target.value)} placeholder="LOT-001" style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Fecha elaboracion</label>
+              <input type="date" className="input" value={nuevoLoteFechaElab} onChange={(e) => setNuevoLoteFechaElab(e.target.value)} style={{ fontSize: 12 }} />
             </div>
             <div>
               <label className="text-secondary" style={{ fontSize: 11 }}>Fecha caducidad *</label>
@@ -768,10 +775,11 @@ function FormProducto({
                   return;
                 }
                 try {
-                  await registrarLoteCaducidad(form.id!, nuevoLote.trim() || null, nuevoLoteFecha, cantNum);
+                  await registrarLoteCaducidad(form.id!, nuevoLote.trim() || null, nuevoLoteFecha, cantNum, undefined, undefined, nuevoLoteFechaElab || undefined);
                   setNuevoLote("");
                   setNuevoLoteFecha("");
                   setNuevoLoteCantidad("");
+                  setNuevoLoteFechaElab("");
                   await recargarLotes();
                 } catch (err) { toastError("Error: " + err); }
               }}>
