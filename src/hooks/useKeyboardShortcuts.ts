@@ -26,7 +26,15 @@ export function useKeyboardShortcuts(rol?: string) {
       { key: "F4", description: "Ir a Ventas del dia", action: () => navigate("/ventas") },
       { key: "F6", description: "Ir a Configuracion", action: () => navigate("/config"), adminOnly: true },
       { key: "F7", description: "Ir a Gastos", action: () => navigate("/gastos"), adminOnly: true },
-      { key: "F8", description: "Ir a Cuentas por cobrar", action: () => navigate("/cuentas"), adminOnly: false },
+      { key: "F8", description: "Monto exacto en POS / Cuentas por cobrar", action: () => {
+        // En POS: dispara monto exacto (mismo que el boton "Exacto")
+        // Fuera de POS: navega a Cuentas por cobrar
+        if (window.location.pathname === "/pos") {
+          window.dispatchEvent(new CustomEvent("pos-monto-exacto"));
+        } else {
+          navigate("/cuentas");
+        }
+      }, adminOnly: false },
       // Acciones rapidas en POS - disponibles para todos
       // Usan CustomEvent para no depender del estado disabled del boton DOM
       { key: "F9", description: "Cobrar venta", action: () => {

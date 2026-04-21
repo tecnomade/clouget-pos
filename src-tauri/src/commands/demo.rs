@@ -36,9 +36,6 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         ("sri_facturas_gratis", "999999"),
         ("sri_facturas_usadas", "0"),
         ("demo_activo", "1"),
-        // Activar todos los módulos opcionales en demo
-        ("modulo_series_activo", "1"),
-        ("modulo_caducidad", "1"),
         ("caducidad_dias_alerta", "7"),
     ];
     for (key, value) in &configs {
@@ -49,17 +46,13 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         .map_err(|e| format!("Error configurando demo: {}", e))?;
     }
 
-    // --- Categorías (8) ---
+    // --- Categorías (4) ---
     conn.execute_batch(
         "INSERT OR IGNORE INTO categorias (id, nombre, descripcion, activo) VALUES
             (1, 'Abarrotes', 'Productos de primera necesidad', 1),
             (2, 'Bebidas', 'Bebidas y refrescos', 1),
             (3, 'Higiene Personal', 'Productos de aseo y cuidado personal', 1),
-            (4, 'Congelados', 'Carnes y productos congelados', 1),
-            (5, 'Tecnologia', 'Equipos electronicos con numero de serie', 1),
-            (6, 'Lacteos', 'Productos lacteos con caducidad', 1),
-            (7, 'Panaderia', 'Pan y reposteria del dia', 1),
-            (8, 'Limpieza Hogar', 'Productos de limpieza para el hogar', 1);",
+            (4, 'Congelados', 'Carnes y productos congelados', 1);",
     )
     .map_err(|e| format!("Error creando categorías: {}", e))?;
 
@@ -90,26 +83,6 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         ("CON004", "Queso Fresco (500g)", 4, 2.50, 4.00, 15.0, 12.0, "UND"),
         ("SRV001", "Servicio de Delivery", 1, 0.0, 2.50, 15.0, 0.0, "UND"),
         ("SRV002", "Empaque para Regalo", 1, 0.0, 1.00, 15.0, 0.0, "UND"),
-        // Tecnologia (cat 5) — requieren serie
-        ("TEC001", "Laptop HP 15.6\" i5 8GB 512SSD", 5, 480.00, 650.00, 15.0, 5.0, "UND"),
-        ("TEC002", "Celular Samsung A15 128GB", 5, 180.00, 245.00, 15.0, 8.0, "UND"),
-        ("TEC003", "Tablet Lenovo M10 64GB", 5, 145.00, 199.00, 15.0, 4.0, "UND"),
-        ("TEC004", "Audifonos Bluetooth JBL", 5, 18.00, 32.00, 15.0, 15.0, "UND"),
-        ("TEC005", "Teclado mecanico RGB", 5, 22.00, 38.50, 15.0, 7.0, "UND"),
-        // Lacteos (cat 6) — requieren caducidad
-        ("LAC001", "Leche Entera (1L)", 6, 0.85, 1.20, 0.0, 60.0, "UND"),
-        ("LAC002", "Yogurt Frutilla (200g)", 6, 0.45, 0.80, 0.0, 80.0, "UND"),
-        ("LAC003", "Mantequilla (250g)", 6, 1.40, 2.20, 15.0, 25.0, "UND"),
-        ("LAC004", "Queso Mozzarella (400g)", 6, 2.80, 4.50, 15.0, 18.0, "UND"),
-        // Panaderia (cat 7) — requieren caducidad (corta)
-        ("PAN001", "Pan de Yema (UND)", 7, 0.10, 0.20, 0.0, 120.0, "UND"),
-        ("PAN002", "Pan Integral (500g)", 7, 0.95, 1.50, 0.0, 30.0, "UND"),
-        ("PAN003", "Torta Chocolate (porc)", 7, 1.20, 2.50, 15.0, 12.0, "UND"),
-        // Limpieza Hogar (cat 8)
-        ("LIM001", "Cloro 4L", 8, 1.80, 2.80, 15.0, 22.0, "UND"),
-        ("LIM002", "Desinfectante Floral 1L", 8, 1.20, 1.95, 15.0, 30.0, "UND"),
-        ("LIM003", "Esponja Multiuso 3-pack", 8, 0.65, 1.10, 15.0, 50.0, "UND"),
-        ("LIM004", "Bolsa Basura 30L 10UN", 8, 0.85, 1.45, 15.0, 40.0, "UND"),
     ];
 
     for (codigo, nombre, cat_id, costo, venta, iva, stock, unidad) in &productos {
@@ -543,16 +516,6 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
     // ejemplos visibles en modo demo
     // ==========================================================================
 
-    // --- Marcar productos que requieren serie y caducidad ---
-    let _ = conn.execute(
-        "UPDATE productos SET requiere_serie = 1 WHERE codigo IN ('TEC001', 'TEC002', 'TEC003')",
-        [],
-    );
-    let _ = conn.execute(
-        "UPDATE productos SET requiere_caducidad = 1
-         WHERE codigo IN ('LAC001', 'LAC002', 'LAC003', 'LAC004', 'PAN001', 'PAN002', 'PAN003')",
-        [],
-    );
     // Servicios no controlan stock
     let _ = conn.execute(
         "UPDATE productos SET es_servicio = 1, no_controla_stock = 1 WHERE codigo IN ('SRV001', 'SRV002')",
@@ -625,73 +588,6 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
              VALUES (3, ?1, ?2, 5, 'PENDIENTE', 'Admin', datetime('now', 'localtime'))",
             rusqlite::params![est1_id, eid],
         );
-    }
-
-    // --- Números de serie demo ---
-    // TEC001 (Laptop) - 5 series, 1 vendida
-    let laptop_id: i64 = conn.query_row("SELECT id FROM productos WHERE codigo = 'TEC001'", [], |r| r.get(0)).unwrap_or(0);
-    if laptop_id > 0 {
-        let series_laptop = ["HP-CND2345ABC", "HP-CND2346XYZ", "HP-CND2347MNO", "HP-CND2348PQR", "HP-CND2349STU"];
-        for (i, s) in series_laptop.iter().enumerate() {
-            let estado = if i == 0 { "VENDIDO" } else { "DISPONIBLE" };
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO numeros_serie (producto_id, serial, estado, fecha_ingreso) VALUES (?1, ?2, ?3, datetime('now','localtime', '-10 days'))",
-                rusqlite::params![laptop_id, s, estado],
-            );
-        }
-    }
-    // TEC002 (Celular Samsung) - 8 series, 2 vendidas
-    let cel_id: i64 = conn.query_row("SELECT id FROM productos WHERE codigo = 'TEC002'", [], |r| r.get(0)).unwrap_or(0);
-    if cel_id > 0 {
-        let series_cel = [
-            "IMEI-358291098765432", "IMEI-358291098765433", "IMEI-358291098765434",
-            "IMEI-358291098765435", "IMEI-358291098765436", "IMEI-358291098765437",
-            "IMEI-358291098765438", "IMEI-358291098765439",
-        ];
-        for (i, s) in series_cel.iter().enumerate() {
-            let estado = if i < 2 { "VENDIDO" } else { "DISPONIBLE" };
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO numeros_serie (producto_id, serial, estado, fecha_ingreso) VALUES (?1, ?2, ?3, datetime('now','localtime', '-7 days'))",
-                rusqlite::params![cel_id, s, estado],
-            );
-        }
-    }
-    // TEC003 (Tablet) - 4 series
-    let tab_id: i64 = conn.query_row("SELECT id FROM productos WHERE codigo = 'TEC003'", [], |r| r.get(0)).unwrap_or(0);
-    if tab_id > 0 {
-        for s in ["LEN-M10-001", "LEN-M10-002", "LEN-M10-003", "LEN-M10-004"] {
-            let _ = conn.execute(
-                "INSERT OR IGNORE INTO numeros_serie (producto_id, serial, estado) VALUES (?1, ?2, 'DISPONIBLE')",
-                rusqlite::params![tab_id, s],
-            );
-        }
-    }
-
-    // --- Lotes con caducidad ---
-    let lacteos_caducidad = [
-        ("LAC001", "L-ECH-2024A", 30,  60.0, "Lote enero"),       // 30 dias - OK
-        ("LAC001", "L-ECH-2024B", 5,   20.0, "Por vencer pronto"), // 5 dias - alerta
-        ("LAC002", "L-YOG-100",   45,  80.0, ""),                 // OK
-        ("LAC002", "L-YOG-101",   2,   15.0, "VENCE PRONTO"),     // 2 dias - urgente
-        ("LAC003", "L-MAN-22",    90,  25.0, ""),                 // OK
-        ("LAC004", "L-QSO-505",   15,  18.0, ""),                 // OK
-        ("PAN001", "PYM-DIA",     1,  120.0, "Pan del dia"),      // 1 dia
-        ("PAN002", "INT-340",     7,   30.0, ""),                 // 7 dias
-        ("PAN003", "TC-CHO-09",   3,   12.0, ""),                 // 3 dias
-    ];
-    for (cod, lote, dias, qty, obs) in &lacteos_caducidad {
-        let pid: i64 = conn.query_row(
-            "SELECT id FROM productos WHERE codigo = ?1",
-            rusqlite::params![cod], |r| r.get(0),
-        ).unwrap_or(0);
-        if pid > 0 {
-            let fecha_cad = format!("+{} days", dias);
-            let _ = conn.execute(
-                "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, observacion)
-                 VALUES (?1, ?2, date('now', ?3), ?4, ?4, ?5)",
-                rusqlite::params![pid, lote, fecha_cad, qty, obs],
-            );
-        }
     }
 
     // --- Movimientos de Inventario (Kardex) demo ---
@@ -773,18 +669,19 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         rusqlite::params![venta_cred2],
     );
 
-    // --- Compras adicionales (varias formas y estados) ---
+    // --- Compras adicionales (varias formas y estados) usando productos existentes ---
+    // Compra a Lacteos del Sur (proveedor 3) - usando productos abarrotes
     let _ = conn.execute(
         "INSERT INTO compras (numero, proveedor_id, subtotal, iva, total, forma_pago, es_credito, numero_factura, observacion, fecha, estado)
-         VALUES ('CMP-000003', 3, 120.00, 18.00, 138.00, 'CHEQUE', 1, 'FAC-003-9988', 'Pedido lacteos semanal', datetime('now', 'localtime', '-7 days'), 'REGISTRADA')",
+         VALUES ('CMP-000003', 3, 120.00, 18.00, 138.00, 'CHEQUE', 1, 'FAC-003-9988', 'Pedido semanal', datetime('now', 'localtime', '-7 days'), 'REGISTRADA')",
         [],
     );
     let cmp3 = conn.last_insert_rowid();
     let _ = conn.execute(
         "INSERT INTO compra_detalles (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
-            (?1, 25, 60, 0.85, 51.00),
-            (?1, 26, 80, 0.45, 36.00),
-            (?1, 27, 25, 1.40, 35.00)",
+            (?1, 1, 60, 1.10, 66.00),
+            (?1, 5, 22, 1.80, 39.60),
+            (?1, 6, 36, 0.40, 14.40)",
         rusqlite::params![cmp3],
     );
     let _ = conn.execute(
@@ -793,28 +690,15 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         rusqlite::params![cmp3],
     );
 
-    // Compra de tecnologia (con series)
-    let _ = conn.execute(
-        "INSERT INTO compras (numero, proveedor_id, subtotal, iva, total, forma_pago, es_credito, numero_factura, observacion, fecha, estado)
-         VALUES ('CMP-000004', 2, 2400.00, 360.00, 2760.00, 'TRANSFERENCIA', 0, 'FAC-002-1500', 'Stock tecnologia', datetime('now', 'localtime', '-10 days'), 'REGISTRADA')",
-        [],
-    );
-    let cmp4 = conn.last_insert_rowid();
-    let _ = conn.execute(
-        "INSERT INTO compra_detalles (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES
-            (?1, 21, 5, 480.00, 2400.00)",
-        rusqlite::params![cmp4],
-    );
-
     // CXP totalmente pagada (historial)
     let _ = conn.execute(
         "INSERT INTO compras (numero, proveedor_id, subtotal, iva, total, forma_pago, es_credito, numero_factura, observacion, fecha, estado)
-         VALUES ('CMP-000005', 1, 60.00, 9.00, 69.00, 'EFECTIVO', 1, 'FAC-001-5500', 'Reposicion limpieza', datetime('now', 'localtime', '-15 days'), 'REGISTRADA')",
+         VALUES ('CMP-000005', 1, 60.00, 9.00, 69.00, 'EFECTIVO', 1, 'FAC-001-5500', 'Reposicion higiene', datetime('now', 'localtime', '-15 days'), 'REGISTRADA')",
         [],
     );
     let cmp5 = conn.last_insert_rowid();
     let _ = conn.execute(
-        "INSERT INTO compra_detalles (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?1, 33, 30, 2.00, 60.00)",
+        "INSERT INTO compra_detalles (compra_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?1, 14, 30, 2.00, 60.00)",
         rusqlite::params![cmp5],
     );
     let _ = conn.execute(
@@ -867,11 +751,12 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
     // (las primeras ventas ya se generaron, dejamos esto como referencia)
 
     // Activar modulos en config para que se vean
+    // Nota: series y caducidad NO se activan porque ya no hay productos demo de tecnologia/lacteos
     let _ = conn.execute_batch(
         "UPDATE config SET value = '1' WHERE key = 'modulo_servicio_tecnico';
-         UPDATE config SET value = '1' WHERE key = 'modulo_caducidad';
-         UPDATE config SET value = '1' WHERE key = 'modulo_series_activo';
-         UPDATE config SET value = '1' WHERE key = 'multi_almacen_activo';"
+         UPDATE config SET value = '1' WHERE key = 'multi_almacen_activo';
+         UPDATE config SET value = '0' WHERE key = 'modulo_caducidad';
+         UPDATE config SET value = '0' WHERE key = 'modulo_series_activo';"
     );
 
     let machine_id = crate::commands::licencia::obtener_machine_id().unwrap_or_default();
@@ -888,7 +773,6 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
             "multi_almacen".to_string(),
             "backup_cloud".to_string(),
             "backup_premium".to_string(),
-            "series".to_string(),
             "servicio_tecnico".to_string(),
             "sri_ilimitado".to_string(),
         ],

@@ -644,11 +644,18 @@ export default function PuntoVenta() {
     const handleBorrador = () => guardarComoDocumento("borrador");
     const handleCotizacion = () => guardarComoDocumento("cotizacion");
     const handleGuia = () => handleGuiaRemision();
+    const handleMontoExacto = () => {
+      // Solo si forma de pago es EFECTIVO y carrito tiene items
+      if (carrito.length === 0 || esFiado || formaPago !== "EFECTIVO") return;
+      setMontoRecibido(total.toFixed(2));
+      setTimeout(() => procesarVenta(), 100);
+    };
     window.addEventListener("pos-cobrar", handleCobrar);
     window.addEventListener("pos-nueva-venta", handleNuevaVenta);
     window.addEventListener("pos-guardar-borrador", handleBorrador);
     window.addEventListener("pos-guardar-cotizacion", handleCotizacion);
     window.addEventListener("pos-guardar-guia", handleGuia);
+    window.addEventListener("pos-monto-exacto", handleMontoExacto);
     const handleRecientes = () => setMostrarRecientes(true);
     const handleGuiaRemisionEvt = () => setMostrarModalGuia(true);
     window.addEventListener("pos-recientes", handleRecientes);
@@ -659,10 +666,11 @@ export default function PuntoVenta() {
       window.removeEventListener("pos-guardar-borrador", handleBorrador);
       window.removeEventListener("pos-guardar-cotizacion", handleCotizacion);
       window.removeEventListener("pos-guardar-guia", handleGuia);
+      window.removeEventListener("pos-monto-exacto", handleMontoExacto);
       window.removeEventListener("pos-recientes", handleRecientes);
       window.removeEventListener("pos-guia-remision", handleGuiaRemisionEvt);
     };
-  }, [procesarVenta, nuevaVentaClick, guardarComoDocumento, handleGuiaRemision]);
+  }, [procesarVenta, nuevaVentaClick, guardarComoDocumento, handleGuiaRemision, carrito.length, esFiado, formaPago, total]);
 
   // Background: procesar emails pendientes cada 60 segundos
   useEffect(() => {
