@@ -17,7 +17,7 @@ pub async fn dispatch_command(
             let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+                    "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                      p.stock_actual, p.stock_minimo,
                      COALESCE(c.nombre, '') as categoria_nombre
                      FROM productos p
@@ -39,9 +39,10 @@ pub async fn dispatch_command(
                         nombre: row.get(2)?,
                         precio_venta: row.get(3)?,
                         iva_porcentaje: row.get(4)?,
-                        stock_actual: row.get(5)?,
-                        stock_minimo: row.get(6)?,
-                        categoria_nombre: row.get(7)?,
+                        incluye_iva: row.get::<_, i32>(5)? != 0,
+                        stock_actual: row.get(6)?,
+                        stock_minimo: row.get(7)?,
+                        categoria_nombre: row.get(8)?,
                         precio_lista: None,
                     })
                 })

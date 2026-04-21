@@ -411,11 +411,30 @@ export default function Configuracion() {
           {/* Columna derecha */}
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
-          {/* Punto de Venta */}
+          {/* Punto de Venta / Productos */}
           <div className="card">
-            <div className="card-header">Punto de Venta</div>
+            <div className="card-header">Productos / IVA</div>
             <div className="card-body">
-              {/* Modo POS eliminado - ahora siempre es grid visual */}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={config.producto_incluye_iva_default !== "0"}
+                  onChange={(e) => {
+                    const val = e.target.checked ? "1" : "0";
+                    update("producto_incluye_iva_default", val);
+                    guardarConfig({ producto_incluye_iva_default: val });
+                    toastExito(e.target.checked
+                      ? "Por defecto: precio incluye IVA"
+                      : "Por defecto: precio NO incluye IVA");
+                  }} />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Precio venta de producto incluye IVA por defecto</div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    Cuando crees un producto nuevo, el checkbox "Precio incluye IVA" vendra marcado.
+                    Esto desglosa automaticamente el IVA del precio (recomendado para Ecuador).
+                  </div>
+                </div>
+              </label>
             </div>
           </div>
 

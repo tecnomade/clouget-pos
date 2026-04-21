@@ -580,6 +580,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_referencia', '0')", []);
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_comprobante', '0')", []);
 
+    // Config: por defecto el precio de venta de un producto incluye IVA (true por default)
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('producto_incluye_iva_default', '1')", []);
+
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
 

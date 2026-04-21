@@ -35,6 +35,7 @@ function FormProducto({
       activo: true,
     }
   );
+  const [mostrarInfoIva, setMostrarInfoIva] = useState(false);
   const [preciosLista, setPreciosLista] = useState<Record<number, string>>({});
   const [seriesCount, setSeriesCount] = useState<{ disponible: number; vendido: number; total: number }>({ disponible: 0, vendido: 0, total: 0 });
   const [mostrarRegistrarSeries, setMostrarRegistrarSeries] = useState(false);
@@ -45,9 +46,16 @@ function FormProducto({
   const [nuevoLoteFecha, setNuevoLoteFecha] = useState("");
   const [nuevoLoteCantidad, setNuevoLoteCantidad] = useState("");
 
-  // Cargar config global (para detectar modulo_caducidad)
+  // Cargar config global (para detectar modulo_caducidad y default incluye_iva)
   useEffect(() => {
-    obtenerConfig().then(setConfig).catch(() => {});
+    obtenerConfig().then((cfg) => {
+      setConfig(cfg);
+      // Aplicar default "precio incluye IVA" solo en producto nuevo
+      if (!productoEditar && cfg.producto_incluye_iva_default === "1") {
+        setForm((prev) => ({ ...prev, incluye_iva: true }));
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const recargarLotes = async () => {
@@ -208,6 +216,78 @@ function FormProducto({
             <option value={5}>5% (IVA reducido)</option>
             <option value={15}>15% (IVA)</option>
           </select>
+          {/* Checkbox "Precio incluye IVA" + info */}
+          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, position: "relative" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", flex: 1 }}>
+              <input
+                type="checkbox"
+                checked={form.incluye_iva}
+                onChange={(e) => setForm({ ...form, incluye_iva: e.target.checked })}
+              />
+              <span>Precio venta <strong>incluye</strong> IVA</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => setMostrarInfoIva(!mostrarInfoIva)}
+              title="Como funciona esto?"
+              style={{
+                background: "var(--color-primary)", color: "#fff", border: "none",
+                borderRadius: "50%", width: 18, height: 18, fontSize: 11, fontWeight: 700,
+                cursor: "pointer", lineHeight: 1, padding: 0, display: "flex",
+                alignItems: "center", justifyContent: "center",
+              }}>
+              ?
+            </button>
+            {mostrarInfoIva && (
+              <div
+                onClick={() => setMostrarInfoIva(false)}
+                style={{
+                  position: "absolute", top: "100%", right: 0, marginTop: 4,
+                  background: "var(--color-surface)", border: "1px solid var(--color-border)",
+                  borderRadius: 6, padding: 12, fontSize: 11, lineHeight: 1.5,
+                  width: 320, zIndex: 20, boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+                  color: "var(--color-text)",
+                }}>
+                <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--color-primary)" }}>
+                  Como funciona "Precio incluye IVA"?
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <strong>Marcado (recomendado):</strong> El "Precio venta" que ingresas YA incluye el IVA.
+                  El sistema lo desglosa automaticamente en la venta.
+                </div>
+                <div style={{ marginBottom: 6, padding: 6, background: "var(--color-surface-alt)", borderRadius: 4 }}>
+                  Ejemplo con IVA 15%:<br/>
+                  Precio venta: $11.50<br/>
+                  → Base: $10.00 + IVA: $1.50 = $11.50
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <strong>Desmarcado:</strong> El precio NO incluye IVA. El sistema sumara el IVA encima del precio.
+                </div>
+                <div style={{ padding: 6, background: "var(--color-surface-alt)", borderRadius: 4 }}>
+                  Ejemplo con IVA 15%:<br/>
+                  Precio venta: $10.00<br/>
+                  → Base: $10.00 + IVA: $1.50 = $11.50 (cobrado)
+                </div>
+                <div style={{ marginTop: 8, fontSize: 10, color: "var(--color-text-secondary)", textAlign: "center" }}>
+                  Click para cerrar
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Desglose en vivo (solo si tiene IVA) */}
+          {form.iva_porcentaje > 0 && form.precio_venta > 0 && (
+            <div style={{ marginTop: 4, fontSize: 11, color: "var(--color-text-secondary)" }}>
+              {form.incluye_iva ? (
+                <>
+                  Desglose: Base ${(form.precio_venta / (1 + form.iva_porcentaje / 100)).toFixed(4)} + IVA ${(form.precio_venta - form.precio_venta / (1 + form.iva_porcentaje / 100)).toFixed(4)} = <strong>${form.precio_venta.toFixed(2)}</strong>
+                </>
+              ) : (
+                <>
+                  Cliente paga: ${form.precio_venta.toFixed(2)} + IVA ${(form.precio_venta * form.iva_porcentaje / 100).toFixed(4)} = <strong>${(form.precio_venta * (1 + form.iva_porcentaje / 100)).toFixed(2)}</strong>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Unidad de medida</label>

@@ -174,7 +174,7 @@ pub fn buscar_productos(
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.iva_porcentaje,
-                    p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
+                    p.incluye_iva, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
                     pp.precio as precio_lista
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
@@ -195,10 +195,11 @@ pub fn buscar_productos(
                 nombre: row.get(3)?,
                 precio_venta: row.get(4)?,
                 iva_porcentaje: row.get(5)?,
-                stock_actual: row.get(6)?,
-                stock_minimo: row.get(7)?,
-                categoria_nombre: row.get(8)?,
-                precio_lista: row.get(9)?,
+                incluye_iva: row.get::<_, i32>(6)? != 0,
+                stock_actual: row.get(7)?,
+                stock_minimo: row.get(8)?,
+                categoria_nombre: row.get(9)?,
+                precio_lista: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -223,7 +224,7 @@ fn buscar_productos_multi_almacen(
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                     COALESCE(se.stock_actual, 0) as stock_local,
                     COALESCE(se.stock_minimo, p.stock_minimo) as stock_min,
                     c.nombre as cat_nombre,
@@ -248,10 +249,11 @@ fn buscar_productos_multi_almacen(
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?,
                 iva_porcentaje: row.get(4)?,
-                stock_actual: row.get(5)?,
-                stock_minimo: row.get(6)?,
-                categoria_nombre: row.get(7)?,
-                precio_lista: row.get(8)?,
+                incluye_iva: row.get::<_, i32>(5)? != 0,
+                stock_actual: row.get(6)?,
+                stock_minimo: row.get(7)?,
+                categoria_nombre: row.get(8)?,
+                precio_lista: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -308,14 +310,14 @@ pub fn listar_productos(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let sql = if solo_activos {
-        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                 p.stock_actual, p.stock_minimo, c.nombre, pp.precio
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
          WHERE p.activo = 1 ORDER BY p.nombre"
     } else {
-        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+        "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                 p.stock_actual, p.stock_minimo, c.nombre, pp.precio
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
@@ -334,10 +336,11 @@ pub fn listar_productos(
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?,
                 iva_porcentaje: row.get(4)?,
-                stock_actual: row.get(5)?,
-                stock_minimo: row.get(6)?,
-                categoria_nombre: row.get(7)?,
-                precio_lista: row.get(8)?,
+                incluye_iva: row.get::<_, i32>(5)? != 0,
+                stock_actual: row.get(6)?,
+                stock_minimo: row.get(7)?,
+                categoria_nombre: row.get(8)?,
+                precio_lista: row.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -353,7 +356,7 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje,
+            "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                     p.stock_actual, p.stock_minimo, c.nombre
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
@@ -374,9 +377,10 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?,
                 iva_porcentaje: row.get(4)?,
-                stock_actual: row.get(5)?,
-                stock_minimo: row.get(6)?,
-                categoria_nombre: row.get(7)?,
+                incluye_iva: row.get::<_, i32>(5)? != 0,
+                stock_actual: row.get(6)?,
+                stock_minimo: row.get(7)?,
+                categoria_nombre: row.get(8)?,
                 precio_lista: None,
             })
         })

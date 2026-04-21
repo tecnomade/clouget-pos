@@ -39,6 +39,7 @@ export interface ProductoBusqueda {
   nombre: string;
   precio_venta: number;
   iva_porcentaje: number;
+  incluye_iva?: boolean;
   stock_actual: number;
   stock_minimo: number;
   categoria_nombre?: string;
@@ -557,6 +558,7 @@ export interface ItemCarrito {
   precio_unitario: number;
   descuento: number;
   iva_porcentaje: number;
+  incluye_iva?: boolean;
   subtotal: number;
   stock_disponible: number;
   stock_minimo: number;

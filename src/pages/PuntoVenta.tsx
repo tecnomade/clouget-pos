@@ -312,6 +312,7 @@ export default function PuntoVenta() {
           precio_unitario: precioEfectivo,
           descuento: 0,
           iva_porcentaje: producto.iva_porcentaje,
+          incluye_iva: producto.incluye_iva ?? false,
           subtotal: precioEfectivo,
           stock_disponible: producto.stock_actual,
           stock_minimo: producto.stock_minimo,
@@ -363,8 +364,22 @@ export default function PuntoVenta() {
     setCarrito((prev) => prev.filter((i) => i.producto_id !== productoId));
   };
 
-  const subtotal = carrito.reduce((sum, i) => sum + i.subtotal, 0);
-  const iva = carrito.reduce((sum, i) => sum + i.subtotal * (i.iva_porcentaje / 100), 0);
+  // Cálculo correcto considerando si el precio del producto YA incluye IVA o no
+  const subtotal = carrito.reduce((sum, i) => {
+    if (i.incluye_iva && i.iva_porcentaje > 0) {
+      // Desglosar: el subtotal ya incluye IVA, restamos para obtener base
+      return sum + i.subtotal / (1 + i.iva_porcentaje / 100);
+    }
+    return sum + i.subtotal;
+  }, 0);
+  const iva = carrito.reduce((sum, i) => {
+    if (i.iva_porcentaje === 0) return sum;
+    if (i.incluye_iva) {
+      const base = i.subtotal / (1 + i.iva_porcentaje / 100);
+      return sum + (i.subtotal - base);
+    }
+    return sum + i.subtotal * (i.iva_porcentaje / 100);
+  }, 0);
   const total = subtotal + iva;
   const cambio = parseFloat(montoRecibido || "0") - total;
 
@@ -424,17 +439,32 @@ export default function PuntoVenta() {
       }
     }
 
+    // Helper: si el item tiene incluye_iva=true, desglosa antes de enviar al backend
+    // (el backend siempre trata precio_unitario como BASE sin IVA)
+    const desglosar = (i: typeof carrito[0]) => {
+      if (i.incluye_iva && i.iva_porcentaje > 0) {
+        const factor = 1 + i.iva_porcentaje / 100;
+        const precioBase = i.precio_unitario / factor;
+        const subtotalBase = i.subtotal / factor;
+        return { precio_unitario: precioBase, subtotal: subtotalBase };
+      }
+      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+    };
+
     const nuevaVenta: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
-      items: carrito.map((i) => ({
-        producto_id: i.producto_id,
-        cantidad: i.cantidad,
-        precio_unitario: i.precio_unitario,
-        descuento: i.descuento,
-        iva_porcentaje: i.iva_porcentaje,
-        subtotal: i.subtotal,
-        info_adicional: i.info_adicional || null,
-      })),
+      items: carrito.map((i) => {
+        const d = desglosar(i);
+        return {
+          producto_id: i.producto_id,
+          cantidad: i.cantidad,
+          precio_unitario: d.precio_unitario,
+          descuento: i.descuento,
+          iva_porcentaje: i.iva_porcentaje,
+          subtotal: d.subtotal,
+          info_adicional: i.info_adicional || null,
+        };
+      }),
       forma_pago: formaPago,
       monto_recibido: esFiado ? 0 : parseFloat(montoRecibido || "0"),
       descuento: 0,
@@ -567,9 +597,19 @@ export default function PuntoVenta() {
   // Escuchar F9 (cobrar) y F10 (nueva venta) via CustomEvent
   const guardarComoDocumento = useCallback(async (tipo: "borrador" | "cotizacion") => {
     if (carrito.length === 0) return;
+    const desglosar = (i: typeof carrito[0]) => {
+      if (i.incluye_iva && i.iva_porcentaje > 0) {
+        const factor = 1 + i.iva_porcentaje / 100;
+        return { precio_unitario: i.precio_unitario / factor, subtotal: i.subtotal / factor };
+      }
+      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+    };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
-      items: carrito.map(i => ({ producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: i.precio_unitario, descuento: i.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: i.subtotal, info_adicional: i.info_adicional || null } as any)),
+      items: carrito.map(i => {
+        const d = desglosar(i);
+        return { producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: d.precio_unitario, descuento: i.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: d.subtotal, info_adicional: i.info_adicional || null } as any;
+      }),
       forma_pago: formaPago, monto_recibido: 0, descuento: 0,
       tipo_documento: tipoDocumento, es_fiado: false,
     };
@@ -597,17 +637,27 @@ export default function PuntoVenta() {
   const confirmarGuiaRemision = useCallback(async () => {
     if (carrito.length === 0) return;
     setGuardandoGuia(true);
+    const desglosar2 = (i: typeof carrito[0]) => {
+      if (i.incluye_iva && i.iva_porcentaje > 0) {
+        const factor = 1 + i.iva_porcentaje / 100;
+        return { precio_unitario: i.precio_unitario / factor, subtotal: i.subtotal / factor };
+      }
+      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+    };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
-      items: carrito.map((i) => ({
-        producto_id: i.producto_id,
-        cantidad: i.cantidad,
-        precio_unitario: i.precio_unitario,
-        descuento: i.descuento,
-        iva_porcentaje: i.iva_porcentaje,
-        subtotal: i.subtotal,
-        info_adicional: i.info_adicional || null,
-      } as any)),
+      items: carrito.map((i) => {
+        const d = desglosar2(i);
+        return {
+          producto_id: i.producto_id,
+          cantidad: i.cantidad,
+          precio_unitario: d.precio_unitario,
+          descuento: i.descuento,
+          iva_porcentaje: i.iva_porcentaje,
+          subtotal: d.subtotal,
+          info_adicional: i.info_adicional || null,
+        } as any;
+      }),
       forma_pago: formaPago,
       monto_recibido: 0,
       descuento: 0,
