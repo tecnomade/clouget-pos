@@ -78,6 +78,13 @@ export default function PuntoVenta() {
   const inputRef = useRef<HTMLInputElement>(null);
   const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
 
+  // Auto-focus al campo de busqueda al cargar/montar el POS
+  // (al entrar desde cualquier parte: sidebar, F1, redirect, etc.)
+  useEffect(() => {
+    const t = setTimeout(() => inputRef.current?.focus(), 100);
+    return () => clearTimeout(t);
+  }, []);
+
   // Modal detalle producto
   const [productoDetalle, setProductoDetalle] = useState<any | null>(null);
 
@@ -1409,11 +1416,43 @@ export default function PuntoVenta() {
               <div style={{ marginBottom: 8 }}>
                 <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Monto recibido</label>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input className="input text-right" type="number" step="0.01" placeholder="0.00"
-                    style={{ fontSize: 14, flex: 1 }}
-                    value={montoRecibido}
-                    onChange={(e) => setMontoRecibido(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
+                  <div style={{ flex: 1, position: "relative" }}>
+                    <input className="input text-right" type="number" step="0.01" placeholder="0.00"
+                      style={{ fontSize: 14, width: "100%", paddingLeft: 130 }}
+                      value={montoRecibido}
+                      onChange={(e) => setMontoRecibido(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
+                    {/* Denominaciones rapidas FLOTANDO dentro del input alineadas a la izquierda */}
+                    {total > 0 && (() => {
+                      const base = Math.ceil((total + 0.01) / 5) * 5;
+                      const opciones = [base, base + 5, base + 15];
+                      return (
+                        <div style={{
+                          position: "absolute", left: 4, top: "50%", transform: "translateY(-50%)",
+                          display: "flex", gap: 3, pointerEvents: "none",
+                        }}>
+                          {opciones.map((monto) => (
+                            <button
+                              key={monto}
+                              type="button"
+                              title={`Cliente paga $${monto.toFixed(2)} - cambio $${(monto - total).toFixed(2)}`}
+                              style={{
+                                pointerEvents: "auto",
+                                background: "rgba(59, 130, 246, 0.12)",
+                                color: "var(--color-primary)",
+                                border: "1px solid rgba(59, 130, 246, 0.35)",
+                                borderRadius: 4,
+                                fontSize: 10, padding: "2px 6px", fontWeight: 700,
+                                cursor: "pointer", lineHeight: 1.2,
+                              }}
+                              onClick={() => setMontoRecibido(monto.toFixed(2))}>
+                              ${monto}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
                   <button
                     className="btn"
                     title="Monto exacto - presione F8"
@@ -1421,7 +1460,7 @@ export default function PuntoVenta() {
                       background: "var(--color-primary)", color: "#fff",
                       fontSize: 11, padding: "0 10px", fontWeight: 700,
                       border: "none", borderRadius: "var(--radius)", cursor: "pointer",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.1,
+                      whiteSpace: "nowrap",
                     }}
                     onClick={() => {
                       setMontoRecibido(total.toFixed(2));
@@ -1429,30 +1468,9 @@ export default function PuntoVenta() {
                     }}
                     disabled={carrito.length === 0}
                   >
-                    <span>Exacto</span>
-                    <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.85 }}>F8</span>
+                    Exacto <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.85, marginLeft: 2 }}>F8</span>
                   </button>
                 </div>
-                {/* Denominaciones rapidas: monto > total cercano */}
-                {total > 0 && (() => {
-                  const base = Math.ceil((total + 0.01) / 5) * 5;
-                  const opciones = [base, base + 5, base + 15];
-                  return (
-                    <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-                      {opciones.map((monto) => (
-                        <button
-                          key={monto}
-                          type="button"
-                          className="btn btn-outline"
-                          title={`Cliente paga $${monto.toFixed(2)} - cambio $${(monto - total).toFixed(2)}`}
-                          style={{ flex: 1, fontSize: 11, padding: "5px 0", fontWeight: 700 }}
-                          onClick={() => setMontoRecibido(monto.toFixed(2))}>
-                          ${monto}
-                        </button>
-                      ))}
-                    </div>
-                  );
-                })()}
               </div>
             )}
 
