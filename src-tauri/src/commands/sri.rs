@@ -170,6 +170,7 @@ struct ClienteSri {
 pub async fn emitir_factura_sri(
     db: State<'_, Database>,
     venta_id: i64,
+    forma_pago_credito_sri: Option<String>,
 ) -> Result<ResultadoEmision, String> {
     // 0. Enforcement de suscripcion SRI
     {
@@ -536,6 +537,44 @@ pub async fn emitir_factura_sri(
 
         let forma_pago_cod = xml::forma_pago_sri(&venta_data.forma_pago);
 
+        // Construir lista de pagos del XML
+        // - Si la venta tiene pagos en pagos_venta (pago mixto), usar esos
+        // - Si forma_pago=CREDITO y el usuario eligio una forma para el SRI, usarla
+        // - Si no, un solo pago con la forma_pago de la venta
+        let pagos_xml: Vec<xml::PagoFactura> = {
+            let conn2 = db.conn.lock().map_err(|e| e.to_string())?;
+            let mut stmt = conn2.prepare(
+                "SELECT forma_pago, monto FROM pagos_venta WHERE venta_id = ?1 ORDER BY id"
+            ).map_err(|e| e.to_string())?;
+            let rows: Vec<(String, f64)> = stmt.query_map(rusqlite::params![venta_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            }).map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+            drop(stmt);
+            drop(conn2);
+
+            if !rows.is_empty() {
+                // Pago mixto: mapear cada uno
+                rows.into_iter().map(|(forma, monto)| {
+                    // Si es credito y hay override, usar el override
+                    let codigo = if forma.eq_ignore_ascii_case("CREDITO") {
+                        forma_pago_credito_sri.clone().unwrap_or_else(|| "20".to_string())
+                    } else {
+                        xml::forma_pago_sri(&forma).to_string()
+                    };
+                    xml::PagoFactura { forma_pago: codigo, total: (monto * 100.0).round() / 100.0 }
+                }).collect()
+            } else if venta_data.forma_pago.eq_ignore_ascii_case("CREDITO")
+                   || venta_data.forma_pago.eq_ignore_ascii_case("MIXTO") {
+                // Venta a credito sin pagos_venta: usar override del usuario o "20"
+                let codigo = forma_pago_credito_sri.clone().unwrap_or_else(|| "20".to_string());
+                vec![xml::PagoFactura { forma_pago: codigo, total: importe_total }]
+            } else {
+                vec![xml::PagoFactura { forma_pago: forma_pago_cod.to_string(), total: importe_total }]
+            }
+        };
+
         let mut info_adicional = Vec::new();
         if let Some(ref email) = cliente_data.email {
             if !email.is_empty() {
@@ -578,10 +617,7 @@ pub async fn emitir_factura_sri(
             total_descuento: venta_data.descuento,
             importe_total,
             impuestos_totales,
-            pagos: vec![xml::PagoFactura {
-                forma_pago: forma_pago_cod.to_string(),
-                total: importe_total,
-            }],
+            pagos: pagos_xml,
             detalles: detalles_factura,
             info_adicional,
         };

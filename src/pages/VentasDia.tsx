@@ -42,6 +42,9 @@ export default function VentasDia() {
   const [fechaDesde, setFechaDesde] = useState(fechaHoy);
   const [fechaHasta, setFechaHasta] = useState(fechaHoy);
   const [reintentandoSri, setReintentandoSri] = useState<number | null>(null);
+  // Modal: forma de pago para SRI cuando la venta es a credito/mixto
+  const [sriPagoVenta, setSriPagoVenta] = useState<{ id: number; numero: string } | null>(null);
+  const [sriFormaPagoCredito, setSriFormaPagoCredito] = useState<string>("20");
   const [reintentandoEmail, setReintentandoEmail] = useState<number | null>(null);
   const [emailVenta, setEmailVenta] = useState<Venta | null>(null);
   const [enviandoEmail, setEnviandoEmail] = useState(false);
@@ -606,6 +609,13 @@ export default function VentasDia() {
                               disabled={reintentandoSri === v.id}
                               onClick={async () => {
                                 if (!v.id) return;
+                                // Si la venta es a credito o mixto, preguntar forma de pago para SRI/RIDE
+                                const esCreditoOMixto = v.forma_pago?.toUpperCase() === "CREDITO"
+                                  || v.forma_pago?.toUpperCase() === "MIXTO";
+                                if (esCreditoOMixto) {
+                                  setSriPagoVenta({ id: v.id, numero: v.numero });
+                                  return;
+                                }
                                 setReintentandoSri(v.id);
                                 try {
                                   const res = await emitirFacturaSri(v.id);
@@ -880,6 +890,65 @@ export default function VentasDia() {
           toastError={toastError}
           toastWarning={toastWarning}
         />
+      )}
+
+      {/* Modal: forma de pago para SRI cuando venta es a credito o mixto */}
+      {sriPagoVenta && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setSriPagoVenta(null); }}>
+          <div className="card" style={{ width: 480 }}>
+            <div className="card-header">Forma de pago para el SRI - {sriPagoVenta.numero}</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Esta venta tiene un monto a <strong>credito</strong>. El SRI requiere indicar
+                con que metodo se cobrara ese monto. Aparecera en el RIDE de la factura.
+              </p>
+              <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
+                Forma de pago a registrar:
+              </label>
+              <select className="input" value={sriFormaPagoCredito}
+                onChange={(e) => setSriFormaPagoCredito(e.target.value)}>
+                <option value="20">20 - Otros con sistema financiero (transferencia, cheque)</option>
+                <option value="01">01 - Sin sistema financiero (efectivo)</option>
+                <option value="19">19 - Tarjeta de credito</option>
+                <option value="16">16 - Tarjeta de debito</option>
+                <option value="17">17 - Dinero electronico</option>
+                <option value="18">18 - Tarjeta prepago</option>
+                <option value="21">21 - Endoso de titulos</option>
+              </select>
+              <div style={{ marginTop: 8, padding: 8, background: "var(--color-surface-alt)", borderRadius: 4, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                💡 Si no esta seguro, deje "20 - Otros con sistema financiero". Es el codigo mas
+                generico y aceptado por el SRI para cobros a credito.
+              </div>
+              <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: 16 }}>
+                <button className="btn btn-outline" onClick={() => setSriPagoVenta(null)}>Cancelar</button>
+                <button className="btn btn-primary"
+                  onClick={async () => {
+                    const id = sriPagoVenta.id;
+                    const codigo = sriFormaPagoCredito;
+                    setSriPagoVenta(null);
+                    setReintentandoSri(id);
+                    try {
+                      const res = await emitirFacturaSri(id, codigo);
+                      if (res.exito) {
+                        toastExito("Factura autorizada por el SRI");
+                        window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+                      } else {
+                        toastWarning(`SRI: ${res.mensaje}`);
+                      }
+                      await cargar();
+                    } catch (err) {
+                      toastError("Error SRI: " + err);
+                    } finally {
+                      setReintentandoSri(null);
+                    }
+                  }}>
+                  Emitir Factura
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal detalle de venta */}

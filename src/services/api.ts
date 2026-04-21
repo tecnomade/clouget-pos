@@ -681,8 +681,8 @@ export async function cargarCertificadoSri(p12Path: string, password: string): P
   return invoke("cargar_certificado_sri", { p12Path, password });
 }
 
-export async function emitirFacturaSri(ventaId: number): Promise<ResultadoEmision> {
-  return smartInvoke("emitir_factura_sri", { ventaId });
+export async function emitirFacturaSri(ventaId: number, formaPagoCreditoSri?: string): Promise<ResultadoEmision> {
+  return smartInvoke("emitir_factura_sri", { ventaId, formaPagoCreditoSri });
 }
 
 export async function consultarEstadoSri(): Promise<EstadoSri> {

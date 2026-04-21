@@ -93,11 +93,15 @@ pub fn tarifa_iva(codigo: &str) -> f64 {
 }
 
 /// Mapea forma de pago POS a codigo SRI
+/// Codigos SRI: 01=Efectivo, 19=Tarjeta credito, 16=Tarjeta debito, 20=Otros sistema financiero (transfer/credito)
 pub fn forma_pago_sri(forma_pos: &str) -> &str {
-    match forma_pos {
+    match forma_pos.to_uppercase().as_str() {
         "EFECTIVO" => "01",
-        "TRANSFERENCIA" => "20",
-        "TARJETA" => "19",
+        "TRANSFERENCIA" | "TRANSFER" => "20",
+        "TARJETA" | "TARJETA_CREDITO" => "19",
+        "TARJETA_DEBITO" => "16",
+        "CREDITO" => "20",  // por defecto: otros con sistema financiero (cliente pagara despues)
+        "MIXTO" => "20",
         _ => "01",
     }
 }
