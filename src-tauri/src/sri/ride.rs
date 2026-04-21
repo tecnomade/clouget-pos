@@ -605,7 +605,7 @@ pub fn generar_ticket_pdf(
         doc.push(p(&format!("Cliente: {}", cliente), s_normal));
     }
 
-    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
+    doc.push(p_aligned(&"-".repeat(160), s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Productos
@@ -649,7 +649,7 @@ pub fn generar_ticket_pdf(
     }
     doc.push(prod_table);
 
-    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
+    doc.push(p_aligned(&"-".repeat(160), s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Totales
@@ -686,7 +686,7 @@ pub fn generar_ticket_pdf(
 
     doc.push(total_table);
 
-    doc.push(p_aligned("----------------------------------------------------------------------------------", s_small, Alignment::Left));
+    doc.push(p_aligned(&"-".repeat(160), s_small, Alignment::Left));
     doc.push(Break::new(0.2));
 
     // Forma de pago (solo para ventas reales)
@@ -711,13 +711,14 @@ pub fn generar_ticket_pdf(
         let ambiente_label = if ambiente == "produccion" { "PRODUCCION" } else { "PRUEBAS" };
         doc.push(p(&format!("Ambiente: {}", ambiente_label), s_normal));
 
-        // QR de clave de acceso
+        // QR de clave de acceso (mas grande para que sea escaneable)
         if let Some(ref clave) = venta.venta.clave_acceso {
             if !clave.is_empty() {
                 if let Ok(qr_path) = generar_qr_image(clave) {
                     if let Ok(mut qr_img) = genpdf::elements::Image::from_path(&qr_path) {
                         qr_img = qr_img.with_alignment(Alignment::Center);
-                        qr_img = qr_img.with_scale(genpdf::Scale::new(0.25, 0.25));
+                        // Escala 0.7 = ~35-40mm cuadrados: legible por celulares
+                        qr_img = qr_img.with_scale(genpdf::Scale::new(0.7, 0.7));
                         doc.push(qr_img);
                     }
                     let _ = std::fs::remove_file(&qr_path);
