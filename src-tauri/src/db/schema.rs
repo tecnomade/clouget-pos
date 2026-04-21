@@ -730,6 +730,22 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Caja', 'CJ');
     ");
 
+    // Migracion: columnas factor_default y es_agrupada en tipos_unidad (multi-unidad v1.9.8)
+    let _ = conn.execute("ALTER TABLE tipos_unidad ADD COLUMN factor_default REAL NOT NULL DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE tipos_unidad ADD COLUMN es_agrupada INTEGER NOT NULL DEFAULT 0", []);
+
+    // Semilla de unidades agrupadas comunes (para reventa: bebidas, farmacia, abarrotes)
+    let _ = conn.execute_batch("
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Sixpack', '6PK', 6, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Doce Pack', '12PK', 12, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Jaba', 'JAB', 12, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Blister', 'BLI', 10, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Paquete', 'PAQ', 6, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Caja (24 und)', 'CJ24', 24, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Docena', 'DOC', 12, 1);
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES ('Media docena', 'MDOC', 6, 1);
+    ");
+
     // Migrar stock existente a stock_establecimiento (solo una vez)
     let stock_est_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM stock_establecimiento", [], |row| row.get(0))
@@ -920,6 +936,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN unidad_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN unidad_nombre TEXT", []);
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN factor_unidad REAL DEFAULT 1", []);
+
+    // unidades_producto: vincular con tipos_unidad maestros (v1.9.8)
+    let _ = conn.execute("ALTER TABLE unidades_producto ADD COLUMN tipo_unidad_id INTEGER REFERENCES tipos_unidad(id)", []);
 
     Ok(())
 }

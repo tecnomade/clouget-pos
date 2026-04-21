@@ -38,9 +38,28 @@ function FormProducto({
   const [mostrarInfoIva, setMostrarInfoIva] = useState(false);
 
   // Multi-unidad de venta (presentaciones)
-  type UnidadProd = { id?: number; nombre: string; abreviatura?: string; factor: number; precio: number; es_base: boolean };
+  type PrecioListaUnidad = { lista_precio_id: number; precio: number };
+  type UnidadProd = {
+    id?: number;
+    tipo_unidad_id?: number | null;
+    nombre: string;
+    abreviatura?: string;
+    factor: number;
+    precio: number;
+    es_base: boolean;
+    precios_lista?: PrecioListaUnidad[];
+    _expandido?: boolean;
+  };
   const [unidades, setUnidades] = useState<UnidadProd[]>([]);
   const [mostrarInfoUnidades, setMostrarInfoUnidades] = useState(false);
+  const [tiposAgrupados, setTiposAgrupados] = useState<any[]>([]);
+
+  // Cargar tipos agrupados del maestro
+  useEffect(() => {
+    import("../services/api").then(({ listarTiposUnidad }) => {
+      listarTiposUnidad().then(ts => setTiposAgrupados(ts.filter((t: any) => t.es_agrupada))).catch(() => {});
+    });
+  }, []);
   const [preciosLista, setPreciosLista] = useState<Record<number, string>>({});
   const [seriesCount, setSeriesCount] = useState<{ disponible: number; vendido: number; total: number }>({ disponible: 0, vendido: 0, total: 0 });
   const [mostrarRegistrarSeries, setMostrarRegistrarSeries] = useState(false);
@@ -91,11 +110,13 @@ function FormProducto({
       if (productoEditar.requiere_caducidad) {
         recargarLotes();
       }
-      // Cargar unidades / presentaciones del producto
-      listarUnidadesProducto(productoEditar.id).then((us) => {
-        setUnidades(us.map(u => ({
-          id: u.id, nombre: u.nombre, abreviatura: u.abreviatura ?? "",
+      // Cargar unidades / presentaciones del producto (incluye precios por lista)
+      listarUnidadesProducto(productoEditar.id).then((us: any[]) => {
+        setUnidades(us.map((u: any) => ({
+          id: u.id, tipo_unidad_id: u.tipo_unidad_id ?? null,
+          nombre: u.nombre, abreviatura: u.abreviatura ?? "",
           factor: u.factor, precio: u.precio, es_base: u.es_base,
+          precios_lista: u.precios_lista || [],
         })));
       }).catch(() => {});
     }
@@ -389,11 +410,11 @@ function FormProducto({
         </div>
       )}
 
-      {/* Presentaciones / Unidades de venta (multi-unidad) */}
+      {/* Presentaciones / Unidades de venta (multi-unidad v1.9.8) */}
       <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)", position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-            Presentaciones / Unidades de venta
+            Presentaciones (otras unidades de venta)
             <button type="button" onClick={() => setMostrarInfoUnidades(!mostrarInfoUnidades)}
               title="Como funciona?"
               style={{
@@ -403,13 +424,43 @@ function FormProducto({
                 alignItems: "center", justifyContent: "center",
               }}>?</button>
             <span style={{ fontSize: 10, color: "var(--color-text-secondary)", fontWeight: 400, marginLeft: 8 }}>
-              (opcional - solo si vendes en mas de una presentacion)
+              (opcional - ej: SIXPACK, JABA, CAJA)
             </span>
           </label>
-          <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "3px 10px" }}
-            onClick={() => setUnidades([...unidades, { nombre: "", abreviatura: "", factor: 1, precio: form.precio_venta, es_base: false }])}>
-            + Agregar
-          </button>
+          {/* Dropdown para agregar desde el maestro */}
+          <select
+            className="input"
+            style={{ width: 230, fontSize: 12 }}
+            value=""
+            onChange={(e) => {
+              const tid = parseInt(e.target.value);
+              if (!tid) return;
+              const tipo = tiposAgrupados.find(t => t.id === tid);
+              if (!tipo) return;
+              // Evitar duplicados
+              if (unidades.some(u => u.tipo_unidad_id === tid)) return;
+              setUnidades([...unidades, {
+                tipo_unidad_id: tid,
+                nombre: tipo.nombre,
+                abreviatura: tipo.abreviatura,
+                factor: tipo.factor_default,
+                precio: form.precio_venta * tipo.factor_default,
+                es_base: false,
+                precios_lista: [],
+                _expandido: true,
+              }]);
+            }}>
+            <option value="">+ Agregar presentacion...</option>
+            {tiposAgrupados
+              .filter(t => !unidades.some(u => u.tipo_unidad_id === t.id))
+              .map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.nombre} ({t.abreviatura}) × {t.factor_default}
+                </option>
+              ))}
+            <option value="" disabled>──────────</option>
+            <option value="-1" disabled>(Crea mas en pestaña Unidades)</option>
+          </select>
         </div>
         {mostrarInfoUnidades && (
           <div onClick={() => setMostrarInfoUnidades(false)}
@@ -420,24 +471,22 @@ function FormProducto({
               width: 360, zIndex: 30, boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
             }}>
             <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--color-primary)" }}>
-              Como funciona "Presentaciones"?
+              Como funciona?
             </div>
             <div style={{ marginBottom: 6 }}>
-              Permite vender el mismo producto en varias unidades. Por ejemplo una cerveza:
+              1. <strong>Define las unidades agrupadas</strong> en la pestaña <strong>Unidades</strong> (SIXPACK, JABA, CAJA, BLISTER, etc.) con su factor default (cuantas unidades base contiene).
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              2. Aqui en cada producto solo <strong>seleccionas</strong> las presentaciones que vende y le pones el <strong>precio</strong>.
             </div>
             <div style={{ marginBottom: 6, padding: 6, background: "var(--color-surface-alt)", borderRadius: 4 }}>
-              <strong>UND</strong> (factor 1) → $1.50<br/>
-              <strong>SIXPACK</strong> (factor 6) → $8.00<br/>
-              <strong>JABA</strong> (factor 12) → $15.00
+              <strong>Cerveza Pilsener:</strong><br/>
+              UND → $1.50 (precio base del producto)<br/>
+              SIXPACK → $8.00 (factor 6, descuenta 6 del stock)<br/>
+              JABA → $15.00 (factor 12)
             </div>
             <div style={{ marginBottom: 6 }}>
-              <strong>Factor</strong>: cuantas unidades base consume esta presentacion. Si vendes 1 SIXPACK, se descuentan 6 del stock.
-            </div>
-            <div style={{ marginBottom: 6 }}>
-              En el POS, al agregar el producto el cajero podra elegir la presentacion.
-            </div>
-            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
-              No es obligatorio. Si solo vendes en una unidad, dejalo vacio.
+              Si tienes <strong>listas de precios</strong> (mayorista, etc) puedes definir precios distintos por presentacion para cada lista.
             </div>
             <div style={{ fontSize: 10, marginTop: 8, textAlign: "center", color: "var(--color-text-secondary)" }}>
               Click para cerrar
@@ -446,34 +495,74 @@ function FormProducto({
         )}
         {unidades.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center", padding: 8, fontStyle: "italic" }}>
-            Sin presentaciones. Click "+ Agregar" para crear una (opcional).
+            Sin presentaciones. Use el menu desplegable para agregar (opcional).
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 0.7fr 0.9fr 30px", gap: 6, fontSize: 10, color: "var(--color-text-secondary)", fontWeight: 600 }}>
-              <span>Nombre</span><span>Abreviatura</span><span>Factor</span><span>Precio $</span><span></span>
-            </div>
             {unidades.map((u, idx) => (
-              <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 0.7fr 0.9fr 30px", gap: 6, alignItems: "center" }}>
-                <input className="input" placeholder="Ej: SIXPACK" style={{ fontSize: 12 }}
-                  value={u.nombre} onChange={(e) => {
-                    const ar = [...unidades]; ar[idx] = { ...ar[idx], nombre: e.target.value }; setUnidades(ar);
-                  }} />
-                <input className="input" placeholder="6PK" style={{ fontSize: 12 }}
-                  value={u.abreviatura ?? ""} onChange={(e) => {
-                    const ar = [...unidades]; ar[idx] = { ...ar[idx], abreviatura: e.target.value }; setUnidades(ar);
-                  }} />
-                <input className="input" type="number" step="0.01" min="0.01" placeholder="6" style={{ fontSize: 12 }}
-                  value={u.factor} onChange={(e) => {
-                    const ar = [...unidades]; ar[idx] = { ...ar[idx], factor: parseFloat(e.target.value) || 1 }; setUnidades(ar);
-                  }} />
-                <input className="input" type="number" step="0.01" min="0" placeholder="0.00" style={{ fontSize: 12 }}
-                  value={u.precio} onChange={(e) => {
-                    const ar = [...unidades]; ar[idx] = { ...ar[idx], precio: parseFloat(e.target.value) || 0 }; setUnidades(ar);
-                  }} />
-                <button type="button" title="Quitar"
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16, padding: 0 }}
-                  onClick={() => setUnidades(unidades.filter((_, i) => i !== idx))}>×</button>
+              <div key={idx} style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
+                {/* Cabecera de la presentacion */}
+                <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.6fr 0.6fr 0.8fr 24px 24px", gap: 6, alignItems: "center", padding: "8px 10px" }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    {u.nombre} {u.abreviatura && <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>({u.abreviatura})</span>}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center" }}>
+                    × {u.factor}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>Precio:</span>
+                  <input className="input" type="number" step="0.01" min="0" placeholder="0.00" style={{ fontSize: 12, textAlign: "right" }}
+                    value={u.precio} onChange={(e) => {
+                      const ar = [...unidades]; ar[idx] = { ...ar[idx], precio: parseFloat(e.target.value) || 0 }; setUnidades(ar);
+                    }} />
+                  <button type="button" title={u._expandido ? "Cerrar precios por lista" : "Definir precios por lista"}
+                    style={{
+                      background: u._expandido ? "var(--color-primary)" : "transparent",
+                      color: u._expandido ? "#fff" : "var(--color-primary)",
+                      border: "1px solid var(--color-primary)",
+                      borderRadius: 4, fontSize: 11, padding: 0, width: 24, height: 24, cursor: "pointer", fontWeight: 700,
+                    }}
+                    onClick={() => {
+                      const ar = [...unidades]; ar[idx] = { ...ar[idx], _expandido: !u._expandido }; setUnidades(ar);
+                    }}>{u._expandido ? "−" : "≡"}</button>
+                  <button type="button" title="Quitar presentacion"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16, padding: 0 }}
+                    onClick={() => setUnidades(unidades.filter((_, i) => i !== idx))}>×</button>
+                </div>
+                {/* Precios por lista (expandible) */}
+                {u._expandido && listasPrecios.length > 0 && (
+                  <div style={{ padding: "10px 12px", background: "var(--color-surface-alt)", borderTop: "1px solid var(--color-border)" }}>
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                      Precios por lista para esta presentacion. Deje vacio para usar el precio default (${u.precio.toFixed(2)}).
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                      {listasPrecios.map((lp) => {
+                        const pl = (u.precios_lista || []).find(p => p.lista_precio_id === lp.id);
+                        return (
+                          <div key={lp.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 11, flex: 1 }}>
+                              {lp.nombre}
+                              {lp.es_default && <span style={{ fontSize: 9, color: "var(--color-success)", marginLeft: 4 }}>(defecto)</span>}
+                            </span>
+                            <input className="input" type="number" step="0.01" min="0"
+                              placeholder={u.precio.toFixed(2)}
+                              style={{ width: 90, fontSize: 11, textAlign: "right" }}
+                              value={pl?.precio ?? ""}
+                              onChange={(e) => {
+                                const valor = e.target.value;
+                                const ar = [...unidades];
+                                let pls = [...(ar[idx].precios_lista || [])];
+                                pls = pls.filter(p => p.lista_precio_id !== lp.id);
+                                if (valor && parseFloat(valor) > 0) {
+                                  pls.push({ lista_precio_id: lp.id!, precio: parseFloat(valor) });
+                                }
+                                ar[idx] = { ...ar[idx], precios_lista: pls }; setUnidades(ar);
+                              }} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -747,8 +836,12 @@ export default function Productos() {
   const [editUnitId, setEditUnitId] = useState<number | null>(null);
   const [editUnitNombre, setEditUnitNombre] = useState("");
   const [editUnitAbrev, setEditUnitAbrev] = useState("");
+  const [editUnitFactor, setEditUnitFactor] = useState<number>(1);
+  const [editUnitAgrupada, setEditUnitAgrupada] = useState<boolean>(false);
   const [nuevoUnitNombre, setNuevoUnitNombre] = useState("");
   const [nuevoUnitAbrev, setNuevoUnitAbrev] = useState("");
+  const [nuevoUnitFactor, setNuevoUnitFactor] = useState<string>("1");
+  const [nuevoUnitAgrupada, setNuevoUnitAgrupada] = useState<boolean>(false);
 
   const toggleEtiquetaId = (id: number) => {
     setEtiquetaIds(prev => {
@@ -1085,44 +1178,89 @@ export default function Productos() {
           <div className="card">
             <div className="card-header">Tipos de Unidad ({tiposUnidad.length})</div>
             <div className="card-body">
-              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                <input className="input" placeholder="Nombre (ej: Kilogramo)" value={nuevoUnitNombre}
-                  onChange={e => setNuevoUnitNombre(e.target.value)} style={{ flex: 1 }} />
-                <input className="input" placeholder="Abrev. (ej: KG)" value={nuevoUnitAbrev}
-                  onChange={e => setNuevoUnitAbrev(e.target.value)} style={{ width: 100 }} />
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Las unidades base (UND, KG, LT...) son la unidad minima de venta.
+                Las unidades <strong>agrupadas</strong> (SIXPACK, JABA, CAJA...) contienen varias unidades base —
+                se usa el factor para saber cuantas unidades base descontar del stock. Al editar un producto podras
+                asignarle las unidades que vende, con su precio propio.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.8fr auto auto", gap: 8, marginBottom: 16, alignItems: "center" }}>
+                <input className="input" placeholder="Nombre (ej: Sixpack)" value={nuevoUnitNombre}
+                  onChange={e => setNuevoUnitNombre(e.target.value)} />
+                <input className="input" placeholder="Abrev. (6PK)" value={nuevoUnitAbrev}
+                  onChange={e => setNuevoUnitAbrev(e.target.value)} />
+                <input className="input" type="number" step="0.01" min="1" placeholder="Factor (6)"
+                  value={nuevoUnitFactor} onChange={e => setNuevoUnitFactor(e.target.value)}
+                  disabled={!nuevoUnitAgrupada} />
+                <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                  <input type="checkbox" checked={nuevoUnitAgrupada}
+                    onChange={e => { setNuevoUnitAgrupada(e.target.checked); if (!e.target.checked) setNuevoUnitFactor("1"); }} />
+                  Agrupada
+                </label>
                 <button className="btn btn-primary" disabled={!nuevoUnitNombre.trim() || !nuevoUnitAbrev.trim()}
                   onClick={() => {
-                    crearTipoUnidad(nuevoUnitNombre.trim(), nuevoUnitAbrev.trim()).then(() => { toastExito("Tipo creado"); setNuevoUnitNombre(""); setNuevoUnitAbrev(""); cargarDatos(); }).catch((err: any) => toastError("" + err));
+                    const factor = nuevoUnitAgrupada ? (parseFloat(nuevoUnitFactor) || 1) : 1;
+                    crearTipoUnidad(nuevoUnitNombre.trim(), nuevoUnitAbrev.trim(), factor, nuevoUnitAgrupada)
+                      .then(() => {
+                        toastExito("Unidad creada");
+                        setNuevoUnitNombre(""); setNuevoUnitAbrev(""); setNuevoUnitFactor("1"); setNuevoUnitAgrupada(false);
+                        cargarDatos();
+                      }).catch((err: any) => toastError("" + err));
                   }}>+ Agregar</button>
               </div>
-              <table className="table">
-                <thead><tr><th>Nombre</th><th>Abreviatura</th><th style={{ width: 120 }}>Acciones</th></tr></thead>
+              <table className="table" style={{ width: "100%" }}>
+                <thead><tr>
+                  <th>Nombre</th><th>Abreviatura</th><th className="text-right">Factor</th><th>Tipo</th><th style={{ width: 140 }}>Acciones</th>
+                </tr></thead>
                 <tbody>
                   {tiposUnidad.map((u: any) => (
-                    <tr key={u.id}>
+                    <tr key={u.id} style={{ background: u.es_agrupada ? "rgba(59,130,246,0.05)" : "transparent" }}>
                       <td>
                         {editUnitId === u.id ? (
                           <input className="input" value={editUnitNombre} onChange={e => setEditUnitNombre(e.target.value)} autoFocus style={{ fontSize: 13 }} />
-                        ) : u.nombre}
+                        ) : <strong>{u.nombre}</strong>}
                       </td>
                       <td>
                         {editUnitId === u.id ? (
                           <input className="input" value={editUnitAbrev} onChange={e => setEditUnitAbrev(e.target.value)} style={{ fontSize: 13, width: 80 }} />
                         ) : u.abreviatura}
                       </td>
+                      <td className="text-right">
+                        {editUnitId === u.id ? (
+                          <input className="input" type="number" step="0.01" min="1" value={editUnitFactor}
+                            onChange={e => setEditUnitFactor(parseFloat(e.target.value) || 1)}
+                            disabled={!editUnitAgrupada}
+                            style={{ fontSize: 13, width: 80, textAlign: "right" }} />
+                        ) : (u.es_agrupada ? <strong>×{u.factor_default}</strong> : "—")}
+                      </td>
+                      <td>
+                        {editUnitId === u.id ? (
+                          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer" }}>
+                            <input type="checkbox" checked={editUnitAgrupada}
+                              onChange={e => { setEditUnitAgrupada(e.target.checked); if (!e.target.checked) setEditUnitFactor(1); }} />
+                            Agrupada
+                          </label>
+                        ) : (u.es_agrupada
+                            ? <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(59,130,246,0.15)", color: "var(--color-primary)", fontWeight: 600 }}>Agrupada</span>
+                            : <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(148,163,184,0.15)", color: "var(--color-text-secondary)" }}>Base</span>
+                        )}
+                      </td>
                       <td>
                         <div className="flex gap-1">
                           {editUnitId === u.id ? (
                             <>
                               <button className="btn btn-primary" style={{ fontSize: 11, padding: "2px 8px" }}
-                                onClick={() => actualizarTipoUnidad(u.id, editUnitNombre, editUnitAbrev).then(() => { toastExito("Actualizado"); setEditUnitId(null); cargarDatos(); }).catch((err: any) => toastError("" + err))}>Guardar</button>
+                                onClick={() => actualizarTipoUnidad(u.id, editUnitNombre, editUnitAbrev, editUnitFactor, editUnitAgrupada).then(() => { toastExito("Actualizado"); setEditUnitId(null); cargarDatos(); }).catch((err: any) => toastError("" + err))}>Guardar</button>
                               <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
                                 onClick={() => setEditUnitId(null)}>Cancelar</button>
                             </>
                           ) : (
                             <>
                               <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
-                                onClick={() => { setEditUnitId(u.id); setEditUnitNombre(u.nombre); setEditUnitAbrev(u.abreviatura); }}>Editar</button>
+                                onClick={() => {
+                                  setEditUnitId(u.id); setEditUnitNombre(u.nombre); setEditUnitAbrev(u.abreviatura);
+                                  setEditUnitFactor(u.factor_default || 1); setEditUnitAgrupada(!!u.es_agrupada);
+                                }}>Editar</button>
                               <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
                                 onClick={() => { if (confirm("¿Eliminar tipo de unidad?")) eliminarTipoUnidad(u.id).then(() => { toastExito("Eliminado"); cargarDatos(); }).catch((err: any) => toastError("" + err)); }}>Eliminar</button>
                             </>

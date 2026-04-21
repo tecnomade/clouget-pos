@@ -202,9 +202,11 @@ export async function listarCategorias(): Promise<Categoria[]> {
 
 // --- Tipos de Unidad ---
 
-export const listarTiposUnidad = () => smartInvoke<any[]>("listar_tipos_unidad");
-export const crearTipoUnidad = (nombre: string, abreviatura: string) => smartInvoke<number>("crear_tipo_unidad", { nombre, abreviatura });
-export const actualizarTipoUnidad = (id: number, nombre: string, abreviatura: string) => smartInvoke<void>("actualizar_tipo_unidad", { id, nombre, abreviatura });
+export const listarTiposUnidad = () => smartInvoke<Array<{ id: number; nombre: string; abreviatura: string; factor_default: number; es_agrupada: boolean }>>("listar_tipos_unidad");
+export const crearTipoUnidad = (nombre: string, abreviatura: string, factorDefault?: number, esAgrupada?: boolean) =>
+  smartInvoke<number>("crear_tipo_unidad", { nombre, abreviatura, factorDefault, esAgrupada });
+export const actualizarTipoUnidad = (id: number, nombre: string, abreviatura: string, factorDefault?: number, esAgrupada?: boolean) =>
+  smartInvoke<void>("actualizar_tipo_unidad", { id, nombre, abreviatura, factorDefault, esAgrupada });
 export const eliminarTipoUnidad = (id: number) => smartInvoke<void>("eliminar_tipo_unidad", { id });
 
 // --- Clientes ---

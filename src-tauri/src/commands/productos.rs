@@ -548,10 +548,20 @@ pub fn eliminar_categoria(db: State<Database>, id: i64, accion: Option<String>, 
 #[tauri::command]
 pub fn listar_tipos_unidad(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT id, nombre, abreviatura FROM tipos_unidad ORDER BY nombre")
-        .map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, abreviatura,
+                COALESCE(factor_default, 1) as factor_default,
+                COALESCE(es_agrupada, 0) as es_agrupada
+         FROM tipos_unidad ORDER BY es_agrupada, nombre"
+    ).map_err(|e| e.to_string())?;
     let result: Vec<serde_json::Value> = stmt.query_map([], |row| {
-        Ok(serde_json::json!({"id": row.get::<_, i64>(0)?, "nombre": row.get::<_, String>(1)?, "abreviatura": row.get::<_, String>(2)?}))
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "nombre": row.get::<_, String>(1)?,
+            "abreviatura": row.get::<_, String>(2)?,
+            "factor_default": row.get::<_, f64>(3)?,
+            "es_agrupada": row.get::<_, i32>(4)? != 0,
+        }))
     }).map_err(|e| e.to_string())?
       .collect::<Result<Vec<_>, _>>()
       .map_err(|e| e.to_string())?;
@@ -559,20 +569,39 @@ pub fn listar_tipos_unidad(db: State<Database>) -> Result<Vec<serde_json::Value>
 }
 
 #[tauri::command]
-pub fn crear_tipo_unidad(db: State<Database>, nombre: String, abreviatura: String) -> Result<i64, String> {
+pub fn crear_tipo_unidad(
+    db: State<Database>,
+    nombre: String,
+    abreviatura: String,
+    factor_default: Option<f64>,
+    es_agrupada: Option<bool>,
+) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute("INSERT INTO tipos_unidad (nombre, abreviatura) VALUES (?1, ?2)",
-        rusqlite::params![nombre.trim(), abreviatura.trim().to_uppercase()])
-        .map_err(|e| e.to_string())?;
+    let factor = factor_default.unwrap_or(1.0);
+    let agrupada = es_agrupada.unwrap_or(false);
+    conn.execute(
+        "INSERT INTO tipos_unidad (nombre, abreviatura, factor_default, es_agrupada) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![nombre.trim(), abreviatura.trim().to_uppercase(), factor, agrupada as i32]
+    ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
 }
 
 #[tauri::command]
-pub fn actualizar_tipo_unidad(db: State<Database>, id: i64, nombre: String, abreviatura: String) -> Result<(), String> {
+pub fn actualizar_tipo_unidad(
+    db: State<Database>,
+    id: i64,
+    nombre: String,
+    abreviatura: String,
+    factor_default: Option<f64>,
+    es_agrupada: Option<bool>,
+) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    conn.execute("UPDATE tipos_unidad SET nombre = ?1, abreviatura = ?2 WHERE id = ?3",
-        rusqlite::params![nombre.trim(), abreviatura.trim().to_uppercase(), id])
-        .map_err(|e| e.to_string())?;
+    let factor = factor_default.unwrap_or(1.0);
+    let agrupada = es_agrupada.unwrap_or(false);
+    conn.execute(
+        "UPDATE tipos_unidad SET nombre = ?1, abreviatura = ?2, factor_default = ?3, es_agrupada = ?4 WHERE id = ?5",
+        rusqlite::params![nombre.trim(), abreviatura.trim().to_uppercase(), factor, agrupada as i32, id]
+    ).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1134,20 +1163,24 @@ pub fn ajustar_cantidad_lote(db: State<Database>, lote_id: i64, cantidad: f64) -
 // PRESENTACIONES / UNIDADES MULTIPLES POR PRODUCTO (v1.9.7)
 // ============================================================================
 
-/// Lista las unidades/presentaciones de un producto, ordenadas por orden y nombre
+/// Lista las unidades/presentaciones de un producto, incluyendo sus precios por lista.
+/// Cada unidad trae un array `precios_lista: [{ lista_precio_id, precio }]`.
 #[tauri::command]
 pub fn listar_unidades_producto(db: State<Database>, producto_id: i64) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, nombre, abreviatura, factor, precio, es_base, orden, activa
+        "SELECT id, nombre, abreviatura, factor, precio, es_base, orden, activa,
+                COALESCE(tipo_unidad_id, 0) as tipo_unidad_id
          FROM unidades_producto
          WHERE producto_id = ?1 AND activa = 1
          ORDER BY orden, factor"
     ).map_err(|e| e.to_string())?;
 
-    let unidades = stmt.query_map(rusqlite::params![producto_id], |row| {
-        Ok(serde_json::json!({
-            "id": row.get::<_, i64>(0)?,
+    let filas: Vec<(i64, serde_json::Value)> = stmt.query_map(rusqlite::params![producto_id], |row| {
+        let id: i64 = row.get(0)?;
+        let tid: i64 = row.get(8)?;
+        let v = serde_json::json!({
+            "id": id,
             "nombre": row.get::<_, String>(1)?,
             "abreviatura": row.get::<_, Option<String>>(2)?,
             "factor": row.get::<_, f64>(3)?,
@@ -1155,14 +1188,36 @@ pub fn listar_unidades_producto(db: State<Database>, producto_id: i64) -> Result
             "es_base": row.get::<_, i32>(5)? != 0,
             "orden": row.get::<_, i32>(6)?,
             "activa": row.get::<_, i32>(7)? != 0,
-        }))
+            "tipo_unidad_id": if tid == 0 { serde_json::Value::Null } else { serde_json::Value::Number(tid.into()) },
+        });
+        Ok((id, v))
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
     .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    // Cargar precios por lista para cada unidad
+    let mut unidades: Vec<serde_json::Value> = Vec::new();
+    for (uid, mut u) in filas {
+        let mut stmt2 = conn.prepare(
+            "SELECT lista_precio_id, precio FROM precios_unidad_lista WHERE unidad_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let precios: Vec<serde_json::Value> = stmt2.query_map(rusqlite::params![uid], |row| {
+            Ok(serde_json::json!({
+                "lista_precio_id": row.get::<_, i64>(0)?,
+                "precio": row.get::<_, f64>(1)?,
+            }))
+        }).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+        u["precios_lista"] = serde_json::Value::Array(precios);
+        unidades.push(u);
+    }
     Ok(unidades)
 }
 
 /// Reemplaza todas las unidades de un producto (operación atómica)
+/// Cada unidad puede incluir `precios_lista: [{ lista_precio_id, precio }]` para overrides por lista.
 #[tauri::command]
 pub fn guardar_unidades_producto(
     db: State<Database>,
@@ -1181,15 +1236,31 @@ pub fn guardar_unidades_producto(
         let factor = u.get("factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
         let precio = u.get("precio").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let es_base = u.get("es_base").and_then(|v| v.as_bool()).unwrap_or(false);
+        let tipo_unidad_id = u.get("tipo_unidad_id").and_then(|v| v.as_i64());
 
         if nombre.trim().is_empty() { continue; }
         if factor <= 0.0 { return Err(format!("Factor invalido para {}", nombre)); }
 
         conn.execute(
-            "INSERT INTO unidades_producto (producto_id, nombre, abreviatura, factor, precio, es_base, orden, activa)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
-            rusqlite::params![producto_id, nombre.trim(), abreviatura, factor, precio, es_base as i32, i as i32],
+            "INSERT INTO unidades_producto (producto_id, nombre, abreviatura, factor, precio, es_base, orden, activa, tipo_unidad_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+            rusqlite::params![producto_id, nombre.trim(), abreviatura, factor, precio, es_base as i32, i as i32, tipo_unidad_id],
         ).map_err(|e| e.to_string())?;
+        let unidad_id = conn.last_insert_rowid();
+
+        // Precios por lista (opcional)
+        if let Some(precios_lista) = u.get("precios_lista").and_then(|v| v.as_array()) {
+            for pl in precios_lista {
+                let lista_id = pl.get("lista_precio_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                let pl_precio = pl.get("precio").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if lista_id > 0 && pl_precio > 0.0 {
+                    conn.execute(
+                        "INSERT OR REPLACE INTO precios_unidad_lista (unidad_id, lista_precio_id, precio) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![unidad_id, lista_id, pl_precio],
+                    ).ok();
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -160,6 +160,110 @@ export default function ReportesPage() {
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const fmtPct = (n: number) => `${n.toFixed(1)}%`;
 
+  // Helper generico para exportar CSV
+  const exportarCsvGeneric = async (nombreArchivo: string, encabezados: string[], filas: (string | number)[][]) => {
+    try {
+      const ruta = await save({
+        defaultPath: nombreArchivo,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!ruta) return;
+      const escape = (v: any) => {
+        const s = String(v ?? "");
+        return s.includes(",") || s.includes('"') || s.includes("\n")
+          ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lineas = [encabezados.map(escape).join(",")];
+      for (const f of filas) {
+        lineas.push(f.map(escape).join(","));
+      }
+      await invoke("guardar_archivo_texto", { ruta, contenido: lineas.join("\n") });
+      toastExito("CSV exportado");
+    } catch (e) { toastError("Error: " + e); }
+  };
+
+  const exportarCxcCsv = () => {
+    if (cxcClienteDetalle) {
+      // Exportar detalle del cliente
+      const cli = cxcClienteDetalle.cliente;
+      exportarCsvGeneric(
+        `cxc-${cli.cliente_nombre.replace(/[^a-zA-Z0-9]/g, "_")}.csv`,
+        ["Venta", "Fecha", "Total", "Pagado", "Saldo", "Estado", "Vencimiento", "Dias atraso"],
+        cxcClienteDetalle.cuentas.map((c: any) => [
+          c.venta_numero || "", c.venta_fecha?.slice(0, 10) || "",
+          c.monto_total.toFixed(2), c.monto_pagado.toFixed(2), c.saldo.toFixed(2),
+          c.estado, c.fecha_vencimiento || "", c.dias_atraso,
+        ])
+      );
+    } else {
+      exportarCsvGeneric(
+        `cxc-por-cliente-${hoy()}.csv`,
+        ["Cliente", "Identificacion", "Telefono", "Num Cuentas", "Total Facturado", "Total Pagado", "Saldo Pendiente", "Vencido", "Proximo Venc.", "Ultimo Pago"],
+        cxcResumen.map((c: any) => [
+          c.cliente_nombre, c.identificacion || "", c.telefono || "",
+          c.num_cuentas, c.total_facturado.toFixed(2), c.total_pagado.toFixed(2),
+          c.saldo_pendiente.toFixed(2), c.monto_vencido.toFixed(2),
+          c.proximo_vencimiento || "", c.ultimo_pago_fecha?.slice(0, 10) || "",
+        ])
+      );
+    }
+  };
+
+  const exportarCxpCsv = () => {
+    if (cxpProveedorDetalle) {
+      const p = cxpProveedorDetalle.proveedor;
+      exportarCsvGeneric(
+        `cxp-${p.proveedor_nombre.replace(/[^a-zA-Z0-9]/g, "_")}.csv`,
+        ["Compra", "Fac. Proveedor", "Fecha", "Total", "Pagado", "Saldo", "Estado", "Vencimiento", "Dias atraso"],
+        cxpProveedorDetalle.cuentas.map((c: any) => [
+          c.compra_numero || "", c.numero_factura || "", c.compra_fecha?.slice(0, 10) || "",
+          c.monto_total.toFixed(2), c.monto_pagado.toFixed(2), c.saldo.toFixed(2),
+          c.estado, c.fecha_vencimiento || "", c.dias_atraso,
+        ])
+      );
+    } else {
+      exportarCsvGeneric(
+        `cxp-por-proveedor-${hoy()}.csv`,
+        ["Proveedor", "RUC", "Telefono", "Num Cuentas", "Total Facturado", "Total Pagado", "Saldo Pendiente", "Vencido", "Proximo Venc.", "Ultimo Pago"],
+        cxpResumen.map((c: any) => [
+          c.proveedor_nombre, c.ruc || "", c.telefono || "",
+          c.num_cuentas, c.total_facturado.toFixed(2), c.total_pagado.toFixed(2),
+          c.saldo_pendiente.toFixed(2), c.monto_vencido.toFixed(2),
+          c.proximo_vencimiento || "", c.ultimo_pago_fecha?.slice(0, 10) || "",
+        ])
+      );
+    }
+  };
+
+  const exportarInventarioCsvFn = () => {
+    if (kardexProducto) {
+      const p = kardexProducto.producto;
+      exportarCsvGeneric(
+        `kardex-${(p.codigo || p.nombre).replace(/[^a-zA-Z0-9]/g, "_")}.csv`,
+        ["Fecha", "Tipo", "Cantidad", "Stock Anterior", "Stock Nuevo", "Costo Unitario", "Motivo", "Usuario"],
+        kardexProducto.movimientos.map((m: any) => [
+          m.fecha?.slice(0, 19).replace("T", " ") || "",
+          m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo,
+          m.costo_unitario ? m.costo_unitario.toFixed(2) : "",
+          m.motivo || "", m.usuario || "",
+        ])
+      );
+    } else if (inventario) {
+      exportarCsvGeneric(
+        `inventario-valorizado-${hoy()}.csv`,
+        ["Codigo", "Producto", "Categoria", "Stock Actual", "Stock Minimo", "Precio Costo", "Precio Venta", "Valor Costo", "Valor Venta", "Utilidad Potencial", "Estado Stock"],
+        inventario.productos.map((p: any) => [
+          p.codigo || "", p.nombre, p.categoria || "",
+          p.stock_actual, p.stock_minimo,
+          p.precio_costo.toFixed(2), p.precio_venta.toFixed(2),
+          p.valor_costo.toFixed(2), p.valor_venta.toFixed(2),
+          p.utilidad_potencial.toFixed(2),
+          p.estado_stock === "SIN_STOCK" ? "Sin stock" : p.estado_stock === "BAJO" ? "Bajo" : "OK",
+        ])
+      );
+    }
+  };
+
   return (
     <>
       <div className="page-header">
@@ -519,10 +623,11 @@ export default function ReportesPage() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <button className="btn btn-outline" onClick={() => setCxcClienteDetalle(null)}>← Volver</button>
-                <h3 style={{ margin: 0 }}>{cxcClienteDetalle.cliente.cliente_nombre}</h3>
+                <h3 style={{ margin: 0, flex: 1 }}>{cxcClienteDetalle.cliente.cliente_nombre}</h3>
                 <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
                   {cxcClienteDetalle.cliente.identificacion} · {cxcClienteDetalle.cliente.telefono}
                 </span>
+                <button className="btn btn-outline" onClick={exportarCxcCsv} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
               </div>
               <div className="card">
                 <table className="table" style={{ width: "100%" }}>
@@ -557,6 +662,10 @@ export default function ReportesPage() {
             </div>
           ) : (
             <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Click en un cliente para ver sus cuentas detalladas</span>
+                <button className="btn btn-outline" onClick={exportarCxcCsv} disabled={cxcResumen.length === 0} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
                 <KpiCard label="Clientes con saldo" valor={String(cxcResumen.length)} />
                 <KpiCard label="Saldo total pendiente" valor={fmt(cxcResumen.reduce((s, c) => s + c.saldo_pendiente, 0))} color="var(--color-warning)" />
@@ -602,10 +711,11 @@ export default function ReportesPage() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <button className="btn btn-outline" onClick={() => setCxpProveedorDetalle(null)}>← Volver</button>
-                <h3 style={{ margin: 0 }}>{cxpProveedorDetalle.proveedor.proveedor_nombre}</h3>
+                <h3 style={{ margin: 0, flex: 1 }}>{cxpProveedorDetalle.proveedor.proveedor_nombre}</h3>
                 <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
                   RUC: {cxpProveedorDetalle.proveedor.ruc} · {cxpProveedorDetalle.proveedor.telefono}
                 </span>
+                <button className="btn btn-outline" onClick={exportarCxpCsv} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
               </div>
               <div className="card">
                 <table className="table" style={{ width: "100%" }}>
@@ -641,6 +751,10 @@ export default function ReportesPage() {
             </div>
           ) : (
             <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Click en un proveedor para ver sus cuentas detalladas</span>
+                <button className="btn btn-outline" onClick={exportarCxpCsv} disabled={cxpResumen.length === 0} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
                 <KpiCard label="Proveedores con saldo" valor={String(cxpResumen.length)} />
                 <KpiCard label="Saldo total pendiente" valor={fmt(cxpResumen.reduce((s, c) => s + c.saldo_pendiente, 0))} color="var(--color-warning)" />
@@ -686,10 +800,11 @@ export default function ReportesPage() {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                 <button className="btn btn-outline" onClick={() => setKardexProducto(null)}>← Volver al inventario</button>
-                <h3 style={{ margin: 0 }}>Kardex: {kardexProducto.producto.nombre}</h3>
+                <h3 style={{ margin: 0, flex: 1 }}>Kardex: {kardexProducto.producto.nombre}</h3>
                 <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
                   Stock actual: <strong>{kardexProducto.producto.stock_actual} {kardexProducto.producto.unidad_medida}</strong>
                 </span>
+                <button className="btn btn-outline" onClick={exportarInventarioCsvFn} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
               </div>
               <div className="card">
                 <table className="table" style={{ width: "100%" }}>
@@ -726,6 +841,10 @@ export default function ReportesPage() {
             </div>
           ) : inventario && (
             <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Click en "Kardex" para ver el detalle de movimientos de un producto</span>
+                <button className="btn btn-outline" onClick={exportarInventarioCsvFn} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
                 <KpiCard label="Productos" valor={String(inventario.total_productos)} sub={`${inventario.total_unidades.toFixed(0)} unidades`} />
                 <KpiCard label="Valor al costo" valor={fmt(inventario.valor_total_costo)} color="var(--color-text)" />
