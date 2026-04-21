@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, exportarVentasCsv, reporteIvaMensual } from "../services/api";
+import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, exportarVentasCsv, reporteIvaMensual,
+  reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
+  reporteInventarioValorizado, reporteKardexProducto } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -28,7 +30,17 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario">("utilidad");
+  // CXC/CXP
+  const [cxcResumen, setCxcResumen] = useState<any[]>([]);
+  const [cxcClienteDetalle, setCxcClienteDetalle] = useState<{ cliente: any; cuentas: any[] } | null>(null);
+  const [cxpResumen, setCxpResumen] = useState<any[]>([]);
+  const [cxpProveedorDetalle, setCxpProveedorDetalle] = useState<{ proveedor: any; cuentas: any[] } | null>(null);
+  // Inventario
+  const [inventario, setInventario] = useState<any | null>(null);
+  const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
+  const [busquedaInv, setBusquedaInv] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK">("TODOS");
   const [desde, setDesde] = useState(inicioMes());
   const [hasta, setHasta] = useState(hoy());
   const [utilidad, setUtilidad] = useState<ReporteUtilidad | null>(null);
@@ -51,6 +63,21 @@ export default function ReportesPage() {
       if (tab === "utilidad") setUtilidad(await reporteUtilidad(desde, hasta));
       else if (tab === "balance") setBalance(await reporteBalance(desde, hasta));
       else if (tab === "productos") setProductos(await reporteProductosRentabilidad(desde, hasta, 50));
+      else if (tab === "cxc") {
+        const r = await reporteCxcPorCliente();
+        setCxcResumen(r);
+        setCxcClienteDetalle(null);
+      }
+      else if (tab === "cxp") {
+        const r = await reporteCxpPorProveedor();
+        setCxpResumen(r);
+        setCxpProveedorDetalle(null);
+      }
+      else if (tab === "inventario") {
+        const inv = await reporteInventarioValorizado();
+        setInventario(inv);
+        setKardexProducto(null);
+      }
     } catch (err) {
       toastError("Error: " + err);
     }
@@ -58,6 +85,27 @@ export default function ReportesPage() {
   };
 
   useEffect(() => { cargar(); }, [tab, desde, hasta]);
+
+  const verDetalleCxc = async (cliente: any) => {
+    try {
+      const cuentas = await reporteCxcDetalleCliente(cliente.cliente_id);
+      setCxcClienteDetalle({ cliente, cuentas });
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const verDetalleCxp = async (proveedor: any) => {
+    try {
+      const cuentas = await reporteCxpDetalleProveedor(proveedor.proveedor_id);
+      setCxpProveedorDetalle({ proveedor, cuentas });
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const verKardex = async (productoId: number) => {
+    try {
+      const k = await reporteKardexProducto(productoId, desde, hasta);
+      setKardexProducto(k);
+    } catch (err) { toastError("Error: " + err); }
+  };
 
   const calcularIva = async () => {
     setCargandoIva(true);
@@ -138,7 +186,15 @@ export default function ReportesPage() {
       <div className="page-body" style={{ padding: 16 }}>
         {/* Tabs */}
         <div className="flex gap-2 mb-4">
-          {([["utilidad", "Estado de Resultados"], ["balance", "Balance"], ["productos", "Rentabilidad por Producto"], ["iva", "Declaracion IVA"]] as const).map(([key, label]) => (
+          {([
+            ["utilidad", "Estado de Resultados"],
+            ["balance", "Balance"],
+            ["productos", "Rentabilidad por Producto"],
+            ["iva", "Declaracion IVA"],
+            ["cxc", "Cuentas por Cobrar"],
+            ["cxp", "Cuentas por Pagar"],
+            ["inventario", "Inventario"],
+          ] as const).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
               style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
               {label}
@@ -455,6 +511,288 @@ export default function ReportesPage() {
               </div>
             )}
           </div>
+        )}
+
+        {/* TAB CXC */}
+        {tab === "cxc" && (
+          cxcClienteDetalle ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button className="btn btn-outline" onClick={() => setCxcClienteDetalle(null)}>← Volver</button>
+                <h3 style={{ margin: 0 }}>{cxcClienteDetalle.cliente.cliente_nombre}</h3>
+                <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                  {cxcClienteDetalle.cliente.identificacion} · {cxcClienteDetalle.cliente.telefono}
+                </span>
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Venta</th><th>Fecha</th><th className="text-right">Total</th>
+                      <th className="text-right">Pagado</th><th className="text-right">Saldo</th>
+                      <th>Estado</th><th>Vencimiento</th><th className="text-right">Atraso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cxcClienteDetalle.cuentas.map((c: any) => (
+                      <tr key={c.cuenta_id}>
+                        <td>{c.venta_numero}</td>
+                        <td>{c.venta_fecha?.slice(0, 10)}</td>
+                        <td className="text-right">{fmt(c.monto_total)}</td>
+                        <td className="text-right">{fmt(c.monto_pagado)}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo)}</td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                          background: c.estado === "VENCIDA" ? "rgba(239,68,68,0.15)" : c.estado === "ABONADA" ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)",
+                          color: c.estado === "VENCIDA" ? "var(--color-danger)" : c.estado === "ABONADA" ? "var(--color-warning)" : "var(--color-primary)"
+                        }}>{c.estado}</span></td>
+                        <td>{c.fecha_vencimiento}</td>
+                        <td className="text-right" style={{ color: c.dias_atraso > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.dias_atraso > 0 ? 700 : 400 }}>
+                          {c.dias_atraso > 0 ? `+${c.dias_atraso}d` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+                <KpiCard label="Clientes con saldo" valor={String(cxcResumen.length)} />
+                <KpiCard label="Saldo total pendiente" valor={fmt(cxcResumen.reduce((s, c) => s + c.saldo_pendiente, 0))} color="var(--color-warning)" />
+                <KpiCard label="Vencido" valor={fmt(cxcResumen.reduce((s, c) => s + c.monto_vencido, 0))} color="var(--color-danger)" />
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Cliente</th><th>Identificacion</th><th>Telefono</th>
+                      <th className="text-right">Cuentas</th><th className="text-right">Saldo</th>
+                      <th className="text-right">Vencido</th><th>Proximo Venc.</th><th>Ultimo Pago</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cxcResumen.length === 0 ? (
+                      <tr><td colSpan={9} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin cuentas pendientes</td></tr>
+                    ) : cxcResumen.map((c: any) => (
+                      <tr key={c.cliente_id} style={{ cursor: "pointer" }} onClick={() => verDetalleCxc(c)}>
+                        <td style={{ fontWeight: 600 }}>{c.cliente_nombre}</td>
+                        <td style={{ fontSize: 11 }}>{c.identificacion || "-"}</td>
+                        <td style={{ fontSize: 11 }}>{c.telefono || "-"}</td>
+                        <td className="text-right">{c.num_cuentas}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo_pendiente)}</td>
+                        <td className="text-right" style={{ color: c.monto_vencido > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.monto_vencido > 0 ? 700 : 400 }}>
+                          {c.monto_vencido > 0 ? fmt(c.monto_vencido) : "—"}
+                        </td>
+                        <td style={{ fontSize: 11 }}>{c.proximo_vencimiento || "—"}</td>
+                        <td style={{ fontSize: 11 }}>{c.ultimo_pago_fecha?.slice(0, 10) || "Sin pagos"}</td>
+                        <td><button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}>Ver detalle</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* TAB CXP */}
+        {tab === "cxp" && (
+          cxpProveedorDetalle ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button className="btn btn-outline" onClick={() => setCxpProveedorDetalle(null)}>← Volver</button>
+                <h3 style={{ margin: 0 }}>{cxpProveedorDetalle.proveedor.proveedor_nombre}</h3>
+                <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                  RUC: {cxpProveedorDetalle.proveedor.ruc} · {cxpProveedorDetalle.proveedor.telefono}
+                </span>
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Compra</th><th>Fac. Proveedor</th><th>Fecha</th>
+                      <th className="text-right">Total</th><th className="text-right">Pagado</th><th className="text-right">Saldo</th>
+                      <th>Estado</th><th>Vencimiento</th><th className="text-right">Atraso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cxpProveedorDetalle.cuentas.map((c: any) => (
+                      <tr key={c.cuenta_id}>
+                        <td>{c.compra_numero}</td>
+                        <td>{c.numero_factura || "-"}</td>
+                        <td>{c.compra_fecha?.slice(0, 10)}</td>
+                        <td className="text-right">{fmt(c.monto_total)}</td>
+                        <td className="text-right">{fmt(c.monto_pagado)}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo)}</td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                          background: c.estado === "VENCIDA" ? "rgba(239,68,68,0.15)" : c.estado === "ABONADA" ? "rgba(245,158,11,0.15)" : "rgba(59,130,246,0.15)",
+                          color: c.estado === "VENCIDA" ? "var(--color-danger)" : c.estado === "ABONADA" ? "var(--color-warning)" : "var(--color-primary)"
+                        }}>{c.estado}</span></td>
+                        <td>{c.fecha_vencimiento}</td>
+                        <td className="text-right" style={{ color: c.dias_atraso > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.dias_atraso > 0 ? 700 : 400 }}>
+                          {c.dias_atraso > 0 ? `+${c.dias_atraso}d` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
+                <KpiCard label="Proveedores con saldo" valor={String(cxpResumen.length)} />
+                <KpiCard label="Saldo total pendiente" valor={fmt(cxpResumen.reduce((s, c) => s + c.saldo_pendiente, 0))} color="var(--color-warning)" />
+                <KpiCard label="Vencido" valor={fmt(cxpResumen.reduce((s, c) => s + c.monto_vencido, 0))} color="var(--color-danger)" />
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Proveedor</th><th>RUC</th><th>Telefono</th>
+                      <th className="text-right">Cuentas</th><th className="text-right">Saldo</th>
+                      <th className="text-right">Vencido</th><th>Proximo Venc.</th><th>Ultimo Pago</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cxpResumen.length === 0 ? (
+                      <tr><td colSpan={9} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin cuentas pendientes</td></tr>
+                    ) : cxpResumen.map((c: any) => (
+                      <tr key={c.proveedor_id} style={{ cursor: "pointer" }} onClick={() => verDetalleCxp(c)}>
+                        <td style={{ fontWeight: 600 }}>{c.proveedor_nombre}</td>
+                        <td style={{ fontSize: 11 }}>{c.ruc || "-"}</td>
+                        <td style={{ fontSize: 11 }}>{c.telefono || "-"}</td>
+                        <td className="text-right">{c.num_cuentas}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.saldo_pendiente)}</td>
+                        <td className="text-right" style={{ color: c.monto_vencido > 0 ? "var(--color-danger)" : "var(--color-text-secondary)", fontWeight: c.monto_vencido > 0 ? 700 : 400 }}>
+                          {c.monto_vencido > 0 ? fmt(c.monto_vencido) : "—"}
+                        </td>
+                        <td style={{ fontSize: 11 }}>{c.proximo_vencimiento || "—"}</td>
+                        <td style={{ fontSize: 11 }}>{c.ultimo_pago_fecha?.slice(0, 10) || "Sin pagos"}</td>
+                        <td><button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}>Ver detalle</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        )}
+
+        {/* TAB INVENTARIO */}
+        {tab === "inventario" && (
+          kardexProducto ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <button className="btn btn-outline" onClick={() => setKardexProducto(null)}>← Volver al inventario</button>
+                <h3 style={{ margin: 0 }}>Kardex: {kardexProducto.producto.nombre}</h3>
+                <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                  Stock actual: <strong>{kardexProducto.producto.stock_actual} {kardexProducto.producto.unidad_medida}</strong>
+                </span>
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th><th>Tipo</th><th className="text-right">Cantidad</th>
+                      <th className="text-right">Stock Anterior</th><th className="text-right">Stock Nuevo</th>
+                      <th className="text-right">Costo</th><th>Motivo</th><th>Usuario</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kardexProducto.movimientos.length === 0 ? (
+                      <tr><td colSpan={8} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin movimientos en este periodo</td></tr>
+                    ) : kardexProducto.movimientos.map((m: any) => (
+                      <tr key={m.id}>
+                        <td style={{ fontSize: 11 }}>{m.fecha?.slice(0, 16).replace("T", " ")}</td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                          background: m.tipo === "VENTA" ? "rgba(239,68,68,0.15)" : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") ? "rgba(34,197,94,0.15)" : "rgba(148,163,184,0.15)",
+                          color: m.tipo === "VENTA" ? "var(--color-danger)" : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") ? "var(--color-success)" : "var(--color-text-secondary)"
+                        }}>{m.tipo}</span></td>
+                        <td className="text-right" style={{ color: m.cantidad < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 600 }}>
+                          {m.cantidad > 0 ? "+" : ""}{m.cantidad}
+                        </td>
+                        <td className="text-right">{m.stock_anterior}</td>
+                        <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
+                        <td className="text-right">{m.costo_unitario ? fmt(m.costo_unitario) : "-"}</td>
+                        <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
+                        <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : inventario && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+                <KpiCard label="Productos" valor={String(inventario.total_productos)} sub={`${inventario.total_unidades.toFixed(0)} unidades`} />
+                <KpiCard label="Valor al costo" valor={fmt(inventario.valor_total_costo)} color="var(--color-text)" />
+                <KpiCard label="Valor al precio venta" valor={fmt(inventario.valor_total_venta)} color="var(--color-primary)" />
+                <KpiCard label="Utilidad potencial" valor={fmt(inventario.utilidad_potencial)} sub={fmtPct(inventario.valor_total_costo > 0 ? (inventario.utilidad_potencial / inventario.valor_total_costo * 100) : 0)} color="var(--color-success)" />
+              </div>
+              {(inventario.productos_sin_stock > 0 || inventario.productos_stock_bajo > 0) && (
+                <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                  {inventario.productos_sin_stock > 0 && (
+                    <div style={{ padding: "8px 14px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6, fontSize: 12, color: "var(--color-danger)" }}>
+                      <strong>{inventario.productos_sin_stock}</strong> productos sin stock
+                    </div>
+                  )}
+                  {inventario.productos_stock_bajo > 0 && (
+                    <div style={{ padding: "8px 14px", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, fontSize: 12, color: "var(--color-warning)" }}>
+                      <strong>{inventario.productos_stock_bajo}</strong> productos con stock bajo
+                    </div>
+                  )}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <input className="input" style={{ flex: 1 }} placeholder="Buscar producto..."
+                  value={busquedaInv} onChange={(e) => setBusquedaInv(e.target.value)} />
+                <select className="input" style={{ width: 180 }}
+                  value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value as any)}>
+                  <option value="TODOS">Todos los estados</option>
+                  <option value="OK">Stock OK</option>
+                  <option value="BAJO">Stock bajo</option>
+                  <option value="SIN_STOCK">Sin stock</option>
+                </select>
+              </div>
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Codigo</th><th>Producto</th><th>Categoria</th>
+                      <th className="text-right">Stock</th><th className="text-right">Costo Un.</th>
+                      <th className="text-right">Valor Costo</th><th className="text-right">Valor Venta</th>
+                      <th className="text-right">Utilidad</th><th>Estado</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventario.productos
+                      .filter((p: any) => filtroEstado === "TODOS" || p.estado_stock === filtroEstado)
+                      .filter((p: any) => !busquedaInv || p.nombre.toLowerCase().includes(busquedaInv.toLowerCase()) || (p.codigo || "").toLowerCase().includes(busquedaInv.toLowerCase()))
+                      .map((p: any) => (
+                      <tr key={p.id}>
+                        <td style={{ fontSize: 11 }}>{p.codigo || "-"}</td>
+                        <td style={{ fontWeight: 600 }}>{p.nombre}</td>
+                        <td style={{ fontSize: 11 }}>{p.categoria || "-"}</td>
+                        <td className="text-right" style={{ fontWeight: 600 }}>{p.stock_actual}</td>
+                        <td className="text-right">{fmt(p.precio_costo)}</td>
+                        <td className="text-right">{fmt(p.valor_costo)}</td>
+                        <td className="text-right">{fmt(p.valor_venta)}</td>
+                        <td className="text-right" style={{ color: "var(--color-success)" }}>{fmt(p.utilidad_potencial)}</td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                          background: p.estado_stock === "SIN_STOCK" ? "rgba(239,68,68,0.15)" : p.estado_stock === "BAJO" ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.15)",
+                          color: p.estado_stock === "SIN_STOCK" ? "var(--color-danger)" : p.estado_stock === "BAJO" ? "var(--color-warning)" : "var(--color-success)"
+                        }}>{p.estado_stock === "SIN_STOCK" ? "Sin stock" : p.estado_stock === "BAJO" ? "Bajo" : "OK"}</span></td>
+                        <td><button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }} onClick={() => verKardex(p.id)}>Kardex</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
         )}
       </div>
     </>

@@ -269,6 +269,7 @@ pub fn listar_movimientos_bancarios(
     // Build UNION ALL query for all bank movement sources
     let mut sql = String::from(
         "SELECT tipo, referencia, monto, fecha, banco_nombre, detalle, banco_id FROM (
+            -- Ventas con un solo pago tipo TRANSFER (forma_pago en ventas)
             SELECT 'VENTA' as tipo, v.numero as referencia, v.total as monto, v.fecha,
                    cb.nombre as banco_nombre,
                    COALESCE(cl.nombre, 'Consumidor Final') as detalle,
@@ -277,6 +278,22 @@ pub fn listar_movimientos_bancarios(
             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
             LEFT JOIN clientes cl ON v.cliente_id = cl.id
             WHERE v.banco_id IS NOT NULL AND v.forma_pago = 'TRANSFER'
+              AND v.anulada = 0 AND v.tipo_estado = 'COMPLETADA'
+              AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
+              AND date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+
+            UNION ALL
+
+            -- Ventas MIXTAS: porcion bancaria desde pagos_venta
+            SELECT 'VENTA' as tipo, v.numero as referencia, pv.monto as monto, v.fecha,
+                   cb.nombre as banco_nombre,
+                   COALESCE(cl.nombre, 'Consumidor Final') as detalle,
+                   pv.banco_id
+            FROM pagos_venta pv
+            INNER JOIN ventas v ON v.id = pv.venta_id
+            LEFT JOIN cuentas_banco cb ON pv.banco_id = cb.id
+            LEFT JOIN clientes cl ON v.cliente_id = cl.id
+            WHERE pv.banco_id IS NOT NULL AND pv.forma_pago = 'TRANSFER'
               AND v.anulada = 0 AND v.tipo_estado = 'COMPLETADA'
               AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
               AND date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)

@@ -817,3 +817,284 @@ pub fn reporte_iva_mensual(
         "total_compras": compras_0 + compras_15_base,
     }))
 }
+
+// =============================================================
+// REPORTES DETALLADOS (v1.9.4): CXC, CXP, Kardex, Inventario
+// =============================================================
+
+/// Reporte de cuentas por cobrar agrupado por cliente, con totales y aging
+#[tauri::command]
+pub fn reporte_cxc_por_cliente(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT
+            cl.id, cl.nombre, cl.identificacion, cl.telefono,
+            COUNT(cc.id) as num_cuentas,
+            SUM(cc.monto_total) as total_facturado,
+            SUM(cc.monto_pagado) as total_pagado,
+            SUM(cc.saldo) as saldo_pendiente,
+            MIN(cc.fecha_vencimiento) as proximo_vencimiento,
+            SUM(CASE WHEN date(cc.fecha_vencimiento) < date('now', 'localtime') THEN cc.saldo ELSE 0 END) as monto_vencido,
+            (SELECT MAX(pc.fecha) FROM pagos_cuenta pc INNER JOIN cuentas_por_cobrar c2 ON pc.cuenta_id = c2.id WHERE c2.cliente_id = cl.id) as ultimo_pago_fecha
+         FROM clientes cl
+         INNER JOIN cuentas_por_cobrar cc ON cc.cliente_id = cl.id
+         WHERE cc.estado IN ('PENDIENTE', 'ABONADA', 'VENCIDA') AND cc.saldo > 0.01
+         GROUP BY cl.id
+         ORDER BY saldo_pendiente DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let resultado = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "cliente_id": row.get::<_, i64>(0)?,
+            "cliente_nombre": row.get::<_, String>(1)?,
+            "identificacion": row.get::<_, Option<String>>(2)?,
+            "telefono": row.get::<_, Option<String>>(3)?,
+            "num_cuentas": row.get::<_, i64>(4)?,
+            "total_facturado": row.get::<_, f64>(5)?,
+            "total_pagado": row.get::<_, f64>(6)?,
+            "saldo_pendiente": row.get::<_, f64>(7)?,
+            "proximo_vencimiento": row.get::<_, Option<String>>(8)?,
+            "monto_vencido": row.get::<_, f64>(9)?,
+            "ultimo_pago_fecha": row.get::<_, Option<String>>(10)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(resultado)
+}
+
+/// Detalle de cuentas por cobrar de un cliente específico
+#[tauri::command]
+pub fn reporte_cxc_detalle_cliente(db: State<Database>, cliente_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT cc.id, cc.venta_id, v.numero, v.fecha,
+                cc.monto_total, cc.monto_pagado, cc.saldo, cc.estado, cc.fecha_vencimiento,
+                CAST(julianday('now', 'localtime') - julianday(cc.fecha_vencimiento) AS INTEGER) as dias_atraso
+         FROM cuentas_por_cobrar cc
+         LEFT JOIN ventas v ON v.id = cc.venta_id
+         WHERE cc.cliente_id = ?1
+         ORDER BY cc.estado DESC, cc.fecha_vencimiento ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let resultado = stmt.query_map(rusqlite::params![cliente_id], |row| {
+        Ok(serde_json::json!({
+            "cuenta_id": row.get::<_, i64>(0)?,
+            "venta_id": row.get::<_, i64>(1)?,
+            "venta_numero": row.get::<_, Option<String>>(2)?,
+            "venta_fecha": row.get::<_, Option<String>>(3)?,
+            "monto_total": row.get::<_, f64>(4)?,
+            "monto_pagado": row.get::<_, f64>(5)?,
+            "saldo": row.get::<_, f64>(6)?,
+            "estado": row.get::<_, String>(7)?,
+            "fecha_vencimiento": row.get::<_, Option<String>>(8)?,
+            "dias_atraso": row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(resultado)
+}
+
+/// Reporte de cuentas por pagar agrupado por proveedor
+#[tauri::command]
+pub fn reporte_cxp_por_proveedor(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT
+            p.id, p.nombre, p.ruc, p.telefono, p.email,
+            COUNT(cp.id) as num_cuentas,
+            SUM(cp.monto_total) as total_facturado,
+            SUM(cp.monto_pagado) as total_pagado,
+            SUM(cp.saldo) as saldo_pendiente,
+            MIN(cp.fecha_vencimiento) as proximo_vencimiento,
+            SUM(CASE WHEN date(cp.fecha_vencimiento) < date('now', 'localtime') THEN cp.saldo ELSE 0 END) as monto_vencido,
+            (SELECT MAX(pp.fecha) FROM pagos_proveedor pp INNER JOIN cuentas_por_pagar c2 ON pp.cuenta_id = c2.id WHERE c2.proveedor_id = p.id) as ultimo_pago_fecha
+         FROM proveedores p
+         INNER JOIN cuentas_por_pagar cp ON cp.proveedor_id = p.id
+         WHERE cp.estado IN ('PENDIENTE', 'ABONADA', 'VENCIDA') AND cp.saldo > 0.01
+         GROUP BY p.id
+         ORDER BY saldo_pendiente DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let resultado = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "proveedor_id": row.get::<_, i64>(0)?,
+            "proveedor_nombre": row.get::<_, String>(1)?,
+            "ruc": row.get::<_, Option<String>>(2)?,
+            "telefono": row.get::<_, Option<String>>(3)?,
+            "email": row.get::<_, Option<String>>(4)?,
+            "num_cuentas": row.get::<_, i64>(5)?,
+            "total_facturado": row.get::<_, f64>(6)?,
+            "total_pagado": row.get::<_, f64>(7)?,
+            "saldo_pendiente": row.get::<_, f64>(8)?,
+            "proximo_vencimiento": row.get::<_, Option<String>>(9)?,
+            "monto_vencido": row.get::<_, f64>(10)?,
+            "ultimo_pago_fecha": row.get::<_, Option<String>>(11)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(resultado)
+}
+
+/// Detalle de cuentas por pagar de un proveedor específico
+#[tauri::command]
+pub fn reporte_cxp_detalle_proveedor(db: State<Database>, proveedor_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT cp.id, cp.compra_id, c.numero, c.numero_factura, c.fecha,
+                cp.monto_total, cp.monto_pagado, cp.saldo, cp.estado, cp.fecha_vencimiento,
+                CAST(julianday('now', 'localtime') - julianday(cp.fecha_vencimiento) AS INTEGER) as dias_atraso
+         FROM cuentas_por_pagar cp
+         LEFT JOIN compras c ON c.id = cp.compra_id
+         WHERE cp.proveedor_id = ?1
+         ORDER BY cp.estado DESC, cp.fecha_vencimiento ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let resultado = stmt.query_map(rusqlite::params![proveedor_id], |row| {
+        Ok(serde_json::json!({
+            "cuenta_id": row.get::<_, i64>(0)?,
+            "compra_id": row.get::<_, Option<i64>>(1)?,
+            "compra_numero": row.get::<_, Option<String>>(2)?,
+            "numero_factura": row.get::<_, Option<String>>(3)?,
+            "compra_fecha": row.get::<_, Option<String>>(4)?,
+            "monto_total": row.get::<_, f64>(5)?,
+            "monto_pagado": row.get::<_, f64>(6)?,
+            "saldo": row.get::<_, f64>(7)?,
+            "estado": row.get::<_, String>(8)?,
+            "fecha_vencimiento": row.get::<_, Option<String>>(9)?,
+            "dias_atraso": row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(resultado)
+}
+
+/// Reporte de inventario valorizado: stock actual + valor (al costo y al precio de venta)
+#[tauri::command]
+pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.codigo, p.nombre, c.nombre as categoria,
+                p.stock_actual, p.stock_minimo,
+                p.precio_costo, p.precio_venta,
+                (p.stock_actual * p.precio_costo) as valor_costo,
+                (p.stock_actual * p.precio_venta) as valor_venta,
+                CASE
+                    WHEN p.stock_actual <= 0 THEN 'SIN_STOCK'
+                    WHEN p.stock_actual <= p.stock_minimo THEN 'BAJO'
+                    ELSE 'OK'
+                END as estado_stock
+         FROM productos p
+         LEFT JOIN categorias c ON p.categoria_id = c.id
+         WHERE p.activo = 1 AND COALESCE(p.es_servicio, 0) = 0 AND COALESCE(p.no_controla_stock, 0) = 0
+         ORDER BY p.nombre"
+    ).map_err(|e| e.to_string())?;
+
+    let mut productos: Vec<serde_json::Value> = Vec::new();
+    let mut total_costo = 0.0_f64;
+    let mut total_venta = 0.0_f64;
+    let mut total_unidades = 0.0_f64;
+    let mut sin_stock = 0_i64;
+    let mut bajo_stock = 0_i64;
+
+    let rows = stmt.query_map([], |row| {
+        let v_costo: f64 = row.get(8)?;
+        let v_venta: f64 = row.get(9)?;
+        let stock: f64 = row.get(4)?;
+        let estado: String = row.get(10)?;
+        Ok((
+            serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "codigo": row.get::<_, Option<String>>(1)?,
+                "nombre": row.get::<_, String>(2)?,
+                "categoria": row.get::<_, Option<String>>(3)?,
+                "stock_actual": stock,
+                "stock_minimo": row.get::<_, f64>(5)?,
+                "precio_costo": row.get::<_, f64>(6)?,
+                "precio_venta": row.get::<_, f64>(7)?,
+                "valor_costo": v_costo,
+                "valor_venta": v_venta,
+                "utilidad_potencial": v_venta - v_costo,
+                "estado_stock": estado.clone(),
+            }),
+            v_costo, v_venta, stock, estado,
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for r in rows {
+        if let Ok((p, vc, vv, st, est)) = r {
+            total_costo += vc;
+            total_venta += vv;
+            total_unidades += st;
+            if est == "SIN_STOCK" { sin_stock += 1; }
+            else if est == "BAJO" { bajo_stock += 1; }
+            productos.push(p);
+        }
+    }
+
+    Ok(serde_json::json!({
+        "productos": productos,
+        "total_productos": productos.len(),
+        "total_unidades": total_unidades,
+        "valor_total_costo": total_costo,
+        "valor_total_venta": total_venta,
+        "utilidad_potencial": total_venta - total_costo,
+        "productos_sin_stock": sin_stock,
+        "productos_stock_bajo": bajo_stock,
+    }))
+}
+
+/// Kardex: movimientos detallados de un producto
+#[tauri::command]
+pub fn reporte_kardex_producto(db: State<Database>, producto_id: i64, fecha_desde: Option<String>, fecha_hasta: Option<String>) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let producto: serde_json::Value = conn.query_row(
+        "SELECT id, codigo, nombre, stock_actual, precio_costo, unidad_medida FROM productos WHERE id = ?1",
+        rusqlite::params![producto_id],
+        |row| Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "codigo": row.get::<_, Option<String>>(1)?,
+            "nombre": row.get::<_, String>(2)?,
+            "stock_actual": row.get::<_, f64>(3)?,
+            "precio_costo": row.get::<_, f64>(4)?,
+            "unidad_medida": row.get::<_, String>(5)?,
+        }))
+    ).map_err(|e| e.to_string())?;
+
+    let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
+
+    let mut stmt = conn.prepare(
+        "SELECT id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, motivo, usuario, created_at, referencia_id
+         FROM movimientos_inventario
+         WHERE producto_id = ?1 AND date(created_at) >= date(?2) AND date(created_at) <= date(?3)
+         ORDER BY created_at DESC, id DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let movimientos = stmt.query_map(rusqlite::params![producto_id, desde, hasta], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "tipo": row.get::<_, String>(1)?,
+            "cantidad": row.get::<_, f64>(2)?,
+            "stock_anterior": row.get::<_, f64>(3)?,
+            "stock_nuevo": row.get::<_, f64>(4)?,
+            "costo_unitario": row.get::<_, Option<f64>>(5)?,
+            "motivo": row.get::<_, Option<String>>(6)?,
+            "usuario": row.get::<_, Option<String>>(7)?,
+            "fecha": row.get::<_, String>(8)?,
+            "referencia_id": row.get::<_, Option<i64>>(9)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "producto": producto,
+        "movimientos": movimientos,
+        "total_movimientos": movimientos.len(),
+    }))
+}

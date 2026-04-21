@@ -980,6 +980,23 @@ export const reporteIvaMensual = (anio: number, mes: number) =>
     iva_a_pagar: number; total_ventas: number; total_compras: number;
   }>("reporte_iva_mensual", { anio, mes });
 
+// --- Reportes detallados (v1.9.4) ---
+export const reporteCxcPorCliente = () => smartInvoke<any[]>("reporte_cxc_por_cliente");
+export const reporteCxcDetalleCliente = (clienteId: number) =>
+  smartInvoke<any[]>("reporte_cxc_detalle_cliente", { clienteId });
+export const reporteCxpPorProveedor = () => smartInvoke<any[]>("reporte_cxp_por_proveedor");
+export const reporteCxpDetalleProveedor = (proveedorId: number) =>
+  smartInvoke<any[]>("reporte_cxp_detalle_proveedor", { proveedorId });
+export const reporteInventarioValorizado = () =>
+  smartInvoke<{
+    productos: any[]; total_productos: number; total_unidades: number;
+    valor_total_costo: number; valor_total_venta: number; utilidad_potencial: number;
+    productos_sin_stock: number; productos_stock_bajo: number;
+  }>("reporte_inventario_valorizado");
+export const reporteKardexProducto = (productoId: number, fechaDesde?: string, fechaHasta?: string) =>
+  smartInvoke<{ producto: any; movimientos: any[]; total_movimientos: number }>(
+    "reporte_kardex_producto", { productoId, fechaDesde, fechaHasta });
+
 // --- Proveedores ---
 
 export const crearProveedor = (proveedor: Proveedor) => smartInvoke<number>("crear_proveedor", { proveedor });

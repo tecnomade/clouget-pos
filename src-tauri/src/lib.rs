@@ -183,6 +183,12 @@ pub fn run() {
             commands::reportes::reporte_productos_rentabilidad,
             commands::reportes::listar_libro_movimientos,
             commands::reportes::reporte_iva_mensual,
+            commands::reportes::reporte_cxc_por_cliente,
+            commands::reportes::reporte_cxc_detalle_cliente,
+            commands::reportes::reporte_cxp_por_proveedor,
+            commands::reportes::reporte_cxp_detalle_proveedor,
+            commands::reportes::reporte_inventario_valorizado,
+            commands::reportes::reporte_kardex_producto,
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,
