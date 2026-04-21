@@ -87,22 +87,26 @@ pub fn registrar_venta(
     // Formato interno: NV-000000017
     let numero = format!("NV-{:09}", secuencial);
 
-    // Calcular totales
+    // Calcular totales con redondeo a 2 decimales (consistencia con XSD del SRI)
+    let r2 = |n: f64| (n * 100.0).round() / 100.0;
     let mut subtotal_sin_iva = 0.0_f64;
     let mut subtotal_con_iva = 0.0_f64;
     let mut iva_total = 0.0_f64;
 
     for item in &venta.items {
-        let subtotal_item = item.cantidad * item.precio_unitario - item.descuento;
+        let subtotal_item = r2(item.cantidad * item.precio_unitario - item.descuento);
         if item.iva_porcentaje > 0.0 {
             subtotal_con_iva += subtotal_item;
-            iva_total += subtotal_item * (item.iva_porcentaje / 100.0);
+            iva_total += r2(subtotal_item * (item.iva_porcentaje / 100.0));
         } else {
             subtotal_sin_iva += subtotal_item;
         }
     }
+    subtotal_sin_iva = r2(subtotal_sin_iva);
+    subtotal_con_iva = r2(subtotal_con_iva);
+    iva_total = r2(iva_total);
 
-    let total = subtotal_sin_iva + subtotal_con_iva + iva_total - venta.descuento;
+    let total = r2(subtotal_sin_iva + subtotal_con_iva + iva_total - venta.descuento);
     let cambio = if venta.monto_recibido > total {
         venta.monto_recibido - total
     } else {
@@ -153,7 +157,7 @@ pub fn registrar_venta(
     // Insertar detalles y actualizar stock
     let mut detalles_guardados = Vec::new();
     for item in &venta.items {
-        let subtotal = item.cantidad * item.precio_unitario - item.descuento;
+        let subtotal = r2(item.cantidad * item.precio_unitario - item.descuento);
 
         // Obtener precio_costo del producto para snapshot en venta_detalles
         let precio_costo_prod: f64 = conn

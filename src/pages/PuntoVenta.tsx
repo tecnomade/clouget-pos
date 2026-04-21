@@ -471,17 +471,22 @@ export default function PuntoVenta() {
     }
 
     // Helper: si el item tiene incluye_iva=true, desglosa precio Y descuento antes de enviar al backend
-    // (el backend siempre trata precio_unitario y descuento como BASE sin IVA)
+    // IMPORTANTE: redondear precio_unitario a 2 decimales (limite del XSD del SRI)
+    // y recalcular subtotal con el precio redondeado para mantener consistencia.
+    const r2 = (n: number) => Math.round(n * 100) / 100;
     const desglosar = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        return {
-          precio_unitario: i.precio_unitario / factor,
-          descuento: i.descuento / factor,
-          subtotal: i.subtotal / factor,
-        };
+        const precioBase = r2(i.precio_unitario / factor);
+        const descBase = r2(i.descuento / factor);
+        const subtotalBase = r2(i.cantidad * precioBase - descBase);
+        return { precio_unitario: precioBase, descuento: descBase, subtotal: subtotalBase };
       }
-      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
+      return {
+        precio_unitario: r2(i.precio_unitario),
+        descuento: r2(i.descuento),
+        subtotal: r2(i.cantidad * r2(i.precio_unitario) - r2(i.descuento)),
+      };
     };
 
     // Validacion de pago mixto antes de enviar
@@ -659,12 +664,15 @@ export default function PuntoVenta() {
   // Escuchar F9 (cobrar) y F10 (nueva venta) via CustomEvent
   const guardarComoDocumento = useCallback(async (tipo: "borrador" | "cotizacion") => {
     if (carrito.length === 0) return;
+    const r2 = (n: number) => Math.round(n * 100) / 100;
     const desglosar = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        return { precio_unitario: i.precio_unitario / factor, descuento: i.descuento / factor, subtotal: i.subtotal / factor };
+        const pBase = r2(i.precio_unitario / factor);
+        const dBase = r2(i.descuento / factor);
+        return { precio_unitario: pBase, descuento: dBase, subtotal: r2(i.cantidad * pBase - dBase) };
       }
-      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
+      return { precio_unitario: r2(i.precio_unitario), descuento: r2(i.descuento), subtotal: r2(i.cantidad * r2(i.precio_unitario) - r2(i.descuento)) };
     };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
@@ -699,12 +707,15 @@ export default function PuntoVenta() {
   const confirmarGuiaRemision = useCallback(async () => {
     if (carrito.length === 0) return;
     setGuardandoGuia(true);
+    const r2g = (n: number) => Math.round(n * 100) / 100;
     const desglosar2 = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        return { precio_unitario: i.precio_unitario / factor, descuento: i.descuento / factor, subtotal: i.subtotal / factor };
+        const pBase = r2g(i.precio_unitario / factor);
+        const dBase = r2g(i.descuento / factor);
+        return { precio_unitario: pBase, descuento: dBase, subtotal: r2g(i.cantidad * pBase - dBase) };
       }
-      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
+      return { precio_unitario: r2g(i.precio_unitario), descuento: r2g(i.descuento), subtotal: r2g(i.cantidad * r2g(i.precio_unitario) - r2g(i.descuento)) };
     };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,

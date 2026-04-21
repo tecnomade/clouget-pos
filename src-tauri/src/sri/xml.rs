@@ -184,8 +184,8 @@ pub fn generar_xml_factura(datos: &DatosFactura) -> String {
         xml.push_str("    <detalle>\n");
         xml_tag(&mut xml, 6, "codigoPrincipal", &det.codigo_principal);
         xml_tag(&mut xml, 6, "descripcion", &xml_escape(&det.descripcion));
-        xml_tag(&mut xml, 6, "cantidad", &format!("{:.6}", det.cantidad));
-        xml_tag(&mut xml, 6, "precioUnitario", &format!("{:.6}", det.precio_unitario));
+        xml_tag(&mut xml, 6, "cantidad", &format!("{:.2}", det.cantidad));
+        xml_tag(&mut xml, 6, "precioUnitario", &format!("{:.2}", det.precio_unitario));
         xml_tag(&mut xml, 6, "descuento", &format!("{:.2}", det.descuento));
         xml_tag(&mut xml, 6, "precioTotalSinImpuesto", &format!("{:.2}", det.precio_total_sin_impuesto));
 
@@ -392,8 +392,8 @@ pub fn generar_xml_nota_credito(datos: &DatosNotaCredito) -> String {
         xml.push_str("    <detalle>\n");
         xml_tag(&mut xml, 6, "codigoInterno", &det.codigo_principal);
         xml_tag(&mut xml, 6, "descripcion", &xml_escape(&det.descripcion));
-        xml_tag(&mut xml, 6, "cantidad", &format!("{:.6}", det.cantidad));
-        xml_tag(&mut xml, 6, "precioUnitario", &format!("{:.6}", det.precio_unitario));
+        xml_tag(&mut xml, 6, "cantidad", &format!("{:.2}", det.cantidad));
+        xml_tag(&mut xml, 6, "precioUnitario", &format!("{:.2}", det.precio_unitario));
         xml_tag(&mut xml, 6, "descuento", &format!("{:.2}", det.descuento));
         xml_tag(&mut xml, 6, "precioTotalSinImpuesto", &format!("{:.2}", det.precio_total_sin_impuesto));
 
