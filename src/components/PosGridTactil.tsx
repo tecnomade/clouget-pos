@@ -52,6 +52,7 @@ export default function PosGridTactil({
       nombre: p.nombre,
       precio_venta: p.precio_venta,
       iva_porcentaje: p.iva_porcentaje,
+      incluye_iva: p.incluye_iva ?? false,
       stock_actual: p.stock_actual,
       stock_minimo: 0,
       categoria_nombre: p.categoria_nombre,
@@ -219,9 +220,9 @@ export default function PosGridTactil({
                 ${p.precio_venta.toFixed(2)}
               </span>
               {p.stock_actual <= 0 ? (
-                <span style={{ fontSize: 9, color: "var(--color-danger)", marginTop: 1, fontWeight: 600 }}>Sin stock</span>
+                <span style={{ fontSize: 12, color: "var(--color-danger)", marginTop: 2, fontWeight: 700 }}>Sin stock</span>
               ) : (
-                <span style={{ fontSize: 9, color: "var(--color-text-secondary)", marginTop: 1 }}>Stock: {p.stock_actual}</span>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2, fontWeight: 600 }}>Stock: <strong style={{ color: "var(--color-text)" }}>{p.stock_actual}</strong></span>
               )}
               </button>
             </div>

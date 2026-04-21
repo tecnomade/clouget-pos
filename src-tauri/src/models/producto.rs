@@ -32,6 +32,7 @@ pub struct ProductoTactil {
     pub nombre: String,
     pub precio_venta: f64,
     pub iva_porcentaje: f64,
+    pub incluye_iva: bool,
     pub stock_actual: f64,
     pub categoria_id: Option<i64>,
     pub categoria_nombre: Option<String>,

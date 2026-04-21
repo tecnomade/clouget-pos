@@ -93,6 +93,11 @@ export default function PuntoVenta() {
   const [infoLote, setInfoLote] = useState("");
   const [infoObservacion, setInfoObservacion] = useState("");
 
+  // Modal descuento por item
+  const [descuentoItemId, setDescuentoItemId] = useState<number | null>(null);
+  const [descuentoTipo, setDescuentoTipo] = useState<"monto" | "porcentaje">("porcentaje");
+  const [descuentoValor, setDescuentoValor] = useState("");
+
   // Cart slide-in panel
   const [carritoAbierto, setCarritoAbierto] = useState(false);
   const [carritoManualCerrado, setCarritoManualCerrado] = useState(false);
@@ -130,6 +135,16 @@ export default function PuntoVenta() {
     setCarrito(prev => prev.map(i =>
       i.producto_id === productoId
         ? { ...i, iva_porcentaje: nuevoIva, subtotal: i.cantidad * i.precio_unitario - i.descuento }
+        : i
+    ));
+  };
+
+  // Descuento por item: monto fijo o porcentaje sobre cantidad * precio_unitario
+  const aplicarDescuentoItem = (productoId: number, descuento: number) => {
+    if (descuento < 0) return;
+    setCarrito(prev => prev.map(i =>
+      i.producto_id === productoId
+        ? { ...i, descuento, subtotal: i.cantidad * i.precio_unitario - descuento }
         : i
     ));
   };
@@ -439,16 +454,18 @@ export default function PuntoVenta() {
       }
     }
 
-    // Helper: si el item tiene incluye_iva=true, desglosa antes de enviar al backend
-    // (el backend siempre trata precio_unitario como BASE sin IVA)
+    // Helper: si el item tiene incluye_iva=true, desglosa precio Y descuento antes de enviar al backend
+    // (el backend siempre trata precio_unitario y descuento como BASE sin IVA)
     const desglosar = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        const precioBase = i.precio_unitario / factor;
-        const subtotalBase = i.subtotal / factor;
-        return { precio_unitario: precioBase, subtotal: subtotalBase };
+        return {
+          precio_unitario: i.precio_unitario / factor,
+          descuento: i.descuento / factor,
+          subtotal: i.subtotal / factor,
+        };
       }
-      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
     };
 
     const nuevaVenta: NuevaVenta = {
@@ -459,7 +476,7 @@ export default function PuntoVenta() {
           producto_id: i.producto_id,
           cantidad: i.cantidad,
           precio_unitario: d.precio_unitario,
-          descuento: i.descuento,
+          descuento: d.descuento,
           iva_porcentaje: i.iva_porcentaje,
           subtotal: d.subtotal,
           info_adicional: i.info_adicional || null,
@@ -600,15 +617,15 @@ export default function PuntoVenta() {
     const desglosar = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        return { precio_unitario: i.precio_unitario / factor, subtotal: i.subtotal / factor };
+        return { precio_unitario: i.precio_unitario / factor, descuento: i.descuento / factor, subtotal: i.subtotal / factor };
       }
-      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
     };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
       items: carrito.map(i => {
         const d = desglosar(i);
-        return { producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: d.precio_unitario, descuento: i.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: d.subtotal, info_adicional: i.info_adicional || null } as any;
+        return { producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: d.precio_unitario, descuento: d.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: d.subtotal, info_adicional: i.info_adicional || null } as any;
       }),
       forma_pago: formaPago, monto_recibido: 0, descuento: 0,
       tipo_documento: tipoDocumento, es_fiado: false,
@@ -640,9 +657,9 @@ export default function PuntoVenta() {
     const desglosar2 = (i: typeof carrito[0]) => {
       if (i.incluye_iva && i.iva_porcentaje > 0) {
         const factor = 1 + i.iva_porcentaje / 100;
-        return { precio_unitario: i.precio_unitario / factor, subtotal: i.subtotal / factor };
+        return { precio_unitario: i.precio_unitario / factor, descuento: i.descuento / factor, subtotal: i.subtotal / factor };
       }
-      return { precio_unitario: i.precio_unitario, subtotal: i.subtotal };
+      return { precio_unitario: i.precio_unitario, descuento: i.descuento, subtotal: i.subtotal };
     };
     const nueva: NuevaVenta = {
       cliente_id: clienteSeleccionado?.id ?? 1,
@@ -652,7 +669,7 @@ export default function PuntoVenta() {
           producto_id: i.producto_id,
           cantidad: i.cantidad,
           precio_unitario: d.precio_unitario,
-          descuento: i.descuento,
+          descuento: d.descuento,
           iva_porcentaje: i.iva_porcentaje,
           subtotal: d.subtotal,
           info_adicional: i.info_adicional || null,
@@ -1233,6 +1250,28 @@ export default function PuntoVenta() {
                       <option value="0">0%</option>
                       <option value="15">15%</option>
                     </select>
+                    {/* Boton de descuento */}
+                    <button
+                      title={item.descuento > 0 ? `Descuento aplicado: $${item.descuento.toFixed(2)}` : "Aplicar descuento"}
+                      style={{
+                        width: 26, height: 26,
+                        border: `1px solid ${item.descuento > 0 ? "var(--color-warning)" : "var(--color-border)"}`,
+                        borderRadius: 4,
+                        background: item.descuento > 0 ? "rgba(245, 158, 11, 0.15)" : "var(--color-surface)",
+                        cursor: "pointer",
+                        color: item.descuento > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
+                        flexShrink: 0, fontSize: 12, fontWeight: 700,
+                      }}
+                      onClick={() => {
+                        setDescuentoItemId(item.producto_id);
+                        if (item.descuento > 0) {
+                          setDescuentoTipo("monto");
+                          setDescuentoValor(item.descuento.toFixed(2));
+                        } else {
+                          setDescuentoTipo("porcentaje");
+                          setDescuentoValor("");
+                        }
+                      }}>%</button>
                     <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}
                       onClick={() => actualizarCantidad(item.producto_id, item.cantidad - 1)}>-</button>
                     <span style={{ minWidth: 18, textAlign: "center", fontSize: 13, flexShrink: 0 }}>{item.cantidad}</span>
@@ -1377,11 +1416,12 @@ export default function PuntoVenta() {
                     onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
                   <button
                     className="btn"
-                    title="Monto exacto (F8)"
+                    title="Monto exacto - presione F8"
                     style={{
                       background: "var(--color-primary)", color: "#fff",
                       fontSize: 11, padding: "0 10px", fontWeight: 700,
                       border: "none", borderRadius: "var(--radius)", cursor: "pointer",
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", lineHeight: 1.1,
                     }}
                     onClick={() => {
                       setMontoRecibido(total.toFixed(2));
@@ -1389,9 +1429,30 @@ export default function PuntoVenta() {
                     }}
                     disabled={carrito.length === 0}
                   >
-                    Exacto
+                    <span>Exacto</span>
+                    <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.85 }}>F8</span>
                   </button>
                 </div>
+                {/* Denominaciones rapidas: monto > total cercano */}
+                {total > 0 && (() => {
+                  const base = Math.ceil((total + 0.01) / 5) * 5;
+                  const opciones = [base, base + 5, base + 15];
+                  return (
+                    <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                      {opciones.map((monto) => (
+                        <button
+                          key={monto}
+                          type="button"
+                          className="btn btn-outline"
+                          title={`Cliente paga $${monto.toFixed(2)} - cambio $${(monto - total).toFixed(2)}`}
+                          style={{ flex: 1, fontSize: 11, padding: "5px 0", fontWeight: 700 }}
+                          onClick={() => setMontoRecibido(monto.toFixed(2))}>
+                          ${monto}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -1689,6 +1750,72 @@ export default function PuntoVenta() {
           </div>
         </div>
       )}
+
+      {/* Modal Descuento por item */}
+      {descuentoItemId !== null && (() => {
+        const item = carrito.find(i => i.producto_id === descuentoItemId);
+        if (!item) return null;
+        const baseItem = item.cantidad * item.precio_unitario;
+        const descCalc = descuentoTipo === "porcentaje"
+          ? (baseItem * (parseFloat(descuentoValor || "0") / 100))
+          : parseFloat(descuentoValor || "0");
+        const descClampeado = Math.max(0, Math.min(baseItem, descCalc));
+        const finalSubtotal = baseItem - descClampeado;
+        const aplicar = () => {
+          aplicarDescuentoItem(descuentoItemId, descClampeado);
+          setDescuentoItemId(null); setDescuentoValor("");
+        };
+        const quitar = () => {
+          aplicarDescuentoItem(descuentoItemId, 0);
+          setDescuentoItemId(null); setDescuentoValor("");
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setDescuentoItemId(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+              <div className="modal-header"><h3>Descuento - {item.nombre}</h3></div>
+              <div className="modal-body">
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  <button className={descuentoTipo === "porcentaje" ? "btn btn-primary" : "btn btn-outline"} style={{ flex: 1 }}
+                    onClick={() => { setDescuentoTipo("porcentaje"); setDescuentoValor(""); }}>
+                    Porcentaje (%)
+                  </button>
+                  <button className={descuentoTipo === "monto" ? "btn btn-primary" : "btn btn-outline"} style={{ flex: 1 }}
+                    onClick={() => { setDescuentoTipo("monto"); setDescuentoValor(""); }}>
+                    Monto fijo ($)
+                  </button>
+                </div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  {descuentoTipo === "porcentaje" ? "Porcentaje de descuento" : "Monto a descontar"}
+                </label>
+                <input className="input" type="number" step="0.01" min="0"
+                  placeholder={descuentoTipo === "porcentaje" ? "Ej: 10 (= 10%)" : "Ej: 0.50"}
+                  value={descuentoValor}
+                  onChange={(e) => setDescuentoValor(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") aplicar(); }}
+                  autoFocus />
+                <div style={{ marginTop: 12, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, fontSize: 12 }}>
+                  <div className="flex justify-between"><span>Base ({item.cantidad} x ${item.precio_unitario.toFixed(2)})</span><span>${baseItem.toFixed(2)}</span></div>
+                  <div className="flex justify-between" style={{ color: "var(--color-warning)" }}><span>Descuento</span><span>-${descClampeado.toFixed(2)}</span></div>
+                  <div className="flex justify-between" style={{ borderTop: "1px solid var(--color-border)", marginTop: 6, paddingTop: 6, fontWeight: 700 }}>
+                    <span>Subtotal del item</span><span>${finalSubtotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                {item.descuento > 0 && (
+                  <button className="btn btn-outline" onClick={quitar} style={{ color: "var(--color-danger)" }}>
+                    Quitar descuento
+                  </button>
+                )}
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <button className="btn btn-outline" onClick={() => setDescuentoItemId(null)}>Cancelar</button>
+                  <button className="btn btn-primary" onClick={aplicar}>Aplicar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Información Adicional */}
       {infoAdicionalProductoId !== null && (() => {

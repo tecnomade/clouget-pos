@@ -715,19 +715,20 @@ export default function VentasDia() {
                           {v.tipo_documento === "NOTA_VENTA" && (esAdmin || tienePermiso("crear_nota_credito")) && (
                             !notasCredito.some(nc => nc.venta_id === v.id) ? (
                               <button className="btn btn-outline" style={{
-                                padding: "2px 6px", fontSize: 10,
-                                color: "var(--color-warning)", borderColor: "rgba(245, 158, 11, 0.4)",
+                                padding: "2px 8px", fontSize: 10, fontWeight: 600,
+                                color: "var(--color-warning)", borderColor: "var(--color-warning)",
+                                background: "rgba(245, 158, 11, 0.08)",
                               }}
-                                title="Crear Devolucion"
+                                title="Devolver productos (parcial o total) y reponer al stock"
                                 onClick={() => v.id && setNcVenta({ id: v.id, numero: v.numero, esDevolucion: true })}>
-                                Dev.
+                                ↩ Devolver
                               </button>
                             ) : (
                               <span style={{
-                                fontSize: 9, padding: "2px 5px", borderRadius: 3,
-                                background: "rgba(245, 158, 11, 0.1)", color: "var(--color-warning)", fontWeight: 600,
-                              }} title="Ya tiene devolucion">
-                                Dev.
+                                fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                                background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)", fontWeight: 600,
+                              }} title="Esta venta ya tiene una devolucion registrada">
+                                ↩ Devuelto
                               </span>
                             )
                           )}

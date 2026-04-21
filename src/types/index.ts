@@ -26,6 +26,7 @@ export interface ProductoTactil {
   nombre: string;
   precio_venta: number;
   iva_porcentaje: number;
+  incluye_iva?: boolean;
   stock_actual: number;
   categoria_id?: number;
   categoria_nombre?: string;

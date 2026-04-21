@@ -433,7 +433,7 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
 
     let mut stmt = conn
         .prepare(
-            "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.stock_actual,
+            "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva, p.stock_actual,
                     p.categoria_id, c.nombre, p.imagen
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
@@ -449,10 +449,11 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 nombre: row.get(1)?,
                 precio_venta: row.get(2)?,
                 iva_porcentaje: row.get(3)?,
-                stock_actual: row.get(4)?,
-                categoria_id: row.get(5)?,
-                categoria_nombre: row.get(6)?,
-                imagen: row.get(7)?,
+                incluye_iva: row.get::<_, i32>(4)? != 0,
+                stock_actual: row.get(5)?,
+                categoria_id: row.get(6)?,
+                categoria_nombre: row.get(7)?,
+                imagen: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?

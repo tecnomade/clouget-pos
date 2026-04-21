@@ -132,12 +132,40 @@ function FormProducto({
   return (
     <form onSubmit={handleSubmit}
       onKeyDown={(e) => {
+        // Ctrl+S o Ctrl+Enter: guardar
+        if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S" || e.key === "Enter")) {
+          e.preventDefault();
+          handleSubmit(e as any);
+          return;
+        }
         // Prevenir submit accidental con Enter (lector de código de barras, etc.)
-        // Solo Ctrl+Enter o el botón de guardar submitean
         if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA" && (e.target as HTMLElement).tagName !== "BUTTON") {
           e.preventDefault();
         }
       }}>
+      {/* Botones de accion fijos arriba (acceso rapido sin scroll) */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 5,
+        background: "var(--color-surface)",
+        padding: "8px 0", marginBottom: 12,
+        borderBottom: "1px solid var(--color-border)",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text)" }}>
+          {form.id ? `Editar Producto: ${form.nombre}` : "Nuevo Producto"}
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 8, fontWeight: 400 }}>
+            Ctrl+S para guardar
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" className="btn btn-outline" onClick={onCancelar} style={{ padding: "6px 14px", fontSize: 12 }}>
+            Cancelar
+          </button>
+          <button type="submit" className="btn btn-primary" style={{ padding: "6px 18px", fontSize: 12, fontWeight: 700 }}>
+            {form.id ? "Actualizar" : "Guardar"}
+          </button>
+        </div>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Nombre *</label>
