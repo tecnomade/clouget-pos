@@ -518,6 +518,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
                         if s.is_empty() { None } else { Some(s) }
                     },
                     tipo_estado: None,
+                    anulada: None,
                     guia_placa: None,
                     guia_chofer: None,
                     guia_direccion_destino: None,

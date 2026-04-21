@@ -416,6 +416,7 @@ pub fn listar_ventas_periodo(
                 banco_nombre: row.get(23).ok(),
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
             })
         })
         .map_err(|e| e.to_string())?

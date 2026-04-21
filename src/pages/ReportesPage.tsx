@@ -41,6 +41,7 @@ export default function ReportesPage() {
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
   const [busquedaInv, setBusquedaInv] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK">("TODOS");
+  const [filtroCategoriaInv, setFiltroCategoriaInv] = useState<string>("TODAS");
   const [desde, setDesde] = useState(inicioMes());
   const [hasta, setHasta] = useState(hoy());
   const [utilidad, setUtilidad] = useState<ReporteUtilidad | null>(null);
@@ -249,10 +250,19 @@ export default function ReportesPage() {
         ])
       );
     } else if (inventario) {
+      // Respetar filtros activos al exportar
+      const filtrados = inventario.productos
+        .filter((p: any) => filtroEstado === "TODOS" || p.estado_stock === filtroEstado)
+        .filter((p: any) => filtroCategoriaInv === "TODAS" || p.categoria === filtroCategoriaInv)
+        .filter((p: any) => !busquedaInv || p.nombre.toLowerCase().includes(busquedaInv.toLowerCase()) || (p.codigo || "").toLowerCase().includes(busquedaInv.toLowerCase()));
+      const sufijoFiltro = [
+        filtroCategoriaInv !== "TODAS" ? filtroCategoriaInv.replace(/[^a-zA-Z0-9]/g, "_") : null,
+        filtroEstado !== "TODOS" ? filtroEstado : null,
+      ].filter(Boolean).join("-");
       exportarCsvGeneric(
-        `inventario-valorizado-${hoy()}.csv`,
+        `inventario-valorizado${sufijoFiltro ? "-" + sufijoFiltro : ""}-${hoy()}.csv`,
         ["Codigo", "Producto", "Categoria", "Stock Actual", "Stock Minimo", "Precio Costo", "Precio Venta", "Valor Costo", "Valor Venta", "Utilidad Potencial", "Estado Stock"],
-        inventario.productos.map((p: any) => [
+        filtrados.map((p: any) => [
           p.codigo || "", p.nombre, p.categoria || "",
           p.stock_actual, p.stock_minimo,
           p.precio_costo.toFixed(2), p.precio_venta.toFixed(2),
@@ -865,16 +875,29 @@ export default function ReportesPage() {
                   )}
                 </div>
               )}
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <input className="input" style={{ flex: 1 }} placeholder="Buscar producto..."
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                <input className="input" style={{ flex: 1, minWidth: 200 }} placeholder="Buscar producto o codigo..."
                   value={busquedaInv} onChange={(e) => setBusquedaInv(e.target.value)} />
-                <select className="input" style={{ width: 180 }}
+                <select className="input" style={{ width: 200 }}
+                  value={filtroCategoriaInv} onChange={(e) => setFiltroCategoriaInv(e.target.value)}>
+                  <option value="TODAS">Todas las categorias</option>
+                  {Array.from(new Set(inventario.productos.map((p: any) => p.categoria).filter(Boolean)))
+                    .sort()
+                    .map((c: any) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select className="input" style={{ width: 170 }}
                   value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value as any)}>
                   <option value="TODOS">Todos los estados</option>
                   <option value="OK">Stock OK</option>
                   <option value="BAJO">Stock bajo</option>
                   <option value="SIN_STOCK">Sin stock</option>
                 </select>
+                {(filtroCategoriaInv !== "TODAS" || filtroEstado !== "TODOS" || busquedaInv) && (
+                  <button className="btn btn-outline" style={{ fontSize: 11 }}
+                    onClick={() => { setFiltroCategoriaInv("TODAS"); setFiltroEstado("TODOS"); setBusquedaInv(""); }}>
+                    Limpiar filtros
+                  </button>
+                )}
               </div>
               <div className="card">
                 <table className="table" style={{ width: "100%" }}>
@@ -889,6 +912,7 @@ export default function ReportesPage() {
                   <tbody>
                     {inventario.productos
                       .filter((p: any) => filtroEstado === "TODOS" || p.estado_stock === filtroEstado)
+                      .filter((p: any) => filtroCategoriaInv === "TODAS" || p.categoria === filtroCategoriaInv)
                       .filter((p: any) => !busquedaInv || p.nombre.toLowerCase().includes(busquedaInv.toLowerCase()) || (p.codigo || "").toLowerCase().includes(busquedaInv.toLowerCase()))
                       .map((p: any) => (
                       <tr key={p.id}>

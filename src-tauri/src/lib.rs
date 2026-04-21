@@ -128,6 +128,7 @@ pub fn run() {
             commands::ventas::obtener_venta,
             commands::ventas::registrar_nota_credito,
             commands::ventas::crear_devolucion_interna,
+            commands::ventas::anular_venta,
             commands::ventas::listar_notas_credito_dia,
             commands::ventas::listar_notas_credito,
             commands::ventas::listar_ventas_sesion_caja,

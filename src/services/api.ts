@@ -766,6 +766,9 @@ export async function listarNotasCreditoSesionCaja(): Promise<NotaCreditoInfo[]>
   return smartInvoke("listar_notas_credito_sesion_caja");
 }
 
+export const anularVenta = (ventaId: number, motivo: string) =>
+  smartInvoke<void>("anular_venta", { ventaId, motivo });
+
 export const crearDevolucionInterna = (ventaId: number, motivo: string, items: any[]) =>
   smartInvoke<any>("crear_devolucion_interna", { ventaId, motivo, items });
 

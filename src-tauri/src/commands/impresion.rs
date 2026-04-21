@@ -43,6 +43,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     banco_nombre: None,
                     tipo_estado: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
                 })
             },
         )
@@ -166,6 +167,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     banco_nombre: None,
                     tipo_estado: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
                 })
             },
         )
@@ -1230,6 +1232,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                     guia_placa: row.get(22).ok(),
                     guia_chofer: row.get(23).ok(),
                     guia_direccion_destino: row.get(24).ok(),
+                anulada: None,
                 })
             },
         )

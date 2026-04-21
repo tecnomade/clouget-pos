@@ -383,6 +383,7 @@ pub fn registrar_venta(
             banco_nombre: None,
             tipo_estado: None,
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
         },
         detalles: detalles_guardados,
         cliente_nombre,
@@ -429,11 +430,12 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
              v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
              v.numero_factura, v.establecimiento, v.punto_emision,
              v.banco_id, v.referencia_pago, cb.nombre as banco_nombre,
-             COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado
+             COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado,
+             COALESCE(v.anulada, 0) as anulada
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
-             WHERE date(v.fecha) = date(?1) AND v.anulada = 0
-             ORDER BY v.fecha DESC",
+             WHERE date(v.fecha) = date(?1)
+             ORDER BY v.anulada ASC, v.fecha DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -465,6 +467,7 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
                 tipo_estado: row.get(24).ok(),
+                anulada: row.get::<_, i64>(25).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
             })
         })
@@ -517,6 +520,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     referencia_pago: row.get(22).ok(),
                     banco_nombre: row.get(23).ok(),
                     tipo_estado: None,
+                    anulada: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 })
             },
@@ -640,6 +644,7 @@ pub fn listar_ventas_sesion_caja(
                 banco_nombre: row.get(23).ok(),
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1024,17 +1029,21 @@ pub fn crear_devolucion_interna(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Validar que la venta existe y es NOTA_VENTA (no FACTURA)
-    let (venta_numero, cliente_id, tipo_doc): (String, i64, String) = conn
+    // Validar que la venta existe y NO esta autorizada por SRI
+    // Politica: NOTA_VENTA y FACTURA_NO_AUTORIZADA se tratan igual (devolucion interna).
+    // Solo FACTURA AUTORIZADA requiere NC electronica SRI.
+    let (venta_numero, cliente_id, tipo_doc, estado_sri): (String, i64, String, String) = conn
         .query_row(
-            "SELECT numero, COALESCE(cliente_id, 1), tipo_documento FROM ventas WHERE id = ?1 AND anulada = 0",
+            "SELECT numero, COALESCE(cliente_id, 1), tipo_documento, COALESCE(estado_sri, 'NO_APLICA')
+             FROM ventas WHERE id = ?1 AND anulada = 0",
             rusqlite::params![venta_id],
-            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| "Venta no encontrada o anulada".to_string())?;
 
-    if tipo_doc == "FACTURA" {
-        return Err("Para facturas electrónicas use la opción de Nota de Crédito SRI".to_string());
+    // Solo bloquear si es FACTURA YA AUTORIZADA por el SRI
+    if tipo_doc == "FACTURA" && estado_sri == "AUTORIZADA" {
+        return Err("Esta factura ya fue autorizada por el SRI. Debe crear una Nota de Credito electronica.".to_string());
     }
 
     // Validar que no exista ya una NC/devolución para esta venta
@@ -1380,6 +1389,7 @@ fn guardar_documento_pendiente(
             banco_id: None, referencia_pago: None, banco_nombre: None,
             tipo_estado: Some(tipo_estado.to_string()),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
         },
         detalles: detalles_guardados, cliente_nombre,
     })
@@ -1571,6 +1581,7 @@ pub fn guardar_guia_remision(
             tipo_estado: Some("GUIA_REMISION".to_string()),
             guia_placa: venta.guia_placa, guia_chofer: venta.guia_chofer,
             guia_direccion_destino: venta.guia_direccion_destino,
+                anulada: None,
         },
         detalles: detalles_guardados, cliente_nombre,
     })
@@ -1654,6 +1665,7 @@ pub fn listar_guias_remision(
             banco_nombre: row.get(23).ok(),
             tipo_estado: row.get(24).ok(),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
@@ -1844,6 +1856,7 @@ pub fn convertir_guia_a_venta(
                 banco_nombre: row.get(23).ok(),
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
             })
         },
     ).map_err(|e| e.to_string())?;
@@ -2004,6 +2017,146 @@ pub fn cambiar_estado_guia(
         "UPDATE ventas SET estado = ?1 WHERE id = ?2 AND tipo_estado = 'GUIA_REMISION'",
         rusqlite::params![nuevo_estado, guia_id],
     ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Anula una venta NO autorizada por el SRI (FACTURA PENDIENTE/RECHAZADA o NOTA_VENTA).
+/// Reintegra el stock, elimina CXC/pagos asociados y marca anulada=1.
+/// Si la factura esta AUTORIZADA por SRI, NO permite anular (debe usar Nota de Credito).
+#[tauri::command]
+pub fn anular_venta(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    venta_id: i64,
+    motivo: String,
+) -> Result<(), String> {
+    // Verificar sesion y permisos (solo admin o con permiso crear_nota_credito)
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesion".to_string())?;
+    let usuario_rol = sesion_actual.rol.clone();
+    let usuario_permisos = sesion_actual.permisos.clone();
+    let usuario_nombre = sesion_actual.nombre.clone();
+    drop(sesion_guard);
+
+    if usuario_rol != "ADMIN" {
+        let tiene_permiso = serde_json::from_str::<serde_json::Value>(&usuario_permisos)
+            .ok()
+            .and_then(|v| v.get("crear_nota_credito")?.as_bool())
+            .unwrap_or(false);
+        if !tiene_permiso {
+            return Err("No tiene permisos para anular ventas".to_string());
+        }
+    }
+
+    if motivo.trim().is_empty() {
+        return Err("Debe ingresar un motivo para la anulacion".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Leer venta
+    let (estado_sri, _tipo_documento, anulada, numero, total): (String, String, i32, String, f64) = conn.query_row(
+        "SELECT COALESCE(estado_sri, 'NO_APLICA'), tipo_documento, anulada, numero, total FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+    ).map_err(|_| "Venta no encontrada".to_string())?;
+
+    if anulada != 0 {
+        return Err("La venta ya esta anulada".to_string());
+    }
+    if estado_sri == "AUTORIZADA" {
+        return Err("No se puede anular una factura AUTORIZADA por el SRI. Debe crear una Nota de Credito.".to_string());
+    }
+
+    // Multi-almacen: obtener est_id para revertir stock por establecimiento
+    let multi_almacen: bool = conn
+        .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let est_id: Option<i64> = if multi_almacen {
+        let terminal_est: String = conn.query_row(
+            "SELECT value FROM config WHERE key = 'terminal_establecimiento'", [],
+            |row| row.get(0)
+        ).unwrap_or_else(|_| "001".to_string());
+        conn.query_row(
+            "SELECT id FROM establecimientos WHERE codigo = ?1",
+            rusqlite::params![terminal_est], |row| row.get(0)
+        ).ok()
+    } else { None };
+
+    // Reintegrar stock de cada item (considerando factor_unidad para multi-unidad)
+    let mut stmt = conn.prepare(
+        "SELECT producto_id, cantidad, COALESCE(factor_unidad, 1) as factor FROM venta_detalles WHERE venta_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    let items: Vec<(i64, f64, f64)> = stmt.query_map(rusqlite::params![venta_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    }).map_err(|e| e.to_string())?
+    .filter_map(|r| r.ok())
+    .collect();
+    drop(stmt);
+
+    for (prod_id, cant, factor) in &items {
+        let cant_base = cant * factor;
+        let omite: bool = conn.query_row(
+            "SELECT (COALESCE(es_servicio, 0) + COALESCE(no_controla_stock, 0)) > 0 FROM productos WHERE id = ?1",
+            rusqlite::params![prod_id],
+            |row| row.get::<_, i64>(0).map(|v| v > 0)
+        ).unwrap_or(false);
+        if omite { continue; }
+
+        let stock_antes: f64 = conn.query_row(
+            "SELECT stock_actual FROM productos WHERE id = ?1",
+            rusqlite::params![prod_id], |row| row.get(0)
+        ).unwrap_or(0.0);
+        conn.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+            rusqlite::params![cant_base, prod_id]
+        ).ok();
+
+        if let Some(eid) = est_id {
+            conn.execute(
+                "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                 WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                rusqlite::params![cant_base, prod_id, eid]
+            ).ok();
+        }
+
+        conn.execute(
+            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario, referencia_id, establecimiento_id)
+             VALUES (?1, 'ANULACION_VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![prod_id, cant_base, stock_antes, stock_antes + cant_base,
+                format!("Anulacion venta {} - {}", numero, motivo.trim()), usuario_nombre, venta_id, est_id]
+        ).ok();
+    }
+
+    // Eliminar CXC y sus pagos
+    conn.execute("DELETE FROM pagos_cuenta WHERE cuenta_id IN (SELECT id FROM cuentas_por_cobrar WHERE venta_id = ?1)",
+        rusqlite::params![venta_id]).ok();
+    conn.execute("DELETE FROM cuentas_por_cobrar WHERE venta_id = ?1",
+        rusqlite::params![venta_id]).ok();
+
+    // Eliminar pagos mixtos de esta venta
+    conn.execute("DELETE FROM pagos_venta WHERE venta_id = ?1",
+        rusqlite::params![venta_id]).ok();
+
+    // Marcar venta como anulada
+    let obs_anulacion = format!("ANULADA por {}: {}", usuario_nombre, motivo.trim());
+    conn.execute(
+        "UPDATE ventas SET anulada = 1, estado = 'ANULADA',
+         observacion = COALESCE(observacion || ' | ', '') || ?1
+         WHERE id = ?2",
+        rusqlite::params![obs_anulacion, venta_id]
+    ).map_err(|e| e.to_string())?;
+
+    // Restar del monto_ventas de la caja abierta
+    conn.execute(
+        "UPDATE caja SET monto_ventas = monto_ventas - ?1
+         WHERE estado = 'ABIERTA'",
+        rusqlite::params![total]
+    ).ok();
 
     Ok(())
 }

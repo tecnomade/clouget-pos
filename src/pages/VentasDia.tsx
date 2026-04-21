@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -45,6 +45,9 @@ export default function VentasDia() {
   // Modal: forma de pago para SRI cuando la venta es a credito/mixto
   const [sriPagoVenta, setSriPagoVenta] = useState<{ id: number; numero: string } | null>(null);
   const [sriFormaPagoCredito, setSriFormaPagoCredito] = useState<string>("20");
+  // Modal: anular venta
+  const [anularVentaModal, setAnularVentaModal] = useState<{ id: number; numero: string } | null>(null);
+  const [anularMotivo, setAnularMotivo] = useState<string>("");
   const [reintentandoEmail, setReintentandoEmail] = useState<number | null>(null);
   const [emailVenta, setEmailVenta] = useState<Venta | null>(null);
   const [enviandoEmail, setEnviandoEmail] = useState(false);
@@ -722,7 +725,21 @@ export default function VentasDia() {
                               )}
                             </>
                           )}
-                          {v.tipo_documento === "NOTA_VENTA" && (esAdmin || tienePermiso("crear_nota_credito")) && (
+                          {/* Anular: para ventas no autorizadas (NOTA_VENTA siempre, FACTURA pendiente/rechazada) */}
+                          {v.anulada !== 1 && v.estado_sri !== "AUTORIZADA" && (esAdmin || tienePermiso("crear_nota_credito")) && (
+                            <button className="btn btn-outline" style={{
+                              padding: "2px 8px", fontSize: 10, fontWeight: 600,
+                              color: "var(--color-danger)", borderColor: "var(--color-danger)",
+                              background: "rgba(239, 68, 68, 0.08)",
+                            }}
+                              title="Anular la venta completa y reintegrar stock"
+                              onClick={() => v.id && setAnularVentaModal({ id: v.id, numero: v.numero })}>
+                              🗑 Anular
+                            </button>
+                          )}
+                          {/* Devolver: para ventas no autorizadas (NOTA_VENTA siempre, FACTURA pendiente/rechazada)
+                               Devolucion parcial o total con restitucion de stock */}
+                          {v.anulada !== 1 && v.estado_sri !== "AUTORIZADA" && (esAdmin || tienePermiso("crear_nota_credito")) && (
                             !notasCredito.some(nc => nc.venta_id === v.id) ? (
                               <button className="btn btn-outline" style={{
                                 padding: "2px 8px", fontSize: 10, fontWeight: 600,
@@ -741,6 +758,14 @@ export default function VentasDia() {
                                 ↩ Devuelto
                               </span>
                             )
+                          )}
+                          {v.anulada === 1 && (
+                            <span style={{
+                              fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                              background: "rgba(239, 68, 68, 0.15)", color: "var(--color-danger)", fontWeight: 700,
+                            }} title={v.observacion || "Anulada"}>
+                              🗑 Anulada
+                            </span>
                           )}
                           <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 11 }}
                             onClick={() => {
@@ -890,6 +915,53 @@ export default function VentasDia() {
           toastError={toastError}
           toastWarning={toastWarning}
         />
+      )}
+
+      {/* Modal: anular venta (solo ventas no autorizadas) */}
+      {anularVentaModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setAnularVentaModal(null); setAnularMotivo(""); } }}>
+          <div className="card" style={{ width: 460 }}>
+            <div className="card-header" style={{ color: "var(--color-danger)" }}>⚠ Anular Venta {anularVentaModal.numero}</div>
+            <div className="card-body">
+              <div style={{ padding: 10, background: "rgba(239,68,68,0.1)", borderRadius: 6, marginBottom: 12, fontSize: 12 }}>
+                <strong>Esta accion:</strong>
+                <ul style={{ margin: "6px 0", paddingLeft: 20, lineHeight: 1.6 }}>
+                  <li>Marca la venta como <strong>ANULADA</strong></li>
+                  <li>Reintegra el stock de cada producto</li>
+                  <li>Elimina la cuenta por cobrar si existiera</li>
+                  <li>Elimina los pagos registrados</li>
+                  <li>Descuenta el monto del total de ventas de la caja</li>
+                </ul>
+                <em style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  No se puede deshacer. Si solo desea devolver parte de los productos, use "Devolver" en su lugar.
+                </em>
+              </div>
+              <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
+                Motivo de la anulacion <span style={{ color: "var(--color-danger)" }}>*</span>
+              </label>
+              <textarea className="input" rows={3} autoFocus
+                placeholder="Ej: Venta duplicada, error del cajero, cliente cancelo..."
+                value={anularMotivo}
+                onChange={(e) => setAnularMotivo(e.target.value)} />
+              <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                <button className="btn btn-outline" onClick={() => { setAnularVentaModal(null); setAnularMotivo(""); }}>Cancelar</button>
+                <button className="btn btn-danger"
+                  disabled={!anularMotivo.trim()}
+                  onClick={async () => {
+                    try {
+                      await anularVenta(anularVentaModal.id, anularMotivo.trim());
+                      toastExito(`Venta ${anularVentaModal.numero} anulada`);
+                      setAnularVentaModal(null); setAnularMotivo("");
+                      await cargar();
+                    } catch (err) { toastError("Error: " + err); }
+                  }}>
+                  Confirmar anulacion
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal: forma de pago para SRI cuando venta es a credito o mixto */}

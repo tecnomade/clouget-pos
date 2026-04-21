@@ -117,6 +117,7 @@ export interface Venta {
   referencia_pago?: string;
   banco_nombre?: string;
   tipo_estado?: string;
+  anulada?: number;
   guia_placa?: string;
   guia_chofer?: string;
   guia_direccion_destino?: string;

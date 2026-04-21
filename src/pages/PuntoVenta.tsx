@@ -141,28 +141,30 @@ export default function PuntoVenta() {
     });
   };
 
-  const editarPrecioItem = (productoId: number, nuevoPrecio: number) => {
+  // Las funciones reciben INDEX del array para soportar multiples items del mismo producto
+  // con distintas unidades (ej. Cerveza UND y Cerveza SIXPACK como items separados)
+  const editarPrecioItem = (idx: number, nuevoPrecio: number) => {
     if (nuevoPrecio < 0) return;
-    setCarrito(prev => prev.map(i =>
-      i.producto_id === productoId
+    setCarrito(prev => prev.map((i, k) =>
+      k === idx
         ? { ...i, precio_unitario: nuevoPrecio, subtotal: i.cantidad * nuevoPrecio - i.descuento, lista_seleccionada: undefined }
         : i
     ));
   };
 
-  const editarIvaItem = (productoId: number, nuevoIva: number) => {
-    setCarrito(prev => prev.map(i =>
-      i.producto_id === productoId
+  const editarIvaItem = (idx: number, nuevoIva: number) => {
+    setCarrito(prev => prev.map((i, k) =>
+      k === idx
         ? { ...i, iva_porcentaje: nuevoIva, subtotal: i.cantidad * i.precio_unitario - i.descuento }
         : i
     ));
   };
 
   // Descuento por item: monto fijo o porcentaje sobre cantidad * precio_unitario
-  const aplicarDescuentoItem = (productoId: number, descuento: number) => {
+  const aplicarDescuentoItem = (idx: number, descuento: number) => {
     if (descuento < 0) return;
-    setCarrito(prev => prev.map(i =>
-      i.producto_id === productoId
+    setCarrito(prev => prev.map((i, k) =>
+      k === idx
         ? { ...i, descuento, subtotal: i.cantidad * i.precio_unitario - descuento }
         : i
     ));
@@ -325,8 +327,12 @@ export default function PuntoVenta() {
 
     const precioEfectivo = unidadElegida?.precio ?? producto.precio_lista ?? producto.precio_venta;
 
-    // Check if already in cart
-    const existente = carrito.find((i) => i.producto_id === producto.id);
+    // Check if already in cart MISMA unidad: solo agrupar si tiene la MISMA presentacion
+    // (si alguno ya en carrito es SIXPACK y ahora agregas UND, son items separados)
+    const unidadId = unidadElegida?.id ?? null;
+    const existente = carrito.find((i) =>
+      i.producto_id === producto.id && (i.unidad_id ?? null) === unidadId
+    );
     if (existente) {
       setCarrito((prev) =>
         prev.map((i) =>
@@ -396,22 +402,22 @@ export default function PuntoVenta() {
     } catch { /* ignore */ }
   };
 
-  const actualizarCantidad = (productoId: number, cantidad: number) => {
+  const actualizarCantidad = (idx: number, cantidad: number) => {
     if (cantidad <= 0) {
-      setCarrito((prev) => prev.filter((i) => i.producto_id !== productoId));
+      setCarrito((prev) => prev.filter((_, k) => k !== idx));
       return;
     }
     setCarrito((prev) =>
-      prev.map((i) =>
-        i.producto_id === productoId
+      prev.map((i, k) =>
+        k === idx
           ? { ...i, cantidad, subtotal: cantidad * i.precio_unitario - i.descuento }
           : i
       )
     );
   };
 
-  const eliminarItem = (productoId: number) => {
-    setCarrito((prev) => prev.filter((i) => i.producto_id !== productoId));
+  const eliminarItem = (idx: number) => {
+    setCarrito((prev) => prev.filter((_, k) => k !== idx));
   };
 
   // Cálculo correcto considerando si el precio del producto YA incluye IVA o no
@@ -1280,8 +1286,8 @@ export default function PuntoVenta() {
 
             {/* Cart items list - scrollable */}
             <div style={{ flex: 1, overflowY: "auto", marginBottom: 12 }}>
-              {carrito.map((item) => (
-                <div key={item.producto_id} style={{
+              {carrito.map((item, idx) => (
+                <div key={`${item.producto_id}-${item.unidad_id ?? 0}-${idx}`} style={{
                   padding: "6px 0", borderBottom: "1px solid var(--color-border)",
                 }}>
                   {/* Una sola fila compacta */}
@@ -1289,7 +1295,7 @@ export default function PuntoVenta() {
                     <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
                       title="Click para agregar información adicional"
                       onClick={() => {
-                        setInfoAdicionalProductoId(item.producto_id);
+                        setInfoAdicionalProductoId(idx as any);
                         // Parsear info existente
                         const info = item.info_adicional || "";
                         const serieMatch = info.match(/Serie:\s*([^|]*)/i);
@@ -1311,11 +1317,11 @@ export default function PuntoVenta() {
                     <span style={{ color: "var(--color-primary)", cursor: tienePermiso("editar_precio") ? "pointer" : "default", fontSize: 11, flexShrink: 0 }}
                       onClick={() => {
                         if (!tienePermiso("editar_precio")) {
-                          solicitarPinAdmin().then(ok => { if (ok) { const p = prompt("Nuevo precio:", String(item.precio_unitario)); if (p) editarPrecioItem(item.producto_id, parseFloat(p)); }});
+                          solicitarPinAdmin().then(ok => { if (ok) { const p = prompt("Nuevo precio:", String(item.precio_unitario)); if (p) editarPrecioItem(idx, parseFloat(p)); }});
                           return;
                         }
                         const p = prompt("Nuevo precio:", String(item.precio_unitario));
-                        if (p) editarPrecioItem(item.producto_id, parseFloat(p));
+                        if (p) editarPrecioItem(idx, parseFloat(p));
                       }}>
                       ${item.precio_unitario.toFixed(2)}
                     </span>
@@ -1323,7 +1329,7 @@ export default function PuntoVenta() {
                       value={item.iva_porcentaje}
                       onChange={(e) => {
                         if (!tienePermiso("editar_precio")) { toastError("Sin permiso"); return; }
-                        editarIvaItem(item.producto_id, parseFloat(e.target.value));
+                        editarIvaItem(idx, parseFloat(e.target.value));
                       }}>
                       <option value="0">0%</option>
                       <option value="15">15%</option>
@@ -1341,7 +1347,7 @@ export default function PuntoVenta() {
                         flexShrink: 0, fontSize: 12, fontWeight: 700,
                       }}
                       onClick={() => {
-                        setDescuentoItemId(item.producto_id);
+                        setDescuentoItemId(idx as any);
                         if (item.descuento > 0) {
                           setDescuentoTipo("monto");
                           setDescuentoValor(item.descuento.toFixed(2));
@@ -1351,13 +1357,13 @@ export default function PuntoVenta() {
                         }
                       }}>%</button>
                     <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}
-                      onClick={() => actualizarCantidad(item.producto_id, item.cantidad - 1)}>-</button>
+                      onClick={() => actualizarCantidad(idx, item.cantidad - 1)}>-</button>
                     <span style={{ minWidth: 18, textAlign: "center", fontSize: 13, flexShrink: 0 }}>{item.cantidad}</span>
                     <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}
-                      onClick={() => actualizarCantidad(item.producto_id, item.cantidad + 1)}>+</button>
+                      onClick={() => actualizarCantidad(idx, item.cantidad + 1)}>+</button>
                     <span style={{ minWidth: 50, textAlign: "right", fontWeight: 600, fontSize: 12, flexShrink: 0 }}>${item.subtotal.toFixed(2)}</span>
                     <button title="Eliminar" style={{ color: "var(--color-danger)", cursor: "pointer", background: "none", border: "none", fontSize: 15, padding: "0 2px", flexShrink: 0 }}
-                      onClick={() => eliminarItem(item.producto_id)}>×</button>
+                      onClick={() => eliminarItem(idx)}>×</button>
                   </div>
                 </div>
               ))}
@@ -2085,7 +2091,7 @@ export default function PuntoVenta() {
 
       {/* Modal Descuento por item */}
       {descuentoItemId !== null && (() => {
-        const item = carrito.find(i => i.producto_id === descuentoItemId);
+        const item = carrito[descuentoItemId];
         if (!item) return null;
         const baseItem = item.cantidad * item.precio_unitario;
         const descCalc = descuentoTipo === "porcentaje"
@@ -2157,7 +2163,7 @@ export default function PuntoVenta() {
           if (infoLote.trim()) partes.push(`Lote: ${infoLote.trim()}`);
           if (infoObservacion.trim()) partes.push(`Obs: ${infoObservacion.trim()}`);
           const valor = partes.join(" | ") || undefined;
-          setCarrito(prev => prev.map(i => i.producto_id === infoAdicionalProductoId ? { ...i, info_adicional: valor } : i));
+          setCarrito(prev => prev.map((i, k) => k === infoAdicionalProductoId ? { ...i, info_adicional: valor } : i));
           setInfoAdicionalProductoId(null);
         };
         return (
@@ -2192,7 +2198,7 @@ export default function PuntoVenta() {
               <div className="modal-footer">
                 <button className="btn btn-outline" onClick={() => {
                   setInfoSerie(""); setInfoLote(""); setInfoObservacion("");
-                  setCarrito(prev => prev.map(i => i.producto_id === infoAdicionalProductoId ? { ...i, info_adicional: undefined } : i));
+                  setCarrito(prev => prev.map((i, k) => k === infoAdicionalProductoId ? { ...i, info_adicional: undefined } : i));
                   setInfoAdicionalProductoId(null);
                 }}>Limpiar</button>
                 <button className="btn btn-primary" onClick={guardarInfo}>Guardar</button>

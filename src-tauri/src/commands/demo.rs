@@ -669,6 +669,41 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         rusqlite::params![venta_cred2],
     );
 
+    // --- Venta ANULADA (caso de error del cajero) ---
+    let _ = conn.execute(
+        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva, descuento, total, forma_pago, monto_recibido, cambio, tipo_documento, estado, estado_sri, usuario, fecha, anulada, observacion)
+         VALUES ('NV-000090', 3, 12.00, 0, 0, 0, 12.00, 'EFECTIVO', 12.00, 0, 'NOTA_VENTA', 'ANULADA', 'NO_APLICA', 'Cajero', datetime('now', 'localtime', '-1 days'), 1, 'ANULADA por Cajero: Venta duplicada por error')",
+        [],
+    );
+    let venta_anulada = conn.last_insert_rowid();
+    if venta_anulada > 0 {
+        let _ = conn.execute(
+            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, precio_costo)
+             VALUES (?1, 1, 8, 1.50, 0, 0, 12.00, 1.10)",
+            rusqlite::params![venta_anulada],
+        );
+    }
+
+    // --- Factura SRI PENDIENTE (aun no autorizada) - permite devolver/anular ---
+    let _ = conn.execute(
+        "INSERT INTO ventas (numero, numero_factura, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva, descuento, total, forma_pago, monto_recibido, cambio, tipo_documento, estado, estado_sri, usuario, fecha, establecimiento, punto_emision)
+         VALUES ('FAC-001-001-000000001', '001-001-000000001', 5, 0, 50.00, 7.50, 0, 57.50, 'EFECTIVO', 57.50, 0, 'FACTURA', 'COMPLETADA', 'PENDIENTE', 'Admin', datetime('now', 'localtime', '-2 hours'), '001', '001')",
+        [],
+    );
+    let factura_pendiente = conn.last_insert_rowid();
+    if factura_pendiente > 0 {
+        let _ = conn.execute(
+            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, precio_costo)
+             VALUES (?1, 10, 10, 2.25, 0, 15, 50.00, 1.50)",
+            rusqlite::params![factura_pendiente],
+        );
+        // Descontar stock del producto (simula venta realizada)
+        let _ = conn.execute(
+            "UPDATE productos SET stock_actual = stock_actual - 10 WHERE id = 10",
+            [],
+        );
+    }
+
     // --- Compras adicionales (varias formas y estados) usando productos existentes ---
     // Compra a Lacteos del Sur (proveedor 3) - usando productos abarrotes
     let _ = conn.execute(

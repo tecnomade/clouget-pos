@@ -37,6 +37,8 @@ pub struct Venta {
     pub guia_chofer: Option<String>,
     #[serde(default)]
     pub guia_direccion_destino: Option<String>,
+    #[serde(default)]
+    pub anulada: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

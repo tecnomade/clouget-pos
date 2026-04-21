@@ -1193,6 +1193,7 @@ pub fn generar_ride_pdf(
                     banco_nombre: None,
                     tipo_estado: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
                 };
                 let fecha_aut: Option<String> = row.get(18).unwrap_or(None);
                 Ok((v, fecha_aut))
@@ -2020,6 +2021,7 @@ pub fn generar_ride_nc_pdf(
         banco_nombre: None,
         tipo_estado: None,
         guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+                anulada: None,
     };
 
     // Detalles
