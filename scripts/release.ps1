@@ -1,7 +1,16 @@
 # =============================================================
 # Clouget POS - Script de Release
-# Uso: powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+# Uso:
+#   powershell -ExecutionPolicy Bypass -File scripts\release.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Beta
+#
+# Flags:
+#   -Beta  Publica al canal beta (los testers la reciben, clientes estables no)
 # =============================================================
+
+param(
+    [switch]$Beta
+)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -10,7 +19,8 @@ Set-Location $ProjectRoot
 # --- Leer version actual ---
 $PackageJson = Get-Content "package.json" -Raw | ConvertFrom-Json
 $Version = $PackageJson.version
-Write-Host "=== Clouget POS Release v$Version ===" -ForegroundColor Cyan
+$Canal = if ($Beta) { "BETA" } else { "STABLE" }
+Write-Host "=== Clouget POS Release v$Version - Canal: $Canal ===" -ForegroundColor Cyan
 
 # --- Rutas ---
 $BundleDir = "src-tauri\target\release\bundle\nsis"
@@ -56,10 +66,6 @@ Write-Host "OK - Instalador: $ExeName" -ForegroundColor Green
 Write-Host "`n[3/6] Creando artefacto de update (.nsis.zip)..." -ForegroundColor Yellow
 $ZipPath = Join-Path $BundleDir $ZipName
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
-# Crear ZIP con Store (method 0) usando Python
-# NOTA: .NET 8 CompressionLevel.NoCompression sigue usando Deflate (method 8)
-# y tauri-plugin-updater usa zip crate con default-features=false que SOLO soporta Store (method 0)
-# Python zipfile.ZIP_STORED garantiza method 0
 python -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_STORED); z.write(sys.argv[2],sys.argv[3]); z.close()" "$ZipPath" "$ExePath" "$ExeName"
 Write-Host "OK - $ZipName ($('{0:N1}' -f ((Get-Item $ZipPath).Length / 1MB)) MB)" -ForegroundColor Green
 
@@ -80,7 +86,6 @@ Write-Host "OK - Firmado" -ForegroundColor Green
 # --- Paso 5: Generar latest.json ---
 Write-Host "`n[5/6] Generando latest.json..." -ForegroundColor Yellow
 
-# Leer la firma y base64-encodearla (Tauri espera el mismo formato que la pubkey)
 $SigBytes = [System.IO.File]::ReadAllBytes($SigPath)
 $Signature = [System.Convert]::ToBase64String($SigBytes)
 $ZipUrlName = $ZipName -replace ' ', '.'
@@ -88,7 +93,7 @@ $PubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
 $LatestJson = @{
     version = $Version
-    notes = "Clouget Punto de Venta v$Version"
+    notes = "Clouget Punto de Venta v$Version$(if ($Beta) { ' (BETA)' })"
     pub_date = $PubDate
     platforms = @{
         "windows-x86_64" = @{
@@ -99,7 +104,6 @@ $LatestJson = @{
 } | ConvertTo-Json -Depth 4
 
 $LatestJsonPath = Join-Path $BundleDir "latest.json"
-# Escribir sin BOM (PowerShell -Encoding UTF8 agrega BOM, lo que rompe el parser JSON de Tauri)
 [System.IO.File]::WriteAllText($LatestJsonPath, $LatestJson, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "OK - latest.json generado (sin BOM)" -ForegroundColor Green
 
@@ -121,11 +125,26 @@ foreach ($f in $ReleaseFiles) {
     }
 }
 
-gh release create "v$Version" `
-    --repo $GhRepo `
-    --title "Clouget POS v$Version" `
-    --notes "Clouget Punto de Venta v$Version" `
-    $ReleaseFiles[0] $ReleaseFiles[1] $ReleaseFiles[2] $ReleaseFiles[3]
+# El release SIEMPRE se crea como v$Version (prerelease si beta)
+# Los archivos siempre suben a ese release
+$TitleSuffix = if ($Beta) { " (BETA)" } else { "" }
+$PrereleaseFlag = if ($Beta) { "--prerelease" } else { "" }
+
+# Crear el release
+if ($Beta) {
+    gh release create "v$Version" `
+        --repo $GhRepo `
+        --title "Clouget POS v$Version$TitleSuffix" `
+        --notes "Clouget Punto de Venta v$Version (Version BETA - solo testers)" `
+        --prerelease `
+        $ReleaseFiles[0] $ReleaseFiles[1] $ReleaseFiles[2] $ReleaseFiles[3]
+} else {
+    gh release create "v$Version" `
+        --repo $GhRepo `
+        --title "Clouget POS v$Version" `
+        --notes "Clouget Punto de Venta v$Version" `
+        $ReleaseFiles[0] $ReleaseFiles[1] $ReleaseFiles[2] $ReleaseFiles[3]
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: No se pudo crear el release en GitHub" -ForegroundColor Red
@@ -133,17 +152,48 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Subir copia con nombre fijo para landing page (URL estable entre versiones)
-$FixedExe = Join-Path $BundleDir "Clouget-POS-setup.exe"
-Copy-Item $ExePath $FixedExe -Force
-gh release upload "v$Version" $FixedExe --repo $GhRepo --clobber
-Write-Host "OK - Subido Clouget-POS-setup.exe (enlace fijo para landing)" -ForegroundColor Green
+if ($Beta) {
+    # CANAL BETA: publicar latest.json en el tag fijo 'beta-channel' (movible)
+    # Los clientes con canal=beta consultan ese tag especifico
+    Write-Host "`n[Extra] Publicando manifest en canal BETA..." -ForegroundColor Yellow
 
-Write-Host "`n=== Release v$Version publicado exitosamente ===" -ForegroundColor Green
+    # Borrar release anterior de beta-channel si existe (para poder reemplazarlo)
+    gh release view "beta-channel" --repo $GhRepo *> $null
+    if ($LASTEXITCODE -eq 0) {
+        gh release delete "beta-channel" --repo $GhRepo --cleanup-tag --yes
+    }
+
+    # Crear un release "movible" que contenga solo el latest.json apuntando a esta beta
+    gh release create "beta-channel" `
+        --repo $GhRepo `
+        --title "Canal Beta (ultima beta disponible)" `
+        --notes "Este release contiene el manifest latest.json del canal BETA. No instalar directamente." `
+        --prerelease `
+        $LatestJsonPath
+    # Tambien el exe e instalador para debug
+    gh release upload "beta-channel" $ReleaseFiles[1] $ReleaseFiles[2] --repo $GhRepo --clobber
+
+    Write-Host "OK - Canal beta actualizado. URL del manifest:" -ForegroundColor Green
+    Write-Host "  https://github.com/$GhRepo/releases/download/beta-channel/latest.json" -ForegroundColor White
+} else {
+    # CANAL STABLE: subir copia con nombre fijo para landing page
+    $FixedExe = Join-Path $BundleDir "Clouget-POS-setup.exe"
+    Copy-Item $ExePath $FixedExe -Force
+    gh release upload "v$Version" $FixedExe --repo $GhRepo --clobber
+    Write-Host "OK - Subido Clouget-POS-setup.exe (enlace fijo para landing)" -ForegroundColor Green
+}
+
+Write-Host "`n=== Release v$Version publicado exitosamente en canal $Canal ===" -ForegroundColor Green
 Write-Host "URL: https://github.com/$GhRepo/releases/tag/v$Version" -ForegroundColor Cyan
+if ($Beta) {
+    Write-Host "Canal BETA manifest: https://github.com/$GhRepo/releases/download/beta-channel/latest.json" -ForegroundColor Yellow
+    Write-Host "`nSOLO los clientes con 'Canal: beta' recibiran esta actualizacion." -ForegroundColor Yellow
+}
 Write-Host "`nArchivos subidos:" -ForegroundColor White
-Write-Host "  - $ExeName (instalador para nuevos clientes)" -ForegroundColor White
-Write-Host "  - $ZipName (artefacto de auto-update)" -ForegroundColor White
-Write-Host "  - $SigName (firma criptografica)" -ForegroundColor White
-Write-Host "  - latest.json (manifiesto de update)" -ForegroundColor White
-Write-Host "  - Clouget-POS-setup.exe (enlace fijo para landing page)" -ForegroundColor White
+Write-Host "  - $ExeName" -ForegroundColor White
+Write-Host "  - $ZipName" -ForegroundColor White
+Write-Host "  - $SigName" -ForegroundColor White
+Write-Host "  - latest.json" -ForegroundColor White
+if (-not $Beta) {
+    Write-Host "  - Clouget-POS-setup.exe (enlace fijo para landing page)" -ForegroundColor White
+}

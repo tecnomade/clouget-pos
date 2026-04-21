@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { obtenerConfig } from "../services/api";
+
+// Endpoint del canal beta (consulta manual via fetch)
+const ENDPOINT_BETA = "https://github.com/tecnomade/clouget-pos/releases/download/beta-channel/latest.json";
 
 type Estado = "idle" | "disponible" | "descargando" | "instalado" | "error";
 
@@ -49,16 +53,46 @@ export default function UpdateChecker() {
 
   const verificarActualizacion = useCallback(async () => {
     try {
-      console.log("[Updater] Verificando actualizaciones...");
+      // Leer canal de actualizaciones de config
+      let canal = "stable";
+      try {
+        const cfg = await obtenerConfig();
+        canal = cfg.update_canal === "beta" ? "beta" : "stable";
+      } catch { /* fallback a stable */ }
+
+      if (canal === "beta") {
+        // Canal beta: verificar manualmente el endpoint beta via fetch
+        // (el plugin no soporta endpoints dinamicos en runtime)
+        try {
+          const resp = await fetch(ENDPOINT_BETA);
+          if (resp.ok) {
+            const betaManifest = await resp.json();
+            const current = __APP_VERSION__;
+            console.log(`[Updater] Canal BETA. Version actual: ${current}, beta disponible: ${betaManifest.version}`);
+            if (betaManifest.version && betaManifest.version !== current) {
+              // Hay una beta mas nueva. El usuario debe descargarla manualmente desde GitHub.
+              setUpdate({ version: betaManifest.version } as any);
+              setEstado("disponible");
+              // Abrir URL de release en navegador
+              console.log(`[Updater] Nueva beta disponible: ${betaManifest.version}`);
+            }
+          }
+        } catch (e) {
+          console.warn("[Updater] No se pudo consultar canal beta:", e);
+        }
+        return;
+      }
+
+      // Canal STABLE: usa el plugin estandar (lee endpoint de tauri.conf.json)
+      console.log("[Updater] Canal: stable, verificando...");
       const resultado = await check();
       console.log("[Updater] Resultado:", resultado);
       if (resultado) {
         setUpdate(resultado);
         setEstado("disponible");
-        // Auto-descargar e instalar
         descargarEInstalar(resultado);
       } else {
-        console.log("[Updater] No hay actualizaciones disponibles (ya esta en la ultima version)");
+        console.log("[Updater] No hay actualizaciones disponibles");
       }
     } catch (e) {
       console.error("[Updater] Error al verificar actualizacion:", e);

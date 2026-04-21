@@ -588,6 +588,10 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Config: auto-imprimir ticket al autorizar en SRI (OFF por defecto, evita imprimir 2 veces)
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('auto_imprimir_sri', '0')", []);
 
+    // Config: canal de actualizaciones (stable | beta). Default stable.
+    // Los testers reciben betas primero antes de liberar a stable.
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('update_canal', 'stable')", []);
+
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
 

@@ -985,6 +985,16 @@ export const reporteIvaMensual = (anio: number, mes: number) =>
     iva_a_pagar: number; total_ventas: number; total_compras: number;
   }>("reporte_iva_mensual", { anio, mes });
 
+// --- Export reportes XLSX/PDF (v2.1.0) ---
+export const exportarInventarioXlsx = (ruta: string, categoriaNombre?: string, busqueda?: string, estadoFiltro?: string) =>
+  smartInvoke<void>("exportar_inventario_xlsx", { ruta, categoriaNombre, busqueda, estadoFiltro });
+export const exportarInventarioPdf = (ruta: string, categoriaNombre?: string, busqueda?: string, estadoFiltro?: string) =>
+  smartInvoke<void>("exportar_inventario_pdf", { ruta, categoriaNombre, busqueda, estadoFiltro });
+export const exportarTablaXlsx = (ruta: string, titulo: string, subtitulo: string | null, encabezados: string[], filas: string[][], columnasNumericas: number[] | null = null) =>
+  smartInvoke<void>("exportar_tabla_xlsx", { ruta, titulo, subtitulo, encabezados, filas, columnasNumericas });
+export const exportarTablaPdf = (ruta: string, titulo: string, subtitulo: string | null, encabezados: string[], filas: string[][], orientacionHorizontal: boolean | null = true) =>
+  smartInvoke<void>("exportar_tabla_pdf", { ruta, titulo, subtitulo, encabezados, filas, orientacionHorizontal });
+
 // --- Multi-unidad (v1.9.7) ---
 export const listarUnidadesProducto = (productoId: number) =>
   smartInvoke<Array<{ id: number; nombre: string; abreviatura: string | null; factor: number; precio: number; es_base: boolean; orden: number; activa: boolean }>>(

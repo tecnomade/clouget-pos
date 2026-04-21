@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, exportarVentasCsv, reporteIvaMensual,
+import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteIvaMensual,
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
-  reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple } from "../services/api";
+  reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple,
+  exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -41,6 +42,8 @@ export default function ReportesPage() {
   const [cxcClienteDetalle, setCxcClienteDetalle] = useState<{ cliente: any; cuentas: any[] } | null>(null);
   const [cxpResumen, setCxpResumen] = useState<any[]>([]);
   const [cxpProveedorDetalle, setCxpProveedorDetalle] = useState<{ proveedor: any; cuentas: any[] } | null>(null);
+  const [busquedaCliente, setBusquedaCliente] = useState("");
+  const [busquedaProveedor, setBusquedaProveedor] = useState("");
   // Inventario
   const [inventario, setInventario] = useState<any | null>(null);
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
@@ -107,20 +110,179 @@ export default function ReportesPage() {
     setKardexCargando(false);
   };
 
-  const exportarKardexMultiCsv = () => {
-    if (!kardexMultiData) return;
-    exportarCsvGeneric(
-      `kardex-multi-${desde}-${hasta}.csv`,
-      ["Fecha", "Producto", "Codigo", "Categoria", "Tipo", "Cantidad", "Stock Anterior", "Stock Nuevo", "Costo Un.", "Motivo", "Usuario"],
-      kardexMultiData.movimientos.map((m: any) => [
-        m.fecha?.slice(0, 19).replace("T", " ") || "",
-        m.nombre, m.codigo || "", m.categoria || "",
-        m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo,
-        m.costo_unitario != null ? m.costo_unitario.toFixed(2) : "",
-        m.motivo || "", m.usuario || "",
-      ])
-    );
+  // Helper generico: arma los datos del tab activo para exportar a XLSX/PDF
+  type ExportDatos = {
+    titulo: string;
+    subtitulo: string | null;
+    archivo: string;
+    encabezados: string[];
+    filas: string[][];
+    cols_numericas?: number[];
   };
+  const obtenerDatosTabla = (): ExportDatos | null => {
+    const periodo = `${desde} a ${hasta}`;
+    if (tab === "utilidad" && utilidad) {
+      const u: any = utilidad;
+      return {
+        titulo: "Estado de Resultados",
+        subtitulo: periodo,
+        archivo: `estado-resultados-${desde}-${hasta}`,
+        encabezados: ["Concepto", "Monto USD"],
+        filas: [
+          ["Ventas brutas", (u.ventas_brutas ?? 0).toFixed(2)],
+          ["(-) Costo de ventas", (u.costo_ventas ?? 0).toFixed(2)],
+          ["= Utilidad bruta", (u.utilidad_bruta ?? 0).toFixed(2)],
+          [`Margen bruto`, `${(u.margen_bruto ?? 0).toFixed(2)}%`],
+          ["(-) Gastos", (u.total_gastos ?? 0).toFixed(2)],
+          ["(-) Devoluciones", (u.total_devoluciones ?? 0).toFixed(2)],
+          ["= UTILIDAD NETA", (u.utilidad_neta ?? 0).toFixed(2)],
+          ["Margen neto", `${(u.margen_neto ?? 0).toFixed(2)}%`],
+          ["Num transacciones", String(u.num_ventas ?? 0)],
+          ["Promedio por venta", (u.promedio_por_venta ?? 0).toFixed(2)],
+        ],
+        cols_numericas: [1],
+      };
+    }
+    if (tab === "balance" && balance) {
+      const b: any = balance;
+      return {
+        titulo: "Balance",
+        subtitulo: periodo,
+        archivo: `balance-${desde}-${hasta}`,
+        encabezados: ["Concepto", "Monto USD"],
+        filas: [
+          ["Ventas totales", (b.total_ventas ?? 0).toFixed(2)],
+          ["Cobros de credito", (b.total_cobros_credito ?? 0).toFixed(2)],
+          ["Gastos", (b.total_gastos ?? 0).toFixed(2)],
+          ["Pagos a proveedores", (b.total_pagos_proveedor ?? 0).toFixed(2)],
+          ["Retiros de caja", (b.total_retiros ?? 0).toFixed(2)],
+          ["UTILIDAD NETA", (b.utilidad_neta ?? 0).toFixed(2)],
+        ],
+        cols_numericas: [1],
+      };
+    }
+    if (tab === "productos") {
+      return {
+        titulo: "Rentabilidad por Producto",
+        subtitulo: periodo,
+        archivo: `rentabilidad-productos-${desde}-${hasta}`,
+        encabezados: ["Producto", "Unidades", "Ingresos", "Costo", "Utilidad", "Margen %"],
+        filas: productos.map((p: any) => [
+          p.nombre,
+          String(p.unidades_vendidas ?? p.cantidad_vendida ?? 0),
+          (p.total_vendido ?? p.ingresos ?? 0).toFixed(2),
+          (p.costo_total ?? p.costo ?? 0).toFixed(2),
+          (p.utilidad ?? 0).toFixed(2),
+          `${(p.margen ?? 0).toFixed(2)}%`,
+        ]),
+        cols_numericas: [1, 2, 3, 4],
+      };
+    }
+    if (tab === "cxc") {
+      if (cxcClienteDetalle) {
+        const cli = cxcClienteDetalle.cliente;
+        return {
+          titulo: `Cuentas por Cobrar - ${cli.cliente_nombre}`,
+          subtitulo: `ID: ${cli.identificacion || "-"} · Tel: ${cli.telefono || "-"}`,
+          archivo: `cxc-${cli.cliente_nombre.replace(/[^a-zA-Z0-9]/g, "_")}`,
+          encabezados: ["Venta", "Fecha", "Total", "Pagado", "Saldo", "Estado", "Vencimiento", "Atraso"],
+          filas: cxcClienteDetalle.cuentas.map((c: any) => [
+            c.venta_numero || "", c.venta_fecha?.slice(0, 10) || "",
+            c.monto_total.toFixed(2), c.monto_pagado.toFixed(2), c.saldo.toFixed(2),
+            c.estado, c.fecha_vencimiento || "", String(c.dias_atraso ?? 0),
+          ]),
+          cols_numericas: [2, 3, 4],
+        };
+      }
+      return {
+        titulo: "Cuentas por Cobrar - Por Cliente",
+        subtitulo: "Resumen de saldos pendientes",
+        archivo: `cxc-por-cliente-${hoy()}`,
+        encabezados: ["Cliente", "Identificacion", "Telefono", "Cuentas", "Facturado", "Pagado", "Saldo", "Vencido"],
+        filas: cxcResumen.filter((c: any) => !busquedaCliente || c.cliente_nombre.toLowerCase().includes(busquedaCliente.toLowerCase()))
+          .map((c: any) => [
+            c.cliente_nombre, c.identificacion || "", c.telefono || "",
+            String(c.num_cuentas),
+            c.total_facturado.toFixed(2), c.total_pagado.toFixed(2),
+            c.saldo_pendiente.toFixed(2), c.monto_vencido.toFixed(2),
+          ]),
+        cols_numericas: [4, 5, 6, 7],
+      };
+    }
+    if (tab === "cxp") {
+      if (cxpProveedorDetalle) {
+        const p = cxpProveedorDetalle.proveedor;
+        return {
+          titulo: `Cuentas por Pagar - ${p.proveedor_nombre}`,
+          subtitulo: `RUC: ${p.ruc || "-"} · Tel: ${p.telefono || "-"}`,
+          archivo: `cxp-${p.proveedor_nombre.replace(/[^a-zA-Z0-9]/g, "_")}`,
+          encabezados: ["Compra", "Fac.Prov", "Fecha", "Total", "Pagado", "Saldo", "Estado", "Vencim.", "Atraso"],
+          filas: cxpProveedorDetalle.cuentas.map((c: any) => [
+            c.compra_numero || "", c.numero_factura || "", c.compra_fecha?.slice(0, 10) || "",
+            c.monto_total.toFixed(2), c.monto_pagado.toFixed(2), c.saldo.toFixed(2),
+            c.estado, c.fecha_vencimiento || "", String(c.dias_atraso ?? 0),
+          ]),
+          cols_numericas: [3, 4, 5],
+        };
+      }
+      return {
+        titulo: "Cuentas por Pagar - Por Proveedor",
+        subtitulo: "Resumen de saldos pendientes",
+        archivo: `cxp-por-proveedor-${hoy()}`,
+        encabezados: ["Proveedor", "RUC", "Telefono", "Cuentas", "Facturado", "Pagado", "Saldo", "Vencido"],
+        filas: cxpResumen.filter((c: any) => !busquedaProveedor || c.proveedor_nombre.toLowerCase().includes(busquedaProveedor.toLowerCase()))
+          .map((c: any) => [
+            c.proveedor_nombre, c.ruc || "", c.telefono || "",
+            String(c.num_cuentas),
+            c.total_facturado.toFixed(2), c.total_pagado.toFixed(2),
+            c.saldo_pendiente.toFixed(2), c.monto_vencido.toFixed(2),
+          ]),
+        cols_numericas: [4, 5, 6, 7],
+      };
+    }
+    if (tab === "kardex" && kardexMultiData) {
+      return {
+        titulo: "Kardex Multi-producto",
+        subtitulo: periodo,
+        archivo: `kardex-${desde}-${hasta}`,
+        encabezados: ["Fecha", "Producto", "Categoria", "Tipo", "Cantidad", "Stock Ant.", "Stock Nuevo", "Costo Un.", "Motivo"],
+        filas: kardexMultiData.movimientos.map((m: any) => [
+          m.fecha?.slice(0, 16).replace("T", " ") || "",
+          m.nombre, m.categoria || "",
+          m.tipo, String(m.cantidad), String(m.stock_anterior), String(m.stock_nuevo),
+          m.costo_unitario != null ? m.costo_unitario.toFixed(2) : "",
+          m.motivo || "",
+        ]),
+        cols_numericas: [4, 5, 6, 7],
+      };
+    }
+    if (tab === "inventario") {
+      if (kardexProducto) {
+        return {
+          titulo: `Kardex - ${kardexProducto.producto.nombre}`,
+          subtitulo: `Stock actual: ${kardexProducto.producto.stock_actual}`,
+          archivo: `kardex-${(kardexProducto.producto.codigo || kardexProducto.producto.nombre).replace(/[^a-zA-Z0-9]/g, "_")}`,
+          encabezados: ["Fecha", "Tipo", "Cantidad", "Stock Ant.", "Stock Nuevo", "Costo Un.", "Motivo"],
+          filas: kardexProducto.movimientos.map((m: any) => [
+            m.fecha?.slice(0, 19).replace("T", " ") || "",
+            m.tipo, String(m.cantidad), String(m.stock_anterior), String(m.stock_nuevo),
+            m.costo_unitario ? m.costo_unitario.toFixed(2) : "",
+            m.motivo || "",
+          ]),
+          cols_numericas: [2, 3, 4, 5],
+        };
+      }
+      // Inventario valorizado: se maneja por backend con filtros
+      return {
+        titulo: "Inventario Valorizado",
+        subtitulo: "Ver filtros en encabezado",
+        archivo: `inventario-${hoy()}`,
+        encabezados: [], filas: [], // backend se encarga
+      };
+    }
+    return null;
+  };
+
 
   const verDetalleCxc = async (cliente: any) => {
     try {
@@ -309,69 +471,8 @@ export default function ReportesPage() {
     }
   };
 
-  const exportarUtilidadCsv = () => {
-    if (!utilidad) return;
-    const u: any = utilidad;
-    exportarCsvGeneric(
-      `estado-resultados-${desde}-${hasta}.csv`,
-      ["Concepto", "Monto USD"],
-      [
-        [`Estado de Resultados (${desde} a ${hasta})`, ""],
-        ["", ""],
-        ["Ventas brutas", (u.ventas_brutas ?? 0).toFixed(2)],
-        ["(-) Costo de ventas", (u.costo_ventas ?? 0).toFixed(2)],
-        ["= Utilidad bruta", (u.utilidad_bruta ?? 0).toFixed(2)],
-        ["Margen bruto (%)", (u.margen_bruto ?? 0).toFixed(2)],
-        ["", ""],
-        ["(-) Gastos totales", (u.total_gastos ?? 0).toFixed(2)],
-        ["(-) Devoluciones/NC", (u.total_devoluciones ?? 0).toFixed(2)],
-        ["", ""],
-        ["= UTILIDAD NETA", (u.utilidad_neta ?? 0).toFixed(2)],
-        ["Margen neto (%)", (u.margen_neto ?? 0).toFixed(2)],
-        ["", ""],
-        ["Num transacciones", u.num_ventas ?? 0],
-        ["Promedio por venta", (u.promedio_por_venta ?? 0).toFixed(2)],
-      ]
-    );
-  };
 
-  const exportarBalanceCsv = () => {
-    if (!balance) return;
-    const b: any = balance;
-    exportarCsvGeneric(
-      `balance-${desde}-${hasta}.csv`,
-      ["Concepto", "Monto USD"],
-      [
-        [`Balance (${desde} a ${hasta})`, ""],
-        ["", ""],
-        ["ENTRADAS", ""],
-        ["Ventas totales", (b.total_ventas ?? 0).toFixed(2)],
-        ["Cobros de credito", (b.total_cobros_credito ?? 0).toFixed(2)],
-        ["", ""],
-        ["SALIDAS", ""],
-        ["Gastos", (b.total_gastos ?? 0).toFixed(2)],
-        ["Pagos a proveedores", (b.total_pagos_proveedor ?? 0).toFixed(2)],
-        ["Retiros de caja", (b.total_retiros ?? 0).toFixed(2)],
-        ["", ""],
-        ["UTILIDAD NETA", (b.utilidad_neta ?? 0).toFixed(2)],
-      ]
-    );
-  };
 
-  const exportarProductosCsv = () => {
-    exportarCsvGeneric(
-      `rentabilidad-productos-${desde}-${hasta}.csv`,
-      ["Producto", "Unidades vendidas", "Ingresos", "Costo", "Utilidad", "Margen %"],
-      productos.map((p: any) => [
-        p.nombre,
-        p.unidades_vendidas ?? p.cantidad_vendida ?? 0,
-        (p.total_vendido ?? p.ingresos ?? 0).toFixed(2),
-        (p.costo_total ?? p.costo ?? 0).toFixed(2),
-        (p.utilidad ?? 0).toFixed(2),
-        `${(p.margen ?? 0).toFixed(2)}%`,
-      ])
-    );
-  };
 
   return (
     <>
@@ -386,23 +487,43 @@ export default function ReportesPage() {
           <input type="date" className="input" style={{ fontSize: 12, padding: "4px 8px", width: 130 }} value={desde} onChange={e => setDesde(e.target.value)} />
           <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>a</span>
           <input type="date" className="input" style={{ fontSize: 12, padding: "4px 8px", width: 130 }} value={hasta} onChange={e => setHasta(e.target.value)} />
-          {/* Boton export contextual segun el tab activo */}
+          {/* Botones export contextuales: Excel y PDF */}
           <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 14px", fontWeight: 600 }}
             onClick={async () => {
               try {
-                if (tab === "utilidad") { exportarUtilidadCsv(); return; }
-                if (tab === "balance") { exportarBalanceCsv(); return; }
-                if (tab === "productos") { exportarProductosCsv(); return; }
-                if (tab === "cxc") { exportarCxcCsv(); return; }
-                if (tab === "cxp") { exportarCxpCsv(); return; }
-                if (tab === "inventario") { exportarInventarioCsvFn(); return; }
-                if (tab === "kardex") { exportarKardexMultiCsv(); return; }
-                if (tab === "iva") { exportarIvaCsv(); return; }
-                // Fallback: export de ventas
-                const ruta = await save({ defaultPath: `reporte-ventas-${desde}-${hasta}.csv`, filters: [{ name: "CSV", extensions: ["csv"] }] });
-                if (ruta) { await exportarVentasCsv(desde, hasta, ruta); toastExito("CSV exportado"); }
+                const result = obtenerDatosTabla();
+                if (!result) { toastError("No hay datos para exportar"); return; }
+                const ruta = await save({
+                  defaultPath: `${result.archivo}.xlsx`,
+                  filters: [{ name: "Excel", extensions: ["xlsx"] }]
+                });
+                if (!ruta) return;
+                if (tab === "inventario" && !kardexProducto) {
+                  await exportarInventarioXlsx(ruta, filtroCategoriaInv, busquedaInv || undefined, filtroEstado);
+                } else {
+                  await exportarTablaXlsx(ruta, result.titulo, result.subtitulo, result.encabezados, result.filas, result.cols_numericas || null);
+                }
+                toastExito("Excel generado");
               } catch (e) { toastError("Error: " + e); }
-            }}>📥 Exportar CSV</button>
+            }}>📊 Excel</button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 14px", fontWeight: 600 }}
+            onClick={async () => {
+              try {
+                const result = obtenerDatosTabla();
+                if (!result) { toastError("No hay datos para exportar"); return; }
+                const ruta = await save({
+                  defaultPath: `${result.archivo}.pdf`,
+                  filters: [{ name: "PDF", extensions: ["pdf"] }]
+                });
+                if (!ruta) return;
+                if (tab === "inventario" && !kardexProducto) {
+                  await exportarInventarioPdf(ruta, filtroCategoriaInv, busquedaInv || undefined, filtroEstado);
+                } else {
+                  await exportarTablaPdf(ruta, result.titulo, result.subtitulo, result.encabezados, result.filas, true);
+                }
+                toastExito("PDF generado");
+              } catch (e) { toastError("Error: " + e); }
+            }}>📄 PDF</button>
         </div>
       </div>
 
@@ -782,9 +903,10 @@ export default function ReportesPage() {
             </div>
           ) : (
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
                 <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Click en un cliente para ver sus cuentas detalladas</span>
-                <button className="btn btn-outline" onClick={exportarCxcCsv} disabled={cxcResumen.length === 0} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
+                <input className="input" placeholder="🔍 Buscar cliente..." style={{ flex: 1, maxWidth: 300, fontSize: 12 }}
+                  value={busquedaCliente} onChange={(e) => setBusquedaCliente(e.target.value)} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
                 <KpiCard label="Clientes con saldo" valor={String(cxcResumen.length)} />
@@ -803,7 +925,9 @@ export default function ReportesPage() {
                   <tbody>
                     {cxcResumen.length === 0 ? (
                       <tr><td colSpan={9} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin cuentas pendientes</td></tr>
-                    ) : cxcResumen.map((c: any) => (
+                    ) : cxcResumen
+                      .filter((c: any) => !busquedaCliente || c.cliente_nombre.toLowerCase().includes(busquedaCliente.toLowerCase()) || (c.identificacion || "").includes(busquedaCliente))
+                      .map((c: any) => (
                       <tr key={c.cliente_id} style={{ cursor: "pointer" }} onClick={() => verDetalleCxc(c)}>
                         <td style={{ fontWeight: 600 }}>{c.cliente_nombre}</td>
                         <td style={{ fontSize: 11 }}>{c.identificacion || "-"}</td>
@@ -871,9 +995,10 @@ export default function ReportesPage() {
             </div>
           ) : (
             <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
                 <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Click en un proveedor para ver sus cuentas detalladas</span>
-                <button className="btn btn-outline" onClick={exportarCxpCsv} disabled={cxpResumen.length === 0} style={{ fontSize: 11 }}>📥 Exportar CSV</button>
+                <input className="input" placeholder="🔍 Buscar proveedor..." style={{ flex: 1, maxWidth: 300, fontSize: 12 }}
+                  value={busquedaProveedor} onChange={(e) => setBusquedaProveedor(e.target.value)} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 16 }}>
                 <KpiCard label="Proveedores con saldo" valor={String(cxpResumen.length)} />
@@ -892,7 +1017,9 @@ export default function ReportesPage() {
                   <tbody>
                     {cxpResumen.length === 0 ? (
                       <tr><td colSpan={9} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin cuentas pendientes</td></tr>
-                    ) : cxpResumen.map((c: any) => (
+                    ) : cxpResumen
+                      .filter((c: any) => !busquedaProveedor || c.proveedor_nombre.toLowerCase().includes(busquedaProveedor.toLowerCase()) || (c.ruc || "").includes(busquedaProveedor))
+                      .map((c: any) => (
                       <tr key={c.proveedor_id} style={{ cursor: "pointer" }} onClick={() => verDetalleCxp(c)}>
                         <td style={{ fontWeight: 600 }}>{c.proveedor_nombre}</td>
                         <td style={{ fontSize: 11 }}>{c.ruc || "-"}</td>

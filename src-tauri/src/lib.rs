@@ -235,6 +235,10 @@ pub fn run() {
             commands::exportar::exportar_gastos_csv,
             commands::exportar::exportar_inventario_csv,
             commands::exportar::guardar_archivo_texto,
+            commands::exportar::exportar_inventario_xlsx,
+            commands::exportar::exportar_inventario_pdf,
+            commands::exportar::exportar_tabla_xlsx,
+            commands::exportar::exportar_tabla_pdf,
             // SRI - Facturación Electrónica
             commands::sri::cargar_certificado_sri,
             commands::sri::emitir_factura_sri,

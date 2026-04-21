@@ -1491,6 +1491,55 @@ export default function Configuracion() {
             </div>
           )}
 
+          {/* Canal de actualizaciones */}
+          <div className="card">
+            <div className="card-header">Actualizaciones</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Elija el canal de actualizaciones que recibira esta instalacion.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 10,
+                  background: config.update_canal !== "beta" ? "rgba(34,197,94,0.1)" : "var(--color-surface-alt)",
+                  border: `1px solid ${config.update_canal !== "beta" ? "rgba(34,197,94,0.4)" : "var(--color-border)"}`,
+                  borderRadius: 6, cursor: "pointer" }}>
+                  <input type="radio" name="update_canal" value="stable"
+                    checked={config.update_canal !== "beta"}
+                    onChange={() => { update("update_canal", "stable"); guardarConfig({ update_canal: "stable" }); toastExito("Canal: estable"); }}
+                    style={{ marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>🟢 Estable (recomendado)</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      Recibe las versiones oficiales, probadas y aprobadas para produccion.
+                      Ideal para la mayoria de clientes.
+                    </div>
+                  </div>
+                </label>
+
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: 10,
+                  background: config.update_canal === "beta" ? "rgba(245,158,11,0.1)" : "var(--color-surface-alt)",
+                  border: `1px solid ${config.update_canal === "beta" ? "rgba(245,158,11,0.4)" : "var(--color-border)"}`,
+                  borderRadius: 6, cursor: "pointer" }}>
+                  <input type="radio" name="update_canal" value="beta"
+                    checked={config.update_canal === "beta"}
+                    onChange={() => { update("update_canal", "beta"); guardarConfig({ update_canal: "beta" }); toastExito("Canal: beta (versiones de prueba)"); }}
+                    style={{ marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>🟡 Beta (testers)</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      Recibe las nuevas versiones antes que el publico general para ayudarnos a probarlas.
+                      Pueden contener errores. Solo actival si usted es tester autorizado.
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <div style={{ marginTop: 10, padding: 8, background: "rgba(59,130,246,0.08)", borderRadius: 4, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                💡 Los cambios se aplican en el proximo chequeo (se verifica al iniciar la app).
+                Version actual: <strong>v{__APP_VERSION__}</strong>
+              </div>
+            </div>
+          </div>
+
           {/* Respaldo */}
           <div className="card">
             <div className="card-header">Respaldo de Datos</div>
