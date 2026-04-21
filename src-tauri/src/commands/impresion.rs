@@ -246,7 +246,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
     // Abrir con visor del sistema
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &pdf_path.to_string_lossy()])
             .spawn()
             .map_err(|e| format!("Error abriendo PDF: {}", e))?;
@@ -388,6 +388,15 @@ fn obtener_datos_reporte_caja(
         )
         .unwrap_or(0.0);
 
+    // Retiros de caja
+    let total_retiros: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
     // Config del negocio
     let nombre_negocio: String = conn
         .query_row(
@@ -411,6 +420,27 @@ fn obtener_datos_reporte_caja(
         )
         .unwrap_or_default();
 
+    // Ventas por categoría
+    let ventas_por_categoria: Vec<(String, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(c.nombre, 'Sin categoria') as cat, COALESCE(SUM(vd.subtotal), 0) as total
+             FROM ventas v
+             JOIN venta_detalles vd ON v.id = vd.venta_id
+             LEFT JOIN productos p ON vd.producto_id = p.id
+             LEFT JOIN categorias c ON p.categoria_id = c.id
+             WHERE v.created_at >= ?1 AND v.anulada = 0
+               AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
+               AND v.tipo_estado = 'COMPLETADA'
+             GROUP BY cat ORDER BY total DESC"
+        ).map_err(|e| e.to_string())?;
+        let rows: Vec<(String, f64)> = stmt.query_map(rusqlite::params![fecha_apertura], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        }).map_err(|e| e.to_string())?
+          .collect::<Result<Vec<_>, _>>()
+          .unwrap_or_default();
+        rows
+    };
+
     Ok(crate::models::ResumenCajaReporte {
         caja,
         total_ventas,
@@ -421,11 +451,13 @@ fn obtener_datos_reporte_caja(
         total_gastos,
         total_cobros_efectivo,
         total_cobros_banco,
+        total_retiros,
         total_notas_credito,
         num_notas_credito,
         nombre_negocio,
         ruc,
         direccion,
+        ventas_por_categoria,
     })
 }
 
@@ -472,7 +504,7 @@ pub fn imprimir_reporte_caja_pdf(db: State<Database>, caja_id: i64) -> Result<St
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &pdf_path.to_string_lossy()])
             .spawn()
             .map_err(|e| format!("Error abriendo PDF: {}", e))?;
@@ -573,6 +605,15 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
         t.push(b'\n');
     }
 
+    // Retiros
+    if r.total_retiros > 0.0 {
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"RETIROS\n");
+        t.extend_from_slice(esc_bold_off);
+        t.extend_from_slice(linea_monto_r("Total Retiros:", &format!("-${:.2}", r.total_retiros), ancho).as_bytes());
+        t.push(b'\n');
+    }
+
     // Cobros de cuentas por cobrar
     if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
         t.extend_from_slice(esc_bold_on);
@@ -597,6 +638,18 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
         t.push(b'\n');
     }
 
+    // Ventas por categoria
+    if !r.ventas_por_categoria.is_empty() {
+        t.extend_from_slice(linea_sep(ancho, '=').as_bytes());
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"VENTAS POR CATEGORIA\n");
+        t.extend_from_slice(esc_bold_off);
+        t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
+        for (cat, total) in &r.ventas_por_categoria {
+            t.extend_from_slice(linea_monto_r(&format!("{}:", cat), &format!("${:.2}", total), ancho).as_bytes());
+        }
+    }
+
     t.extend_from_slice(linea_sep(ancho, '=').as_bytes());
 
     // Cuadre de caja
@@ -609,6 +662,9 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
         t.extend_from_slice(linea_monto_r("(+) Cobros efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
     }
     t.extend_from_slice(linea_monto_r("(-) Gastos:", &format!("${:.2}", r.total_gastos), ancho).as_bytes());
+    if r.total_retiros > 0.0 {
+        t.extend_from_slice(linea_monto_r("(-) Retiros:", &format!("${:.2}", r.total_retiros), ancho).as_bytes());
+    }
     t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
     t.extend_from_slice(esc_bold_on);
     t.extend_from_slice(linea_monto_r("Monto Esperado:", &format!("${:.2}", r.caja.monto_esperado), ancho).as_bytes());
@@ -665,7 +721,7 @@ fn generar_reporte_caja_pdf(
     use genpdf::style::Style;
     use genpdf::{Alignment, Document, Element, Margins, SimplePageDecorator};
 
-    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
     let font_family = genpdf::fonts::from_files(
         fonts_dir.to_str().unwrap_or("fonts"),
         "LiberationSans",
@@ -833,6 +889,25 @@ fn generar_reporte_caja_pdf(
         doc.push(Break::new(0.5));
     }
 
+    // Retiros
+    if r.total_retiros > 0.0 {
+        doc.push(Paragraph::new("RETIROS").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut retiros_table = TableLayout::new(vec![3, 2]);
+        retiros_table
+            .row()
+            .element(Paragraph::new("Total Retiros:").styled(s_normal))
+            .element(
+                Paragraph::new(format!("-${:.2}", r.total_retiros))
+                    .aligned(Alignment::Right)
+                    .styled(s_bold),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+        doc.push(retiros_table);
+        doc.push(Break::new(0.5));
+    }
+
     // Cobros de cuentas por cobrar
     if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
         doc.push(Paragraph::new("COBROS CUENTAS POR COBRAR").styled(s_subtitle));
@@ -895,6 +970,21 @@ fn generar_reporte_caja_pdf(
         doc.push(Break::new(0.5));
     }
 
+    // Ventas por categoria
+    if !r.ventas_por_categoria.is_empty() {
+        doc.push(Paragraph::new("VENTAS POR CATEGORIA").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut cat_table = TableLayout::new(vec![3, 2]);
+        for (cat, total) in &r.ventas_por_categoria {
+            cat_table.row()
+                .element(Paragraph::new(format!("{}:", cat)).styled(s_normal))
+                .element(Paragraph::new(format!("${:.2}", total)).aligned(Alignment::Right).styled(s_normal))
+                .push().ok();
+        }
+        doc.push(cat_table);
+        doc.push(Break::new(0.5));
+    }
+
     // Cuadre de caja
     doc.push(Paragraph::new("CUADRE DE CAJA").styled(s_subtitle));
     doc.push(Break::new(0.3));
@@ -942,6 +1032,18 @@ fn generar_reporte_caja_pdf(
         )
         .push()
         .map_err(|e| format!("Error: {}", e))?;
+    if r.total_retiros > 0.0 {
+        cuadre_table
+            .row()
+            .element(Paragraph::new("(-) Retiros:").styled(s_normal))
+            .element(
+                Paragraph::new(format!("${:.2}", r.total_retiros))
+                    .aligned(Alignment::Right)
+                    .styled(s_normal),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
     cuadre_table
         .row()
         .element(Paragraph::new("Monto Esperado:").styled(s_bold))
@@ -1007,8 +1109,7 @@ fn generar_reporte_caja_pdf(
 fn enumerar_impresoras_sistema() -> Result<Vec<String>, String> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-        let output = Command::new("powershell")
+        let output = crate::utils::silent_command("powershell")
             .args(["-Command", "Get-Printer | Select-Object -ExpandProperty Name"])
             .output()
             .map_err(|e| e.to_string())?;
@@ -1168,22 +1269,24 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    // Cargar datos del cliente
-    let (cliente_nombre, cliente_identificacion) =
+    // Cargar datos del cliente (nombre, identificacion, direccion, telefono)
+    let (cliente_nombre, cliente_identificacion, cliente_direccion, cliente_telefono) =
         if let Some(cid) = venta.cliente_id {
             conn.query_row(
-                "SELECT nombre, identificacion FROM clientes WHERE id = ?1",
+                "SELECT nombre, identificacion, direccion, telefono FROM clientes WHERE id = ?1",
                 rusqlite::params![cid],
                 |row| {
                     Ok((
                         row.get::<_, String>(0).ok(),
                         row.get::<_, Option<String>>(1).unwrap_or(None),
+                        row.get::<_, Option<String>>(2).unwrap_or(None),
+                        row.get::<_, Option<String>>(3).unwrap_or(None),
                     ))
                 },
             )
-            .unwrap_or((None, None))
+            .unwrap_or((None, None, None, None))
         } else {
-            (None, None)
+            (None, None, None, None)
         };
 
     // Cargar config del negocio
@@ -1210,6 +1313,8 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
         &config,
         cliente_nombre.as_deref(),
         cliente_identificacion.as_deref(),
+        cliente_direccion.as_deref(),
+        cliente_telefono.as_deref(),
     )?;
 
     // Guardar en temp
@@ -1225,7 +1330,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
     // Abrir con visor del sistema
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &pdf_path.to_string_lossy()])
             .spawn()
             .map_err(|e| format!("Error abriendo PDF: {}", e))?;
@@ -1242,19 +1347,22 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
     Ok(pdf_path.to_string_lossy().to_string())
 }
 
-/// Genera los bytes del PDF A4 para Guía de Remisión
+/// Genera los bytes del PDF A4 para Guía de Remisión (formato profesional)
 fn generar_guia_remision_pdf(
     venta: &crate::models::Venta,
     detalles: &[crate::models::VentaDetalle],
     config: &std::collections::HashMap<String, String>,
     cliente_nombre: Option<&str>,
     cliente_identificacion: Option<&str>,
+    cliente_direccion: Option<&str>,
+    cliente_telefono: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    use genpdf::elements::{Break, Paragraph, TableLayout};
-    use genpdf::style::Style;
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use genpdf::elements::{Break, LinearLayout, PaddedElement, Paragraph, StyledElement, TableLayout};
+    use genpdf::style::{Color, Style};
     use genpdf::{Alignment, Document, Element, Margins, SimplePageDecorator};
 
-    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
     let font_family = genpdf::fonts::from_files(
         fonts_dir.to_str().unwrap_or("fonts"),
         "LiberationSans",
@@ -1267,175 +1375,236 @@ fn generar_guia_remision_pdf(
     doc.set_paper_size(genpdf::Size::new(210, 297)); // A4
 
     let mut decorator = SimplePageDecorator::new();
-    decorator.set_margins(Margins::trbl(20, 20, 20, 20));
+    decorator.set_margins(Margins::trbl(15, 15, 15, 15));
     doc.set_page_decorator(decorator);
 
+    // --- Helpers para celdas con padding ---
+    fn pp(text: &str, style: Style) -> PaddedElement<StyledElement<Paragraph>> {
+        Paragraph::new(text).styled(style).padded(Margins::trbl(2, 2, 2, 4))
+    }
+
+    fn pp_right(text: &str, style: Style) -> impl Element {
+        Paragraph::new(text).aligned(Alignment::Right).styled(style).padded(Margins::trbl(2, 4, 2, 2))
+    }
+
+    fn pp_center(text: &str, style: Style) -> impl Element {
+        Paragraph::new(text).aligned(Alignment::Center).styled(style).padded(Margins::trbl(2, 2, 2, 2))
+    }
+
     // Estilos
-    let s_title = Style::new().with_font_size(16).bold();
-    let s_subtitle = Style::new().with_font_size(12).bold();
-    let s_normal = Style::new().with_font_size(10);
-    let s_bold = Style::new().with_font_size(10).bold();
-    let s_small = Style::new().with_font_size(9);
-    let s_table_header = Style::new().with_font_size(9).bold();
-    let s_table_cell = Style::new().with_font_size(9);
-    let s_total_bold = Style::new().with_font_size(11).bold();
+    let s_normal = Style::new().with_font_size(9);
+    let s_bold = Style::new().with_font_size(9).bold();
+    let s_small = Style::new().with_font_size(8);
+    let s_small_bold = Style::new().with_font_size(8).bold();
+    let s_small_italic = Style::new().with_font_size(7).italic();
+    let s_doc_title = Style::new().with_font_size(16).bold();
+    let s_doc_no = Style::new().with_font_size(11);
+    let s_negocio = Style::new().with_font_size(11).bold();
+    let s_table_header = Style::new().with_font_size(8).bold();
+    let s_table_cell = Style::new().with_font_size(8);
+    let s_total_bold = Style::new().with_font_size(10).bold();
     let s_firma = Style::new().with_font_size(9);
-    let s_nota = Style::new().with_font_size(8);
+    let s_firma_label = Style::new().with_font_size(8).bold();
+    let s_firma_field = Style::new().with_font_size(8);
+    let s_footer = Style::new().with_font_size(7).with_color(Color::Greyscale(128));
 
     // --- Datos del negocio ---
     let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
     let ruc = config.get("ruc").map(|s| s.as_str()).unwrap_or("");
-    let direccion = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
-    let telefono = config.get("telefono").map(|s| s.as_str()).unwrap_or("");
+    let direccion_neg = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
+    let telefono_neg = config.get("telefono").map(|s| s.as_str()).unwrap_or("");
+
+    let fecha = venta.fecha.as_deref().unwrap_or("-");
 
     // ===================================================================
-    // ENCABEZADO
+    // SECCION 1: ENCABEZADO (2 columnas con bordes)
+    // Izq: Logo + datos del negocio
+    // Der: Titulo "GUIA DE REMISION" + numero + fecha
     // ===================================================================
-    doc.push(
+    let mut header_table = TableLayout::new(vec![1, 1]);
+    header_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+
+    // --- Columna izquierda: Logo + datos emisor ---
+    let mut col_izq = LinearLayout::vertical();
+
+    // Logo del negocio (misma lógica que ride.rs)
+    if let Some(logo_b64) = config.get("logo_negocio") {
+        if !logo_b64.is_empty() {
+            if let Ok(logo_bytes) = BASE64.decode(logo_b64) {
+                let logo_temp = std::env::temp_dir().join("clouget_guia_logo.png");
+                if std::fs::write(&logo_temp, &logo_bytes).is_ok() {
+                    if let Ok(mut logo_img) = genpdf::elements::Image::from_path(&logo_temp) {
+                        logo_img = logo_img.with_alignment(Alignment::Center);
+                        // Escala dinámica: llenar ancho de columna
+                        let max_width_mm = 84.0_f64;
+                        let max_height_mm = 30.0_f64;
+                        let (img_w, img_h) = if logo_bytes.len() > 24 && &logo_bytes[0..4] == b"\x89PNG" {
+                            let w = u32::from_be_bytes([logo_bytes[16], logo_bytes[17], logo_bytes[18], logo_bytes[19]]) as f64;
+                            let h = u32::from_be_bytes([logo_bytes[20], logo_bytes[21], logo_bytes[22], logo_bytes[23]]) as f64;
+                            (w, h)
+                        } else {
+                            (200.0, 100.0)
+                        };
+                        let scale_by_w = (max_width_mm * 300.0) / (25.4 * img_w);
+                        let rendered_h = 25.4 * (scale_by_w * img_h) / 300.0;
+                        let final_scale = if rendered_h > max_height_mm {
+                            (max_height_mm * 300.0) / (25.4 * img_h)
+                        } else {
+                            scale_by_w
+                        };
+                        logo_img = logo_img.with_scale(genpdf::Scale::new(final_scale, final_scale));
+                        col_izq.push(logo_img.padded(Margins::trbl(2, 3, 2, 3)));
+                    }
+                    let _ = std::fs::remove_file(&logo_temp);
+                }
+            }
+        }
+    }
+
+    // Datos del negocio
+    col_izq.push(pp(nombre_negocio, s_negocio));
+    if !ruc.is_empty() {
+        col_izq.push(pp(&format!("RUC: {}", ruc), s_bold));
+    }
+    if !direccion_neg.is_empty() {
+        col_izq.push(pp(&format!("Dir: {}", direccion_neg), s_small));
+    }
+    if !telefono_neg.is_empty() {
+        col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_small));
+    }
+    col_izq.push(Break::new(0.5));
+
+    // --- Columna derecha: Titulo documento + numero + fecha ---
+    let mut col_der = LinearLayout::vertical();
+    col_der.push(Break::new(2));
+    col_der.push(
         Paragraph::new("GUIA DE REMISION")
             .aligned(Alignment::Center)
-            .styled(s_title),
+            .styled(s_doc_title)
+            .padded(Margins::trbl(1, 3, 1, 3)),
     );
-    doc.push(Break::new(0.5));
-
-    doc.push(
-        Paragraph::new(nombre_negocio)
+    col_der.push(Break::new(1));
+    col_der.push(
+        Paragraph::new(format!("Nro: {}", venta.numero))
             .aligned(Alignment::Center)
-            .styled(s_subtitle),
+            .styled(s_doc_no)
+            .padded(Margins::trbl(1, 3, 1, 3)),
     );
-    if !ruc.is_empty() {
-        doc.push(
-            Paragraph::new(format!("RUC: {}", ruc))
-                .aligned(Alignment::Center)
-                .styled(s_normal),
-        );
-    }
-    if !direccion.is_empty() {
-        doc.push(
-            Paragraph::new(format!("Direccion: {}", direccion))
-                .aligned(Alignment::Center)
-                .styled(s_small),
-        );
-    }
-    if !telefono.is_empty() {
-        doc.push(
-            Paragraph::new(format!("Telefono: {}", telefono))
-                .aligned(Alignment::Center)
-                .styled(s_small),
-        );
-    }
+    col_der.push(Break::new(0.5));
+    col_der.push(
+        Paragraph::new(format!("Fecha: {}", fecha))
+            .aligned(Alignment::Center)
+            .styled(s_normal)
+            .padded(Margins::trbl(1, 3, 1, 3)),
+    );
+    col_der.push(Break::new(1));
 
-    doc.push(Break::new(0.5));
+    // Estado
+    let estado_label = match venta.estado.as_str() {
+        "PENDIENTE" => "PENDIENTE DE ENTREGA",
+        "COMPLETADA" => "ENTREGADA",
+        "ANULADA" => "ANULADA",
+        _ => &venta.estado,
+    };
+    col_der.push(
+        Paragraph::new(estado_label)
+            .aligned(Alignment::Center)
+            .styled(s_bold)
+            .padded(Margins::trbl(1, 3, 2, 3)),
+    );
 
-    // Número y fecha
-    let fecha = venta.fecha.as_deref().unwrap_or("-");
-    let mut nro_table = TableLayout::new(vec![1, 1]);
-    nro_table
+    header_table
         .row()
-        .element(
-            Paragraph::new(format!("Nro: {}", venta.numero)).styled(s_bold),
-        )
-        .element(
-            Paragraph::new(format!("Fecha: {}", fecha))
-                .aligned(Alignment::Right)
-                .styled(s_bold),
-        )
+        .element(col_izq.padded(Margins::trbl(0, 0, 0, 0)))
+        .element(col_der.padded(Margins::trbl(0, 0, 0, 0)))
         .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    doc.push(nro_table);
+        .map_err(|e| format!("Error header: {}", e))?;
 
-    doc.push(Break::new(0.3));
-    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
-    doc.push(Break::new(0.5));
+    doc.push(header_table);
+    doc.push(Break::new(0.8));
 
     // ===================================================================
-    // DATOS DEL CLIENTE
+    // SECCION 2: DATOS DE TRANSPORTE (con bordes)
     // ===================================================================
-    doc.push(Paragraph::new("CLIENTE").styled(s_subtitle));
-    doc.push(Break::new(0.3));
-
-    let mut cliente_table = TableLayout::new(vec![1, 3]);
-    cliente_table
-        .row()
-        .element(Paragraph::new("Nombre:").styled(s_bold))
-        .element(Paragraph::new(cliente_nombre.unwrap_or("Consumidor Final")).styled(s_normal))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    cliente_table
-        .row()
-        .element(Paragraph::new("Identificacion:").styled(s_bold))
-        .element(Paragraph::new(cliente_identificacion.unwrap_or("9999999999999")).styled(s_normal))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    doc.push(cliente_table);
-
-    doc.push(Break::new(0.5));
-
-    // ===================================================================
-    // DATOS DE TRANSPORTE
-    // ===================================================================
-    doc.push(Paragraph::new("TRANSPORTE").styled(s_subtitle));
-    doc.push(Break::new(0.3));
-
     let placa = venta.guia_placa.as_deref().unwrap_or("-");
     let chofer = venta.guia_chofer.as_deref().unwrap_or("-");
     let destino = venta.guia_direccion_destino.as_deref().unwrap_or("-");
 
-    let mut transporte_table = TableLayout::new(vec![1, 3]);
-    transporte_table
-        .row()
-        .element(Paragraph::new("Placa:").styled(s_bold))
-        .element(Paragraph::new(placa).styled(s_normal))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    transporte_table
-        .row()
-        .element(Paragraph::new("Chofer:").styled(s_bold))
-        .element(Paragraph::new(chofer).styled(s_normal))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    transporte_table
-        .row()
-        .element(Paragraph::new("Destino:").styled(s_bold))
-        .element(Paragraph::new(destino).styled(s_normal))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    doc.push(transporte_table);
+    let mut transporte_table = TableLayout::new(vec![1, 2, 1, 2]);
+    transporte_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
-    doc.push(Break::new(0.3));
-    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
+    // Fila 1: Placa + Chofer
+    transporte_table
+        .row()
+        .element(pp("Placa:", s_small_bold))
+        .element(pp(placa, s_normal))
+        .element(pp("Chofer:", s_small_bold))
+        .element(pp(chofer, s_normal))
+        .push()
+        .map_err(|e| format!("Error transporte: {}", e))?;
+
+    // Fila 2: Direccion destino (span completo)
+    transporte_table
+        .row()
+        .element(pp("Dir. Destino:", s_small_bold))
+        .element(pp(destino, s_normal))
+        .element(pp("", s_normal))
+        .element(pp("", s_normal))
+        .push()
+        .map_err(|e| format!("Error transporte: {}", e))?;
+
+    doc.push(transporte_table);
     doc.push(Break::new(0.5));
 
     // ===================================================================
-    // TABLA DE PRODUCTOS
+    // SECCION 3: DATOS DEL CLIENTE (con bordes)
     // ===================================================================
-    doc.push(Paragraph::new("DETALLE DE PRODUCTOS").styled(s_subtitle));
-    doc.push(Break::new(0.3));
+    let mut cliente_table = TableLayout::new(vec![1, 2, 1, 2]);
+    cliente_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
-    // Header: # | Producto | Cant | P.Unit | Subtotal
-    let mut items_table = TableLayout::new(vec![1, 6, 2, 2, 2]);
+    // Fila 1: Nombre + Identificacion
+    cliente_table
+        .row()
+        .element(pp("Cliente:", s_small_bold))
+        .element(pp(cliente_nombre.unwrap_or("Consumidor Final"), s_normal))
+        .element(pp("Identificacion:", s_small_bold))
+        .element(pp(cliente_identificacion.unwrap_or("9999999999999"), s_normal))
+        .push()
+        .map_err(|e| format!("Error cliente: {}", e))?;
+
+    // Fila 2: Direccion + Telefono
+    let cli_dir = cliente_direccion.unwrap_or("-");
+    let cli_tel = cliente_telefono.unwrap_or("-");
+    cliente_table
+        .row()
+        .element(pp("Direccion:", s_small_bold))
+        .element(pp(cli_dir, s_normal))
+        .element(pp("Telefono:", s_small_bold))
+        .element(pp(cli_tel, s_normal))
+        .push()
+        .map_err(|e| format!("Error cliente: {}", e))?;
+
+    doc.push(cliente_table);
+    doc.push(Break::new(0.8));
+
+    // ===================================================================
+    // SECCION 4: TABLA DE PRODUCTOS (con bordes FrameCellDecorator)
+    // Columnas: # | Codigo | Descripcion | Cantidad | P.Unit | Subtotal
+    // ===================================================================
+    let mut items_table = TableLayout::new(vec![1, 2, 5, 2, 2, 2]);
+    items_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
 
     // Header row
     items_table
         .row()
-        .element(Paragraph::new("#").aligned(Alignment::Center).styled(s_table_header))
-        .element(Paragraph::new("Producto").styled(s_table_header))
-        .element(Paragraph::new("Cant").aligned(Alignment::Center).styled(s_table_header))
-        .element(Paragraph::new("P.Unit").aligned(Alignment::Right).styled(s_table_header))
-        .element(Paragraph::new("Subtotal").aligned(Alignment::Right).styled(s_table_header))
+        .element(pp_center("#", s_table_header))
+        .element(pp("Codigo", s_table_header))
+        .element(pp("Descripcion", s_table_header))
+        .element(pp_center("Cantidad", s_table_header))
+        .element(pp_right("P.Unit", s_table_header))
+        .element(pp_right("Subtotal", s_table_header))
         .push()
-        .map_err(|e| format!("Error: {}", e))?;
-
-    // Separator row
-    items_table
-        .row()
-        .element(Paragraph::new("---").styled(s_small))
-        .element(Paragraph::new("------------------------------").styled(s_small))
-        .element(Paragraph::new("------").styled(s_small))
-        .element(Paragraph::new("--------").styled(s_small))
-        .element(Paragraph::new("--------").styled(s_small))
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
+        .map_err(|e| format!("Error items header: {}", e))?;
 
     for (i, det) in detalles.iter().enumerate() {
         let nombre = det.nombre_producto.as_deref().unwrap_or("Producto");
@@ -1444,209 +1613,209 @@ fn generar_guia_remision_pdf(
         } else {
             format!("{:.2}", det.cantidad)
         };
+        let codigo = format!("{}", det.producto_id);
 
         items_table
             .row()
-            .element(
-                Paragraph::new(format!("{}", i + 1))
-                    .aligned(Alignment::Center)
-                    .styled(s_table_cell),
-            )
-            .element(Paragraph::new(nombre).styled(s_table_cell))
-            .element(
-                Paragraph::new(&cant_str)
-                    .aligned(Alignment::Center)
-                    .styled(s_table_cell),
-            )
-            .element(
-                Paragraph::new(format!("${:.2}", det.precio_unitario))
-                    .aligned(Alignment::Right)
-                    .styled(s_table_cell),
-            )
-            .element(
-                Paragraph::new(format!("${:.2}", det.subtotal))
-                    .aligned(Alignment::Right)
-                    .styled(s_table_cell),
-            )
+            .element(pp_center(&format!("{}", i + 1), s_table_cell))
+            .element(pp(&codigo, s_table_cell))
+            .element(pp(nombre, s_table_cell))
+            .element(pp_center(&cant_str, s_table_cell))
+            .element(pp_right(&format!("${:.2}", det.precio_unitario), s_table_cell))
+            .element(pp_right(&format!("${:.2}", det.subtotal), s_table_cell))
             .push()
-            .map_err(|e| format!("Error: {}", e))?;
+            .map_err(|e| format!("Error item: {}", e))?;
 
-        // Info adicional (S/N, lote, observacion)
+        // Info adicional (S/N, lote, observacion) en fila aparte
         if let Some(ref info) = det.info_adicional {
             if !info.is_empty() {
                 items_table
                     .row()
-                    .element(Paragraph::new("").styled(s_small))
-                    .element(Paragraph::new(format!("  {}", info)).styled(s_small))
-                    .element(Paragraph::new("").styled(s_small))
-                    .element(Paragraph::new("").styled(s_small))
-                    .element(Paragraph::new("").styled(s_small))
+                    .element(pp("", s_small))
+                    .element(pp("", s_small))
+                    .element(
+                        Paragraph::new(format!("  >> {}", info))
+                            .styled(s_small_italic)
+                            .padded(Margins::trbl(0, 1, 1, 5)),
+                    )
+                    .element(pp("", s_small))
+                    .element(pp("", s_small))
+                    .element(pp("", s_small))
                     .push()
-                    .map_err(|e| format!("Error: {}", e))?;
+                    .map_err(|e| format!("Error info: {}", e))?;
             }
         }
     }
 
     doc.push(items_table);
-
-    doc.push(Break::new(0.3));
-    doc.push(Paragraph::new("________________________________________________________________________________________________________").styled(s_small));
-    doc.push(Break::new(0.3));
+    doc.push(Break::new(0.5));
 
     // ===================================================================
-    // TOTALES
+    // SECCION 5: TOTALES (alineados a la derecha)
     // ===================================================================
-    let mut totales_table = TableLayout::new(vec![5, 2]);
-    totales_table
-        .row()
-        .element(Paragraph::new("Subtotal:").aligned(Alignment::Right).styled(s_bold))
-        .element(
-            Paragraph::new(format!("${:.2}", venta.subtotal_sin_iva + venta.subtotal_con_iva))
-                .aligned(Alignment::Right)
-                .styled(s_normal),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
+    let mut totales_outer = TableLayout::new(vec![4, 2]);
 
-    if venta.descuento > 0.0 {
-        totales_table
+    // Espacio izquierdo vacío + bloque totales a la derecha
+    let mut totales_block = LinearLayout::vertical();
+
+    // Subtotal
+    {
+        let mut row_table = TableLayout::new(vec![1, 1]);
+        row_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+        row_table
             .row()
-            .element(Paragraph::new("Descuento:").aligned(Alignment::Right).styled(s_bold))
-            .element(
-                Paragraph::new(format!("-${:.2}", venta.descuento))
-                    .aligned(Alignment::Right)
-                    .styled(s_normal),
-            )
+            .element(pp("Subtotal:", s_bold))
+            .element(pp_right(
+                &format!("${:.2}", venta.subtotal_sin_iva + venta.subtotal_con_iva),
+                s_normal,
+            ))
             .push()
-            .map_err(|e| format!("Error: {}", e))?;
+            .map_err(|e| format!("Error totales: {}", e))?;
+        totales_block.push(row_table);
     }
 
-    totales_table
-        .row()
-        .element(Paragraph::new("IVA:").aligned(Alignment::Right).styled(s_bold))
-        .element(
-            Paragraph::new(format!("${:.2}", venta.iva))
-                .aligned(Alignment::Right)
-                .styled(s_normal),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
+    // Descuento (si aplica)
+    if venta.descuento > 0.0 {
+        let mut row_table = TableLayout::new(vec![1, 1]);
+        row_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+        row_table
+            .row()
+            .element(pp("Descuento:", s_bold))
+            .element(pp_right(&format!("-${:.2}", venta.descuento), s_normal))
+            .push()
+            .map_err(|e| format!("Error totales: {}", e))?;
+        totales_block.push(row_table);
+    }
 
-    totales_table
-        .row()
-        .element(Paragraph::new("TOTAL:").aligned(Alignment::Right).styled(s_total_bold))
-        .element(
-            Paragraph::new(format!("${:.2}", venta.total))
-                .aligned(Alignment::Right)
-                .styled(s_total_bold),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
+    // IVA
+    {
+        let mut row_table = TableLayout::new(vec![1, 1]);
+        row_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+        row_table
+            .row()
+            .element(pp("IVA:", s_bold))
+            .element(pp_right(&format!("${:.2}", venta.iva), s_normal))
+            .push()
+            .map_err(|e| format!("Error totales: {}", e))?;
+        totales_block.push(row_table);
+    }
 
-    doc.push(totales_table);
+    // TOTAL
+    {
+        let mut row_table = TableLayout::new(vec![1, 1]);
+        row_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+        row_table
+            .row()
+            .element(pp("TOTAL:", s_total_bold))
+            .element(pp_right(&format!("${:.2}", venta.total), s_total_bold))
+            .push()
+            .map_err(|e| format!("Error totales: {}", e))?;
+        totales_block.push(row_table);
+    }
+
+    totales_outer
+        .row()
+        .element(Paragraph::new("").styled(s_normal))
+        .element(totales_block)
+        .push()
+        .map_err(|e| format!("Error totales outer: {}", e))?;
+
+    doc.push(totales_outer);
+
+    // Observacion
+    if let Some(ref obs) = venta.observacion {
+        if !obs.is_empty() {
+            doc.push(Break::new(0.5));
+            let mut obs_table = TableLayout::new(vec![1]);
+            obs_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+            obs_table
+                .row()
+                .element(pp(&format!("Observacion: {}", obs), s_normal))
+                .push()
+                .map_err(|e| format!("Error obs: {}", e))?;
+            doc.push(obs_table);
+        }
+    }
 
     doc.push(Break::new(3));
 
     // ===================================================================
-    // FIRMAS
+    // SECCION 6: FIRMA "RECIBI CONFORME" (caja unica, ancho completo)
     // ===================================================================
-    let mut firmas_table = TableLayout::new(vec![1, 1, 1]);
-    firmas_table
+    // Layout: 2 columnas — izquierda vacía (spacer), derecha con cuadro de firma
+    let mut firmas_table = TableLayout::new(vec![1, 1]);
+    firmas_table.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(false, false, false));
+
+    // Columna izquierda: vacía
+    let spacer = LinearLayout::vertical();
+
+    // Columna derecha: cuadro con borde
+    let mut firma_outer = TableLayout::new(vec![1]);
+    firma_outer.set_cell_decorator(genpdf::elements::FrameCellDecorator::new(true, true, false));
+
+    let mut firma_box = LinearLayout::vertical();
+    firma_box.push(
+        Paragraph::new("RECIBI CONFORME")
+            .aligned(Alignment::Center)
+            .styled(s_firma_label)
+            .padded(Margins::trbl(4, 4, 2, 4)),
+    );
+    firma_box.push(Break::new(5));
+    firma_box.push(
+        Paragraph::new("________________________________")
+            .aligned(Alignment::Center)
+            .styled(s_firma)
+            .padded(Margins::trbl(0, 4, 0, 4)),
+    );
+    firma_box.push(
+        Paragraph::new("Firma")
+            .aligned(Alignment::Center)
+            .styled(s_firma_field)
+            .padded(Margins::trbl(0, 4, 3, 4)),
+    );
+    firma_box.push(
+        Paragraph::new("Nombre: ___________________________________")
+            .aligned(Alignment::Left)
+            .styled(s_firma_field)
+            .padded(Margins::trbl(2, 8, 1, 8)),
+    );
+    firma_box.push(
+        Paragraph::new("Cedula:   ___________________________________")
+            .aligned(Alignment::Left)
+            .styled(s_firma_field)
+            .padded(Margins::trbl(1, 8, 4, 8)),
+    );
+
+    firma_outer
         .row()
-        .element(
-            Paragraph::new("_________________________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .element(Paragraph::new("").styled(s_firma))
-        .element(
-            Paragraph::new("_________________________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
+        .element(firma_box)
         .push()
-        .map_err(|e| format!("Error: {}", e))?;
+        .map_err(|e| format!("Error firma: {}", e))?;
 
     firmas_table
         .row()
-        .element(
-            Paragraph::new("ENTREGADO POR")
-                .aligned(Alignment::Center)
-                .styled(s_bold),
-        )
-        .element(Paragraph::new("").styled(s_firma))
-        .element(
-            Paragraph::new("RECIBI CONFORME")
-                .aligned(Alignment::Center)
-                .styled(s_bold),
-        )
+        .element(spacer)
+        .element(firma_outer)
         .push()
-        .map_err(|e| format!("Error: {}", e))?;
-
-    firmas_table
-        .row()
-        .element(
-            Paragraph::new("Nombre: _______________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .element(Paragraph::new("").styled(s_firma))
-        .element(
-            Paragraph::new("Nombre: _______________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-
-    firmas_table
-        .row()
-        .element(
-            Paragraph::new("Cedula: _______________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .element(Paragraph::new("").styled(s_firma))
-        .element(
-            Paragraph::new("Cedula: _______________")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-
-    firmas_table
-        .row()
-        .element(
-            Paragraph::new("Firma")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .element(Paragraph::new("").styled(s_firma))
-        .element(
-            Paragraph::new("Firma")
-                .aligned(Alignment::Center)
-                .styled(s_firma),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
+        .map_err(|e| format!("Error firmas: {}", e))?;
 
     doc.push(firmas_table);
 
-    doc.push(Break::new(2));
+    doc.push(Break::new(1.5));
 
-    // Nota legal
+    // ===================================================================
+    // SECCION 7: NOTAS Y FOOTER
+    // ===================================================================
     doc.push(
         Paragraph::new("Nota: Este documento NO tiene valor tributario. Es una guia de remision interna para control de mercaderia.")
             .aligned(Alignment::Center)
-            .styled(s_nota),
+            .styled(s_footer),
     );
-
-    doc.push(Break::new(1));
+    doc.push(Break::new(0.5));
     doc.push(
-        Paragraph::new("Generado con CLOUGET PUNTO DE VENTA")
+        Paragraph::new("Generado por Clouget POS")
             .aligned(Alignment::Center)
-            .styled(s_nota),
+            .styled(s_footer),
     );
 
     let mut buffer = Vec::new();

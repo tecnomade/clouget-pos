@@ -77,10 +77,61 @@ pub async fn backup_cloud_premium(db: State<'_, Database>) -> Result<String, Str
 }
 
 /// Sube un backup a Google Drive del usuario (gratis).
+/// Refresca el access_token de Google Drive usando el refresh_token via Edge Function.
+async fn refrescar_gdrive_token(db: &Database) -> Result<String, String> {
+    let (refresh_token, api_url, api_key) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let get = |key: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |row| row.get(0)).unwrap_or_default()
+        };
+        (get("gdrive_refresh_token"), get("licencia_api_url"), get("licencia_api_key"))
+    };
+
+    if refresh_token.is_empty() {
+        return Err("No hay refresh_token. Reconecte Google Drive.".to_string());
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{}/gdrive-auth", api_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("apikey", &api_key)
+        .json(&serde_json::json!({ "refresh_token": refresh_token }))
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("Error refrescando token: {}", e))?;
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    if data["ok"].as_bool() != Some(true) {
+        return Err(format!("Error refrescando: {}", data["error"].as_str().unwrap_or("desconocido")));
+    }
+
+    let new_token = data["access_token"].as_str().unwrap_or("").to_string();
+    if new_token.is_empty() {
+        return Err("No se obtuvo nuevo access_token".to_string());
+    }
+
+    // Guardar nuevo token
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('gdrive_access_token', ?1)", rusqlite::params![new_token]).ok();
+        // Si viene nuevo refresh_token, guardarlo también
+        if let Some(new_rt) = data["refresh_token"].as_str() {
+            if !new_rt.is_empty() {
+                conn.execute("INSERT OR REPLACE INTO config (key, value) VALUES ('gdrive_refresh_token', ?1)", rusqlite::params![new_rt]).ok();
+            }
+        }
+    }
+
+    Ok(new_token)
+}
+
 #[tauri::command]
 pub async fn backup_cloud_gdrive(db: State<'_, Database>) -> Result<String, String> {
     // Extraer todo lo sincrónico
-    let (backup_data, access_token, folder_id) = {
+    let (backup_data, mut access_token, folder_id) = {
         let (data, _lic) = crear_backup_encriptado(&db)?;
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let at: String = conn.query_row("SELECT value FROM config WHERE key = 'gdrive_access_token'", [], |row| row.get(0)).unwrap_or_default();
@@ -89,7 +140,8 @@ pub async fn backup_cloud_gdrive(db: State<'_, Database>) -> Result<String, Stri
     };
 
     if access_token.is_empty() {
-        return Err("Conecte su cuenta de Google Drive primero".to_string());
+        // Intentar refrescar automáticamente
+        access_token = refrescar_gdrive_token(&db).await?;
     }
 
     let client = reqwest::Client::new();
@@ -100,7 +152,7 @@ pub async fn backup_cloud_gdrive(db: State<'_, Database>) -> Result<String, Stri
             .post("https://www.googleapis.com/drive/v3/files")
             .bearer_auth(&access_token)
             .json(&serde_json::json!({
-                "name": "CloudgetPOS-Backups",
+                "name": "Clouget POS Backups",
                 "mimeType": "application/vnd.google-apps.folder"
             }))
             .send()
@@ -163,7 +215,11 @@ pub async fn backup_cloud_gdrive(db: State<'_, Database>) -> Result<String, Stri
     } else {
         let status = resp.status();
         if status.as_u16() == 401 {
-            return Err("Token de Google Drive expirado. Reconecte su cuenta.".to_string());
+            // Intentar refrescar token y reintentar
+            match refrescar_gdrive_token(&db).await {
+                Ok(_) => return Err("Token refrescado. Intente de nuevo.".to_string()),
+                Err(_) => return Err("Token de Google Drive expirado. Reconecte su cuenta.".to_string()),
+            }
         }
         let body_text = resp.text().await.unwrap_or_default();
         Err(format!("Error de Google Drive ({}): {}", status, body_text))
@@ -233,18 +289,26 @@ pub fn desconectar_gdrive(db: State<Database>) -> Result<(), String> {
 /// 5. Guarda los tokens en config
 #[tauri::command]
 pub async fn conectar_gdrive(db: State<'_, Database>) -> Result<String, String> {
+    // Constantes de respaldo (valores públicos de Supabase)
+    const DEFAULT_CLIENT_ID: &str = "419804426556-ple84m5nr8473fs32f9ma2a12gl2vcdl.apps.googleusercontent.com";
+    const DEFAULT_API_URL: &str = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1";
+    const DEFAULT_API_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpha3F1emZsa3ZmcWZscW54cHhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY2MDcxNjQsImV4cCI6MjA1MjE4MzE2NH0.sxaKNMkNguqQnvmUXh2JVRjqXDDqgsKb2LKPSGFp9bE";
+
     let (client_id, api_url, api_key) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let get = |key: &str| -> String {
             conn.query_row("SELECT value FROM config WHERE key = ?1", rusqlite::params![key], |row| row.get(0))
                 .unwrap_or_default()
         };
-        (get("gdrive_client_id"), get("licencia_api_url"), get("licencia_api_key"))
+        let cid = get("gdrive_client_id");
+        let url = get("licencia_api_url");
+        let key = get("licencia_api_key");
+        (
+            if cid.is_empty() { DEFAULT_CLIENT_ID.to_string() } else { cid },
+            if url.is_empty() { DEFAULT_API_URL.to_string() } else { url },
+            if key.is_empty() { DEFAULT_API_KEY.to_string() } else { key },
+        )
     };
-
-    if client_id.is_empty() {
-        return Err("ID de cliente de Google Drive no configurado".to_string());
-    }
 
     // Iniciar mini-servidor para capturar el callback OAuth
     let (tx, rx) = tokio::sync::oneshot::channel::<String>();
@@ -294,7 +358,7 @@ pub async fn conectar_gdrive(db: State<'_, Database>) -> Result<String, String> 
 
     // Abrir en el navegador del sistema
     #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd").args(["/C", "start", &auth_url.replace("&", "^&")]).spawn().ok();
+    crate::utils::silent_command("cmd").args(["/C", "start", &auth_url.replace("&", "^&")]).spawn().ok();
     #[cfg(target_os = "linux")]
     std::process::Command::new("xdg-open").arg(&auth_url).spawn().ok();
     #[cfg(target_os = "macos")]

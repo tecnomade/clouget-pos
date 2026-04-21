@@ -16,14 +16,15 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
         .ok();
 
     conn.execute(
-        "INSERT INTO gastos (descripcion, monto, categoria, caja_id, observacion)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO gastos (descripcion, monto, categoria, caja_id, observacion, es_recurrente)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![
             gasto.descripcion,
             gasto.monto,
             gasto.categoria,
             caja_id,
             gasto.observacion,
+            gasto.es_recurrente as i32,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -33,7 +34,7 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
     // Obtener el gasto insertado con su fecha
     let resultado = conn
         .query_row(
-            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion
+            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion, COALESCE(es_recurrente, 0)
              FROM gastos WHERE id = ?1",
             rusqlite::params![id],
             |row| {
@@ -45,6 +46,7 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
                     fecha: row.get(4)?,
                     caja_id: row.get(5)?,
                     observacion: row.get(6)?,
+                    es_recurrente: row.get::<_, i32>(7)? != 0,
                 })
             },
         )
@@ -59,7 +61,7 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion
+            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion, COALESCE(es_recurrente, 0)
              FROM gastos
              WHERE date(fecha) = date(?1)
              ORDER BY fecha DESC",
@@ -76,6 +78,7 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
                 fecha: row.get(4)?,
                 caja_id: row.get(5)?,
                 observacion: row.get(6)?,
+                es_recurrente: row.get::<_, i32>(7)? != 0,
             })
         })
         .map_err(|e| e.to_string())?

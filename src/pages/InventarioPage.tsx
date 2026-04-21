@@ -4,6 +4,7 @@ import {
   registrarMovimiento,
   resumenInventario,
   buscarProductos,
+  exportarKardexCsv,
 } from "../services/api";
 import type { MovimientoInventario, ResumenInventario } from "../services/api";
 import type { ProductoBusqueda } from "../types";
@@ -22,11 +23,11 @@ function fechaHace(dias: number): string {
 }
 
 const TIPO_COLORES: Record<string, { bg: string; color: string }> = {
-  ENTRADA: { bg: "#dcfce7", color: "#166534" },
-  SALIDA: { bg: "#fee2e2", color: "#dc2626" },
-  VENTA: { bg: "#dbeafe", color: "#1e40af" },
-  AJUSTE: { bg: "#fef3c7", color: "#92400e" },
-  DEVOLUCION: { bg: "#f3e8ff", color: "#7c3aed" },
+  ENTRADA: { bg: "rgba(22, 163, 74, 0.15)", color: "var(--color-success, #22c55e)" },
+  SALIDA: { bg: "rgba(220, 38, 38, 0.15)", color: "var(--color-danger, #ef4444)" },
+  VENTA: { bg: "rgba(59, 130, 246, 0.15)", color: "var(--color-primary, #3b82f6)" },
+  AJUSTE: { bg: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning, #f59e0b)" },
+  DEVOLUCION: { bg: "rgba(139, 92, 246, 0.15)", color: "#a78bfa" },
 };
 
 export default function InventarioPage() {
@@ -68,6 +69,24 @@ export default function InventarioPage() {
       setModalResultados(res);
     } else {
       setModalResultados([]);
+    }
+  };
+
+  const handleExportarKardex = async () => {
+    try {
+      const csv = await exportarKardexCsv(fechaDesde, fechaHasta, filtroProductoId);
+      const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kardex_${fechaDesde}_${fechaHasta}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toastExito("Kardex exportado");
+    } catch (err) {
+      toastError("Error al exportar: " + err);
     }
   };
 
@@ -128,11 +147,11 @@ export default function InventarioPage() {
             </div>
             <div className="card" style={{ padding: 14 }}>
               <div className="text-secondary" style={{ fontSize: 11 }}>Entradas (mes)</div>
-              <div className="text-xl font-bold" style={{ color: "#166534" }}>{resumen.total_entradas_mes}</div>
+              <div className="text-xl font-bold" style={{ color: "var(--color-success, #22c55e)" }}>{resumen.total_entradas_mes}</div>
             </div>
             <div className="card" style={{ padding: 14 }}>
               <div className="text-secondary" style={{ fontSize: 11 }}>Salidas (mes)</div>
-              <div className="text-xl font-bold" style={{ color: "#dc2626" }}>{resumen.total_salidas_mes}</div>
+              <div className="text-xl font-bold" style={{ color: "var(--color-danger, #ef4444)" }}>{resumen.total_salidas_mes}</div>
             </div>
             <div className="card" style={{ padding: 14 }}>
               <div className="text-secondary" style={{ fontSize: 11 }}>Ajustes (mes)</div>
@@ -160,7 +179,7 @@ export default function InventarioPage() {
             </select>
             {filtroProductoId ? (
               <div className="flex items-center gap-1">
-                <span style={{ fontSize: 12, background: "#eff6ff", padding: "4px 8px", borderRadius: 4 }}>
+                <span style={{ fontSize: 12, background: "var(--color-surface-alt)", color: "var(--color-text)", padding: "4px 8px", borderRadius: 4 }}>
                   {filtroProductoNombre}
                 </span>
                 <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 10 }}
@@ -171,6 +190,10 @@ export default function InventarioPage() {
             ) : (
               <span className="text-secondary" style={{ fontSize: 11 }}>Click en un producto para filtrar</span>
             )}
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "6px 12px", marginLeft: "auto" }}
+              onClick={handleExportarKardex}>
+              Exportar Kardex CSV
+            </button>
           </div>
         </div>
 
@@ -196,7 +219,7 @@ export default function InventarioPage() {
               </thead>
               <tbody>
                 {movimientos.map((m) => {
-                  const tc = TIPO_COLORES[m.tipo] || { bg: "#f1f5f9", color: "#64748b" };
+                  const tc = TIPO_COLORES[m.tipo] || { bg: "var(--color-surface-alt)", color: "var(--color-text-secondary)" };
                   return (
                     <tr key={m.id}>
                       <td className="text-secondary" style={{ fontSize: 12, whiteSpace: "nowrap" }}>
@@ -205,7 +228,7 @@ export default function InventarioPage() {
                         }) : "-"}
                       </td>
                       <td>
-                        <span style={{ cursor: "pointer", color: "#2563eb", fontWeight: 500 }}
+                        <span style={{ cursor: "pointer", color: "var(--color-primary, #3b82f6)", fontWeight: 500 }}
                           onClick={() => {
                             setFiltroProductoId(m.producto_id);
                             setFiltroProductoNombre(m.producto_nombre || "");
@@ -225,7 +248,7 @@ export default function InventarioPage() {
                         </span>
                       </td>
                       <td className="text-right font-bold" style={{
-                        color: m.cantidad >= 0 ? "#166534" : "#dc2626",
+                        color: m.cantidad >= 0 ? "var(--color-success, #22c55e)" : "var(--color-danger, #ef4444)",
                       }}>
                         {m.cantidad >= 0 ? "+" : ""}{m.cantidad}
                       </td>
@@ -264,7 +287,7 @@ export default function InventarioPage() {
 
             {/* Buscar producto */}
             <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>Producto</label>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>Producto</label>
               {modalProducto ? (
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: 13, fontWeight: 500 }}>{modalProducto.nombre}</span>
@@ -284,9 +307,9 @@ export default function InventarioPage() {
                   {modalResultados.length > 0 && (
                     <div style={{
                       position: "absolute", top: "100%", left: 0, right: 0,
-                      background: "white", border: "1px solid var(--color-border)",
+                      background: "var(--color-surface)", border: "1px solid var(--color-border)",
                       borderRadius: 6, maxHeight: 200, overflow: "auto", zIndex: 10,
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
                     }}>
                       {modalResultados.slice(0, 10).map((p) => (
                         <div key={p.id}
@@ -299,8 +322,8 @@ export default function InventarioPage() {
                               setModalCantidad(String(p.stock_actual));
                             }
                           }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "#f8fafc")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "white")}>
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surface-hover)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                           <strong>{p.nombre}</strong>
                           <span className="text-secondary" style={{ marginLeft: 8, fontSize: 11 }}>
                             Stock: {p.stock_actual}
@@ -315,7 +338,7 @@ export default function InventarioPage() {
 
             {/* Cantidad */}
             <div style={{ marginBottom: 12 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
                 {modalTipo === "ENTRADA" ? "Cantidad a ingresar" : "Stock real (conteo fisico)"}
               </label>
               <input className="input" type="number" style={{ width: "100%", fontSize: 13 }}
@@ -323,7 +346,7 @@ export default function InventarioPage() {
                 value={modalCantidad}
                 onChange={(e) => setModalCantidad(e.target.value)} />
               {modalTipo === "AJUSTE" && modalProducto && modalCantidad && (
-                <div style={{ fontSize: 11, marginTop: 4, color: "#64748b" }}>
+                <div style={{ fontSize: 11, marginTop: 4, color: "var(--color-text-secondary)" }}>
                   Diferencia: {(parseFloat(modalCantidad) - modalProducto.stock_actual) >= 0 ? "+" : ""}
                   {(parseFloat(modalCantidad) - modalProducto.stock_actual).toFixed(1)} unidades
                 </div>
@@ -333,7 +356,7 @@ export default function InventarioPage() {
             {/* Costo (solo para entradas) */}
             {modalTipo === "ENTRADA" && (
               <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
                   Costo unitario (opcional)
                 </label>
                 <input className="input" type="number" step="0.01" style={{ width: "100%", fontSize: 13 }}
@@ -345,7 +368,7 @@ export default function InventarioPage() {
 
             {/* Motivo */}
             <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
                 Motivo / Observacion
               </label>
               <input className="input" style={{ width: "100%", fontSize: 13 }}

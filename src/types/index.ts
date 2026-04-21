@@ -16,6 +16,9 @@ export interface Producto {
   es_servicio: boolean;
   activo: boolean;
   imagen?: string;
+  requiere_serie?: boolean;
+  requiere_caducidad?: boolean;
+  no_controla_stock?: boolean;
 }
 
 export interface ProductoTactil {
@@ -32,6 +35,7 @@ export interface ProductoTactil {
 export interface ProductoBusqueda {
   id: number;
   codigo?: string;
+  codigo_barras?: string;
   nombre: string;
   precio_venta: number;
   iva_porcentaje: number;
@@ -211,6 +215,7 @@ export interface ResumenCaja {
   total_gastos: number;
   total_cobros_efectivo: number;
   total_cobros_banco: number;
+  total_retiros: number;
 }
 
 // Gasto
@@ -222,6 +227,7 @@ export interface Gasto {
   fecha?: string;
   caja_id?: number;
   observacion?: string;
+  es_recurrente?: boolean;
 }
 
 // Cuentas por Cobrar
@@ -299,12 +305,14 @@ export interface UsuarioInfo {
   nombre: string;
   rol: string;
   activo: boolean;
+  permisos: string;
 }
 
 export interface SesionActiva {
   usuario_id: number;
   nombre: string;
   rol: string;
+  permisos: string;
 }
 
 export interface NuevoUsuario {
@@ -439,6 +447,105 @@ export interface StockEstablecimiento {
   establecimiento_codigo: string;
   stock_actual: number;
   stock_minimo: number;
+}
+
+// Proveedor
+export interface Proveedor {
+  id?: number;
+  ruc?: string;
+  nombre: string;
+  direccion?: string;
+  telefono?: string;
+  email?: string;
+  contacto?: string;
+  dias_credito?: number;
+  activo: boolean;
+}
+
+// Compras
+export interface Compra {
+  id?: number;
+  numero: string;
+  proveedor_id: number;
+  fecha?: string;
+  numero_factura?: string;
+  subtotal: number;
+  iva: number;
+  total: number;
+  estado: string;
+  forma_pago: string;
+  es_credito: boolean;
+  observacion?: string;
+  proveedor_nombre?: string;
+}
+
+export interface CompraDetalle {
+  id?: number;
+  compra_id?: number;
+  producto_id?: number;
+  descripcion?: string;
+  cantidad: number;
+  precio_unitario: number;
+  subtotal: number;
+  nombre_producto?: string;
+}
+
+export interface CompraCompleta {
+  compra: Compra;
+  detalles: CompraDetalle[];
+}
+
+export interface ItemCompra {
+  producto_id?: number;
+  descripcion?: string;
+  cantidad: number;
+  precio_unitario: number;
+  iva_porcentaje: number;
+}
+
+export interface NuevaCompra {
+  proveedor_id: number;
+  numero_factura?: string;
+  items: ItemCompra[];
+  forma_pago: string;
+  es_credito: boolean;
+  observacion?: string;
+  dias_credito?: number;
+}
+
+// Cuentas por Pagar
+export interface CuentaPorPagar {
+  id?: number;
+  proveedor_id: number;
+  compra_id?: number;
+  monto_total: number;
+  monto_pagado: number;
+  saldo: number;
+  estado: string;
+  fecha_vencimiento?: string;
+  observacion?: string;
+  created_at?: string;
+  proveedor_nombre?: string;
+  compra_numero?: string;
+}
+
+export interface PagoProveedor {
+  id?: number;
+  cuenta_id: number;
+  monto: number;
+  fecha?: string;
+  forma_pago: string;
+  numero_comprobante?: string;
+  observacion?: string;
+  banco_id?: number;
+  banco_nombre?: string;
+}
+
+export interface ResumenAcreedor {
+  proveedor_id: number;
+  proveedor_nombre: string;
+  total_deuda: number;
+  num_cuentas: number;
 }
 
 // Item del carrito (para la pantalla de venta)

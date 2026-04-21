@@ -568,6 +568,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Columna info_adicional en venta_detalles (número de serie, lote, observaciones por item)
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN info_adicional TEXT", []);
 
+    // Columna precio_costo en venta_detalles (snapshot del costo al momento de la venta)
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN precio_costo REAL NOT NULL DEFAULT 0", []);
+
     // Columnas de transferencia bancaria en ventas
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN banco_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN referencia_pago TEXT", []);
@@ -579,6 +582,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Columna establecimiento_id en movimientos_inventario
     let _ = conn.execute("ALTER TABLE movimientos_inventario ADD COLUMN establecimiento_id INTEGER", []);
+
+    // --- Migración: Permisos por usuario (JSON) ---
+    let _ = conn.execute("ALTER TABLE usuarios ADD COLUMN permisos TEXT NOT NULL DEFAULT '{}'", []);
 
     // Migración: tipo_estado en ventas (COMPLETADA, BORRADOR, COTIZACION, CONVERTIDA)
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN tipo_estado TEXT NOT NULL DEFAULT 'COMPLETADA'", []);
@@ -601,6 +607,126 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );"
     ).ok();
 
+    // --- Migración: Proveedores, Compras y Cuentas por Pagar ---
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS proveedores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ruc TEXT,
+            nombre TEXT NOT NULL,
+            direccion TEXT,
+            telefono TEXT,
+            email TEXT,
+            contacto TEXT,
+            dias_credito INTEGER NOT NULL DEFAULT 0,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS compras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL,
+            proveedor_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            numero_factura TEXT,
+            subtotal REAL NOT NULL DEFAULT 0,
+            iva REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            estado TEXT NOT NULL DEFAULT 'REGISTRADA',
+            forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO',
+            es_credito INTEGER NOT NULL DEFAULT 0,
+            observacion TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS compra_detalles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compra_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            descripcion TEXT,
+            cantidad REAL NOT NULL DEFAULT 1,
+            precio_unitario REAL NOT NULL DEFAULT 0,
+            subtotal REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE CASCADE,
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS cuentas_por_pagar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor_id INTEGER NOT NULL,
+            compra_id INTEGER,
+            monto_total REAL NOT NULL,
+            monto_pagado REAL NOT NULL DEFAULT 0,
+            saldo REAL NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+            fecha_vencimiento TEXT,
+            observacion TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (proveedor_id) REFERENCES proveedores(id),
+            FOREIGN KEY (compra_id) REFERENCES compras(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pagos_proveedor (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cuenta_id INTEGER NOT NULL,
+            monto REAL NOT NULL,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO',
+            numero_comprobante TEXT,
+            observacion TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (cuenta_id) REFERENCES cuentas_por_pagar(id)
+        );",
+    )?;
+
+    // --- Migración: Retiros de caja ---
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS retiros_caja (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caja_id INTEGER NOT NULL,
+            monto REAL NOT NULL,
+            motivo TEXT NOT NULL DEFAULT '',
+            banco_id INTEGER,
+            referencia TEXT,
+            usuario TEXT NOT NULL,
+            usuario_id INTEGER,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (caja_id) REFERENCES caja(id)
+        );",
+    )?;
+
+    // --- Migración: Estado de depósito en retiros_caja ---
+    let _ = conn.execute("ALTER TABLE retiros_caja ADD COLUMN estado TEXT NOT NULL DEFAULT 'SIN_DEPOSITO'", []);
+    let _ = conn.execute("ALTER TABLE retiros_caja ADD COLUMN comprobante_imagen TEXT", []);
+
+    // --- Migración: banco_id en pagos_proveedor ---
+    let _ = conn.execute("ALTER TABLE pagos_proveedor ADD COLUMN banco_id INTEGER", []);
+
+    // --- Migración: Columnas de contraseña en usuarios ---
+    let _ = conn.execute("ALTER TABLE usuarios ADD COLUMN password_hash TEXT", []);
+    let _ = conn.execute("ALTER TABLE usuarios ADD COLUMN password_salt TEXT", []);
+
+    // Config: modo de login (pin, password, ambos)
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modo_login', 'pin')", [])?;
+
+    // Secuencial para compras
+    conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('secuencial_compra', '1')", [])?;
+
+    // --- Migración: Tipos de unidad ---
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS tipos_unidad (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            abreviatura TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Unidad', 'UND');
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Kilogramo', 'KG');
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Libra', 'LB');
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Litro', 'LT');
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Metro', 'MT');
+        INSERT OR IGNORE INTO tipos_unidad (nombre, abreviatura) VALUES ('Caja', 'CJ');
+    ");
+
     // Migrar stock existente a stock_establecimiento (solo una vez)
     let stock_est_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM stock_establecimiento", [], |row| row.get(0))
@@ -619,6 +745,122 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             ).ok();
         }
     }
+
+    // --- Migración: Números de serie ---
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN requiere_serie INTEGER NOT NULL DEFAULT 0", []);
+
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS numeros_serie (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            serial TEXT NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'DISPONIBLE',
+            compra_id INTEGER,
+            venta_id INTEGER,
+            venta_detalle_id INTEGER,
+            cliente_id INTEGER,
+            cliente_nombre TEXT,
+            fecha_ingreso TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            fecha_venta TEXT,
+            observacion TEXT,
+            FOREIGN KEY (producto_id) REFERENCES productos(id),
+            UNIQUE(producto_id, serial)
+        );
+    ");
+
+    // --- Migración: Caducidad / Lotes ---
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN requiere_caducidad INTEGER NOT NULL DEFAULT 0", []);
+
+    // --- Migración: no_controla_stock (productos a granel, digitales) ---
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN no_controla_stock INTEGER NOT NULL DEFAULT 0", []);
+
+    // --- Migración: gastos recurrentes ---
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN es_recurrente INTEGER NOT NULL DEFAULT 0", []);
+
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS lotes_caducidad (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            lote TEXT,
+            fecha_caducidad TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            cantidad_inicial REAL NOT NULL,
+            compra_id INTEGER,
+            observacion TEXT,
+            fecha_ingreso TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_lotes_producto ON lotes_caducidad(producto_id);
+        CREATE INDEX IF NOT EXISTS idx_lotes_caducidad ON lotes_caducidad(fecha_caducidad);
+    ");
+
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modulo_caducidad', '0')", []);
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caducidad_dias_alerta', '7')", []);
+
+    // Módulo Servicio Técnico
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modulo_servicio_tecnico', '0')", []);
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS ordenes_servicio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL UNIQUE,
+            cliente_id INTEGER,
+            cliente_nombre TEXT,
+            cliente_telefono TEXT,
+            tipo_equipo TEXT NOT NULL DEFAULT 'GENERAL',
+            equipo_descripcion TEXT NOT NULL,
+            equipo_marca TEXT,
+            equipo_modelo TEXT,
+            equipo_serie TEXT,
+            equipo_placa TEXT,
+            equipo_kilometraje INTEGER,
+            equipo_kilometraje_proximo INTEGER,
+            accesorios TEXT,
+            problema_reportado TEXT NOT NULL,
+            diagnostico TEXT,
+            trabajo_realizado TEXT,
+            observaciones TEXT,
+            tecnico_id INTEGER,
+            tecnico_nombre TEXT,
+            estado TEXT NOT NULL DEFAULT 'RECIBIDO',
+            fecha_ingreso TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            fecha_promesa TEXT,
+            fecha_entrega TEXT,
+            presupuesto REAL DEFAULT 0,
+            monto_final REAL DEFAULT 0,
+            garantia_dias INTEGER DEFAULT 0,
+            venta_id INTEGER,
+            usuario_creador TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ordenes_estado ON ordenes_servicio(estado);
+        CREATE INDEX IF NOT EXISTS idx_ordenes_cliente ON ordenes_servicio(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_ordenes_serie ON ordenes_servicio(equipo_serie);
+        CREATE INDEX IF NOT EXISTS idx_ordenes_placa ON ordenes_servicio(equipo_placa);
+
+        CREATE TABLE IF NOT EXISTS ordenes_servicio_movimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            estado_anterior TEXT,
+            estado_nuevo TEXT NOT NULL,
+            observacion TEXT,
+            usuario TEXT,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (orden_id) REFERENCES ordenes_servicio(id) ON DELETE CASCADE
+        );
+    ");
+
+    // Imágenes de órdenes de servicio
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS ordenes_servicio_imagenes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'GENERAL',
+            imagen_base64 TEXT NOT NULL,
+            descripcion TEXT,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (orden_id) REFERENCES ordenes_servicio(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_imagenes_orden ON ordenes_servicio_imagenes(orden_id);
+    ");
 
     Ok(())
 }

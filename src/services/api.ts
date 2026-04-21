@@ -95,6 +95,13 @@ import type {
   StockEstablecimiento,
   DocumentoReciente,
   ResumenGuias,
+  Proveedor,
+  NuevaCompra,
+  CompraCompleta,
+  Compra,
+  ResumenAcreedor,
+  CuentaPorPagar,
+  PagoProveedor,
 } from "../types";
 
 // --- Productos ---
@@ -131,9 +138,49 @@ export async function eliminarImagenProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_imagen_producto", { id });
 }
 
+export async function eliminarProducto(id: number): Promise<void> {
+  return smartInvoke("eliminar_producto", { id });
+}
+
 export async function listarProductosTactil(): Promise<ProductoTactil[]> {
   return smartInvoke("listar_productos_tactil");
 }
+
+// --- Números de Serie ---
+
+export const registrarSeries = (productoId: number, seriales: string[], compraId?: number) =>
+  smartInvoke<{ insertados: number; duplicados: number }>("registrar_series", { productoId, seriales, compraId: compraId ?? null });
+
+export const listarSeriesProducto = (productoId: number, estado?: string) =>
+  smartInvoke<any[]>("listar_series_producto", { productoId, estado: estado ?? null });
+
+export const seriesDisponibles = (productoId: number) =>
+  smartInvoke<{ id: number; serial: string }[]>("series_disponibles", { productoId });
+
+export const marcarSerieVendida = (serieId: number, ventaId: number, ventaDetalleId?: number, clienteId?: number, clienteNombre?: string) =>
+  smartInvoke<void>("marcar_serie_vendida", { serieId, ventaId, ventaDetalleId: ventaDetalleId ?? null, clienteId: clienteId ?? null, clienteNombre: clienteNombre ?? null });
+
+export const buscarSerie = (serial: string) =>
+  smartInvoke<any[]>("buscar_serie", { serial });
+
+export const devolverSerie = (serieId: number) =>
+  smartInvoke<void>("devolver_serie", { serieId });
+
+// --- Caducidad ---
+export const registrarLoteCaducidad = (productoId: number, lote: string | null, fechaCaducidad: string, cantidad: number, compraId?: number, observacion?: string) =>
+  smartInvoke<number>("registrar_lote_caducidad", { productoId, lote, fechaCaducidad, cantidad, compraId: compraId ?? null, observacion: observacion ?? null });
+
+export const listarLotesProducto = (productoId: number) =>
+  smartInvoke<any[]>("listar_lotes_producto", { productoId });
+
+export const alertasCaducidad = () =>
+  smartInvoke<{lotes: any[], vencidos: number, por_vencer: number, dias_alerta: number}>("alertas_caducidad");
+
+export const eliminarLoteCaducidad = (loteId: number) =>
+  smartInvoke<void>("eliminar_lote_caducidad", { loteId });
+
+export const ajustarCantidadLote = (loteId: number, cantidad: number) =>
+  smartInvoke<void>("ajustar_cantidad_lote", { loteId, cantidad });
 
 // --- Categorías ---
 
@@ -141,9 +188,24 @@ export async function crearCategoria(categoria: Categoria): Promise<number> {
   return smartInvoke("crear_categoria", { categoria });
 }
 
+export async function actualizarCategoria(id: number, nombre: string): Promise<void> {
+  return smartInvoke("actualizar_categoria", { id, nombre });
+}
+
+export async function eliminarCategoria(id: number, accion?: string, moverA?: number): Promise<any> {
+  return smartInvoke("eliminar_categoria", { id, accion, moverA });
+}
+
 export async function listarCategorias(): Promise<Categoria[]> {
   return smartInvoke("listar_categorias");
 }
+
+// --- Tipos de Unidad ---
+
+export const listarTiposUnidad = () => smartInvoke<any[]>("listar_tipos_unidad");
+export const crearTipoUnidad = (nombre: string, abreviatura: string) => smartInvoke<number>("crear_tipo_unidad", { nombre, abreviatura });
+export const actualizarTipoUnidad = (id: number, nombre: string, abreviatura: string) => smartInvoke<void>("actualizar_tipo_unidad", { id, nombre, abreviatura });
+export const eliminarTipoUnidad = (id: number) => smartInvoke<void>("eliminar_tipo_unidad", { id });
 
 // --- Clientes ---
 
@@ -209,6 +271,10 @@ export async function convertirGuiaAVenta(params: {
   esFiado?: boolean; bancoId?: number; referenciaPago?: string;
 }): Promise<VentaCompleta> {
   return smartInvoke("convertir_guia_a_venta", params);
+}
+
+export async function cambiarEstadoGuia(guiaId: number, nuevoEstado: string): Promise<void> {
+  return smartInvoke("cambiar_estado_guia", { guiaId, nuevoEstado });
 }
 
 export async function listarChoferes(): Promise<[number, string, string | null][]> {
@@ -332,6 +398,18 @@ export async function obtenerCajaAbierta(): Promise<Caja | null> {
   return smartInvoke("obtener_caja_abierta");
 }
 
+// --- Retiros de Caja ---
+
+export const registrarRetiro = (monto: number, motivo: string, bancoId?: number, referencia?: string) =>
+  smartInvoke<any>("registrar_retiro", { monto, motivo, bancoId: bancoId ?? null, referencia: referencia ?? null });
+
+export async function listarRetirosCaja(cajaId: number): Promise<any[]> {
+  return smartInvoke("listar_retiros_caja", { cajaId });
+}
+
+export const confirmarDeposito = (retiroId: number, referencia: string, comprobanteImagen?: string) =>
+  smartInvoke<void>("confirmar_deposito", { retiroId, referencia, comprobanteImagen: comprobanteImagen ?? null });
+
 // --- Impresión ---
 
 export async function imprimirTicket(ventaId: number): Promise<string> {
@@ -436,6 +514,12 @@ export async function generarEtiquetasPdf(config: EtiquetaConfig): Promise<strin
   return invoke("generar_etiquetas_pdf", { config });
 }
 
+// --- Cotización PDF ---
+
+export async function generarCotizacionPdf(ventaId: number): Promise<string> {
+  return invoke("generar_cotizacion_pdf", { ventaId });
+}
+
 // --- Confirmación de pagos ---
 
 export async function confirmarPagoCuenta(pagoId: number): Promise<CuentaDetalle> {
@@ -502,6 +586,14 @@ export async function guardarConfig(configs: Record<string, string>): Promise<vo
   return smartInvoke("guardar_config", { configs });
 }
 
+export async function obtenerSecuenciales(): Promise<Record<string, number>> {
+  return smartInvoke("obtener_secuenciales");
+}
+
+export async function actualizarSecuencial(establecimiento: string, puntoEmision: string, tipoDocumento: string, secuencial: number): Promise<void> {
+  return smartInvoke("actualizar_secuencial", { establecimiento, puntoEmision, tipoDocumento, secuencial });
+}
+
 export async function cargarLogoNegocio(logoPath: string): Promise<string> {
   return smartInvoke("cargar_logo_negocio", { logoPath });
 }
@@ -512,8 +604,8 @@ export async function eliminarLogoNegocio(): Promise<string> {
 
 // --- Usuarios / Sesión ---
 
-export async function iniciarSesion(pin: string): Promise<SesionActiva> {
-  return smartInvoke("iniciar_sesion", { pin });
+export async function iniciarSesion(pin: string, password?: string): Promise<SesionActiva> {
+  return smartInvoke("iniciar_sesion", { pin, password: password ?? null });
 }
 
 export async function cerrarSesion(): Promise<void> {
@@ -541,13 +633,24 @@ export async function actualizarUsuario(
   nombre?: string,
   pin?: string,
   rol?: string,
-  activo?: boolean
+  activo?: boolean,
+  permisos?: string
 ): Promise<UsuarioInfo> {
-  return smartInvoke("actualizar_usuario", { id, nombre, pin, rol, activo });
+  return smartInvoke("actualizar_usuario", { id, nombre, pin, rol, activo, permisos });
 }
+
+export const obtenerPermisosDisponibles = () => smartInvoke<[string, string][]>("obtener_permisos_disponibles");
 
 export async function eliminarUsuario(id: number): Promise<void> {
   return smartInvoke("eliminar_usuario", { id });
+}
+
+export async function cambiarPassword(usuarioId: number, password: string): Promise<void> {
+  return smartInvoke("cambiar_password", { usuarioId, password });
+}
+
+export async function listarUsuariosLogin(): Promise<[number, string][]> {
+  return smartInvoke("listar_usuarios_login");
 }
 
 // --- Exportar CSV ---
@@ -563,6 +666,10 @@ export async function exportarGastosCsv(fechaInicio: string, fechaFin: string, r
 export async function exportarInventarioCsv(ruta: string): Promise<string> {
   return invoke("exportar_inventario_csv", { ruta });
 }
+
+export const exportarPlantillaProductos = () => smartInvoke<number[]>("exportar_plantilla_productos");
+export const exportarProductosExcel = () => smartInvoke<number[]>("exportar_productos_excel");
+export const importarProductosExcel = (archivoBytes: number[]) => smartInvoke<{creados: number, actualizados: number, errores: number, mensajes: string[], lotes_creados?: number, warnings_caducidad?: string[]}>("importar_productos_excel", { archivoBytes });
 
 // --- SRI - Facturacion Electronica ---
 
@@ -635,6 +742,10 @@ export async function listarNotasCreditoDia(fecha: string): Promise<NotaCreditoI
   return smartInvoke("listar_notas_credito_dia", { fecha });
 }
 
+export async function listarNotasCredito(fechaDesde: string, fechaHasta: string, estado?: string): Promise<any[]> {
+  return smartInvoke("listar_notas_credito", { fechaDesde, fechaHasta, estado: estado ?? null });
+}
+
 // --- Ventas por sesión de caja (para cajeros) ---
 
 export async function listarVentasSesionCaja(): Promise<Venta[]> {
@@ -648,6 +759,9 @@ export async function resumenSesionCaja(): Promise<ResumenDiario> {
 export async function listarNotasCreditoSesionCaja(): Promise<NotaCreditoInfo[]> {
   return smartInvoke("listar_notas_credito_sesion_caja");
 }
+
+export const crearDevolucionInterna = (ventaId: number, motivo: string, items: any[]) =>
+  smartInvoke<any>("crear_devolucion_interna", { ventaId, motivo, items });
 
 export async function emitirNotaCreditoSri(ncId: number): Promise<ResultadoEmision> {
   return smartInvoke("emitir_nota_credito_sri", { ncId });
@@ -713,6 +827,9 @@ export async function listarMovimientos(
 export async function resumenInventario(): Promise<ResumenInventario> {
   return smartInvoke("resumen_inventario");
 }
+
+export const exportarKardexCsv = (fechaDesde: string, fechaHasta: string, productoId?: number) =>
+  smartInvoke<string>("exportar_kardex_csv", { fechaDesde, fechaHasta, productoId: productoId ?? null });
 
 // --- Listas de Precios ---
 
@@ -780,6 +897,9 @@ export async function probarConexionServidor(url: string, token: string): Promis
   return invoke("probar_conexion_servidor", { url, token });
 }
 
+export const resetearBaseDatos = (confirmacion: string) =>
+  smartInvoke<string>("resetear_base_datos", { confirmacion });
+
 // --- Transferencias y Multi-almacén ---
 
 export async function crearTransferencia(
@@ -846,3 +966,171 @@ export async function reporteBalance(fechaInicio: string, fechaHasta: string): P
 export async function reporteProductosRentabilidad(fechaInicio: string, fechaHasta: string, limite: number = 50): Promise<ProductoRentabilidad[]> {
   return smartInvoke("reporte_productos_rentabilidad", { fechaInicio, fechaHasta, limite });
 }
+
+export const reporteIvaMensual = (anio: number, mes: number) =>
+  smartInvoke<{
+    anio: number; mes: number; fecha_desde: string; fecha_hasta: string;
+    ventas_0: number; ventas_15_base: number; iva_ventas: number;
+    nc_base: number; nc_iva: number; iva_ventas_neto: number;
+    compras_0: number; compras_15_base: number; iva_compras: number;
+    iva_a_pagar: number; total_ventas: number; total_compras: number;
+  }>("reporte_iva_mensual", { anio, mes });
+
+// --- Proveedores ---
+
+export const crearProveedor = (proveedor: Proveedor) => smartInvoke<number>("crear_proveedor", { proveedor });
+export const actualizarProveedor = (proveedor: Proveedor) => smartInvoke<void>("actualizar_proveedor", { proveedor });
+export const listarProveedores = () => smartInvoke<Proveedor[]>("listar_proveedores");
+export const buscarProveedores = (termino: string) => smartInvoke<Proveedor[]>("buscar_proveedores", { termino });
+export const eliminarProveedor = (id: number) => smartInvoke<void>("eliminar_proveedor", { id });
+
+// --- Compras ---
+
+export const registrarCompra = (compra: NuevaCompra) => smartInvoke<CompraCompleta>("registrar_compra", { compra });
+export const listarCompras = (fechaDesde: string, fechaHasta: string) => smartInvoke<Compra[]>("listar_compras", { fechaDesde, fechaHasta });
+export const obtenerCompra = (id: number) => smartInvoke<CompraCompleta>("obtener_compra", { id });
+export const anularCompra = (id: number) => smartInvoke<void>("anular_compra", { id });
+
+// --- Importacion XML Factura Electronica (SRI) ---
+
+export interface PreviewItemXml {
+  codigo_principal?: string | null;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  descuento: number;
+  iva_porcentaje: number;
+  subtotal: number;
+  producto_existente_id?: number | null;
+  producto_existente_nombre?: string | null;
+}
+
+export interface PreviewXmlCompra {
+  proveedor_ruc: string;
+  proveedor_nombre: string;
+  proveedor_existe: boolean;
+  proveedor_id?: number | null;
+  numero_factura: string;
+  fecha_emision: string;
+  clave_acceso: string;
+  subtotal_0: number;
+  subtotal_15: number;
+  iva: number;
+  total: number;
+  items: PreviewItemXml[];
+}
+
+export interface NuevoProductoSimple {
+  codigo?: string | null;
+  nombre: string;
+  categoria_id?: number | null;
+  iva_porcentaje: number;
+}
+
+export interface ItemMapeadoXml {
+  accion: "producto_nuevo" | "producto_existente" | "gasto" | "ignorar";
+  producto_id?: number | null;
+  producto_nuevo?: NuevoProductoSimple | null;
+  gasto_categoria?: string | null;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  iva_porcentaje: number;
+  subtotal: number;
+}
+
+export interface ImportarXmlInput {
+  proveedor_id: number;
+  numero_factura: string;
+  fecha_emision: string;
+  items_mapeados: ItemMapeadoXml[];
+  forma_pago: string;
+  dias_credito?: number | null;
+}
+
+export const previewXmlCompra = (xmlContenido: string) =>
+  smartInvoke<PreviewXmlCompra>("preview_xml_compra", { xmlContenido });
+
+export const importarXmlCompra = (input: ImportarXmlInput) =>
+  smartInvoke<{ compra_id: number | null; productos_creados: number; gastos_creados: number; items_compra: number }>(
+    "importar_xml_compra",
+    { input }
+  );
+
+// --- Cuentas por Pagar ---
+
+export const alertasPagosVencidos = () => smartInvoke<any[]>("alertas_pagos_vencidos");
+export const resumenAcreedores = () => smartInvoke<ResumenAcreedor[]>("resumen_acreedores");
+export const listarCuentasPagar = (proveedorId?: number) => smartInvoke<CuentaPorPagar[]>("listar_cuentas_pagar", { proveedorId: proveedorId ?? null });
+export const registrarPagoProveedor = (cuentaId: number, monto: number, formaPago: string, comprobante?: string, observacion?: string, bancoId?: number) =>
+  smartInvoke<void>("registrar_pago_proveedor", { cuentaId, monto, formaPago, numeroComprobante: comprobante ?? null, observacion: observacion ?? null, bancoId: bancoId ?? null });
+export const historialPagosProveedor = (cuentaId: number) => smartInvoke<PagoProveedor[]>("historial_pagos_proveedor", { cuentaId });
+export const listarMovimientosBancarios = (bancoId?: number, fechaDesde?: string, fechaHasta?: string) =>
+  smartInvoke<any[]>("listar_movimientos_bancarios", { bancoId: bancoId ?? null, fechaDesde: fechaDesde ?? "", fechaHasta: fechaHasta ?? "" });
+
+// --- Nota de Venta PDF ---
+
+export async function generarNotaVentaPdf(ventaId: number): Promise<string> {
+  return invoke("generar_nota_venta_pdf", { ventaId });
+}
+
+// --- Servicio Técnico ---
+
+export interface OrdenServicio {
+  id?: number;
+  numero?: string;
+  cliente_id?: number | null;
+  cliente_nombre?: string;
+  cliente_telefono?: string;
+  tipo_equipo?: string;
+  equipo_descripcion: string;
+  equipo_marca?: string;
+  equipo_modelo?: string;
+  equipo_serie?: string;
+  equipo_placa?: string;
+  equipo_kilometraje?: number;
+  equipo_kilometraje_proximo?: number;
+  accesorios?: string;
+  problema_reportado: string;
+  diagnostico?: string;
+  trabajo_realizado?: string;
+  observaciones?: string;
+  tecnico_id?: number | null;
+  tecnico_nombre?: string;
+  estado?: string;
+  fecha_ingreso?: string;
+  fecha_promesa?: string;
+  fecha_entrega?: string;
+  presupuesto?: number;
+  monto_final?: number;
+  garantia_dias?: number;
+  venta_id?: number | null;
+  usuario_creador?: string;
+}
+
+export const crearOrdenServicio = (orden: OrdenServicio) =>
+  smartInvoke<number>("crear_orden_servicio", { orden });
+export const actualizarOrdenServicio = (orden: OrdenServicio) =>
+  smartInvoke<void>("actualizar_orden_servicio", { orden });
+export const cambiarEstadoOrden = (ordenId: number, nuevoEstado: string, observacion?: string) =>
+  smartInvoke<void>("cambiar_estado_orden", { ordenId, nuevoEstado, observacion: observacion ?? null });
+export const obtenerOrdenServicio = (id: number) =>
+  smartInvoke<OrdenServicio>("obtener_orden_servicio", { id });
+export const listarOrdenesServicio = (filtroEstado?: string, fechaDesde?: string, fechaHasta?: string, tecnicoId?: number) =>
+  smartInvoke<OrdenServicio[]>("listar_ordenes_servicio", { filtroEstado: filtroEstado ?? null, fechaDesde: fechaDesde ?? null, fechaHasta: fechaHasta ?? null, tecnicoId: tecnicoId ?? null });
+export const buscarOrdenesPorEquipo = (query: string) =>
+  smartInvoke<OrdenServicio[]>("buscar_ordenes_por_equipo", { query });
+export const historialMovimientosOrden = (ordenId: number) =>
+  smartInvoke<any[]>("historial_movimientos_orden", { ordenId });
+export const eliminarOrdenServicio = (id: number) =>
+  smartInvoke<void>("eliminar_orden_servicio", { id });
+export const agregarImagenOrden = (ordenId: number, tipo: string, imagenBase64: string, descripcion?: string) =>
+  smartInvoke<number>("agregar_imagen_orden", { ordenId, tipo, imagenBase64, descripcion: descripcion ?? null });
+export const listarImagenesOrden = (ordenId: number) =>
+  smartInvoke<any[]>("listar_imagenes_orden", { ordenId });
+export const eliminarImagenOrden = (imagenId: number) =>
+  smartInvoke<void>("eliminar_imagen_orden", { imagenId });
+export const cobrarOrdenServicio = (ordenId: number, formaPago: string, montoRecibido: number, itemsRepuestos: any[]) =>
+  smartInvoke<number>("cobrar_orden_servicio", { ordenId, formaPago, montoRecibido, itemsRepuestos });
+export const imprimirOrdenServicioPdf = (ordenId: number) =>
+  smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId });

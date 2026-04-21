@@ -17,6 +17,12 @@ import Configuracion from "./pages/Configuracion";
 import InventarioPage from "./pages/InventarioPage";
 import GuiasRemisionPage from "./pages/GuiasRemisionPage";
 import ReportesPage from "./pages/ReportesPage";
+import ComprasPage from "./pages/ComprasPage";
+import PagarPage from "./pages/PagarPage";
+import MovimientosBancariosPage from "./pages/MovimientosBancariosPage";
+import SeriesPage from "./pages/SeriesPage";
+import CaducidadPage from "./pages/CaducidadPage";
+import ServicioTecnicoPage from "./pages/ServicioTecnicoPage";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
 import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarModoRed } from "./services/api";
@@ -25,6 +31,14 @@ import ConnectionStatus from "./components/ConnectionStatus";
 import type { LicenciaInfo } from "./types";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles/global.css";
+
+// Auto-select all text in number inputs on focus (global)
+document.addEventListener("focusin", (e) => {
+  const target = e.target as HTMLInputElement;
+  if (target?.tagName === "INPUT" && target.type === "number") {
+    setTimeout(() => target.select(), 0);
+  }
+});
 
 function AppGate() {
   const [licencia, setLicencia] = useState<LicenciaInfo | null>(null);
@@ -120,7 +134,13 @@ function AppGate() {
                 <Route path="/clientes" element={<Clientes />} />
                 <Route path="/guias" element={<GuiasRemisionPage />} />
                 <Route path="/gastos" element={<GastosPage />} />
+                <Route path="/compras" element={<ComprasPage />} />
+                <Route path="/pagar" element={<PagarPage />} />
+                <Route path="/movimientos-bancarios" element={<MovimientosBancariosPage />} />
                 <Route path="/inventario" element={<InventarioPage />} />
+                <Route path="/series" element={<SeriesPage />} />
+                <Route path="/caducidad" element={<CaducidadPage />} />
+                <Route path="/servicio-tecnico" element={<ServicioTecnicoPage />} />
                 <Route path="/reportes" element={<ReportesPage />} />
                 <Route path="/config" element={<Configuracion />} />
               </>

@@ -4,6 +4,7 @@ import {
   resumenDiario, resumenDiarioAyer, resumenFiadosPendientes,
   alertasStockBajo, obtenerCajaAbierta, ventasPorDia,
   productosMasVendidosReporte, ultimasVentasDia, resumenDeudores,
+  alertasPagosVencidos,
 } from "../services/api";
 import { useSesion } from "../contexts/SesionContext";
 import type { ResumenDiario, AlertaStock, VentaDiaria, ProductoMasVendido, UltimaVenta } from "../services/api";
@@ -28,7 +29,7 @@ function fechaHace7Dias(): string {
 }
 
 export default function DashboardPage() {
-  const { sesion, esAdmin } = useSesion();
+  const { sesion, esAdmin, tienePermiso } = useSesion();
   const navigate = useNavigate();
   const [resumen, setResumen] = useState<ResumenDiario | null>(null);
   const [resumenAyer, setResumenAyer] = useState<ResumenDiario | null>(null);
@@ -39,11 +40,18 @@ export default function DashboardPage() {
   const [topProductos, setTopProductos] = useState<ProductoMasVendido[]>([]);
   const [ultimasVentas, setUltimasVentas] = useState<UltimaVenta[]>([]);
   const [deudores, setDeudores] = useState<ResumenCliente[]>([]);
+  const [pagosVencidos, setPagosVencidos] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
+  const [cajaViejaAbierta, setCajaViejaAbierta] = useState(false);
 
   useEffect(() => {
     const hoy = fechaHoy();
     const hace7 = fechaHace7Dias();
+    // Fetch pagos vencidos if user has permission
+    if (esAdmin || tienePermiso("gestionar_compras")) {
+      alertasPagosVencidos().then(setPagosVencidos).catch(() => {});
+    }
+
     Promise.all([
       resumenDiario(hoy).catch(() => null),
       resumenDiarioAyer().catch(() => null),
@@ -51,7 +59,7 @@ export default function DashboardPage() {
       alertasStockBajo().catch(() => []),
       obtenerCajaAbierta().catch(() => null),
       ventasPorDia(hace7, hoy).catch(() => []),
-      productosMasVendidosReporte(hoy, hoy, 5).catch(() => []),
+      productosMasVendidosReporte(hoy, hoy, 10).catch(() => []),
       ultimasVentasDia(5).catch(() => []),
       resumenDeudores().catch(() => []),
     ]).then(([r, ra, f, a, c, vs, tp, uv, d]) => {
@@ -60,6 +68,14 @@ export default function DashboardPage() {
       setFiadosPendientes(f);
       setAlertas(a);
       setCajaAbierta(c);
+      // Detectar caja vieja (abierta de un día anterior)
+      if (c && c.fecha_apertura) {
+        const fechaCaja = c.fecha_apertura.slice(0, 10);
+        const hoyStr = fechaHoy();
+        if (fechaCaja < hoyStr) {
+          setCajaViejaAbierta(true);
+        }
+      }
       setVentasSemana(vs);
       setTopProductos(tp);
       setUltimasVentas(uv);
@@ -113,9 +129,39 @@ export default function DashboardPage() {
   // === Vista ADMIN ===
   return (
     <>
+      {/* Modal advertencia caja vieja */}
+      {cajaViejaAbierta && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3>⚠️ Caja sin cerrar</h3>
+            </div>
+            <div className="modal-body">
+              <p>Hay una caja abierta del día <strong>{cajaAbierta?.fecha_apertura?.slice(0, 10)}</strong> que no fue cerrada.</p>
+              <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 13 }}>
+                Es importante cerrar la caja del día anterior antes de continuar vendiendo para mantener un cuadre correcto.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setCajaViejaAbierta(false)}>
+                Después
+              </button>
+              <button className="btn btn-primary" onClick={() => { setCajaViejaAbierta(false); navigate("/caja"); }}>
+                Ir a cerrar caja
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="page-header">
         <h2>Inicio</h2>
-        <span className="text-secondary" style={{ fontSize: 13 }}>{fechaHoy()}</span>
+        <div className="flex gap-4 items-center">
+          <button className="btn btn-success" style={{ fontSize: 12, padding: "6px 16px" }}
+            onClick={() => navigate("/pos")}>
+            + Nueva Venta
+          </button>
+          <span className="text-secondary" style={{ fontSize: 13, marginLeft: 8 }}>{fechaHoy()}</span>
+        </div>
       </div>
       <div className="page-body">
         {/* KPI Cards con comparativo */}
@@ -127,6 +173,56 @@ export default function DashboardPage() {
           <KpiCard label="Transferencia" valor={resumen?.total_transferencia ?? 0} ayer={resumenAyer?.total_transferencia} prefix="$" />
           <KpiCard label="Por Cobrar" valor={fiadosPendientes} prefix="$" color={fiadosPendientes > 0 ? "var(--color-warning)" : undefined} />
         </div>
+
+        {/* Alertas: Pagos vencidos + Stock bajo */}
+        {(pagosVencidos.length > 0 || alertas.length > 0) && (
+          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+            {pagosVencidos.length > 0 && (esAdmin || tienePermiso("gestionar_compras")) && (
+              <div className="card" style={{ flex: 1, borderLeft: "4px solid var(--color-danger)" }}>
+                <div className="card-body" style={{ padding: 12 }}>
+                  <div style={{ fontWeight: 700, color: "var(--color-danger)", marginBottom: 8 }}>
+                    Pagos Vencidos ({pagosVencidos.length})
+                  </div>
+                  {pagosVencidos.slice(0, 3).map((p: any) => (
+                    <div key={p.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span>{p.proveedor_nombre}</span>
+                      <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>
+                        ${Number(p.saldo).toFixed(2)} — {Math.floor(p.dias_vencido)} dias
+                      </span>
+                    </div>
+                  ))}
+                  {pagosVencidos.length > 3 && (
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      y {pagosVencidos.length - 3} mas...
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {alertas.length > 0 && (esAdmin || tienePermiso("gestionar_inventario") || tienePermiso("gestionar_productos")) && (
+              <div className="card" style={{ flex: 1, borderLeft: "4px solid var(--color-warning)" }}>
+                <div className="card-body" style={{ padding: 12 }}>
+                  <div style={{ fontWeight: 700, color: "var(--color-warning)", marginBottom: 8 }}>
+                    Stock Bajo ({alertas.length})
+                  </div>
+                  {alertas.slice(0, 3).map((a) => (
+                    <div key={a.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span>{a.nombre}</span>
+                      <span style={{ fontWeight: 600, color: a.stock_actual <= 0 ? "var(--color-danger)" : "var(--color-warning)" }}>
+                        {a.stock_actual} / {a.stock_minimo}
+                      </span>
+                    </div>
+                  ))}
+                  {alertas.length > 3 && (
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      y {alertas.length - 3} mas...
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Fila 1: Gráfica + Caja/Acciones */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
@@ -202,9 +298,9 @@ export default function DashboardPage() {
 
         {/* Fila 2: Top productos + Últimas ventas */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-          {/* Top 5 productos más vendidos */}
+          {/* Top 10 productos más vendidos */}
           <div className="card">
-            <div className="card-header">Top 5 Productos del Dia</div>
+            <div className="card-header">Top 10 Productos del Dia</div>
             <div className="card-body" style={{ padding: 0 }}>
               {topProductos.length === 0 ? (
                 <div className="text-center text-secondary" style={{ padding: 24, fontSize: 13 }}>Sin ventas hoy</div>

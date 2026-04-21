@@ -91,7 +91,7 @@ pub fn generar_ride_pdf(
     tipo_doc: &str,                        // "FACTURA" o "NOTA DE CREDITO"
     doc_modificado: Option<&DocModificado>, // Solo para NC
 ) -> Result<Vec<u8>, String> {
-    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
 
     let font_family = genpdf::fonts::from_files(
         fonts_dir.to_str().unwrap_or("fonts"),
@@ -543,7 +543,7 @@ pub fn generar_ticket_pdf(
     venta: &VentaCompleta,
     config: &HashMap<String, String>,
 ) -> Result<Vec<u8>, String> {
-    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
 
     let font_family = genpdf::fonts::from_files(
         fonts_dir.to_str().unwrap_or("fonts"),
@@ -561,16 +561,21 @@ pub fn generar_ticket_pdf(
     decorator.set_margins(Margins::trbl(3, 3, 3, 3));
     doc.set_page_decorator(decorator);
 
-    let s_title = Style::new().with_font_size(10).bold();
-    let s_normal = Style::new().with_font_size(7);
-    let s_bold = Style::new().with_font_size(7).bold();
-    let s_small = Style::new().with_font_size(6);
-    let s_total = Style::new().with_font_size(9).bold();
+    let s_title = Style::new().with_font_size(12).bold();
+    let s_normal = Style::new().with_font_size(8);
+    let s_bold = Style::new().with_font_size(8).bold();
+    let s_small = Style::new().with_font_size(7);
+    let s_total = Style::new().with_font_size(11).bold();
     let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
     let ruc = config.get("ruc").map(|s| s.as_str()).unwrap_or("");
     let direccion = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
 
-    // Encabezado
+    let tipo_estado = venta.venta.tipo_estado.as_deref().unwrap_or("");
+    let es_cotizacion = venta.venta.tipo_documento == "COTIZACION" || tipo_estado == "COTIZACION";
+    let es_borrador = venta.venta.tipo_documento == "BORRADOR" || tipo_estado == "BORRADOR";
+    let es_guia = venta.venta.tipo_documento == "GUIA_REMISION" || tipo_estado == "GUIA_REMISION";
+
+    // Encabezado (sin logo, solo texto)
     doc.push(p_aligned(nombre_negocio, s_title, Alignment::Center));
     if !ruc.is_empty() {
         doc.push(p_aligned(&format!("RUC: {}", ruc), s_normal, Alignment::Center));
@@ -579,7 +584,17 @@ pub fn generar_ticket_pdf(
         doc.push(p_aligned(direccion, s_small, Alignment::Center));
     }
 
-    doc.push(Break::new(0.5));
+    doc.push(Break::new(0.2));
+
+    // Tipo de documento
+    let tipo_label = if es_cotizacion { "COTIZACION" }
+        else if es_borrador { "BORRADOR" }
+        else if es_guia { "GUIA DE REMISION" }
+        else if venta.venta.tipo_documento == "FACTURA" { "FACTURA" }
+        else { "NOTA DE VENTA" };
+    doc.push(p_aligned(tipo_label, s_total, Alignment::Center));
+
+    doc.push(Break::new(0.3));
 
     // Info venta
     doc.push(p(&format!("No: {}", venta.venta.numero), s_bold));
@@ -590,7 +605,8 @@ pub fn generar_ticket_pdf(
         doc.push(p(&format!("Cliente: {}", cliente), s_normal));
     }
 
-    doc.push(Break::new(0.5));
+    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(Break::new(0.2));
 
     // Productos
     let mut prod_table = TableLayout::new(vec![1, 4, 2]);
@@ -627,7 +643,8 @@ pub fn generar_ticket_pdf(
     }
     doc.push(prod_table);
 
-    doc.push(Break::new(0.5));
+    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(Break::new(0.2));
 
     // Totales
     let mut total_table = TableLayout::new(vec![3, 2]);
@@ -663,13 +680,16 @@ pub fn generar_ticket_pdf(
 
     doc.push(total_table);
 
-    doc.push(Break::new(0.3));
+    doc.push(p_aligned("----------------------------------------------------------", s_small, Alignment::Center));
+    doc.push(Break::new(0.2));
 
-    // Forma de pago
-    doc.push(p(&format!("Pago: {}", venta.venta.forma_pago), s_normal));
-    if venta.venta.monto_recibido > 0.0 {
-        doc.push(p(&format!("Recibido: ${}", format_dinero(venta.venta.monto_recibido)), s_normal));
-        doc.push(p(&format!("Cambio:   ${}", format_dinero(venta.venta.cambio)), s_normal));
+    // Forma de pago (solo para ventas reales)
+    if !es_cotizacion && !es_borrador {
+        doc.push(p(&format!("Pago: {}", venta.venta.forma_pago), s_normal));
+        if venta.venta.monto_recibido > 0.0 {
+            doc.push(p(&format!("Recibido: ${}", format_dinero(venta.venta.monto_recibido)), s_normal));
+            doc.push(p(&format!("Cambio:   ${}", format_dinero(venta.venta.cambio)), s_normal));
+        }
     }
 
     // Info SRI si fue autorizada
@@ -707,7 +727,15 @@ pub fn generar_ticket_pdf(
     }
 
     doc.push(Break::new(1));
-    doc.push(p_aligned("Gracias por su compra!", s_bold, Alignment::Center));
+    if es_cotizacion {
+        doc.push(p_aligned("Validez: 30 dias", s_bold, Alignment::Center));
+        doc.push(p_aligned("Esta cotizacion no es un", s_small, Alignment::Center));
+        doc.push(p_aligned("documento de venta", s_small, Alignment::Center));
+    } else if es_borrador {
+        doc.push(p_aligned("DOCUMENTO NO FINALIZADO", s_bold, Alignment::Center));
+    } else {
+        doc.push(p_aligned("Gracias por su compra!", s_bold, Alignment::Center));
+    }
 
     // Renderizar
     let mut buffer = Vec::new();

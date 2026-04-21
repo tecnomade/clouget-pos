@@ -1,14 +1,12 @@
-import { useState, useMemo } from "react";
-import type { ProductoTactil, ProductoBusqueda, Categoria, ItemCarrito } from "../types";
+import { useState, useMemo, useRef } from "react";
+import type { ProductoTactil, ProductoBusqueda, Categoria } from "../types";
 
 interface PosGridTactilProps {
   categorias: Categoria[];
   productosTactil: ProductoTactil[];
-  carrito: ItemCarrito[];
   onAgregarProducto: (producto: ProductoBusqueda) => void;
-  onActualizarCantidad: (productoId: number, cantidad: number) => void;
-  onEliminarItem: (productoId: number) => void;
-  onEditarInfoAdicional?: (productoId: number, info: string | undefined) => void;
+  onVerDetalle?: (productoId: number) => void;
+  puedeVerDetalle?: boolean;
   busqueda: string;
   onBusquedaChange: (v: string) => void;
   resultados: ProductoBusqueda[];
@@ -18,18 +16,23 @@ interface PosGridTactilProps {
 export default function PosGridTactil({
   categorias,
   productosTactil,
-  carrito,
   onAgregarProducto,
-  onActualizarCantidad,
-  onEliminarItem,
-  onEditarInfoAdicional,
+  onVerDetalle,
+  puedeVerDetalle,
   busqueda,
   onBusquedaChange,
   resultados,
   inputRef,
 }: PosGridTactilProps) {
   const [categoriaActiva, setCategoriaActiva] = useState<number | null>(null);
-  const [carritoExpandido, setCarritoExpandido] = useState(true);
+  const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
+  const categoriasRef = useRef<HTMLDivElement>(null);
+
+  const scrollCategorias = (dir: "left" | "right") => {
+    if (categoriasRef.current) {
+      categoriasRef.current.scrollBy({ left: dir === "right" ? 200 : -200, behavior: "smooth" });
+    }
+  };
 
   const productosFiltrados = useMemo(() => {
     let lista = productosTactil;
@@ -43,9 +46,6 @@ export default function PosGridTactil({
     return lista;
   }, [productosTactil, categoriaActiva, busqueda]);
 
-  const totalCarrito = carrito.reduce((s, i) => s + i.subtotal, 0);
-  const itemsCarrito = carrito.reduce((s, i) => s + i.cantidad, 0);
-
   const handleTap = (p: ProductoTactil) => {
     const busquedaCompatible: ProductoBusqueda = {
       id: p.id,
@@ -57,13 +57,16 @@ export default function PosGridTactil({
       categoria_nombre: p.categoria_nombre,
       precio_lista: undefined,
     };
+    const now = Date.now();
+    if (lastAddRef.current.id === busquedaCompatible.id && now - lastAddRef.current.time < 500) return;
+    lastAddRef.current = { id: busquedaCompatible.id, time: now };
     onAgregarProducto(busquedaCompatible);
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden", minWidth: 0 }}>
       {/* Search bar */}
-      <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)" }}>
+      <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)", flexShrink: 0, position: "relative", minWidth: 0, overflow: "hidden" }}>
         <input
           ref={inputRef}
           className="input"
@@ -83,7 +86,7 @@ export default function PosGridTactil({
           }}>
             {resultados.map((r) => (
               <div key={r.id}
-                onClick={() => { onAgregarProducto(r); onBusquedaChange(""); }}
+                onClick={() => { const now = Date.now(); if (lastAddRef.current.id === r.id && now - lastAddRef.current.time < 500) return; lastAddRef.current = { id: r.id, time: now }; onAgregarProducto(r); onBusquedaChange(""); }}
                 style={{
                   padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--color-border)",
                   display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -99,40 +102,55 @@ export default function PosGridTactil({
         )}
       </div>
 
-      {/* Category tabs */}
+      {/* Category tabs - scrollable with arrows */}
       <div style={{
-        display: "flex", gap: 6, padding: "8px 12px",
-        overflowX: "auto", borderBottom: "1px solid var(--color-border)",
+        display: "flex", alignItems: "center", borderBottom: "1px solid var(--color-border)",
         flexShrink: 0,
       }}>
-        <button
-          className={`btn ${categoriaActiva === null ? "btn-primary" : "btn-outline"}`}
-          style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
-          onClick={() => setCategoriaActiva(null)}
-        >
-          Todos
+        <button onClick={() => scrollCategorias("left")}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 6px", fontSize: 16, color: "var(--color-text-secondary)", flexShrink: 0 }}>
+          ◀
         </button>
-        {categorias.map((c) => (
+        <div ref={categoriasRef} style={{
+          display: "flex", gap: 6, padding: "6px 4px",
+          overflowX: "auto", flexWrap: "nowrap", flex: 1, minWidth: 0,
+          scrollbarWidth: "none",
+        }}>
           <button
-            key={c.id}
-            className={`btn ${categoriaActiva === c.id ? "btn-primary" : "btn-outline"}`}
-            style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap" }}
-            onClick={() => setCategoriaActiva(c.id!)}
+            className={`btn ${categoriaActiva === null ? "btn-primary" : "btn-outline"}`}
+            style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap", flexShrink: 0 }}
+            onClick={() => setCategoriaActiva(null)}
           >
-            {c.nombre}
+            Todos
           </button>
-        ))}
+          {categorias.map((c) => (
+            <button
+              key={c.id}
+              className={`btn ${categoriaActiva === c.id ? "btn-primary" : "btn-outline"}`}
+              style={{ fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap", flexShrink: 0 }}
+              onClick={() => setCategoriaActiva(c.id!)}
+            >
+              {c.nombre}
+            </button>
+          ))}
+        </div>
+        <button onClick={() => scrollCategorias("right")}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 6px", fontSize: 16, color: "var(--color-text-secondary)", flexShrink: 0 }}>
+          ▶
+        </button>
       </div>
 
-      {/* Product grid */}
+      {/* Product grid - scrollable */}
       <div style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+        gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
         gap: 8,
         overflowY: "auto",
+        overflowX: "hidden",
         flex: 1,
         padding: 8,
         alignContent: "start",
+        minHeight: 0,
       }}>
         {productosFiltrados.length === 0 ? (
           <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "var(--color-text-secondary)", padding: 40 }}>
@@ -140,24 +158,39 @@ export default function PosGridTactil({
           </div>
         ) : (
           productosFiltrados.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => handleTap(p)}
-              style={{
-                display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center",
-                padding: 10, border: "1px solid var(--color-border)",
-                borderRadius: 12, background: "var(--color-surface)",
-                color: "var(--color-text)",
-                cursor: "pointer", minHeight: 140,
-                boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                opacity: p.stock_actual <= 0 ? 0.4 : 1,
-                transition: "transform 0.1s, box-shadow 0.1s",
-              }}
-              onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
-              onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
-              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
-            >
+            <div key={p.id} style={{ position: "relative" }}>
+              {puedeVerDetalle && onVerDetalle && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onVerDetalle(p.id); }}
+                  title="Ver detalles"
+                  style={{
+                    position: "absolute", top: 4, right: 4, zIndex: 2,
+                    background: "rgba(59, 130, 246, 0.15)",
+                    border: "1px solid var(--color-primary)",
+                    borderRadius: 4, cursor: "pointer", padding: "2px 6px",
+                    fontSize: 12, color: "var(--color-primary)",
+                  }}
+                >
+                  👁
+                </button>
+              )}
+              <button
+                onClick={() => handleTap(p)}
+                style={{
+                  display: "flex", flexDirection: "column",
+                  alignItems: "center", justifyContent: "center",
+                  padding: 10, border: "1px solid var(--color-border)",
+                  borderRadius: 12, background: "var(--color-surface)",
+                  color: "var(--color-text)",
+                  cursor: "pointer", minHeight: 140, width: "100%",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+                  opacity: p.stock_actual <= 0 ? 0.4 : 1,
+                  transition: "transform 0.1s, box-shadow 0.1s",
+                }}
+                onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
+                onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+                onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              >
               {p.imagen ? (
                 <img
                   src={`data:image/png;base64,${p.imagen}`}
@@ -185,116 +218,14 @@ export default function PosGridTactil({
               <span style={{ fontSize: 12, fontWeight: 700, color: "var(--color-primary)", marginTop: 2 }}>
                 ${p.precio_venta.toFixed(2)}
               </span>
-              {p.stock_actual <= 0 && (
-                <span style={{ fontSize: 9, color: "var(--color-danger)", marginTop: 1 }}>Sin stock</span>
+              {p.stock_actual <= 0 ? (
+                <span style={{ fontSize: 9, color: "var(--color-danger)", marginTop: 1, fontWeight: 600 }}>Sin stock</span>
+              ) : (
+                <span style={{ fontSize: 9, color: "var(--color-text-secondary)", marginTop: 1 }}>Stock: {p.stock_actual}</span>
               )}
-            </button>
+              </button>
+            </div>
           ))
-        )}
-      </div>
-
-      {/* Cart bar (collapsible) */}
-      <div style={{
-        borderTop: "2px solid var(--color-border-strong, var(--color-border))",
-        background: "var(--color-surface)",
-      }}>
-        {/* Cart header - always visible */}
-        <div
-          onClick={() => setCarritoExpandido(!carritoExpandido)}
-          style={{
-            padding: "10px 12px", cursor: "pointer",
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-            fontWeight: 600, fontSize: 14,
-          }}
-        >
-          <span>
-            Carrito ({itemsCarrito} {itemsCarrito === 1 ? "item" : "items"})
-            {carritoExpandido ? " ▼" : " ▲"}
-          </span>
-          <span style={{ color: "var(--color-primary)", fontSize: 16 }}>
-            ${totalCarrito.toFixed(2)}
-          </span>
-        </div>
-
-        {/* Cart items - expandable */}
-        {carritoExpandido && (
-          <div style={{ maxHeight: 200, overflowY: "auto", borderTop: "1px solid var(--color-border)" }}>
-            {carrito.length === 0 ? (
-              <div style={{ padding: 16, textAlign: "center", color: "var(--color-text-secondary)", fontSize: 12 }}>
-                Carrito vacio
-              </div>
-            ) : (
-              carrito.map((item) => (
-                <div key={item.producto_id} style={{
-                  padding: "6px 12px", borderBottom: "1px solid var(--color-border)",
-                  display: "flex", alignItems: "center", gap: 8, fontSize: 12,
-                }}>
-                  <span style={{ flex: 1, fontWeight: 500 }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                      {item.nombre}
-                      {onEditarInfoAdicional && (
-                        <button
-                          title="Info adicional (S/N, lote, obs.)"
-                          style={{
-                            background: item.info_adicional ? "rgba(96, 165, 250, 0.15)" : "none",
-                            border: item.info_adicional ? "1px solid rgba(96, 165, 250, 0.3)" : "1px solid var(--color-border)",
-                            borderRadius: 4, cursor: "pointer", fontSize: 10, padding: "0px 4px",
-                            color: item.info_adicional ? "var(--color-primary)" : "var(--color-text-secondary)",
-                            lineHeight: "16px",
-                          }}
-                          onClick={() => {
-                            const valor = prompt("Info adicional (S/N, lote, observacion):", item.info_adicional || "");
-                            if (valor !== null) {
-                              onEditarInfoAdicional(item.producto_id, valor || undefined);
-                            }
-                          }}
-                        >
-                          {item.info_adicional ? "S/N" : "+"}
-                        </button>
-                      )}
-                    </span>
-                    {item.info_adicional && (
-                      <div style={{ fontSize: 9, color: "var(--color-primary)", fontWeight: 400 }}>{item.info_adicional}</div>
-                    )}
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <button
-                      className="btn btn-outline"
-                      style={{ padding: "0 6px", fontSize: 14, lineHeight: 1, minWidth: 24 }}
-                      onClick={() => {
-                        if (item.cantidad <= 1) {
-                          onEliminarItem(item.producto_id);
-                        } else {
-                          onActualizarCantidad(item.producto_id, item.cantidad - 1);
-                        }
-                      }}
-                    >
-                      -
-                    </button>
-                    <span style={{ minWidth: 20, textAlign: "center", fontWeight: 600 }}>
-                      {item.cantidad}
-                    </span>
-                    <button
-                      className="btn btn-outline"
-                      style={{ padding: "0 6px", fontSize: 14, lineHeight: 1, minWidth: 24 }}
-                      onClick={() => onActualizarCantidad(item.producto_id, item.cantidad + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                  <span style={{ fontWeight: 600, minWidth: 60, textAlign: "right" }}>
-                    ${item.subtotal.toFixed(2)}
-                  </span>
-                  <button
-                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 14, padding: 2 }}
-                    onClick={() => onEliminarItem(item.producto_id)}
-                  >
-                    x
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
         )}
       </div>
     </div>

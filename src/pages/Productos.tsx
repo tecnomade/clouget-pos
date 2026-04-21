@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto, generarEtiquetasPdf } from "../services/api";
+import { useState, useEffect, useRef, useMemo } from "react";
+import NumericInput from "../components/NumericInput";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
@@ -10,12 +11,14 @@ function FormProducto({
   productoEditar,
   categorias,
   listasPrecios,
+  tiposUnidad,
 }: {
   onGuardar: () => void;
   onCancelar: () => void;
   productoEditar?: Producto;
   categorias: Categoria[];
   listasPrecios: ListaPrecio[];
+  tiposUnidad?: Array<{ id: number; nombre: string; abreviatura: string }>;
 }) {
   const { toastError } = useToast();
   const [form, setForm] = useState<Producto>(
@@ -33,6 +36,27 @@ function FormProducto({
     }
   );
   const [preciosLista, setPreciosLista] = useState<Record<number, string>>({});
+  const [seriesCount, setSeriesCount] = useState<{ disponible: number; vendido: number; total: number }>({ disponible: 0, vendido: 0, total: 0 });
+  const [mostrarRegistrarSeries, setMostrarRegistrarSeries] = useState(false);
+  const [seriesTexto, setSeriesTexto] = useState("");
+  const [config, setConfig] = useState<Record<string, string>>({});
+  const [lotes, setLotes] = useState<any[]>([]);
+  const [nuevoLote, setNuevoLote] = useState("");
+  const [nuevoLoteFecha, setNuevoLoteFecha] = useState("");
+  const [nuevoLoteCantidad, setNuevoLoteCantidad] = useState("");
+
+  // Cargar config global (para detectar modulo_caducidad)
+  useEffect(() => {
+    obtenerConfig().then(setConfig).catch(() => {});
+  }, []);
+
+  const recargarLotes = async () => {
+    if (!productoEditar?.id) return;
+    try {
+      const lst = await listarLotesProducto(productoEditar.id);
+      setLotes(lst);
+    } catch { /* ignore */ }
+  };
 
   // Cargar precios existentes al editar
   useEffect(() => {
@@ -42,6 +66,18 @@ function FormProducto({
         precios.forEach((p) => { map[p.lista_precio_id] = p.precio.toString(); });
         setPreciosLista(map);
       }).catch(() => {});
+      // Cargar conteo de series si requiere_serie
+      if (productoEditar.requiere_serie) {
+        listarSeriesProducto(productoEditar.id).then((series) => {
+          const disponible = series.filter((s: any) => s.estado === "DISPONIBLE").length;
+          const vendido = series.filter((s: any) => s.estado === "VENDIDO").length;
+          setSeriesCount({ disponible, vendido, total: series.length });
+        }).catch(() => {});
+      }
+      // Cargar lotes si requiere_caducidad
+      if (productoEditar.requiere_caducidad) {
+        recargarLotes();
+      }
     }
   }, [productoEditar?.id]);
 
@@ -67,13 +103,33 @@ function FormProducto({
         await guardarPreciosProducto(productoId, preciosArr);
       }
       onGuardar();
-    } catch (err) {
-      toastError("Error: " + err);
+    } catch (err: any) {
+      const errStr = String(err);
+      // Manejo amigable del error de código de barras duplicado
+      if (errStr.includes("DUPLICATE_BARCODE:")) {
+        const partes = errStr.split("DUPLICATE_BARCODE:")[1]?.split(":") ?? [];
+        const codigo = partes[0] || "";
+        const productos = partes.slice(1).join(":") || "otro producto";
+        toastError(`El código de barras "${codigo}" ya está asignado a: ${productos}`);
+      } else if (errStr.includes("UNIQUE constraint failed: productos.codigo_barras")) {
+        toastError("Ya existe otro producto con ese código de barras (puede estar inactivo). Use un código diferente o desactive el duplicado.");
+      } else if (errStr.includes("UNIQUE constraint failed: productos.codigo")) {
+        toastError("Ya existe otro producto con ese código. Use un código diferente.");
+      } else {
+        toastError("Error: " + err);
+      }
     }
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit}
+      onKeyDown={(e) => {
+        // Prevenir submit accidental con Enter (lector de código de barras, etc.)
+        // Solo Ctrl+Enter o el botón de guardar submitean
+        if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA" && (e.target as HTMLElement).tagName !== "BUTTON") {
+          e.preventDefault();
+        }
+      }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Nombre *</label>
@@ -98,6 +154,10 @@ function FormProducto({
             className="input"
             value={form.codigo_barras ?? ""}
             onChange={(e) => setForm({ ...form, codigo_barras: e.target.value || undefined })}
+            onKeyDown={(e) => {
+              // Evitar que Enter (del lector de código de barras) submita el formulario
+              if (e.key === "Enter") e.preventDefault();
+            }}
           />
         </div>
         <div>
@@ -115,45 +175,28 @@ function FormProducto({
         </div>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Precio costo</label>
-          <input
-            className="input"
-            type="number"
-            step="0.01"
-            value={form.precio_costo}
-            onChange={(e) => setForm({ ...form, precio_costo: parseFloat(e.target.value) || 0 })}
-          />
+          <NumericInput value={form.precio_costo} step={0.01} min={0}
+            onChange={(v) => setForm({ ...form, precio_costo: v })} />
         </div>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Precio venta *</label>
-          <input
-            className="input"
-            type="number"
-            step="0.01"
-            required
-            value={form.precio_venta}
-            onChange={(e) => setForm({ ...form, precio_venta: parseFloat(e.target.value) || 0 })}
-          />
+          <NumericInput value={form.precio_venta} step={0.01} min={0}
+            onChange={(v) => setForm({ ...form, precio_venta: v })} />
         </div>
-        <div>
-          <label className="text-secondary" style={{ fontSize: 12 }}>Stock actual</label>
-          <input
-            className="input"
-            type="number"
-            step="0.01"
-            value={form.stock_actual}
-            onChange={(e) => setForm({ ...form, stock_actual: parseFloat(e.target.value) || 0 })}
-          />
-        </div>
-        <div>
-          <label className="text-secondary" style={{ fontSize: 12 }}>Stock mínimo</label>
-          <input
-            className="input"
-            type="number"
-            step="0.01"
-            value={form.stock_minimo}
-            onChange={(e) => setForm({ ...form, stock_minimo: parseFloat(e.target.value) || 0 })}
-          />
-        </div>
+        {!form.es_servicio && (
+          <>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 12 }}>Stock actual</label>
+              <NumericInput value={form.stock_actual} step={1} min={0}
+                onChange={(v) => setForm({ ...form, stock_actual: v })} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 12 }}>Stock mínimo</label>
+              <NumericInput value={form.stock_minimo} step={1} min={0}
+                onChange={(v) => setForm({ ...form, stock_minimo: v })} />
+            </div>
+          </>
+        )}
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>IVA %</label>
           <select
@@ -173,11 +216,19 @@ function FormProducto({
             value={form.unidad_medida}
             onChange={(e) => setForm({ ...form, unidad_medida: e.target.value })}
           >
-            <option value="UND">Unidad</option>
-            <option value="KG">Kilogramo</option>
-            <option value="LB">Libra</option>
-            <option value="LT">Litro</option>
-            <option value="MT">Metro</option>
+            {tiposUnidad && tiposUnidad.length > 0 ? (
+              tiposUnidad.map((u) => (
+                <option key={u.id} value={u.abreviatura}>{u.nombre} ({u.abreviatura})</option>
+              ))
+            ) : (
+              <>
+                <option value="UND">Unidad</option>
+                <option value="KG">Kilogramo</option>
+                <option value="LB">Libra</option>
+                <option value="LT">Litro</option>
+                <option value="MT">Metro</option>
+              </>
+            )}
           </select>
         </div>
       </div>
@@ -269,6 +320,161 @@ function FormProducto({
           PNG o JPG, max 500KB. Se muestra en modo tactil del POS.
         </span>
       </div>
+      {/* Requiere número de serie */}
+      <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+          <input type="checkbox" checked={form.requiere_serie ?? false}
+            onChange={e => setForm({ ...form, requiere_serie: e.target.checked })} />
+          Requiere numero de serie
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
+          <input type="checkbox" checked={form.es_servicio ?? false}
+            onChange={(e) => setForm({ ...form, es_servicio: e.target.checked, no_controla_stock: e.target.checked || (form.no_controla_stock ?? false) })} />
+          Es un servicio (no se imprime ni se controla stock)
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: form.es_servicio ? "not-allowed" : "pointer", marginTop: 8, opacity: form.es_servicio ? 0.6 : 1 }}>
+          <input type="checkbox" checked={form.no_controla_stock ?? false}
+            onChange={(e) => setForm({ ...form, no_controla_stock: e.target.checked })}
+            disabled={form.es_servicio} />
+          No controlar stock (productos a granel, digitales)
+        </label>
+        {config.modulo_caducidad === "1" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
+            <input type="checkbox" checked={form.requiere_caducidad ?? false}
+              onChange={(e) => setForm({ ...form, requiere_caducidad: e.target.checked })} />
+            Requiere control de caducidad (alimentos, medicinas)
+          </label>
+        )}
+        <span className="text-secondary" style={{ fontSize: 10, marginTop: 4, display: "block" }}>
+          Si activa, cada unidad necesita un numero de serie unico al vender.
+        </span>
+        {form.requiere_serie && form.id && (
+          <div style={{ marginTop: 10, padding: 10, background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+            <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12, marginBottom: 8 }}>
+              <span>Disponibles: <strong style={{ color: "var(--color-success)" }}>{seriesCount.disponible}</strong></span>
+              <span>Vendidos: <strong style={{ color: "var(--color-primary)" }}>{seriesCount.vendido}</strong></span>
+              <span>Total: <strong>{seriesCount.total}</strong></span>
+              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 10px", marginLeft: "auto" }}
+                onClick={() => setMostrarRegistrarSeries(!mostrarRegistrarSeries)}>
+                {mostrarRegistrarSeries ? "Cerrar" : "+ Registrar series"}
+              </button>
+            </div>
+            {mostrarRegistrarSeries && (
+              <div>
+                <textarea
+                  className="input"
+                  placeholder="Ingrese numeros de serie, uno por linea..."
+                  value={seriesTexto}
+                  onChange={e => setSeriesTexto(e.target.value)}
+                  rows={4}
+                  style={{ width: "100%", fontSize: 12, fontFamily: "monospace" }}
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 6, alignItems: "center" }}>
+                  <button type="button" className="btn btn-primary" style={{ fontSize: 11, padding: "4px 12px" }}
+                    onClick={async () => {
+                      const serials = seriesTexto.split("\n").map(s => s.trim()).filter(s => s);
+                      if (serials.length === 0) return;
+                      try {
+                        const res = await registrarSeries(form.id!, serials);
+                        toastError(`${res.insertados} registrados, ${res.duplicados} duplicados`);
+                        setSeriesTexto("");
+                        setMostrarRegistrarSeries(false);
+                        // Recargar conteo
+                        const series = await listarSeriesProducto(form.id!);
+                        const disponible = series.filter((s: any) => s.estado === "DISPONIBLE").length;
+                        const vendido = series.filter((s: any) => s.estado === "VENDIDO").length;
+                        setSeriesCount({ disponible, vendido, total: series.length });
+                      } catch (err) { toastError("Error: " + err); }
+                    }}>
+                    Registrar
+                  </button>
+                  <span className="text-secondary" style={{ fontSize: 10 }}>
+                    {seriesTexto.split("\n").filter(s => s.trim()).length} serie(s) a registrar
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Lotes de caducidad */}
+      {form.requiere_caducidad && form.id && (
+        <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Lotes de caducidad</div>
+          {lotes.length > 0 ? (
+            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 8 }}>
+              <thead>
+                <tr style={{ textAlign: "left" }}>
+                  <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Lote</th>
+                  <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Fecha caducidad</th>
+                  <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}>Cantidad</th>
+                  <th style={{ padding: "4px 8px", borderBottom: "1px solid var(--color-border)" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {lotes.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ padding: "4px 8px" }}>{l.lote || "-"}</td>
+                    <td style={{ padding: "4px 8px" }}>{l.fecha_caducidad}</td>
+                    <td style={{ padding: "4px 8px" }}>{l.cantidad}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                      <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
+                        onClick={async () => {
+                          if (!confirm("Eliminar este lote?")) return;
+                          try {
+                            await eliminarLoteCaducidad(l.id);
+                            await recargarLotes();
+                          } catch (err) { toastError("Error: " + err); }
+                        }}>
+                        Eliminar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 8 }}>No hay lotes registrados.</div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Lote (opcional)</label>
+              <input className="input" value={nuevoLote} onChange={(e) => setNuevoLote(e.target.value)} placeholder="LOT-001" style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Fecha caducidad *</label>
+              <input type="date" className="input" value={nuevoLoteFecha} onChange={(e) => setNuevoLoteFecha(e.target.value)} style={{ fontSize: 12 }} />
+            </div>
+            <div>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Cantidad *</label>
+              <input type="number" min="0" step="any" className="input" value={nuevoLoteCantidad} onChange={(e) => setNuevoLoteCantidad(e.target.value)} style={{ fontSize: 12 }} />
+            </div>
+            <button type="button" className="btn btn-primary" style={{ fontSize: 12 }}
+              onClick={async () => {
+                if (!nuevoLoteFecha || !nuevoLoteCantidad) {
+                  toastError("Fecha y cantidad son requeridas");
+                  return;
+                }
+                const cantNum = parseFloat(nuevoLoteCantidad);
+                if (isNaN(cantNum) || cantNum <= 0) {
+                  toastError("Cantidad invalida");
+                  return;
+                }
+                try {
+                  await registrarLoteCaducidad(form.id!, nuevoLote.trim() || null, nuevoLoteFecha, cantNum);
+                  setNuevoLote("");
+                  setNuevoLoteFecha("");
+                  setNuevoLoteCantidad("");
+                  await recargarLotes();
+                } catch (err) { toastError("Error: " + err); }
+              }}>
+              Agregar lote
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
         <button type="button" className="btn btn-outline" onClick={onCancelar}>
           Cancelar
@@ -283,12 +489,19 @@ function FormProducto({
 
 export default function Productos() {
   const { toastExito, toastError } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importando, setImportando] = useState(false);
   const [productos, setProductos] = useState<ProductoBusqueda[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [productoEditar, setProductoEditar] = useState<Producto | undefined>();
   const [filtro, setFiltro] = useState("");
+  const [filtroCategoriaId, setFiltroCategoriaId] = useState<number | null>(null);
+  const [ordenamiento, setOrdenamiento] = useState<string>("nombre_asc");
+  const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
+  const [vistaAgrupada, setVistaAgrupada] = useState(false);
+  const [categoriasExpandidas, setCategoriasExpandidas] = useState<Set<string>>(new Set());
   const [mostrarEtiquetas, setMostrarEtiquetas] = useState(false);
   const [etiquetaIds, setEtiquetaIds] = useState<Set<number>>(new Set());
   const [etiquetaCantidad, setEtiquetaCantidad] = useState(1);
@@ -303,6 +516,22 @@ export default function Productos() {
   const [etiquetaMargenTop, setEtiquetaMargenTop] = useState(5);
   const [etiquetaMargenLeft, setEtiquetaMargenLeft] = useState(5);
   const [etiquetaBusqueda, setEtiquetaBusqueda] = useState("");
+
+  // Pestañas
+  const [tabActiva, setTabActiva] = useState<"productos" | "categorias" | "unidades">("productos");
+
+  // CRUD Categorías
+  const [editCatId, setEditCatId] = useState<number | null>(null);
+  const [editCatNombre, setEditCatNombre] = useState("");
+  const [nuevaCatNombre, setNuevaCatNombre] = useState("");
+
+  // CRUD Tipos de Unidad
+  const [tiposUnidad, setTiposUnidad] = useState<any[]>([]);
+  const [editUnitId, setEditUnitId] = useState<number | null>(null);
+  const [editUnitNombre, setEditUnitNombre] = useState("");
+  const [editUnitAbrev, setEditUnitAbrev] = useState("");
+  const [nuevoUnitNombre, setNuevoUnitNombre] = useState("");
+  const [nuevoUnitAbrev, setNuevoUnitAbrev] = useState("");
 
   const toggleEtiquetaId = (id: number) => {
     setEtiquetaIds(prev => {
@@ -361,14 +590,29 @@ export default function Productos() {
   };
 
   const cargarDatos = async () => {
-    const [prods, cats, listas] = await Promise.all([listarProductos(true), listarCategorias(), listarListasPrecios().catch(() => [])]);
+    const [prods, cats, listas, units] = await Promise.all([listarProductos(true), listarCategorias(), listarListasPrecios().catch(() => []), listarTiposUnidad().catch(() => [])]);
     setProductos(prods);
     setCategorias(cats);
     setListasPrecios(listas);
+    setTiposUnidad(units);
   };
 
   useEffect(() => {
     cargarDatos();
+    // Si la URL tiene ?edit=ID, abrir ese producto automáticamente
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get("edit");
+    if (editId) {
+      const pid = parseInt(editId, 10);
+      if (!isNaN(pid)) {
+        obtenerProducto(pid).then((prod) => {
+          setProductoEditar(prod);
+          setMostrarForm(true);
+          // Limpiar la URL
+          window.history.replaceState({}, "", window.location.pathname);
+        }).catch(() => {});
+      }
+    }
   }, []);
 
   const handleEditar = async (id: number) => {
@@ -391,26 +635,143 @@ export default function Productos() {
     }
   };
 
-  const productosFiltrados = filtro
-    ? productos.filter(
-        (p) =>
-          p.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
-          (p.codigo && p.codigo.toLowerCase().includes(filtro.toLowerCase()))
-      )
-    : productos;
+  const descargarExcel = (bytes: number[], nombre: string) => {
+    const arr = new Uint8Array(bytes);
+    const blob = new Blob([arr], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nombre; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePlantilla = async () => {
+    try {
+      const bytes = await exportarPlantillaProductos();
+      descargarExcel(bytes, "plantilla_productos.xlsx");
+      toastExito("Plantilla descargada");
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const handleExportar = async () => {
+    try {
+      const bytes = await exportarProductosExcel();
+      descargarExcel(bytes, `productos_${new Date().toISOString().slice(0,10)}.xlsx`);
+      toastExito("Productos exportados");
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportando(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(buffer));
+      const result = await importarProductosExcel(bytes);
+      const lotesMsg = result.lotes_creados ? `, ${result.lotes_creados} lote(s) de caducidad` : "";
+      toastExito(`Importación: ${result.creados} creados, ${result.actualizados} actualizados, ${result.errores} errores${lotesMsg}`);
+      if (result.mensajes.length > 0) {
+        result.mensajes.slice(0, 5).forEach(m => toastError(m));
+      }
+      if (result.warnings_caducidad && result.warnings_caducidad.length > 0) {
+        const nombres = result.warnings_caducidad.slice(0, 5).join(", ");
+        const extra = result.warnings_caducidad.length > 5 ? ` y ${result.warnings_caducidad.length - 5} mas` : "";
+        toastError(`${result.warnings_caducidad.length} producto(s) con caducidad sin fecha (stock = 0): ${nombres}${extra}. Agregue lotes manualmente.`);
+      }
+      cargarDatos();
+    } catch (err) { toastError("Error importando: " + err); }
+    finally { setImportando(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
+  };
+
+  const categoriaNombreFiltro = filtroCategoriaId !== null
+    ? categorias.find(c => c.id === filtroCategoriaId)?.nombre ?? null
+    : null;
+
+  const productosFiltrados = useMemo(() => {
+    let lista = productos.filter(p => {
+      if (filtro && !p.nombre.toLowerCase().includes(filtro.toLowerCase()) &&
+          !(p.codigo && p.codigo.toLowerCase().includes(filtro.toLowerCase()))) return false;
+      if (categoriaNombreFiltro !== null && p.categoria_nombre !== categoriaNombreFiltro) return false;
+      return true;
+    });
+
+    lista.sort((a, b) => {
+      switch (ordenamiento) {
+        case "nombre_desc": return b.nombre.localeCompare(a.nombre);
+        case "precio_asc": return a.precio_venta - b.precio_venta;
+        case "precio_desc": return b.precio_venta - a.precio_venta;
+        case "stock_asc": return a.stock_actual - b.stock_actual;
+        case "stock_desc": return b.stock_actual - a.stock_actual;
+        case "recientes": return (b.id || 0) - (a.id || 0);
+        default: return a.nombre.localeCompare(b.nombre);
+      }
+    });
+
+    return lista;
+  }, [productos, filtro, categoriaNombreFiltro, ordenamiento]);
+
+  const productosAgrupados = useMemo(() => {
+    const grupos: Record<string, typeof productosFiltrados> = {};
+    for (const p of productosFiltrados) {
+      const cat = p.categoria_nombre || "Sin categoría";
+      if (!grupos[cat]) grupos[cat] = [];
+      grupos[cat].push(p);
+    }
+    const sorted = Object.entries(grupos).sort(([a], [b]) => a.localeCompare(b));
+    return sorted;
+  }, [productosFiltrados]);
+
+  const toggleCategoria = (cat: string) => {
+    const s = new Set(categoriasExpandidas);
+    if (s.has(cat)) s.delete(cat); else s.add(cat);
+    setCategoriasExpandidas(s);
+  };
+
+  const expandirTodas = () => {
+    setCategoriasExpandidas(new Set(productosAgrupados.map(([cat]) => cat)));
+  };
+
+  const contraerTodas = () => {
+    setCategoriasExpandidas(new Set());
+  };
 
   return (
     <>
       <div className="page-header">
-        <h2>Productos ({productos.length})</h2>
+        <div className="flex gap-2 items-center">
+          <h2>Productos</h2>
+          <div className="flex gap-1" style={{ marginLeft: 12 }}>
+            {(["productos", "categorias", "unidades"] as const).map(tab => (
+              <button key={tab} className={`btn ${tabActiva === tab ? "btn-primary" : "btn-outline"}`}
+                style={{ fontSize: 11, padding: "4px 12px" }}
+                onClick={() => setTabActiva(tab)}>
+                {tab === "productos" ? `Lista (${productos.length})` : tab === "categorias" ? "Categorías" : "Unidades"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="flex gap-2">
+          {tabActiva === "productos" && <>
           <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
             onClick={() => setMostrarEtiquetas(true)}>
             Etiquetas
           </button>
           <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+            onClick={handlePlantilla}>
+            Plantilla Excel
+          </button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+            onClick={handleExportar}>
+            Exportar Excel
+          </button>
+          <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 10px" }}
+            onClick={() => fileInputRef.current?.click()} disabled={importando}>
+            {importando ? "Importando..." : "Importar Excel"}
+          </button>
+          <input type="file" ref={fileInputRef} accept=".xlsx,.xls" style={{ display: "none" }} onChange={handleImport} />
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
             onClick={handleExportarCSV}>
-            CSV
+            CSV Inventario
           </button>
           <button
             className="btn btn-primary"
@@ -422,10 +783,145 @@ export default function Productos() {
           >
             + Nuevo Producto
           </button>
+          </>}
         </div>
       </div>
       <div className="page-body">
-        {mostrarForm ? (
+        {/* Tab: Categorías */}
+        {tabActiva === "categorias" && (
+          <div className="card">
+            <div className="card-header">Categorías ({categorias.length})</div>
+            <div className="card-body">
+              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <input className="input" placeholder="Nueva categoría..." value={nuevaCatNombre}
+                  onChange={e => setNuevaCatNombre(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && nuevaCatNombre.trim()) {
+                    crearCategoria({ nombre: nuevaCatNombre.trim(), activo: true } as any).then(() => { toastExito("Categoría creada"); setNuevaCatNombre(""); cargarDatos(); }).catch((err: any) => toastError("" + err));
+                  }}}
+                  style={{ flex: 1 }} />
+                <button className="btn btn-primary" disabled={!nuevaCatNombre.trim()}
+                  onClick={() => {
+                    crearCategoria({ nombre: nuevaCatNombre.trim(), activo: true } as any).then(() => { toastExito("Categoría creada"); setNuevaCatNombre(""); cargarDatos(); }).catch((err: any) => toastError("" + err));
+                  }}>+ Agregar</button>
+              </div>
+              <table className="table">
+                <thead><tr><th>Nombre</th><th style={{ width: 120 }}>Acciones</th></tr></thead>
+                <tbody>
+                  {categorias.map(c => (
+                    <tr key={c.id}>
+                      <td>
+                        {editCatId === c.id ? (
+                          <input className="input" value={editCatNombre} onChange={e => setEditCatNombre(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") { actualizarCategoria(c.id!, editCatNombre).then(() => { toastExito("Actualizada"); setEditCatId(null); cargarDatos(); }).catch((err: any) => toastError("" + err)); }}}
+                            autoFocus style={{ fontSize: 13 }} />
+                        ) : c.nombre}
+                      </td>
+                      <td>
+                        <div className="flex gap-1">
+                          {editCatId === c.id ? (
+                            <>
+                              <button className="btn btn-primary" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => actualizarCategoria(c.id!, editCatNombre).then(() => { toastExito("Actualizada"); setEditCatId(null); cargarDatos(); }).catch((err: any) => toastError("" + err))}>Guardar</button>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => setEditCatId(null)}>Cancelar</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => { setEditCatId(c.id!); setEditCatNombre(c.nombre); }}>Editar</button>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
+                                onClick={async () => {
+                                  try {
+                                    const res = await eliminarCategoria(c.id!);
+                                    if (res.requiere_accion) {
+                                      const opcion = prompt(`Esta categoría tiene ${res.productos} producto(s).\n\nEscriba:\n• "mover" para mover productos a General\n• "eliminar" para eliminar los productos\n• Cancele para no hacer nada`);
+                                      if (!opcion) return;
+                                      if (opcion.toLowerCase() === "mover") {
+                                        await eliminarCategoria(c.id!, "mover");
+                                        toastExito("Productos movidos a General, categoría eliminada");
+                                      } else if (opcion.toLowerCase() === "eliminar") {
+                                        if (confirm(`¿Está seguro de ELIMINAR ${res.productos} producto(s)? Esta acción no se puede deshacer.`)) {
+                                          await eliminarCategoria(c.id!, "eliminar_productos");
+                                          toastExito("Productos y categoría eliminados");
+                                        }
+                                      }
+                                    } else {
+                                      toastExito("Categoría eliminada");
+                                    }
+                                    cargarDatos();
+                                  } catch (err: any) { toastError("" + err); }
+                                }}>Eliminar</button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Tipos de Unidad */}
+        {tabActiva === "unidades" && (
+          <div className="card">
+            <div className="card-header">Tipos de Unidad ({tiposUnidad.length})</div>
+            <div className="card-body">
+              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <input className="input" placeholder="Nombre (ej: Kilogramo)" value={nuevoUnitNombre}
+                  onChange={e => setNuevoUnitNombre(e.target.value)} style={{ flex: 1 }} />
+                <input className="input" placeholder="Abrev. (ej: KG)" value={nuevoUnitAbrev}
+                  onChange={e => setNuevoUnitAbrev(e.target.value)} style={{ width: 100 }} />
+                <button className="btn btn-primary" disabled={!nuevoUnitNombre.trim() || !nuevoUnitAbrev.trim()}
+                  onClick={() => {
+                    crearTipoUnidad(nuevoUnitNombre.trim(), nuevoUnitAbrev.trim()).then(() => { toastExito("Tipo creado"); setNuevoUnitNombre(""); setNuevoUnitAbrev(""); cargarDatos(); }).catch((err: any) => toastError("" + err));
+                  }}>+ Agregar</button>
+              </div>
+              <table className="table">
+                <thead><tr><th>Nombre</th><th>Abreviatura</th><th style={{ width: 120 }}>Acciones</th></tr></thead>
+                <tbody>
+                  {tiposUnidad.map((u: any) => (
+                    <tr key={u.id}>
+                      <td>
+                        {editUnitId === u.id ? (
+                          <input className="input" value={editUnitNombre} onChange={e => setEditUnitNombre(e.target.value)} autoFocus style={{ fontSize: 13 }} />
+                        ) : u.nombre}
+                      </td>
+                      <td>
+                        {editUnitId === u.id ? (
+                          <input className="input" value={editUnitAbrev} onChange={e => setEditUnitAbrev(e.target.value)} style={{ fontSize: 13, width: 80 }} />
+                        ) : u.abreviatura}
+                      </td>
+                      <td>
+                        <div className="flex gap-1">
+                          {editUnitId === u.id ? (
+                            <>
+                              <button className="btn btn-primary" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => actualizarTipoUnidad(u.id, editUnitNombre, editUnitAbrev).then(() => { toastExito("Actualizado"); setEditUnitId(null); cargarDatos(); }).catch((err: any) => toastError("" + err))}>Guardar</button>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => setEditUnitId(null)}>Cancelar</button>
+                            </>
+                          ) : (
+                            <>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => { setEditUnitId(u.id); setEditUnitNombre(u.nombre); setEditUnitAbrev(u.abreviatura); }}>Editar</button>
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
+                                onClick={() => { if (confirm("¿Eliminar tipo de unidad?")) eliminarTipoUnidad(u.id).then(() => { toastExito("Eliminado"); cargarDatos(); }).catch((err: any) => toastError("" + err)); }}>Eliminar</button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Productos */}
+        {tabActiva === "productos" && (mostrarForm ? (
           <div className="card">
             <div className="card-header">
               {productoEditar ? "Editar Producto" : "Nuevo Producto"}
@@ -435,6 +931,7 @@ export default function Productos() {
                 productoEditar={productoEditar}
                 categorias={categorias}
                 listasPrecios={listasPrecios}
+                tiposUnidad={tiposUnidad}
                 onGuardar={() => {
                   setMostrarForm(false);
                   cargarDatos();
@@ -445,51 +942,234 @@ export default function Productos() {
           </div>
         ) : (
           <>
-            <input
-              className="input mb-4"
-              placeholder="Filtrar productos..."
-              value={filtro}
-              onChange={(e) => setFiltro(e.target.value)}
-            />
-            <div className="card">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Código</th>
-                    <th>Nombre</th>
-                    <th>Categoría</th>
-                    <th className="text-right">Precio</th>
-                    <th className="text-right">Stock</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {productosFiltrados.map((p) => (
-                    <tr key={p.id}>
-                      <td>{p.codigo ?? "-"}</td>
-                      <td><strong>{p.nombre}</strong></td>
-                      <td className="text-secondary">{p.categoria_nombre ?? "-"}</td>
-                      <td className="text-right">${p.precio_venta.toFixed(2)}</td>
-                      <td className="text-right">{p.stock_actual}</td>
-                      <td>
-                        <button className="btn btn-outline" onClick={() => handleEditar(p.id)}>
-                          Editar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {productosFiltrados.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="text-center text-secondary" style={{ padding: 40 }}>
-                        No hay productos registrados
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                className="input"
+                placeholder="Filtrar productos..."
+                value={filtro}
+                onChange={(e) => setFiltro(e.target.value)}
+                style={{ flex: 1, minWidth: 150 }}
+              />
+              <select className="input" style={{ width: 160, fontSize: 12 }}
+                value={filtroCategoriaId ?? ""}
+                onChange={(e) => setFiltroCategoriaId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Todas las categorías</option>
+                {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+              <select className="input" style={{ width: 160, fontSize: 12 }}
+                value={ordenamiento}
+                onChange={(e) => setOrdenamiento(e.target.value)}>
+                <option value="nombre_asc">Nombre A-Z</option>
+                <option value="nombre_desc">Nombre Z-A</option>
+                <option value="precio_asc">Precio menor</option>
+                <option value="precio_desc">Precio mayor</option>
+                <option value="stock_asc">Menor stock</option>
+                <option value="stock_desc">Mayor stock</option>
+                <option value="recientes">Más recientes</option>
+              </select>
+              <button className={`btn ${vistaAgrupada ? "btn-primary" : "btn-outline"}`}
+                style={{ fontSize: 11, padding: "4px 12px" }}
+                onClick={() => setVistaAgrupada(!vistaAgrupada)}>
+                {vistaAgrupada ? "Vista Agrupada" : "Vista Normal"}
+              </button>
+              <span className="text-secondary" style={{ fontSize: 12 }}>
+                {productosFiltrados.length} de {productos.length} producto(s)
+              </span>
             </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+              {seleccionados.size > 0 && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{seleccionados.size} seleccionado(s)</span>
+                  <button className="btn btn-danger" style={{ fontSize: 11, padding: "4px 12px" }}
+                    onClick={async () => {
+                      if (!confirm(`¿Eliminar ${seleccionados.size} producto(s)?`)) return;
+                      try {
+                        for (const id of seleccionados) { await eliminarProducto(id); }
+                        toastExito(`${seleccionados.size} producto(s) eliminado(s)`);
+                        setSeleccionados(new Set());
+                        cargarDatos();
+                      } catch (err) { toastError("Error: " + err); }
+                    }}>
+                    Eliminar seleccionados
+                  </button>
+                </div>
+              )}
+              {filtroCategoriaId !== null && (
+                <button className="btn btn-danger" style={{ fontSize: 11, padding: "4px 12px" }}
+                  onClick={async () => {
+                    const cat = categorias.find(c => c.id === filtroCategoriaId);
+                    if (!confirm(`¿Eliminar TODOS los productos de "${cat?.nombre}"? (${productosFiltrados.length} productos)`)) return;
+                    try {
+                      for (const p of productosFiltrados) { await eliminarProducto(p.id); }
+                      toastExito(`${productosFiltrados.length} producto(s) eliminado(s)`);
+                      setFiltroCategoriaId(null);
+                      cargarDatos();
+                    } catch (err) { toastError("Error: " + err); }
+                  }}>
+                  Eliminar categoría completa
+                </button>
+              )}
+            </div>
+            {vistaAgrupada ? (
+              <div style={{ flex: 1, overflow: "auto" }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }} onClick={expandirTodas}>Expandir todas</button>
+                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }} onClick={contraerTodas}>Contraer todas</button>
+                </div>
+                {productosAgrupados.map(([categoria, prods]) => (
+                  <div key={categoria} className="card" style={{ marginBottom: 8 }}>
+                    <div
+                      style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "10px 14px", cursor: "pointer",
+                        background: "var(--color-surface-alt)", borderRadius: "var(--radius)",
+                        fontWeight: 600, fontSize: 14,
+                      }}
+                      onClick={() => toggleCategoria(categoria)}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span>{categoriasExpandidas.has(categoria) ? "\u25BC" : "\u25B6"}</span>
+                        <span>{categoria}</span>
+                        <span style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 400 }}>
+                          ({prods.length} producto{prods.length !== 1 ? "s" : ""})
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
+                        <span>Total: ${prods.reduce((s, p) => s + p.stock_actual * p.precio_venta, 0).toFixed(2)}</span>
+                        <span>Stock: {prods.reduce((s, p) => s + p.stock_actual, 0)}</span>
+                      </div>
+                    </div>
+                    {categoriasExpandidas.has(categoria) && (
+                      <table className="table" style={{ fontSize: 13 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: 30 }}>
+                              <input type="checkbox"
+                                checked={prods.every(p => seleccionados.has(p.id))}
+                                onChange={(e) => {
+                                  const s = new Set(seleccionados);
+                                  prods.forEach(p => { if (e.target.checked) s.add(p.id); else s.delete(p.id); });
+                                  setSeleccionados(s);
+                                }} />
+                            </th>
+                            <th>CODIGO</th>
+                            <th>NOMBRE</th>
+                            <th className="text-right">PRECIO</th>
+                            <th className="text-right">STOCK</th>
+                            <th style={{ width: 80 }}></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {prods.map(p => (
+                            <tr key={p.id}>
+                              <td>
+                                <input type="checkbox" checked={seleccionados.has(p.id)}
+                                  onChange={(e) => {
+                                    const s = new Set(seleccionados);
+                                    if (e.target.checked) s.add(p.id); else s.delete(p.id);
+                                    setSeleccionados(s);
+                                  }} />
+                              </td>
+                              <td style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{p.codigo || "-"}</td>
+                              <td><strong>{p.nombre}</strong></td>
+                              <td className="text-right">${p.precio_venta.toFixed(2)}</td>
+                              <td className="text-right" style={{
+                                color: p.stock_actual <= 0 ? "var(--color-danger)" : p.stock_actual <= p.stock_minimo ? "var(--color-warning)" : undefined,
+                                fontWeight: p.stock_actual <= p.stock_minimo ? 600 : undefined
+                              }}>
+                                {p.stock_actual}
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: 4 }}>
+                                  <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                                    onClick={() => handleEditar(p.id)}>Editar</button>
+                                  <button className="btn btn-danger" style={{ padding: "2px 6px", fontSize: 11 }}
+                                    onClick={async () => {
+                                      if (!confirm(`\u00bfEliminar "${p.nombre}"?`)) return;
+                                      try {
+                                        await eliminarProducto(p.id);
+                                        toastExito("Eliminado");
+                                        cargarDatos();
+                                      } catch (err) { toastError("Error: " + err); }
+                                    }}>x</button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="card">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 30 }}>
+                        <input type="checkbox"
+                          checked={seleccionados.size === productosFiltrados.length && productosFiltrados.length > 0}
+                          onChange={(e) => {
+                            if (e.target.checked) setSeleccionados(new Set(productosFiltrados.map(p => p.id)));
+                            else setSeleccionados(new Set());
+                          }} />
+                      </th>
+                      <th>Código</th>
+                      <th>Nombre</th>
+                      <th>Categoría</th>
+                      <th className="text-right">Precio</th>
+                      <th className="text-right">Stock</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productosFiltrados.map((p) => (
+                      <tr key={p.id}>
+                        <td>
+                          <input type="checkbox" checked={seleccionados.has(p.id)}
+                            onChange={(e) => {
+                              const s = new Set(seleccionados);
+                              if (e.target.checked) s.add(p.id); else s.delete(p.id);
+                              setSeleccionados(s);
+                            }} />
+                        </td>
+                        <td>{p.codigo ?? "-"}</td>
+                        <td><strong>{p.nombre}</strong></td>
+                        <td className="text-secondary">{p.categoria_nombre ?? "-"}</td>
+                        <td className="text-right">${p.precio_venta.toFixed(2)}</td>
+                        <td className="text-right">{p.stock_actual}</td>
+                        <td>
+                          <div className="flex gap-1">
+                            <button className="btn btn-outline" onClick={() => handleEditar(p.id)}>
+                              Editar
+                            </button>
+                            <button className="btn btn-danger" style={{ padding: "2px 8px", fontSize: 11 }}
+                              onClick={async () => {
+                                if (!confirm(`\u00bfEliminar "${p.nombre}"?`)) return;
+                                try {
+                                  await eliminarProducto(p.id);
+                                  toastExito("Producto eliminado");
+                                  cargarDatos();
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>x</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {productosFiltrados.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="text-center text-secondary" style={{ padding: 40 }}>
+                          No hay productos registrados
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
-        )}
+        ))}
       </div>
       {/* Modal Etiquetas */}
       {mostrarEtiquetas && (() => {

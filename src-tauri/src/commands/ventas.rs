@@ -58,13 +58,31 @@ pub fn registrar_venta(
         rusqlite::params![terminal_est, terminal_pe],
     ).map_err(|e| e.to_string())?;
 
-    let secuencial: i64 = conn
+    let mut secuencial: i64 = conn
         .query_row(
             "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_VENTA'",
             rusqlite::params![terminal_est, terminal_pe],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
+
+    // Safety: si hay ventas existentes con números más altos (ej. desde demo),
+    // saltar al siguiente número disponible para evitar UNIQUE constraint failed
+    let max_existente: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) FROM ventas WHERE numero LIKE 'NV-%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if max_existente >= secuencial {
+        secuencial = max_existente + 1;
+        // Actualizar tabla para futuros secuenciales
+        conn.execute(
+            "UPDATE secuenciales SET secuencial = ?1 WHERE establecimiento_codigo = ?2 AND punto_emision_codigo = ?3 AND tipo_documento = 'NOTA_VENTA'",
+            rusqlite::params![secuencial, terminal_est, terminal_pe],
+        ).ok();
+    }
 
     // Formato interno: NV-000000017
     let numero = format!("NV-{:09}", secuencial);
@@ -137,10 +155,19 @@ pub fn registrar_venta(
     for item in &venta.items {
         let subtotal = item.cantidad * item.precio_unitario - item.descuento;
 
+        // Obtener precio_costo del producto para snapshot en venta_detalles
+        let precio_costo_prod: f64 = conn
+            .query_row(
+                "SELECT precio_costo FROM productos WHERE id = ?1",
+                rusqlite::params![item.producto_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
+
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
-             descuento, iva_porcentaje, subtotal, info_adicional)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             descuento, iva_porcentaje, subtotal, info_adicional, precio_costo)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -150,31 +177,36 @@ pub fn registrar_venta(
                 item.iva_porcentaje,
                 subtotal,
                 item.info_adicional,
+                precio_costo_prod,
             ],
         )
         .map_err(|e| e.to_string())?;
 
-        // Obtener stock antes de descontar y verificar si es servicio
-        let (stock_antes, es_servicio): (f64, bool) = conn
+        // Obtener stock antes de descontar y verificar si es servicio o no controla stock
+        let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
             .query_row(
-                "SELECT stock_actual, es_servicio FROM productos WHERE id = ?1",
+                "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
                 rusqlite::params![item.producto_id],
-                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?)),
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
             )
-            .unwrap_or((0.0, false));
+            .unwrap_or((0.0, false, false));
 
-        // Descontar stock (si no es servicio)
-        conn.execute(
-            "UPDATE productos SET stock_actual = stock_actual - ?1,
-             updated_at = datetime('now','localtime')
-             WHERE id = ?2 AND es_servicio = 0",
-            rusqlite::params![item.cantidad, item.producto_id],
-        )
-        .map_err(|e| e.to_string())?;
+        let omite_stock = es_servicio || no_controla_stock;
+
+        // Descontar stock (si no es servicio y controla stock)
+        if !omite_stock {
+            conn.execute(
+                "UPDATE productos SET stock_actual = stock_actual - ?1,
+                 updated_at = datetime('now','localtime')
+                 WHERE id = ?2",
+                rusqlite::params![item.cantidad, item.producto_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         // Multi-almacén: también descontar de stock_establecimiento
         if let Some(eid) = est_id {
-            if !es_servicio {
+            if !omite_stock {
                 conn.execute(
                     "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
                      WHERE producto_id = ?2 AND establecimiento_id = ?3",
@@ -184,7 +216,7 @@ pub fn registrar_venta(
         }
 
         // Registrar movimiento de inventario (kardex) para productos físicos
-        if !es_servicio {
+        if !omite_stock {
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
                  VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -589,7 +621,7 @@ pub fn resumen_sesion_caja(
 
     let utilidad_bruta: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(vd.subtotal - (p.precio_costo * vd.cantidad)), 0)
+            "SELECT COALESCE(SUM(vd.subtotal - (CASE WHEN COALESCE(vd.precio_costo, 0) > 0 THEN vd.precio_costo ELSE p.precio_costo END * vd.cantidad)), 0)
              FROM venta_detalles vd
              JOIN ventas v ON vd.venta_id = v.id
              JOIN productos p ON vd.producto_id = p.id
@@ -699,7 +731,20 @@ pub fn registrar_nota_credito(
         .ok_or("Debe iniciar sesión".to_string())?;
     let usuario_nombre = sesion_actual.nombre.clone();
     let usuario_id = sesion_actual.usuario_id;
+    let usuario_rol = sesion_actual.rol.clone();
+    let usuario_permisos = sesion_actual.permisos.clone();
     drop(sesion_guard);
+
+    // Verificar permiso: admin o tiene crear_nota_credito
+    if usuario_rol != "ADMIN" {
+        let tiene_permiso = serde_json::from_str::<serde_json::Value>(&usuario_permisos)
+            .ok()
+            .and_then(|v| v.get("crear_nota_credito")?.as_bool())
+            .unwrap_or(false);
+        if !tiene_permiso {
+            return Err("No tiene permisos para crear notas de crédito".to_string());
+        }
+    }
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
@@ -846,6 +891,193 @@ pub fn registrar_nota_credito(
     })
 }
 
+/// Crea una devolución interna (NC sin SRI) para ventas tipo NOTA_VENTA.
+#[tauri::command]
+pub fn crear_devolucion_interna(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    venta_id: i64,
+    motivo: String,
+    items: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión".to_string())?;
+    let usuario_nombre = sesion_actual.nombre.clone();
+    let usuario_id = sesion_actual.usuario_id;
+    let usuario_rol = sesion_actual.rol.clone();
+    let usuario_permisos = sesion_actual.permisos.clone();
+    drop(sesion_guard);
+
+    // Verificar permiso: admin o tiene crear_nota_credito
+    if usuario_rol != "ADMIN" {
+        let tiene_permiso = serde_json::from_str::<serde_json::Value>(&usuario_permisos)
+            .ok()
+            .and_then(|v| v.get("crear_nota_credito")?.as_bool())
+            .unwrap_or(false);
+        if !tiene_permiso {
+            return Err("No tiene permisos para crear notas de crédito".to_string());
+        }
+    }
+
+    if items.is_empty() {
+        return Err("Debe seleccionar al menos un item para la devolución".to_string());
+    }
+    if motivo.trim().is_empty() {
+        return Err("Debe ingresar un motivo para la devolución".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validar que la venta existe y es NOTA_VENTA (no FACTURA)
+    let (venta_numero, cliente_id, tipo_doc): (String, i64, String) = conn
+        .query_row(
+            "SELECT numero, COALESCE(cliente_id, 1), tipo_documento FROM ventas WHERE id = ?1 AND anulada = 0",
+            rusqlite::params![venta_id],
+            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?)),
+        )
+        .map_err(|_| "Venta no encontrada o anulada".to_string())?;
+
+    if tipo_doc == "FACTURA" {
+        return Err("Para facturas electrónicas use la opción de Nota de Crédito SRI".to_string());
+    }
+
+    // Validar que no exista ya una NC/devolución para esta venta
+    let nc_existente: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM notas_credito WHERE venta_id = ?1",
+            rusqlite::params![venta_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if nc_existente > 0 {
+        return Err("Ya existe una devolución para esta venta".to_string());
+    }
+
+    // Leer establecimiento y punto de emisión
+    let establecimiento: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+    let punto_emision: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_punto_emision'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+
+    // Generar número secuencial
+    conn.execute(
+        "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, 'NOTA_CREDITO', 1)",
+        rusqlite::params![establecimiento, punto_emision],
+    ).map_err(|e| e.to_string())?;
+
+    let secuencial: i64 = conn
+        .query_row(
+            "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_CREDITO'",
+            rusqlite::params![establecimiento, punto_emision],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
+
+    let numero = format!("{}-{}-{:09}", establecimiento, punto_emision, secuencial);
+
+    // Calcular totales
+    let mut subtotal_sin_iva = 0.0_f64;
+    let mut subtotal_con_iva = 0.0_f64;
+    let mut iva_total = 0.0_f64;
+
+    for item in &items {
+        let cantidad = item.get("cantidad").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let precio_unitario = item.get("precio_unitario").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let descuento = item.get("descuento").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let iva_porcentaje = item.get("iva_porcentaje").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        let subtotal_item = cantidad * precio_unitario - descuento;
+        if iva_porcentaje > 0.0 {
+            subtotal_con_iva += subtotal_item;
+            iva_total += subtotal_item * (iva_porcentaje / 100.0);
+        } else {
+            subtotal_sin_iva += subtotal_item;
+        }
+    }
+
+    let total = subtotal_sin_iva + subtotal_con_iva + iva_total;
+
+    // Insertar nota de crédito con estado_sri = 'NO_APLICA'
+    conn.execute(
+        "INSERT INTO notas_credito (numero, venta_id, cliente_id, motivo,
+         subtotal_sin_iva, subtotal_con_iva, iva, total, usuario, usuario_id,
+         establecimiento, punto_emision, estado_sri)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'NO_APLICA')",
+        rusqlite::params![
+            numero, venta_id, cliente_id, motivo.trim(),
+            subtotal_sin_iva, subtotal_con_iva, iva_total, total,
+            usuario_nombre, usuario_id, establecimiento, punto_emision,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let nc_id = conn.last_insert_rowid();
+
+    // Insertar detalles y devolver stock
+    for item in &items {
+        let producto_id = item.get("producto_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let cantidad = item.get("cantidad").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let precio_unitario = item.get("precio_unitario").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let descuento = item.get("descuento").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let iva_porcentaje = item.get("iva_porcentaje").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let subtotal = cantidad * precio_unitario - descuento;
+
+        conn.execute(
+            "INSERT INTO nota_credito_detalles (nota_credito_id, producto_id, cantidad,
+             precio_unitario, descuento, iva_porcentaje, subtotal)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                nc_id, producto_id, cantidad,
+                precio_unitario, descuento, iva_porcentaje, subtotal,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Devolver stock (si no es servicio)
+        conn.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1,
+             updated_at = datetime('now','localtime')
+             WHERE id = ?2 AND es_servicio = 0",
+            rusqlite::params![cantidad, producto_id],
+        )
+        .ok();
+
+        // Multi-almacén: devolver stock a stock_establecimiento
+        let est_id: Option<i64> = conn
+            .query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![establecimiento], |row| row.get(0))
+            .ok();
+        if let Some(eid) = est_id {
+            conn.execute(
+                "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                 WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                rusqlite::params![cantidad, producto_id, eid],
+            ).ok();
+        }
+    }
+
+    // Incrementar secuencial
+    conn.execute(
+        "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_CREDITO'",
+        rusqlite::params![establecimiento, punto_emision],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "id": nc_id,
+        "numero": numero,
+        "venta_id": venta_id,
+        "venta_numero": venta_numero,
+        "motivo": motivo.trim(),
+        "total": total,
+        "estado_sri": "NO_APLICA",
+    }))
+}
+
 #[tauri::command]
 pub fn listar_notas_credito_dia(
     db: State<Database>,
@@ -885,6 +1117,77 @@ pub fn listar_notas_credito_dia(
         .map_err(|e| e.to_string())?;
 
     Ok(notas)
+}
+
+#[tauri::command]
+pub fn listar_notas_credito(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+    estado: Option<String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let base_query = "SELECT nc.id, nc.numero, nc.venta_id, nc.motivo, nc.total, nc.estado_sri,
+             nc.fecha, nc.clave_acceso, nc.autorizacion_sri, nc.numero_factura_nc,
+             COALESCE(v.numero_factura, v.numero) as venta_numero,
+             COALESCE(cl.nombre, 'CONSUMIDOR FINAL') as cliente_nombre
+             FROM notas_credito nc
+             LEFT JOIN ventas v ON nc.venta_id = v.id
+             LEFT JOIN clientes cl ON nc.cliente_id = cl.id
+             WHERE date(nc.fecha) >= date(?1) AND date(nc.fecha) <= date(?2)";
+
+    let query = if let Some(ref est) = estado {
+        format!("{} AND nc.estado_sri = ?3 ORDER BY nc.fecha DESC", base_query)
+    } else {
+        format!("{} ORDER BY nc.fecha DESC", base_query)
+    };
+
+    let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+
+    let rows: Vec<serde_json::Value> = if let Some(ref est) = estado {
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta, est], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "numero": row.get::<_, String>(1)?,
+                "venta_id": row.get::<_, i64>(2)?,
+                "motivo": row.get::<_, String>(3)?,
+                "total": row.get::<_, f64>(4)?,
+                "estado_sri": row.get::<_, String>(5).unwrap_or_else(|_| "PENDIENTE".to_string()),
+                "fecha": row.get::<_, String>(6)?,
+                "clave_acceso": row.get::<_, Option<String>>(7)?,
+                "autorizacion_sri": row.get::<_, Option<String>>(8)?,
+                "numero_factura_nc": row.get::<_, Option<String>>(9)?,
+                "venta_numero": row.get::<_, String>(10)?,
+                "cliente_nombre": row.get::<_, String>(11)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+    } else {
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "numero": row.get::<_, String>(1)?,
+                "venta_id": row.get::<_, i64>(2)?,
+                "motivo": row.get::<_, String>(3)?,
+                "total": row.get::<_, f64>(4)?,
+                "estado_sri": row.get::<_, String>(5).unwrap_or_else(|_| "PENDIENTE".to_string()),
+                "fecha": row.get::<_, String>(6)?,
+                "clave_acceso": row.get::<_, Option<String>>(7)?,
+                "autorizacion_sri": row.get::<_, Option<String>>(8)?,
+                "numero_factura_nc": row.get::<_, Option<String>>(9)?,
+                "venta_numero": row.get::<_, String>(10)?,
+                "cliente_nombre": row.get::<_, String>(11)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+    };
+
+    Ok(rows)
 }
 
 // ==========================================
@@ -1093,27 +1396,31 @@ pub fn guardar_guia_remision(
             rusqlite::params![venta_id, item.producto_id, item.cantidad, item.precio_unitario, item.descuento, item.iva_porcentaje, subtotal, item.info_adicional],
         ).map_err(|e| e.to_string())?;
 
-        // Obtener stock antes de descontar y verificar si es servicio
-        let (stock_antes, es_servicio): (f64, bool) = conn
+        // Obtener stock antes de descontar y verificar si es servicio o no controla stock
+        let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
             .query_row(
-                "SELECT stock_actual, es_servicio FROM productos WHERE id = ?1",
+                "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
                 rusqlite::params![item.producto_id],
-                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?)),
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
             )
-            .unwrap_or((0.0, false));
+            .unwrap_or((0.0, false, false));
 
-        // Descontar stock (si no es servicio)
-        conn.execute(
-            "UPDATE productos SET stock_actual = stock_actual - ?1,
-             updated_at = datetime('now','localtime')
-             WHERE id = ?2 AND es_servicio = 0",
-            rusqlite::params![item.cantidad, item.producto_id],
-        )
-        .map_err(|e| e.to_string())?;
+        let omite_stock = es_servicio || no_controla_stock;
+
+        // Descontar stock (si no es servicio y controla stock)
+        if !omite_stock {
+            conn.execute(
+                "UPDATE productos SET stock_actual = stock_actual - ?1,
+                 updated_at = datetime('now','localtime')
+                 WHERE id = ?2",
+                rusqlite::params![item.cantidad, item.producto_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
 
         // Multi-almacén: también descontar de stock_establecimiento
         if let Some(eid) = est_id {
-            if !es_servicio {
+            if !omite_stock {
                 conn.execute(
                     "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
                      WHERE producto_id = ?2 AND establecimiento_id = ?3",
@@ -1123,7 +1430,7 @@ pub fn guardar_guia_remision(
         }
 
         // Registrar movimiento de inventario (kardex) para productos físicos
-        if !es_servicio {
+        if !omite_stock {
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
                  VALUES (?1, 'GUIA_REMISION', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1505,5 +1812,101 @@ pub fn guardar_chofer(db: State<Database>, nombre: String, placa: Option<String>
         "INSERT OR REPLACE INTO choferes (nombre, placa) VALUES (?1, ?2)",
         rusqlite::params![nombre.trim(), placa.as_deref().map(|p| p.trim())],
     ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cambiar_estado_guia(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    guia_id: i64,
+    nuevo_estado: String,
+) -> Result<(), String> {
+    // Verificar sesión activa
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let _sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión".to_string())?;
+    drop(sesion_guard);
+
+    // Validar nuevo estado
+    if nuevo_estado != "ENTREGADA" && nuevo_estado != "RECHAZADA" {
+        return Err("Estado no válido. Use ENTREGADA o RECHAZADA".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Verificar que la guía existe y es una guía de remisión pendiente
+    let estado_actual: String = conn
+        .query_row(
+            "SELECT estado FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'",
+            rusqlite::params![guia_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Guía de remisión no encontrada".to_string())?;
+
+    // No permitir cambiar desde COMPLETADA (cerrada/convertida)
+    if estado_actual == "COMPLETADA" {
+        return Err("No se puede cambiar el estado de una guía cerrada/convertida".to_string());
+    }
+
+    // No permitir cambiar si ya está en un estado final
+    if estado_actual == "ENTREGADA" || estado_actual == "RECHAZADA" {
+        return Err(format!("La guía ya está en estado {}", estado_actual));
+    }
+
+    // Si RECHAZADA: devolver stock
+    if nuevo_estado == "RECHAZADA" {
+        // Multi-almacén: obtener ID del establecimiento
+        let terminal_est: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
+            .unwrap_or_else(|_| "001".to_string());
+        let multi_almacen: bool = conn
+            .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let est_id: Option<i64> = if multi_almacen {
+            conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![terminal_est], |row| row.get(0)).ok()
+        } else {
+            None
+        };
+
+        // Obtener items de la guía y devolver stock
+        let mut stmt = conn.prepare(
+            "SELECT producto_id, cantidad FROM venta_detalles WHERE venta_id = ?1"
+        ).map_err(|e| e.to_string())?;
+
+        let items: Vec<(i64, f64)> = stmt.query_map(rusqlite::params![guia_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+        }).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+        for (producto_id, cantidad) in &items {
+            // Devolver stock al producto
+            conn.execute(
+                "UPDATE productos SET stock_actual = stock_actual + ?1,
+                 updated_at = datetime('now','localtime')
+                 WHERE id = ?2 AND es_servicio = 0",
+                rusqlite::params![cantidad, producto_id],
+            ).ok();
+
+            // Multi-almacén: devolver stock a stock_establecimiento
+            if let Some(eid) = est_id {
+                conn.execute(
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                    rusqlite::params![cantidad, producto_id, eid],
+                ).ok();
+            }
+        }
+    }
+
+    // Actualizar estado de la guía
+    conn.execute(
+        "UPDATE ventas SET estado = ?1 WHERE id = ?2 AND tipo_estado = 'GUIA_REMISION'",
+        rusqlite::params![nuevo_estado, guia_id],
+    ).map_err(|e| e.to_string())?;
+
     Ok(())
 }

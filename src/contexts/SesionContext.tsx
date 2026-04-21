@@ -7,6 +7,7 @@ interface SesionContextType {
   setSesion: (s: SesionActiva | null) => void;
   cerrarSesion: () => Promise<void>;
   esAdmin: boolean;
+  tienePermiso: (permiso: string) => boolean;
 }
 
 const SesionContext = createContext<SesionContextType | null>(null);
@@ -62,8 +63,19 @@ export function SesionProvider({ children }: { children: React.ReactNode }) {
 
   const esAdmin = sesion?.rol === "ADMIN";
 
+  const tienePermiso = useCallback((permiso: string): boolean => {
+    if (!sesion) return false;
+    if (sesion.rol === "ADMIN") return true;
+    try {
+      const permisos = JSON.parse(sesion.permisos || "{}");
+      return !!permisos[permiso];
+    } catch {
+      return false;
+    }
+  }, [sesion]);
+
   return (
-    <SesionContext.Provider value={{ sesion, setSesion, cerrarSesion, esAdmin }}>
+    <SesionContext.Provider value={{ sesion, setSesion, cerrarSesion, esAdmin, tienePermiso }}>
       {children}
     </SesionContext.Provider>
   );

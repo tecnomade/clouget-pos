@@ -3,21 +3,33 @@ use crate::models::{NuevoUsuario, SesionActiva, UsuarioInfo};
 use crate::utils;
 use tauri::State;
 
-/// Verifica el PIN contra todos los usuarios activos.
+/// Verifica el PIN o contraseña contra todos los usuarios activos.
 /// Si coincide, establece la sesión activa.
+/// El modo de autenticación se determina por la config 'modo_login':
+///   'pin' => solo PIN, 'password' => solo contraseña, 'ambos' => PIN o contraseña
 #[tauri::command]
 pub fn iniciar_sesion(
     db: State<Database>,
     sesion: State<SesionState>,
     pin: String,
+    password: Option<String>,
 ) -> Result<SesionActiva, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // Leer modo_login de config
+    let modo_login: String = conn
+        .query_row(
+            "SELECT value FROM config WHERE key = 'modo_login'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| "pin".to_string());
+
     let mut stmt = conn
-        .prepare("SELECT id, nombre, pin_hash, pin_salt, rol FROM usuarios WHERE activo = 1")
+        .prepare("SELECT id, nombre, pin_hash, pin_salt, rol, permisos, password_hash, password_salt FROM usuarios WHERE activo = 1")
         .map_err(|e| e.to_string())?;
 
-    let usuarios: Vec<(i64, String, String, String, String)> = stmt
+    let usuarios: Vec<(i64, String, String, String, String, String, Option<String>, Option<String>)> = stmt
         .query_map([], |row| {
             Ok((
                 row.get(0)?,
@@ -25,42 +37,119 @@ pub fn iniciar_sesion(
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    for (id, nombre, pin_hash, pin_salt, rol) in usuarios {
-        let hash_intento = utils::hash_pin(&pin_salt, &pin);
-        if hash_intento == pin_hash {
-            let nueva_sesion = SesionActiva {
-                usuario_id: id,
-                nombre: nombre.clone(),
-                rol: rol.clone(),
-            };
-            let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
-            *sesion_guard = Some(nueva_sesion.clone());
-            return Ok(nueva_sesion);
+    // Intentar autenticación por PIN (si modo es 'pin' o 'ambos')
+    if modo_login == "pin" || modo_login == "ambos" {
+        if !pin.is_empty() {
+            for (id, nombre, pin_hash, pin_salt, rol, permisos, _, _) in &usuarios {
+                let hash_intento = utils::hash_pin(pin_salt, &pin);
+                if hash_intento == *pin_hash {
+                    let nueva_sesion = SesionActiva {
+                        usuario_id: *id,
+                        nombre: nombre.clone(),
+                        rol: rol.clone(),
+                        permisos: permisos.clone(),
+                    };
+                    let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+                    *sesion_guard = Some(nueva_sesion.clone());
+                    // Persistir sesión en config para sobrevivir reinicios
+                    if let Ok(json) = serde_json::to_string(&nueva_sesion) {
+                        let _ = conn.execute(
+                            "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                            rusqlite::params![json],
+                        );
+                    }
+                    return Ok(nueva_sesion);
+                }
+            }
+            // En modo 'pin' puro, retornar error inmediatamente
+            if modo_login == "pin" {
+                return Err("PIN incorrecto".to_string());
+            }
         }
     }
 
-    Err("PIN incorrecto".to_string())
+    // Intentar autenticación por contraseña (si se envió password, siempre intentar)
+    if password.is_some() {
+        if let Some(ref pwd) = password {
+            if !pwd.is_empty() {
+                for (id, nombre, _, _, rol, permisos, password_hash, password_salt) in &usuarios {
+                    if let (Some(pw_hash), Some(pw_salt)) = (password_hash, password_salt) {
+                        let hash_intento = utils::hash_pin(pw_salt, pwd);
+                        if hash_intento == *pw_hash {
+                            let nueva_sesion = SesionActiva {
+                                usuario_id: *id,
+                                nombre: nombre.clone(),
+                                rol: rol.clone(),
+                                permisos: permisos.clone(),
+                            };
+                            let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+                            *sesion_guard = Some(nueva_sesion.clone());
+                            // Persistir sesión en config para sobrevivir reinicios
+                            if let Ok(json) = serde_json::to_string(&nueva_sesion) {
+                                let _ = conn.execute(
+                                    "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                                    rusqlite::params![json],
+                                );
+                            }
+                            return Ok(nueva_sesion);
+                        }
+                    }
+                }
+                return Err("Contraseña incorrecta. Verifique que el usuario tiene contraseña configurada en Configuracion.".to_string());
+            }
+        }
+    }
+
+    Err("Credenciales incorrectas".to_string())
 }
 
 /// Cierra la sesión activa
 #[tauri::command]
-pub fn cerrar_sesion(sesion: State<SesionState>) -> Result<(), String> {
+pub fn cerrar_sesion(db: State<Database>, sesion: State<SesionState>) -> Result<(), String> {
     let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
     *sesion_guard = None;
+    // Limpiar sesión persistida
+    if let Ok(conn) = db.conn.lock() {
+        let _ = conn.execute("DELETE FROM config WHERE key = 'sesion_activa'", []);
+    }
     Ok(())
 }
 
-/// Retorna la sesión activa (o null si no hay)
+/// Retorna la sesión activa (o null si no hay).
+/// Si la memoria está vacía, intenta restaurar desde config (persistencia).
 #[tauri::command]
-pub fn obtener_sesion_actual(sesion: State<SesionState>) -> Result<Option<SesionActiva>, String> {
-    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
-    Ok(sesion_guard.clone())
+pub fn obtener_sesion_actual(
+    db: State<Database>,
+    sesion: State<SesionState>,
+) -> Result<Option<SesionActiva>, String> {
+    let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    if sesion_guard.is_some() {
+        return Ok(sesion_guard.clone());
+    }
+    // Intentar restaurar desde config
+    if let Ok(conn) = db.conn.lock() {
+        let json: Result<String, _> = conn.query_row(
+            "SELECT value FROM config WHERE key = 'sesion_activa'",
+            [],
+            |row| row.get(0),
+        );
+        if let Ok(json_str) = json {
+            if let Ok(restaurada) = serde_json::from_str::<SesionActiva>(&json_str) {
+                *sesion_guard = Some(restaurada.clone());
+                return Ok(Some(restaurada));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Crea un nuevo usuario. Requiere sesión ADMIN.
@@ -80,8 +169,8 @@ pub fn crear_usuario(
     }
 
     // Validar rol
-    if usuario.rol != "ADMIN" && usuario.rol != "CAJERO" {
-        return Err("El rol debe ser ADMIN o CAJERO".to_string());
+    if usuario.rol != "ADMIN" && usuario.rol != "CAJERO" && usuario.rol != "TECNICO" {
+        return Err("El rol debe ser ADMIN, CAJERO o TECNICO".to_string());
     }
 
     // Validar nombre no vacío
@@ -89,6 +178,12 @@ pub fn crear_usuario(
     if nombre.is_empty() {
         return Err("El nombre no puede estar vacío".to_string());
     }
+
+    // Validar permisos JSON si se proporcionan
+    let permisos = usuario.permisos.unwrap_or_else(|| "{}".to_string());
+    // Verificar que sea JSON válido
+    serde_json::from_str::<serde_json::Value>(&permisos)
+        .map_err(|_| "El campo permisos debe ser un JSON válido".to_string())?;
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
@@ -110,9 +205,9 @@ pub fn crear_usuario(
     let pin_hash = utils::hash_pin(&salt, &usuario.pin);
 
     conn.execute(
-        "INSERT INTO usuarios (nombre, pin_hash, pin_salt, rol, activo)
-         VALUES (?1, ?2, ?3, ?4, 1)",
-        rusqlite::params![nombre, pin_hash, salt, usuario.rol],
+        "INSERT INTO usuarios (nombre, pin_hash, pin_salt, rol, activo, permisos)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+        rusqlite::params![nombre, pin_hash, salt, usuario.rol, permisos],
     )
     .map_err(|e| e.to_string())?;
 
@@ -123,6 +218,7 @@ pub fn crear_usuario(
         nombre,
         rol: usuario.rol,
         activo: true,
+        permisos,
     })
 }
 
@@ -137,7 +233,7 @@ pub fn listar_usuarios(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let mut stmt = conn
-        .prepare("SELECT id, nombre, rol, activo FROM usuarios ORDER BY id")
+        .prepare("SELECT id, nombre, rol, activo, permisos FROM usuarios ORDER BY id")
         .map_err(|e| e.to_string())?;
 
     let usuarios = stmt
@@ -147,6 +243,7 @@ pub fn listar_usuarios(
                 nombre: row.get(1)?,
                 rol: row.get(2)?,
                 activo: row.get::<_, i64>(3).map(|v| v == 1)?,
+                permisos: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -166,6 +263,7 @@ pub fn actualizar_usuario(
     pin: Option<String>,
     rol: Option<String>,
     activo: Option<bool>,
+    permisos: Option<String>,
 ) -> Result<UsuarioInfo, String> {
     verificar_admin(&sesion)?;
 
@@ -239,8 +337,8 @@ pub fn actualizar_usuario(
 
     // Actualizar rol
     if let Some(ref new_rol_str) = rol {
-        if new_rol_str != "ADMIN" && new_rol_str != "CAJERO" {
-            return Err("El rol debe ser ADMIN o CAJERO".to_string());
+        if new_rol_str != "ADMIN" && new_rol_str != "CAJERO" && new_rol_str != "TECNICO" {
+            return Err("El rol debe ser ADMIN, CAJERO o TECNICO".to_string());
         }
         conn.execute(
             "UPDATE usuarios SET rol = ?1 WHERE id = ?2",
@@ -258,10 +356,22 @@ pub fn actualizar_usuario(
         .map_err(|e| e.to_string())?;
     }
 
+    // Actualizar permisos
+    if let Some(ref new_permisos) = permisos {
+        // Verificar que sea JSON válido
+        serde_json::from_str::<serde_json::Value>(new_permisos)
+            .map_err(|_| "El campo permisos debe ser un JSON válido".to_string())?;
+        conn.execute(
+            "UPDATE usuarios SET permisos = ?1 WHERE id = ?2",
+            rusqlite::params![new_permisos, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
     // Retornar usuario actualizado
     let updated = conn
         .query_row(
-            "SELECT id, nombre, rol, activo FROM usuarios WHERE id = ?1",
+            "SELECT id, nombre, rol, activo, permisos FROM usuarios WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok(UsuarioInfo {
@@ -269,6 +379,7 @@ pub fn actualizar_usuario(
                     nombre: row.get(1)?,
                     rol: row.get(2)?,
                     activo: row.get::<_, i64>(3).map(|v| v == 1)?,
+                    permisos: row.get(4)?,
                 })
             },
         )
@@ -352,6 +463,76 @@ pub fn verificar_pin_admin(db: State<Database>, pin: String) -> Result<String, S
     }
 
     Err("PIN de administrador incorrecto".to_string())
+}
+
+/// Retorna la lista de permisos disponibles en el sistema.
+#[tauri::command]
+pub fn obtener_permisos_disponibles() -> Vec<(String, String)> {
+    use crate::models::usuario::PERMISOS_DISPONIBLES;
+    PERMISOS_DISPONIBLES
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// Lista nombres de usuarios activos (sin autenticación requerida).
+/// Solo retorna id y nombre para el selector de login.
+#[tauri::command]
+pub fn listar_usuarios_login(
+    db: State<Database>,
+) -> Result<Vec<(i64, String)>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, nombre FROM usuarios WHERE activo = 1 ORDER BY nombre")
+        .map_err(|e| e.to_string())?;
+
+    let usuarios = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(usuarios)
+}
+
+/// Establece o cambia la contraseña de un usuario. Requiere ADMIN.
+#[tauri::command]
+pub fn cambiar_password(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    usuario_id: i64,
+    password: String,
+) -> Result<(), String> {
+    verificar_admin(&sesion)?;
+
+    if password.len() < 6 {
+        return Err("La contraseña debe tener al menos 6 caracteres".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Verificar que el usuario existe
+    let _: String = conn
+        .query_row(
+            "SELECT nombre FROM usuarios WHERE id = ?1",
+            rusqlite::params![usuario_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Usuario no encontrado".to_string())?;
+
+    let salt = utils::generar_salt();
+    let password_hash = utils::hash_pin(&salt, &password);
+
+    conn.execute(
+        "UPDATE usuarios SET password_hash = ?1, password_salt = ?2 WHERE id = ?3",
+        rusqlite::params![password_hash, salt, usuario_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 /// Helper: verifica que la sesión actual sea ADMIN

@@ -19,10 +19,26 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const salirDemo = useCallback(async () => {
-    await apiSalirDemo();
+    let backendOk = false;
+    try {
+      await apiSalirDemo();
+      backendOk = true;
+    } catch (err) {
+      console.error("Error saliendo de demo:", err);
+      // Si el backend falló, mostrar mensaje y dejar al usuario decidir
+      const reintentar = confirm("Error al salir del modo demo: " + err + "\n\n¿Forzar reinicio de la app de todos modos? (puede requerir cerrar y volver a abrir)");
+      if (!reintentar) return;
+    }
     setDemo(false);
-    // Recargar la app para volver a LicenciaPage
-    window.location.reload();
+    // Forzar recarga completa
+    if (backendOk) {
+      setTimeout(() => {
+        window.location.href = window.location.origin;
+      }, 100);
+    } else {
+      // Reload duro
+      window.location.reload();
+    }
   }, []);
 
   return (

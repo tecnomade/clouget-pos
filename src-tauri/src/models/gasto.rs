@@ -9,4 +9,6 @@ pub struct Gasto {
     pub fecha: Option<String>,
     pub caja_id: Option<i64>,
     pub observacion: Option<String>,
+    #[serde(default)]
+    pub es_recurrente: bool,
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf } from "../services/api";
+import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia } from "../services/api";
 import { useToast } from "../components/Toast";
 import type { VentaCompleta, CuentaBanco, ResumenGuias } from "../types";
 
@@ -61,7 +61,11 @@ export default function GuiasRemisionPage() {
 
   const cargar = async () => {
     try {
-      const estado = filtroEstado === "TODAS" ? undefined : filtroEstado === "PENDIENTES" ? "PENDIENTE" : "COMPLETADA";
+      const estado = filtroEstado === "TODAS" ? undefined
+        : filtroEstado === "PENDIENTES" ? "PENDIENTE"
+        : filtroEstado === "ENTREGADAS" ? "ENTREGADA"
+        : filtroEstado === "RECHAZADAS" ? "RECHAZADA"
+        : "COMPLETADA";
       const [g, r] = await Promise.all([
         listarGuiasRemision({ fechaDesde, fechaHasta, estado }),
         resumenGuiasRemision(fechaDesde, fechaHasta),
@@ -150,7 +154,7 @@ export default function GuiasRemisionPage() {
       <div className="page-body">
         {/* Status filter */}
         <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-          {["TODAS", "PENDIENTES", "CERRADAS"].map(f => (
+          {["TODAS", "PENDIENTES", "ENTREGADAS", "RECHAZADAS", "CERRADAS"].map(f => (
             <button key={f} className="btn"
               style={{
                 fontSize: 12, padding: "5px 14px", fontWeight: 600,
@@ -159,7 +163,7 @@ export default function GuiasRemisionPage() {
                 border: filtroEstado === f ? "none" : "1px solid var(--color-border)",
               }}
               onClick={() => setFiltroEstado(f)}>
-              {f === "TODAS" ? "Todas" : f === "PENDIENTES" ? "Pendientes" : "Cerradas"}
+              {f === "TODAS" ? "Todas" : f === "PENDIENTES" ? "Pendientes" : f === "ENTREGADAS" ? "Entregadas" : f === "RECHAZADAS" ? "Rechazadas" : "Cerradas"}
             </button>
           ))}
         </div>
@@ -216,24 +220,60 @@ export default function GuiasRemisionPage() {
                     <td>
                       <span style={{
                         fontSize: 10, padding: "2px 8px", borderRadius: 3, fontWeight: 600,
-                        background: g.estado === "PENDIENTE" || g.tipo_estado === "GUIA_REMISION"
-                          ? "rgba(251, 146, 60, 0.15)" : "rgba(74, 222, 128, 0.15)",
-                        color: g.estado === "PENDIENTE" || g.tipo_estado === "GUIA_REMISION"
-                          ? "var(--color-warning)" : "var(--color-success)",
+                        background: g.estado === "PENDIENTE" ? "rgba(251, 146, 60, 0.15)"
+                          : g.estado === "ENTREGADA" ? "rgba(74, 222, 128, 0.15)"
+                          : g.estado === "RECHAZADA" ? "rgba(239, 68, 68, 0.15)"
+                          : "rgba(96, 165, 250, 0.15)",
+                        color: g.estado === "PENDIENTE" ? "var(--color-warning)"
+                          : g.estado === "ENTREGADA" ? "var(--color-success)"
+                          : g.estado === "RECHAZADA" ? "var(--color-danger)"
+                          : "var(--color-primary)",
                       }}>
-                        {g.estado === "PENDIENTE" || g.tipo_estado === "GUIA_REMISION" ? "PENDIENTE" : "COMPLETADA"}
+                        {g.estado === "PENDIENTE" ? "PENDIENTE"
+                          : g.estado === "ENTREGADA" ? "ENTREGADA"
+                          : g.estado === "RECHAZADA" ? "RECHAZADA"
+                          : "CERRADA"}
                       </span>
                     </td>
                     <td>
                       <div className="flex gap-1">
-                        {(g.estado === "PENDIENTE" || g.tipo_estado === "GUIA_REMISION") && (
-                          <button className="btn btn-outline" style={{
-                            fontSize: 10, padding: "2px 8px",
-                            color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",
-                          }}
-                            onClick={() => abrirConvertir(g.id)}>
-                            Convertir
-                          </button>
+                        {g.estado === "PENDIENTE" && (
+                          <>
+                            <button className="btn btn-outline" style={{
+                              fontSize: 10, padding: "2px 8px",
+                              color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",
+                            }}
+                              onClick={() => abrirConvertir(g.id)}>
+                              Convertir
+                            </button>
+                            <button className="btn btn-outline" style={{
+                              fontSize: 10, padding: "2px 8px",
+                              color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",
+                            }}
+                              onClick={async () => {
+                                try {
+                                  await cambiarEstadoGuia(g.id, "ENTREGADA");
+                                  toastExito("Guia marcada como entregada");
+                                  cargar();
+                                } catch (e) { toastError("Error: " + e); }
+                              }}>
+                              Entregada
+                            </button>
+                            <button className="btn btn-outline" style={{
+                              fontSize: 10, padding: "2px 8px",
+                              color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
+                            }}
+                              onClick={async () => {
+                                if (!confirm("Rechazar guia? Se devolvera el stock de los productos.")) return;
+                                try {
+                                  await cambiarEstadoGuia(g.id, "RECHAZADA");
+                                  toastExito("Guia rechazada, stock devuelto");
+                                  cargar();
+                                } catch (e) { toastError("Error: " + e); }
+                              }}>
+                              Rechazada
+                            </button>
+                          </>
                         )}
                         <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
                           onClick={() => abrirDetalle(g.id)}>
@@ -286,10 +326,19 @@ export default function GuiasRemisionPage() {
                   <span className="text-secondary">Estado: </span>
                   <span style={{
                     fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 600,
-                    background: detalle.venta.tipo_estado === "GUIA_REMISION" ? "rgba(251, 146, 60, 0.15)" : "rgba(74, 222, 128, 0.15)",
-                    color: detalle.venta.tipo_estado === "GUIA_REMISION" ? "var(--color-warning)" : "var(--color-success)",
+                    background: detalle.venta.estado === "PENDIENTE" ? "rgba(251, 146, 60, 0.15)"
+                      : detalle.venta.estado === "ENTREGADA" ? "rgba(74, 222, 128, 0.15)"
+                      : detalle.venta.estado === "RECHAZADA" ? "rgba(239, 68, 68, 0.15)"
+                      : "rgba(96, 165, 250, 0.15)",
+                    color: detalle.venta.estado === "PENDIENTE" ? "var(--color-warning)"
+                      : detalle.venta.estado === "ENTREGADA" ? "var(--color-success)"
+                      : detalle.venta.estado === "RECHAZADA" ? "var(--color-danger)"
+                      : "var(--color-primary)",
                   }}>
-                    {detalle.venta.tipo_estado === "GUIA_REMISION" ? "PENDIENTE" : "COMPLETADA"}
+                    {detalle.venta.estado === "PENDIENTE" ? "PENDIENTE"
+                      : detalle.venta.estado === "ENTREGADA" ? "ENTREGADA"
+                      : detalle.venta.estado === "RECHAZADA" ? "RECHAZADA"
+                      : "CERRADA"}
                   </span>
                 </div>
               </div>

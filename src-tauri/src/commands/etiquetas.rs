@@ -114,7 +114,7 @@ pub fn generar_etiquetas_pdf(
     let preset_info = resolver_preset(&config);
     let cols = preset_info.columnas.unwrap_or(config.columnas.max(1).min(6) as usize);
 
-    let fonts_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
     let font_family = genpdf::fonts::from_files(&fonts_dir, "LiberationSans", None)
         .or_else(|_| genpdf::fonts::from_files("C:\\Windows\\Fonts", "arial", None))
         .or_else(|_| genpdf::fonts::from_files("C:\\Windows\\Fonts", "calibri", None))
@@ -249,7 +249,7 @@ pub fn generar_etiquetas_pdf(
     // Open PDF
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &path.to_string_lossy()])
             .spawn()
             .ok();

@@ -185,6 +185,66 @@ pub fn listar_movimientos(
     Ok(movimientos)
 }
 
+/// Exporta el kardex (movimientos de inventario) a formato CSV
+#[tauri::command]
+pub fn exportar_kardex_csv(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+    producto_id: Option<i64>,
+) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let where_producto = if producto_id.is_some() { "AND m.producto_id = ?3" } else { "" };
+    let sql = format!(
+        "SELECT m.created_at, COALESCE(p.codigo, ''), p.nombre, m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo,
+                COALESCE(m.costo_unitario, 0), COALESCE(m.referencia_id, 0), COALESCE(m.usuario, '')
+         FROM movimientos_inventario m
+         JOIN productos p ON m.producto_id = p.id
+         WHERE date(m.created_at) >= date(?1) AND date(m.created_at) <= date(?2) {}
+         ORDER BY m.created_at DESC",
+        where_producto
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let mut csv = String::from("Fecha,Codigo,Producto,Tipo,Cantidad,Stock Anterior,Stock Nuevo,Costo Unitario,Referencia ID,Usuario\n");
+
+    let escape = |s: &str| -> String {
+        if s.contains(',') || s.contains('"') || s.contains('\n') {
+            format!("\"{}\"", s.replace('"', "\"\""))
+        } else {
+            s.to_string()
+        }
+    };
+
+    let row_handler = |row: &rusqlite::Row| -> rusqlite::Result<String> {
+        Ok(format!("{},{},{},{},{},{},{},{:.2},{},{}\n",
+            row.get::<_, String>(0)?,
+            escape(&row.get::<_, String>(1)?),
+            escape(&row.get::<_, String>(2)?),
+            row.get::<_, String>(3)?,
+            row.get::<_, f64>(4)?,
+            row.get::<_, f64>(5)?,
+            row.get::<_, f64>(6)?,
+            row.get::<_, f64>(7)?,
+            row.get::<_, i64>(8)?,
+            escape(&row.get::<_, String>(9)?)
+        ))
+    };
+
+    let rows = if let Some(pid) = producto_id {
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta, pid], row_handler).map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    } else {
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], row_handler).map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+
+    for r in rows { csv.push_str(&r); }
+    Ok(csv)
+}
+
 /// Resumen general de inventario para el dashboard
 #[tauri::command]
 pub fn resumen_inventario(db: State<Database>) -> Result<ResumenInventario, String> {

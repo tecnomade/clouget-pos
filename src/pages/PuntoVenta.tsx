@@ -1,18 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, obtenerXmlFirmado, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto } from "../services/api";
 import type { AlertaStock } from "../services/api";
-import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import PosGridTactil from "../components/PosGridTactil";
+import { useSesion } from "../contexts/SesionContext";
 import DocumentosRecientes from "../components/DocumentosRecientes";
 import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
 
 export default function PuntoVenta() {
   const { toastExito, toastError, toastWarning } = useToast();
   const navigate = useNavigate();
+  const { tienePermiso, esAdmin } = useSesion();
   const [busqueda, setBusqueda] = useState("");
   const [resultados, setResultados] = useState<ProductoBusqueda[]>([]);
   const [_favoritos, setFavoritos] = useState<ProductoBusqueda[]>([]);
@@ -60,7 +60,9 @@ export default function PuntoVenta() {
   const [bancoSeleccionado, setBancoSeleccionado] = useState<number | null>(null);
   const [referenciaPago, setReferenciaPago] = useState("");
   const [requiereReferencia, setRequiereReferencia] = useState(false);
-  const [_requiereComprobante, setRequiereComprobante] = useState(false);
+  const [requiereComprobante, setRequiereComprobante] = useState(false);
+  const [comprobanteImagen, setComprobanteImagen] = useState<string | null>(null);
+  const [autoImprimirTicket, setAutoImprimirTicket] = useState(false);
 
   // Panel documentos recientes
   const [mostrarRecientes, setMostrarRecientes] = useState(false);
@@ -74,6 +76,63 @@ export default function PuntoVenta() {
   const [choferesGuardados, setChoferesGuardados] = useState<[number, string, string | null][]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
+
+  // Modal detalle producto
+  const [productoDetalle, setProductoDetalle] = useState<any | null>(null);
+
+  // Admin PIN modal for price editing
+  const [mostrarPinAdmin, setMostrarPinAdmin] = useState(false);
+  const [pinAdminValor, setPinAdminValor] = useState("");
+  const [pinAdminError, setPinAdminError] = useState("");
+  const pinResolveRef = useRef<((ok: boolean) => void) | null>(null);
+
+  // Modal info adicional
+  const [infoAdicionalProductoId, setInfoAdicionalProductoId] = useState<number | null>(null);
+  const [infoSerie, setInfoSerie] = useState("");
+  const [infoLote, setInfoLote] = useState("");
+  const [infoObservacion, setInfoObservacion] = useState("");
+
+  // Cart slide-in panel
+  const [carritoAbierto, setCarritoAbierto] = useState(false);
+  const [carritoManualCerrado, setCarritoManualCerrado] = useState(false);
+
+  // Auto-open cart when items are added
+  useEffect(() => {
+    if (carrito.length > 0 && !carritoManualCerrado) {
+      setCarritoAbierto(true);
+    }
+    if (carrito.length === 0) {
+      setCarritoAbierto(false);
+      setCarritoManualCerrado(false);
+    }
+  }, [carrito.length, carritoManualCerrado]);
+
+  const solicitarPinAdmin = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      pinResolveRef.current = resolve;
+      setPinAdminValor("");
+      setPinAdminError("");
+      setMostrarPinAdmin(true);
+    });
+  };
+
+  const editarPrecioItem = (productoId: number, nuevoPrecio: number) => {
+    if (nuevoPrecio < 0) return;
+    setCarrito(prev => prev.map(i =>
+      i.producto_id === productoId
+        ? { ...i, precio_unitario: nuevoPrecio, subtotal: i.cantidad * nuevoPrecio - i.descuento, lista_seleccionada: undefined }
+        : i
+    ));
+  };
+
+  const editarIvaItem = (productoId: number, nuevoIva: number) => {
+    setCarrito(prev => prev.map(i =>
+      i.producto_id === productoId
+        ? { ...i, iva_porcentaje: nuevoIva, subtotal: i.cantidad * i.precio_unitario - i.descuento }
+        : i
+    ));
+  };
 
   const cargarAlertas = useCallback(() => {
     alertasStockBajo().then(setAlertas).catch(() => {});
@@ -87,7 +146,13 @@ export default function PuntoVenta() {
       setVerificandoCaja(false);
     }).catch(() => setVerificandoCaja(false));
     cargarAlertas();
-    listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+    listarCuentasBanco().then((cbs) => {
+      setCuentasBanco(cbs);
+      // Auto-seleccionar primera cuenta si no hay ninguna seleccionada
+      if (cbs.length > 0 && !bancoSeleccionado) {
+        setBancoSeleccionado(cbs[0].id ?? null);
+      }
+    }).catch(() => {});
     // Cargar regimen y estado ambiente confirmado
     obtenerConfig().then((cfg) => {
       if (cfg.regimen) {
@@ -101,6 +166,7 @@ export default function PuntoVenta() {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
+      setAutoImprimirTicket(cfg.auto_imprimir === "1");
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
@@ -117,8 +183,10 @@ export default function PuntoVenta() {
     setBusqueda(termino);
     if (termino.length >= 1) {
       const res = await buscarProductos(termino, clienteSeleccionado?.lista_precio_id);
-      // Si hay exactamente 1 resultado y el término parece código exacto (código de barras numérico o código de producto), agregar directamente
-      if (res.length === 1 && (res[0].codigo === termino || /^\d{4,}$/.test(termino))) {
+      // Si hay exactamente 1 resultado y el término coincide EXACTAMENTE con el código o código de barras, agregar directamente
+      if (res.length === 1 && (res[0].codigo === termino || res[0].codigo_barras === termino)) {
+        const now = Date.now();
+        if (lastAddRef.current.id === res[0].id && now - lastAddRef.current.time < 1000) return;
         agregarAlCarrito(res[0]);
         return;
       }
@@ -200,6 +268,14 @@ export default function PuntoVenta() {
   };
 
   const agregarAlCarrito = async (producto: ProductoBusqueda) => {
+    // Debounce para scanner de código de barras
+    const now = Date.now();
+    if (lastAddRef.current.id === producto.id && now - lastAddRef.current.time < 500) {
+      setBusqueda(""); setResultados([]); inputRef.current?.focus();
+      return;
+    }
+    lastAddRef.current = { id: producto.id, time: now };
+
     const precioEfectivo = producto.precio_lista ?? producto.precio_venta;
 
     // Check if already in cart
@@ -248,6 +324,25 @@ export default function PuntoVenta() {
     setBusqueda("");
     setResultados([]);
     inputRef.current?.focus();
+
+    // Verificar caducidad si el producto lo requiere
+    try {
+      const prodFull = await obtenerProducto(producto.id);
+      if (prodFull && prodFull.requiere_caducidad) {
+        const lotes = await listarLotesProducto(producto.id);
+        const ahora = new Date();
+        const vencidos = lotes.filter((l: any) => new Date(l.fecha_caducidad) < ahora);
+        const porVencer = lotes.filter((l: any) => {
+          const dias = Math.floor((new Date(l.fecha_caducidad).getTime() - ahora.getTime()) / (1000 * 60 * 60 * 24));
+          return dias >= 0 && dias <= 7;
+        });
+        if (vencidos.length > 0) {
+          toastWarning(`${producto.nombre}: tiene ${vencidos.length} lote(s) VENCIDOS - revise antes de vender`);
+        } else if (porVencer.length > 0) {
+          toastWarning(`${producto.nombre}: ${porVencer.length} lote(s) por vencer pronto`);
+        }
+      }
+    } catch { /* ignore */ }
   };
 
   const actualizarCantidad = (productoId: number, cantidad: number) => {
@@ -279,9 +374,19 @@ export default function PuntoVenta() {
       toastError("Debe abrir la caja antes de realizar ventas");
       return;
     }
-    // Validar referencia obligatoria en transferencia
-    if (formaPago === "TRANSFER" && requiereReferencia && !referenciaPago.trim()) {
+    // Validar cuenta bancaria seleccionada en transferencia
+    if (!esFiado && formaPago === "TRANSFER" && !bancoSeleccionado && cuentasBanco.length > 0) {
+      toastError("Seleccione una cuenta bancaria para la transferencia");
+      return;
+    }
+    // Validar referencia obligatoria en transferencia (no aplica si es crédito)
+    if (!esFiado && formaPago === "TRANSFER" && requiereReferencia && !referenciaPago.trim()) {
       toastError("El numero de referencia es obligatorio para transferencias");
+      return;
+    }
+    // Validar comprobante obligatorio en transferencia
+    if (!esFiado && formaPago === "TRANSFER" && requiereComprobante && !comprobanteImagen) {
+      toastError("El comprobante de transferencia es obligatorio");
       return;
     }
     // Verificar que el usuario ha confirmado el ambiente SRI
@@ -337,6 +442,7 @@ export default function PuntoVenta() {
       es_fiado: esFiado,
       banco_id: formaPago === "TRANSFER" ? bancoSeleccionado : null,
       referencia_pago: formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null,
+      comprobante_imagen: formaPago === "TRANSFER" ? (comprobanteImagen || null) : null,
     };
 
     try {
@@ -349,6 +455,7 @@ export default function PuntoVenta() {
       setClienteSeleccionado(null);
       setBancoSeleccionado(null);
       setReferenciaPago("");
+      setComprobanteImagen(null);
       // Si fue FACTURA, modulo SRI activo y emision automatica activada, emitir al SRI
       if (tipoDocumento === "FACTURA" && sriModuloActivo && sriEmisionAutomatica && resultado.venta.id) {
         setEmitiendo(true);
@@ -396,6 +503,11 @@ export default function PuntoVenta() {
           setEmitiendo(false);
         }
       }
+      // Auto-imprimir ticket si está configurado
+      if (autoImprimirTicket && resultado.venta.id) {
+        const fn = ticketUsarPdf ? imprimirTicketPdf : imprimirTicket;
+        fn(resultado.venta.id).catch(() => {});
+      }
       setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
       // Refrescar favoritos, alertas de stock y productos grid
       productosMasVendidos(12).then(setFavoritos).catch(() => {});
@@ -410,7 +522,7 @@ export default function PuntoVenta() {
     } catch (err) {
       toastError("Error al registrar venta: " + err);
     }
-  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, toastError, toastExito, toastWarning]);
+  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning]);
 
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);
@@ -507,7 +619,7 @@ export default function PuntoVenta() {
     };
     try {
       const res = await guardarGuiaRemision(nueva);
-      toastExito(`Guía ${res.venta.numero} creada - stock descontado`);
+      toastExito(`Guia ${res.venta.numero} creada - stock descontado`);
       // Guardar chofer para autocompletar futuro
       if (guiaChofer.trim()) {
         guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});
@@ -537,12 +649,18 @@ export default function PuntoVenta() {
     window.addEventListener("pos-guardar-borrador", handleBorrador);
     window.addEventListener("pos-guardar-cotizacion", handleCotizacion);
     window.addEventListener("pos-guardar-guia", handleGuia);
+    const handleRecientes = () => setMostrarRecientes(true);
+    const handleGuiaRemisionEvt = () => setMostrarModalGuia(true);
+    window.addEventListener("pos-recientes", handleRecientes);
+    window.addEventListener("pos-guia-remision", handleGuiaRemisionEvt);
     return () => {
       window.removeEventListener("pos-cobrar", handleCobrar);
       window.removeEventListener("pos-nueva-venta", handleNuevaVenta);
       window.removeEventListener("pos-guardar-borrador", handleBorrador);
       window.removeEventListener("pos-guardar-cotizacion", handleCotizacion);
       window.removeEventListener("pos-guardar-guia", handleGuia);
+      window.removeEventListener("pos-recientes", handleRecientes);
+      window.removeEventListener("pos-guia-remision", handleGuiaRemisionEvt);
     };
   }, [procesarVenta, nuevaVentaClick, guardarComoDocumento, handleGuiaRemision]);
 
@@ -564,33 +682,47 @@ export default function PuntoVenta() {
     if (!ventaCompletada?.venta.id) return;
     setEnviandoEmail(true);
     try {
-      // Guardar email en el cliente si tiene id
+      // Guardar email en el cliente
       if (clienteSeleccionado?.id && clienteSeleccionado.id !== 1) {
         await actualizarCliente({ ...clienteSeleccionado, email: emailInput });
+        setClienteSeleccionado(prev => prev ? { ...prev, email: emailInput } : prev);
       }
-      await enviarNotificacionSri(ventaCompletada.venta.id, emailInput);
-      toastExito(`Email enviado a ${emailInput}`);
-      setMostrarModalEmail(false);
+
+      // Si la factura aún no está autorizada, autorizar primero
+      if (ventaCompletada.venta.tipo_documento === "FACTURA" && ventaCompletada.venta.estado_sri !== "AUTORIZADA") {
+        setMostrarModalEmail(false);
+        setEmitiendo(true);
+        try {
+          const res = await emitirFacturaSri(ventaCompletada.venta.id);
+          setResultadoSri(res);
+          if (res.exito) {
+            toastExito("Factura autorizada por el SRI");
+            setVentaCompletada(prev => prev ? {
+              ...prev,
+              venta: { ...prev.venta, estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
+            } : prev);
+            window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+            // Enviar notificación con el email recién guardado
+            await enviarNotificacionSri(ventaCompletada.venta.id, emailInput);
+            toastExito(`Email enviado a ${emailInput}`);
+          } else {
+            toastWarning(`SRI: ${res.mensaje}`);
+          }
+        } catch (err) {
+          toastWarning("Error enviando al SRI: " + err);
+        } finally {
+          setEmitiendo(false);
+        }
+      } else {
+        // Ya autorizada, solo enviar notificación
+        await enviarNotificacionSri(ventaCompletada.venta.id, emailInput);
+        toastExito(`Email enviado a ${emailInput}`);
+        setMostrarModalEmail(false);
+      }
     } catch (err) {
-      toastError("Error enviando email: " + err);
+      toastError("Error: " + err);
     } finally {
       setEnviandoEmail(false);
-    }
-  };
-
-  const handleDescargarXml = async (ventaId: number, ventaNumero: string) => {
-    try {
-      const xml = await obtenerXmlFirmado(ventaId);
-      const destino = await save({
-        defaultPath: `factura-${ventaNumero.replace(/[\/\\:]/g, "-")}.xml`,
-        filters: [{ name: "XML", extensions: ["xml"] }],
-      });
-      if (destino) {
-        await invoke("guardar_archivo_texto", { ruta: destino, contenido: xml });
-        toastExito("XML guardado");
-      }
-    } catch (err) {
-      toastError("Error descargando XML: " + err);
     }
   };
 
@@ -643,8 +775,50 @@ export default function PuntoVenta() {
                         .catch((e) => toastError("Error al imprimir: " + e));
                     }
                   }}>
-                  {ticketUsarPdf ? "Ver Ticket PDF" : "Imprimir Ticket"}
+                  {ticketUsarPdf ? "Ver Ticket" : "Imprimir Ticket"}
                 </button>
+
+                {/* Botón Autorizar SRI - solo si es factura, SRI activo, y aún no autorizada */}
+                {ventaCompletada.venta.tipo_documento === "FACTURA" && sriModuloActivo && !esFacturaAutorizada && !emitiendo && (
+                  <button className="btn btn-outline btn-lg" style={{ color: "var(--color-primary)", borderColor: "var(--color-primary)" }}
+                    onClick={async () => {
+                      if (!ventaCompletada.venta.id) return;
+                      // Si no tiene email y no es consumidor final, pedir email primero
+                      if (clienteSeleccionado && clienteSeleccionado.id !== 1 && !clienteSeleccionado.email?.trim()) {
+                        setMostrarModalEmail(true);
+                        return;
+                      }
+                      setEmitiendo(true);
+                      try {
+                        const res = await emitirFacturaSri(ventaCompletada.venta.id);
+                        setResultadoSri(res);
+                        if (res.exito) {
+                          toastExito("Factura autorizada por el SRI");
+                          setVentaCompletada(prev => prev ? {
+                            ...prev,
+                            venta: { ...prev.venta, estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
+                          } : prev);
+                          window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+                          // Auto-enviar email
+                          if (clienteSeleccionado?.email?.trim()) {
+                            enviarNotificacionSri(ventaCompletada.venta.id!, clienteSeleccionado.email)
+                              .then(() => toastExito(`Email enviado a ${clienteSeleccionado!.email}`))
+                              .catch(() => toastWarning("Email pendiente, se reintentara"));
+                          }
+                        } else {
+                          toastWarning(`SRI: ${res.mensaje}`);
+                        }
+                      } catch (err) {
+                        toastWarning("Error enviando al SRI: " + err);
+                      } finally {
+                        setEmitiendo(false);
+                      }
+                    }}>
+                    Autorizar SRI
+                  </button>
+                )}
+
+                {/* Botones post-autorización */}
                 {esFacturaAutorizada && (
                   <>
                     <button className="btn btn-outline btn-lg"
@@ -655,10 +829,34 @@ export default function PuntoVenta() {
                             .catch((e) => toastError("Error RIDE: " + e));
                         }
                       }}>
-                      Imprimir RIDE
+                      RIDE
                     </button>
-                    <button className="btn btn-outline btn-lg" onClick={() => handleDescargarXml(ventaCompletada.venta.id!, ventaCompletada.venta.numero)}>
-                      Descargar XML
+                    <button className="btn btn-outline btn-lg"
+                      onClick={async () => {
+                        if (!ventaCompletada.venta.id) return;
+                        // Si cliente tiene email, enviar directamente
+                        if (clienteSeleccionado?.email) {
+                          try {
+                            await enviarNotificacionSri(ventaCompletada.venta.id, clienteSeleccionado.email);
+                            toastExito(`Email enviado a ${clienteSeleccionado.email}`);
+                          } catch (err: any) {
+                            const errStr = String(err);
+                            if (errStr.startsWith("ENCOLADO:")) {
+                              toastWarning("Email pendiente, se reintentara");
+                            } else {
+                              toastWarning("Error: " + errStr);
+                            }
+                          }
+                        } else {
+                          // Sin email, abrir modal para ingresar
+                          setMostrarModalEmail(true);
+                        }
+                      }}>
+                      Notificar
+                    </button>
+                    <button className="btn btn-outline btn-lg"
+                      onClick={() => setMostrarModalEmail(true)}>
+                      Notificar a...
                     </button>
                   </>
                 )}
@@ -711,9 +909,11 @@ export default function PuntoVenta() {
   }
 
   return (
-    <>
-      <div className="page-header" style={{ paddingRight: 340 }}>
-        <h2>Punto de Venta</h2>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", maxWidth: "100%", overflow: "hidden", minWidth: 0 }}>
+      <div className="page-header">
+        <div className="flex gap-2 items-center">
+          <h2>Punto de Venta</h2>
+        </div>
         <div className="flex gap-2 items-center">
           {/* Selector de cliente */}
           <div style={{ position: "relative" }}>
@@ -819,16 +1019,16 @@ export default function PuntoVenta() {
                             recalcularPreciosCarrito(cliente.id ?? null);
                             toastExito(`Cliente registrado: ${cliente.nombre}`);
                           } catch (err: any) {
-                            toastError(err?.toString() || "No se encontró información");
+                            toastError(err?.toString() || "No se encontro informacion");
                           } finally {
                             setConsultandoSri(false);
                           }
                         }}
                       >
-                        {consultandoSri ? "Consultando..." : "🔍 Consultar en SRI"}
+                        {consultandoSri ? "Consultando..." : "Consultar en SRI"}
                       </button>
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                        Buscar datos por cédula/RUC en el SRI
+                        Buscar datos por cedula/RUC en el SRI
                       </div>
                     </div>
                   ) : (
@@ -843,85 +1043,178 @@ export default function PuntoVenta() {
         </div>
       </div>
 
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative" }}>
-        {/* Panel izquierdo - Grid de productos (con margen para columna fixed) */}
-        <div style={{ flex: 1, position: "relative", marginRight: 324 }}>
-          <PosGridTactil
-            categorias={categoriasTactil}
-            productosTactil={productosTactil}
-            carrito={carrito}
-            onAgregarProducto={agregarAlCarrito}
-            onActualizarCantidad={actualizarCantidad}
-            onEliminarItem={eliminarItem}
-            onEditarInfoAdicional={(productoId, info) => {
-              setCarrito(prev => prev.map(i =>
-                i.producto_id === productoId ? { ...i, info_adicional: info } : i
-              ));
-            }}
-            busqueda={busqueda}
-            onBusquedaChange={handleBuscar}
-            resultados={resultados}
-            inputRef={inputRef}
-          />
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", position: "relative", minWidth: 0 }}>
+        {/* Main content - product grid */}
+        <div style={{ flex: 1, position: "relative", marginRight: carritoAbierto ? 420 : 0, transition: "margin-right 0.3s", display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+          <div style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, minWidth: 0 }}>
+            <PosGridTactil
+              categorias={categoriasTactil}
+              productosTactil={productosTactil}
+              onAgregarProducto={agregarAlCarrito}
+              puedeVerDetalle={esAdmin}
+              onVerDetalle={async (pid) => {
+                try {
+                  const p = await obtenerProducto(pid);
+                  setProductoDetalle(p);
+                } catch (err) { toastError("Error: " + err); }
+              }}
+              busqueda={busqueda}
+              onBusquedaChange={handleBuscar}
+              resultados={resultados}
+              inputRef={inputRef}
+            />
+          </div>
+          {/* Footer acciones rápidas */}
+          <div style={{
+            display: "flex", justifyContent: "flex-end", gap: 6, padding: "6px 12px",
+            borderTop: "1px solid var(--color-border)", background: "var(--color-surface)",
+            flexShrink: 0, position: "relative", zIndex: 2,
+          }}>
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 14px" }}
+              onClick={() => guardarComoDocumento("borrador")}>
+              Borrador
+            </button>
+            <button className="btn" style={{ fontSize: 11, padding: "5px 14px", background: "#ea580c", color: "#fff", border: "none" }}
+              onClick={() => setMostrarModalGuia(true)}>
+              Guía R.
+            </button>
+            <button className="btn" style={{ fontSize: 11, padding: "5px 14px", background: "#2563eb", color: "#fff", border: "none" }}
+              onClick={() => guardarComoDocumento("cotizacion")}>
+              Cotización
+            </button>
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 14px" }}
+              onClick={() => setMostrarRecientes(true)}>
+              Recientes
+            </button>
+          </div>
         </div>
-        {/* Código de modo normal eliminado - ahora siempre usa grid */}
 
-        {/* Botón Recientes - solo zona superior */}
-        <button
-          onClick={() => setMostrarRecientes(true)}
-          style={{
-            position: "fixed", right: 300, top: "50%", transform: "translateY(-50%)", height: 120,
-            writingMode: "vertical-rl", textOrientation: "mixed",
-            padding: "0 5px", background: "rgba(96, 165, 250, 0.15)",
-            border: "none", borderLeft: "2px solid var(--color-primary)",
-            borderRadius: "8px 0 0 8px",
-            cursor: "pointer", fontSize: 11, fontWeight: 700, letterSpacing: 1,
-            color: "var(--color-primary)", zIndex: 5, width: 24,
-          }}
-        >
-          RECIENTES
-        </button>
+        {/* Cart toggle button */}
+        {carrito.length > 0 && (
+          <button
+            className={`cart-panel-toggle ${carritoAbierto ? "open" : ""}`}
+            onClick={() => {
+              setCarritoAbierto(!carritoAbierto);
+              if (carritoAbierto) setCarritoManualCerrado(true);
+              else setCarritoManualCerrado(false);
+            }}
+          >
+            {carritoAbierto ? "\u25B6" : "\u25C0"}
+          </button>
+        )}
 
-        {/* Panel derecho - Totales y cobro - fixed hasta el fondo */}
-        <div style={{
-          position: "fixed", right: 0, top: 44, bottom: 0, width: 300,
-          background: "var(--color-surface)",
-          borderLeft: "2px solid var(--color-border-strong, var(--color-border))",
-          display: "flex", flexDirection: "column", zIndex: 5,
-        }}>
-          <div style={{ flex: 1, padding: "12px 16px" }}>
-            <div className="flex justify-between mb-2">
-              <span className="text-secondary">Items:</span>
-              <span>{carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
-            </div>
-            <div className="flex justify-between mb-2">
-              <span className="text-secondary">Subtotal:</span>
-              <span>${subtotal.toFixed(2)}</span>
-            </div>
-            {iva > 0 && (
-              <div className="flex justify-between mb-2">
-                <span className="text-secondary">IVA:</span>
-                <span>${iva.toFixed(2)}</span>
+        {/* Cart panel */}
+        <div className={`cart-panel ${carritoAbierto ? "open" : ""}`}>
+          <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column" }}>
+            {/* Cliente + Items count en una fila */}
+            <div className="flex justify-between items-center mb-2">
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {clienteSeleccionado ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)" }}>{clienteSeleccionado.nombre}</span>
+                    <button style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-secondary)", fontSize: 11, padding: "0 2px" }}
+                      onClick={() => { setClienteSeleccionado(null); recalcularPreciosCarrito(null); }}>×</button>
+                  </div>
+                ) : (
+                  <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                    onClick={() => setMostrarClientes(!mostrarClientes)}>
+                    Consumidor Final
+                  </button>
+                )}
               </div>
-            )}
-            <div className="flex justify-between" style={{
-              fontSize: 26, fontWeight: 700, padding: "12px 0",
-              borderTop: "2px solid var(--color-border)",
-              borderBottom: "2px solid var(--color-border)", margin: "8px 0",
-            }}>
-              <span>TOTAL:</span>
-              <span>${total.toFixed(2)}</span>
+              <span className="text-secondary" style={{ fontSize: 12 }}>Items: {carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
             </div>
 
-            {/* Tipo de documento - solo visible si no es RIMPE_POPULAR */}
+            {/* Cart items list - scrollable */}
+            <div style={{ flex: 1, overflowY: "auto", marginBottom: 12 }}>
+              {carrito.map((item) => (
+                <div key={item.producto_id} style={{
+                  padding: "6px 0", borderBottom: "1px solid var(--color-border)",
+                }}>
+                  {/* Una sola fila compacta */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                      title="Click para agregar información adicional"
+                      onClick={() => {
+                        setInfoAdicionalProductoId(item.producto_id);
+                        // Parsear info existente
+                        const info = item.info_adicional || "";
+                        const serieMatch = info.match(/Serie:\s*([^|]*)/i);
+                        const loteMatch = info.match(/Lote:\s*([^|]*)/i);
+                        const obsMatch = info.match(/Obs:\s*([^|]*)/i);
+                        setInfoSerie(serieMatch ? serieMatch[1].trim() : "");
+                        setInfoLote(loteMatch ? loteMatch[1].trim() : "");
+                        setInfoObservacion(obsMatch ? obsMatch[1].trim() : "");
+                        // Si no tiene formato estructurado, poner todo en observación
+                        if (!serieMatch && !loteMatch && !obsMatch && info) {
+                          setInfoObservacion(info);
+                        }
+                      }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {item.nombre}
+                      </div>
+                      {item.info_adicional && <div style={{ fontSize: 10, color: "var(--color-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.info_adicional}</div>}
+                    </div>
+                    <span style={{ color: "var(--color-primary)", cursor: tienePermiso("editar_precio") ? "pointer" : "default", fontSize: 11, flexShrink: 0 }}
+                      onClick={() => {
+                        if (!tienePermiso("editar_precio")) {
+                          solicitarPinAdmin().then(ok => { if (ok) { const p = prompt("Nuevo precio:", String(item.precio_unitario)); if (p) editarPrecioItem(item.producto_id, parseFloat(p)); }});
+                          return;
+                        }
+                        const p = prompt("Nuevo precio:", String(item.precio_unitario));
+                        if (p) editarPrecioItem(item.producto_id, parseFloat(p));
+                      }}>
+                      ${item.precio_unitario.toFixed(2)}
+                    </span>
+                    <select style={{ width: 50, fontSize: 10, padding: "2px 1px", border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", color: "var(--color-text)", flexShrink: 0 }}
+                      value={item.iva_porcentaje}
+                      onChange={(e) => {
+                        if (!tienePermiso("editar_precio")) { toastError("Sin permiso"); return; }
+                        editarIvaItem(item.producto_id, parseFloat(e.target.value));
+                      }}>
+                      <option value="0">0%</option>
+                      <option value="15">15%</option>
+                    </select>
+                    <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}
+                      onClick={() => actualizarCantidad(item.producto_id, item.cantidad - 1)}>-</button>
+                    <span style={{ minWidth: 18, textAlign: "center", fontSize: 13, flexShrink: 0 }}>{item.cantidad}</span>
+                    <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}
+                      onClick={() => actualizarCantidad(item.producto_id, item.cantidad + 1)}>+</button>
+                    <span style={{ minWidth: 50, textAlign: "right", fontWeight: 600, fontSize: 12, flexShrink: 0 }}>${item.subtotal.toFixed(2)}</span>
+                    <button title="Eliminar" style={{ color: "var(--color-danger)", cursor: "pointer", background: "none", border: "none", fontSize: 15, padding: "0 2px", flexShrink: 0 }}
+                      onClick={() => eliminarItem(item.producto_id)}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Totals */}
+            <div style={{ borderTop: "2px solid var(--color-border)", paddingTop: 8 }}>
+              <div className="flex justify-between" style={{ fontSize: 13 }}>
+                <span className="text-secondary">Subtotal:</span>
+                <span>${subtotal.toFixed(2)}</span>
+              </div>
+              {iva > 0 && (
+                <div className="flex justify-between" style={{ fontSize: 13 }}>
+                  <span className="text-secondary">IVA:</span>
+                  <span>${iva.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between" style={{ fontSize: 22, fontWeight: 700, margin: "6px 0" }}>
+                <span>TOTAL:</span>
+                <span>${total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Tipo documento - solo si no RIMPE_POPULAR */}
             {regimen !== "RIMPE_POPULAR" && (
-              <div className="mb-4">
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Tipo de documento</label>
-                <div className="flex gap-2">
+              <div style={{ marginBottom: 8 }}>
+                <label className="text-secondary" style={{ fontSize: 11 }}>Tipo documento</label>
+                <div className="flex gap-2" style={{ marginTop: 4 }}>
                   {(["NOTA_VENTA", "FACTURA"] as const).map((tipo) => (
                     <button key={tipo}
                       className={`btn ${tipoDocumento === tipo ? "btn-primary" : "btn-outline"}`}
-                      style={{ flex: 1, fontSize: 12, justifyContent: "center" }}
+                      style={{ flex: 1, fontSize: 11, justifyContent: "center", padding: "4px 0" }}
                       onClick={() => setTipoDocumento(tipo)}>
                       {tipo === "NOTA_VENTA" ? "Nota Venta" : "Factura"}
                     </button>
@@ -944,109 +1237,130 @@ export default function PuntoVenta() {
               </div>
             )}
 
-            {/* Forma de pago - como la referencia: todos coloridos, mismo tamaño */}
-            <div className="mb-4">
-              <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Forma de pago</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  className="btn"
-                  style={{
-                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
-                    background: formaPago === "EFECTIVO" && !esFiado ? "#16a34a" : "#22c55e",
-                    color: "white", border: "none", borderRadius: 8,
-                    opacity: formaPago === "EFECTIVO" && !esFiado ? 1 : 0.6,
-                  }}
+            {/* Forma de pago */}
+            <div style={{ marginBottom: 8 }}>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Forma de pago</label>
+              <div style={{ marginTop: 4 }}>
+                <button className="btn" style={{ width: "100%", justifyContent: "center", fontSize: 13, padding: "8px 0", marginBottom: 4, background: formaPago === "EFECTIVO" && !esFiado ? "#16a34a" : "var(--color-surface)", color: formaPago === "EFECTIVO" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
                   onClick={() => { setFormaPago("EFECTIVO"); setEsFiado(false); }}>
                   Efectivo
                 </button>
-                <button
-                  className="btn"
-                  style={{
-                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
-                    background: formaPago === "TRANSFER" && !esFiado ? "#1d4ed8" : "#3b82f6",
-                    color: "white", border: "none", borderRadius: 8,
-                    opacity: formaPago === "TRANSFER" && !esFiado ? 1 : 0.6,
-                  }}
-                  onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
-                  Transferencia
-                </button>
-                <button
-                  className="btn"
-                  style={{
-                    flex: 1, fontSize: 13, padding: "10px 0", justifyContent: "center", fontWeight: 700,
-                    background: esFiado ? "#b45309" : "#f59e0b",
-                    color: "white", border: "none", borderRadius: 8,
-                    opacity: esFiado ? 1 : 0.6,
-                  }}
-                  onClick={() => setEsFiado(!esFiado)}>
-                  Credito
-                </button>
+                <div className="flex gap-2">
+                  <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                    onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
+                    Transferencia
+                  </button>
+                  <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                    onClick={() => setEsFiado(!esFiado)}>
+                    Credito
+                  </button>
+                </div>
               </div>
             </div>
 
             {/* Transferencia: cuenta bancaria + referencia */}
             {!esFiado && formaPago === "TRANSFER" && (
-              <div className="mb-4" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                 {cuentasBanco.length > 0 && (
                   <div>
-                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Cuenta destino</label>
+                    <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Cuenta destino</label>
                     <select
                       className="input"
+                      style={{ fontSize: 12 }}
                       value={bancoSeleccionado ?? ""}
                       onChange={(e) => setBancoSeleccionado(e.target.value ? Number(e.target.value) : null)}
                     >
                       <option value="">Seleccionar cuenta...</option>
                       {cuentasBanco.map((cb) => (
                         <option key={cb.id} value={cb.id}>
-                          {cb.nombre}{cb.numero_cuenta ? ` — ${cb.numero_cuenta}` : ""}
+                          {cb.nombre}{cb.numero_cuenta ? ` - ${cb.numero_cuenta}` : ""}
                         </option>
                       ))}
                     </select>
                   </div>
                 )}
                 <div>
-                  <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>
                     Nro. referencia {requiereReferencia && <span style={{ color: "var(--color-danger)" }}>*</span>}
                   </label>
-                  <input className="input" placeholder="Ej: 123456789"
+                  <input className="input" placeholder="Ej: 123456789" style={{ fontSize: 12 }}
                     value={referenciaPago}
                     onChange={(e) => setReferenciaPago(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>
+                    Comprobante {requiereComprobante && <span style={{ color: "var(--color-danger)" }}>*</span>}
+                  </label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="file" accept="image/*" style={{ fontSize: 11, flex: 1 }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
+                        const reader = new FileReader();
+                        reader.onload = () => setComprobanteImagen(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }} />
+                    {comprobanteImagen && <span style={{ fontSize: 11, color: "var(--color-success)" }}>OK</span>}
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Monto recibido - solo si no es fiado */}
+            {/* Monto recibido - solo si no es fiado y es efectivo */}
             {!esFiado && formaPago === "EFECTIVO" && (
-              <div className="mb-4">
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Monto recibido</label>
-                <input className="input input-lg text-right" type="number" step="0.01" placeholder="0.00"
-                  value={montoRecibido}
-                  onChange={(e) => setMontoRecibido(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
+              <div style={{ marginBottom: 8 }}>
+                <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Monto recibido</label>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input className="input text-right" type="number" step="0.01" placeholder="0.00"
+                    style={{ fontSize: 14, flex: 1 }}
+                    value={montoRecibido}
+                    onChange={(e) => setMontoRecibido(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
+                  <button
+                    className="btn"
+                    title="Monto exacto (F8)"
+                    style={{
+                      background: "var(--color-primary)", color: "#fff",
+                      fontSize: 11, padding: "0 10px", fontWeight: 700,
+                      border: "none", borderRadius: "var(--radius)", cursor: "pointer",
+                    }}
+                    onClick={() => {
+                      setMontoRecibido(total.toFixed(2));
+                      setTimeout(() => procesarVenta(), 100);
+                    }}
+                    disabled={carrito.length === 0}
+                  >
+                    Exacto
+                  </button>
+                </div>
               </div>
             )}
 
             {!esFiado && formaPago === "EFECTIVO" && cambio >= 0 && montoRecibido && (
-              <div className="flex justify-between text-lg">
+              <div className="flex justify-between" style={{ fontSize: 14, marginBottom: 8 }}>
                 <span>Cambio:</span>
-                <span className="font-bold text-success">${cambio.toFixed(2)}</span>
+                <span className="font-bold" style={{ color: "var(--color-success)" }}>${cambio.toFixed(2)}</span>
               </div>
             )}
 
             {esFiado && (
-              <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 10, borderRadius: "var(--radius)", fontSize: 13, color: "var(--color-warning)" }}>
+              <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 8, borderRadius: "var(--radius)", fontSize: 12, color: "var(--color-warning)", marginBottom: 8 }}>
                 Se registrara como cuenta por cobrar
                 {clienteSeleccionado ? ` a ${clienteSeleccionado.nombre}` : ". Seleccione un cliente arriba."}
               </div>
             )}
-          </div>
 
-          <button className="btn btn-success btn-lg" data-action="cobrar"
-            style={{ width: "100%", justifyContent: "center", fontSize: 16, marginBottom: 6, borderRadius: 10 }}
-            disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
-            onClick={procesarVenta}>
-            {esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
-          </button>
+            {/* Cobrar button */}
+            <button className="btn btn-success" data-action="cobrar"
+              style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0", marginTop: 8 }}
+              disabled={carrito.length === 0 || (esFiado && !clienteSeleccionado)}
+              onClick={procesarVenta}>
+              {esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`} (F9)
+            </button>
+
+            {/* Botones movidos al footer del área central */}
+          </div>
         </div>
       </div>
 
@@ -1059,7 +1373,7 @@ export default function PuntoVenta() {
             </div>
             <div className="modal-body">
               <p style={{ marginBottom: 12 }}>
-                Las facturas se enviarán al ambiente:
+                Las facturas se enviaran al ambiente:
               </p>
               <div style={{
                 padding: "12px 16px",
@@ -1158,14 +1472,14 @@ export default function PuntoVenta() {
         <div className="modal-overlay" onClick={() => setMostrarModalGuia(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
             <div className="modal-header">
-              <h3>Guía de Remisión</h3>
+              <h3>Guia de Remision</h3>
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <p className="text-secondary" style={{ fontSize: 12, margin: 0 }}>
-                Se descontará stock al crear la guía. Todos los campos son opcionales.
+                Se descontara stock al crear la guia. Todos los campos son opcionales.
               </p>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Placa del vehículo</label>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Placa del vehiculo</label>
                 <input className="input" placeholder="Ej: ABC-1234" value={guiaPlaca}
                   onChange={(e) => setGuiaPlaca(e.target.value.toUpperCase())} autoFocus />
               </div>
@@ -1186,8 +1500,8 @@ export default function PuntoVenta() {
                 </datalist>
               </div>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Dirección de destino</label>
-                <input className="input" placeholder="Dirección de entrega" value={guiaDireccion}
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Direccion de destino</label>
+                <input className="input" placeholder="Direccion de entrega" value={guiaDireccion}
                   onChange={(e) => setGuiaDireccion(e.target.value)} />
               </div>
               <div style={{ fontSize: 12, padding: 8, borderRadius: "var(--radius)", background: "rgba(251, 146, 60, 0.1)", color: "var(--color-warning)" }}>
@@ -1202,12 +1516,174 @@ export default function PuntoVenta() {
               <button className="btn" disabled={guardandoGuia}
                 style={{ background: "rgba(251, 146, 60, 0.2)", color: "#fb923c", border: "1px solid rgba(251, 146, 60, 0.4)", fontWeight: 600 }}
                 onClick={confirmarGuiaRemision}>
-                {guardandoGuia ? "Guardando..." : "Crear Guía de Remisión"}
+                {guardandoGuia ? "Guardando..." : "Crear Guia de Remision"}
               </button>
             </div>
           </div>
         </div>
       )}
-    </>
+      {/* Modal PIN Admin para editar precio */}
+      {productoDetalle && (
+        <div className="modal-overlay" onClick={() => setProductoDetalle(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0 }}>Detalle del Producto</h3>
+              <button onClick={() => setProductoDetalle(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--color-text)" }}>×</button>
+            </div>
+            <div className="modal-body">
+              {productoDetalle.imagen && (
+                <img src={`data:image/png;base64,${productoDetalle.imagen}`} alt={productoDetalle.nombre}
+                  style={{ width: 120, height: 120, objectFit: "contain", display: "block", margin: "0 auto 12px", borderRadius: 8 }} />
+              )}
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{productoDetalle.nombre}</div>
+              {productoDetalle.descripcion && (
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                  {productoDetalle.descripcion}
+                </p>
+              )}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
+                <div><strong>Código:</strong> {productoDetalle.codigo || "-"}</div>
+                <div><strong>Código barras:</strong> {productoDetalle.codigo_barras || "-"}</div>
+                <div><strong>Precio venta:</strong> <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>${productoDetalle.precio_venta?.toFixed(2)}</span></div>
+                <div><strong>Precio costo:</strong> ${productoDetalle.precio_costo?.toFixed(2)}</div>
+                <div><strong>Stock actual:</strong> <span style={{ fontWeight: 600, color: productoDetalle.stock_actual <= 0 ? "var(--color-danger)" : undefined }}>{productoDetalle.stock_actual}</span></div>
+                <div><strong>Stock mínimo:</strong> {productoDetalle.stock_minimo}</div>
+                <div><strong>IVA:</strong> {productoDetalle.iva_porcentaje}%</div>
+                <div><strong>Unidad:</strong> {productoDetalle.unidad_medida}</div>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button className="btn btn-outline" onClick={() => setProductoDetalle(null)}>Cerrar</button>
+              <button className="btn btn-primary" onClick={() => {
+                const pid = productoDetalle.id;
+                setProductoDetalle(null);
+                navigate(`/productos?edit=${pid}`);
+              }}>Editar Producto</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {mostrarPinAdmin && (
+        <div className="modal-overlay" onClick={() => {
+          setMostrarPinAdmin(false);
+          pinResolveRef.current?.(false);
+          pinResolveRef.current = null;
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 320 }}>
+            <div className="modal-header">
+              <h3>PIN de Administrador</h3>
+            </div>
+            <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: 0 }}>
+                Ingrese el PIN de administrador para editar el precio.
+              </p>
+              <input
+                className="input"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="PIN (4-6 digitos)"
+                value={pinAdminValor}
+                onChange={(e) => {
+                  setPinAdminValor(e.target.value.replace(/\D/g, ""));
+                  setPinAdminError("");
+                }}
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter" && pinAdminValor.length >= 4) {
+                    try {
+                      await verificarPinAdmin(pinAdminValor);
+                      setMostrarPinAdmin(false);
+                      pinResolveRef.current?.(true);
+                      pinResolveRef.current = null;
+                    } catch {
+                      setPinAdminError("PIN incorrecto");
+                    }
+                  }
+                }}
+                autoFocus
+                style={{ fontSize: 18, textAlign: "center", letterSpacing: 8 }}
+              />
+              {pinAdminError && (
+                <span style={{ color: "var(--color-danger)", fontSize: 12, textAlign: "center" }}>{pinAdminError}</span>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => {
+                setMostrarPinAdmin(false);
+                pinResolveRef.current?.(false);
+                pinResolveRef.current = null;
+              }}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" disabled={pinAdminValor.length < 4} onClick={async () => {
+                try {
+                  await verificarPinAdmin(pinAdminValor);
+                  setMostrarPinAdmin(false);
+                  pinResolveRef.current?.(true);
+                  pinResolveRef.current = null;
+                } catch {
+                  setPinAdminError("PIN incorrecto");
+                }
+              }}>
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Información Adicional */}
+      {infoAdicionalProductoId !== null && (() => {
+        const guardarInfo = () => {
+          const partes: string[] = [];
+          if (infoSerie.trim()) partes.push(`Serie: ${infoSerie.trim()}`);
+          if (infoLote.trim()) partes.push(`Lote: ${infoLote.trim()}`);
+          if (infoObservacion.trim()) partes.push(`Obs: ${infoObservacion.trim()}`);
+          const valor = partes.join(" | ") || undefined;
+          setCarrito(prev => prev.map(i => i.producto_id === infoAdicionalProductoId ? { ...i, info_adicional: valor } : i));
+          setInfoAdicionalProductoId(null);
+        };
+        return (
+          <div className="modal-overlay" onClick={() => setInfoAdicionalProductoId(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+              <div className="modal-header">
+                <h3>Información adicional</h3>
+              </div>
+              <div className="modal-body">
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Número de serie</label>
+                    <input className="input" placeholder="Ej: SN-12345678"
+                      value={infoSerie} onChange={(e) => setInfoSerie(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") guardarInfo(); }}
+                      autoFocus />
+                  </div>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Lote</label>
+                    <input className="input" placeholder="Ej: LOTE-A001"
+                      value={infoLote} onChange={(e) => setInfoLote(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") guardarInfo(); }} />
+                  </div>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Observación</label>
+                    <input className="input" placeholder="Ej: Color rojo, talla M..."
+                      value={infoObservacion} onChange={(e) => setInfoObservacion(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") guardarInfo(); }} />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline" onClick={() => {
+                  setInfoSerie(""); setInfoLote(""); setInfoObservacion("");
+                  setCarrito(prev => prev.map(i => i.producto_id === infoAdicionalProductoId ? { ...i, info_adicional: undefined } : i));
+                  setInfoAdicionalProductoId(null);
+                }}>Limpiar</button>
+                <button className="btn btn-primary" onClick={guardarInfo}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </div>
   );
 }

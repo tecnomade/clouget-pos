@@ -1,3 +1,5 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use image::GenericImageView;
 use crate::models::VentaCompleta;
 use std::collections::HashMap;
 
@@ -14,17 +16,33 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     let esc_bold_off: &[u8] = &[0x1B, 0x45, 0x00]; // Negrita off
     let esc_double_on: &[u8] = &[0x1B, 0x21, 0x30]; // Doble alto+ancho
     let esc_double_off: &[u8] = &[0x1B, 0x21, 0x00]; // Normal
+    let esc_double_h: &[u8] = &[0x1B, 0x21, 0x10]; // Doble alto (sin doble ancho)
     let esc_cut: &[u8] = &[0x1D, 0x56, 0x00]; // Corte total
     let esc_feed: &[u8] = &[0x1B, 0x64, 0x04]; // Avanzar 4 líneas
+    let esc_open_drawer: &[u8] = &[0x1B, 0x70, 0x00, 0x19, 0x78]; // Abrir cajón (pin 2)
 
     ticket.extend_from_slice(esc_init);
+
+    // === LOGO ===
+    // Si hay logo_negocio en config (base64 PNG), intentar imprimirlo como imagen raster
+    if let Some(logo_b64) = config.get("logo_negocio") {
+        if !logo_b64.is_empty() {
+            if let Some(raster_bytes) = logo_to_raster(logo_b64, 300) {
+                ticket.extend_from_slice(esc_center);
+                ticket.extend_from_slice(&raster_bytes);
+                ticket.push(b'\n');
+            }
+        }
+    }
 
     // Encabezado - nombre del negocio
     ticket.extend_from_slice(esc_center);
     ticket.extend_from_slice(esc_bold_on);
+    ticket.extend_from_slice(esc_double_on);
     let nombre = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
     ticket.extend_from_slice(nombre.as_bytes());
     ticket.push(b'\n');
+    ticket.extend_from_slice(esc_double_off);
     ticket.extend_from_slice(esc_bold_off);
 
     // RUC
@@ -56,21 +74,30 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     }
 
     ticket.extend_from_slice(esc_left);
-    ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+    ticket.extend_from_slice(linea_separador_doble(ancho).as_bytes());
 
-    // Tipo y número de documento
+    // === TIPO DE DOCUMENTO - prominente, doble alto, centrado ===
+    let es_cotizacion = venta.venta.tipo_documento == "COTIZACION";
+    let es_borrador = venta.venta.tipo_documento == "BORRADOR";
     let tipo_doc = match venta.venta.tipo_documento.as_str() {
-        "FACTURA" => "FACTURA ELECTRONICA",
+        "FACTURA" => "FACTURA",
+        "COTIZACION" => "COTIZACION",
+        "BORRADOR" => "BORRADOR",
         _ => "NOTA DE VENTA",
     };
     ticket.extend_from_slice(esc_center);
     ticket.extend_from_slice(esc_bold_on);
-    ticket.extend_from_slice(format!("{}\n", tipo_doc).as_bytes());
+    ticket.extend_from_slice(esc_double_h); // Doble alto para prominencia
+    ticket.extend_from_slice(tipo_doc.as_bytes());
+    ticket.push(b'\n');
+    ticket.extend_from_slice(esc_double_off);
+
+    // === NÚMERO DE DOCUMENTO - prominente ===
     ticket.extend_from_slice(format!("No. {}\n", venta.venta.numero).as_bytes());
     ticket.extend_from_slice(esc_bold_off);
     ticket.extend_from_slice(esc_left);
 
-    ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+    ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
     // Fecha y cliente
     let fecha = venta.venta.fecha.as_deref().unwrap_or("-");
@@ -78,7 +105,7 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     let cliente = venta.cliente_nombre.as_deref().unwrap_or("CONSUMIDOR FINAL");
     ticket.extend_from_slice(format!("Cliente: {}\n", cliente).as_bytes());
 
-    ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+    ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
     // Cabecera de detalle
     ticket.extend_from_slice(esc_bold_on);
@@ -86,7 +113,7 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
         format!("{:<22} {:>5} {:>8} {:>9}\n", "PRODUCTO", "CANT", "P.UNIT", "SUBTOT").as_bytes(),
     );
     ticket.extend_from_slice(esc_bold_off);
-    ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+    ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
     // Detalles
     for det in &venta.detalles {
@@ -123,7 +150,7 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
         }
     }
 
-    ticket.extend_from_slice(linea_separador(ancho, '=').as_bytes());
+    ticket.extend_from_slice(linea_separador_doble(ancho).as_bytes());
 
     // Totales
     ticket.extend_from_slice(linea_monto("Subtotal 0%:", venta.venta.subtotal_sin_iva, ancho).as_bytes());
@@ -142,20 +169,22 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     ticket.extend_from_slice(esc_bold_off);
     ticket.extend_from_slice(esc_left);
 
-    ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+    ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
-    // Pago
-    ticket.extend_from_slice(
-        format!("Forma pago: {}\n", venta.venta.forma_pago).as_bytes(),
-    );
-    if venta.venta.monto_recibido > 0.0 {
-        ticket.extend_from_slice(linea_monto("Recibido:", venta.venta.monto_recibido, ancho).as_bytes());
-        ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
+    // Pago (skip for cotizacion and borrador)
+    if !es_cotizacion && !es_borrador {
+        ticket.extend_from_slice(
+            format!("Forma pago: {}\n", venta.venta.forma_pago).as_bytes(),
+        );
+        if venta.venta.monto_recibido > 0.0 {
+            ticket.extend_from_slice(linea_monto("Recibido:", venta.venta.monto_recibido, ancho).as_bytes());
+            ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
+        }
     }
 
     // Info SRI si fue autorizada
     if venta.venta.estado_sri == "AUTORIZADA" {
-        ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+        ticket.extend_from_slice(linea_separador_doble(ancho).as_bytes());
         ticket.extend_from_slice(esc_center);
         ticket.extend_from_slice(esc_bold_on);
         ticket.extend_from_slice(b"FACTURA ELECTRONICA AUTORIZADA\n");
@@ -182,7 +211,7 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
             if ambiente == "produccion" { "PRODUCCION" } else { "PRUEBAS" }
         ).as_bytes());
 
-        ticket.extend_from_slice(linea_separador(ancho, '-').as_bytes());
+        ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
         ticket.extend_from_slice(esc_center);
         ticket.extend_from_slice(b"ESTE TICKET NO ES UN\n");
         ticket.extend_from_slice(b"DOCUMENTO TRIBUTARIO OFICIAL\n");
@@ -194,17 +223,48 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     // Pie
     ticket.push(b'\n');
     ticket.extend_from_slice(esc_center);
-    ticket.extend_from_slice(b"Gracias por su compra!\n");
+    ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
+    if es_cotizacion {
+        ticket.extend_from_slice(b"Validez: 30 dias\n");
+        ticket.extend_from_slice(b"Esta cotizacion no es un\n");
+        ticket.extend_from_slice(b"documento de venta\n");
+    } else if es_borrador {
+        ticket.extend_from_slice(b"DOCUMENTO NO FINALIZADO\n");
+    } else {
+        ticket.extend_from_slice(b"Gracias por su compra!\n");
+    }
     ticket.extend_from_slice(b"CLOUGET PUNTO DE VENTA\n");
 
     ticket.extend_from_slice(esc_feed);
     ticket.extend_from_slice(esc_cut);
 
+    // Abrir cajón de dinero si está habilitado
+    let abrir_cajon = config.get("abrir_cajon").map(|v| v == "1").unwrap_or(true);
+    if abrir_cajon {
+        ticket.extend_from_slice(esc_open_drawer);
+    }
+
     ticket
 }
 
-fn linea_separador(ancho: usize, ch: char) -> String {
-    format!("{}\n", std::iter::repeat(ch).take(ancho).collect::<String>())
+/// Separador doble: ═══════════
+fn linea_separador_doble(ancho: usize) -> String {
+    let mut s = String::with_capacity(ancho + 1);
+    for _ in 0..ancho {
+        s.push('=');
+    }
+    s.push('\n');
+    s
+}
+
+/// Separador simple: ----------------
+fn linea_separador_simple(ancho: usize) -> String {
+    let mut s = String::with_capacity(ancho + 1);
+    for _ in 0..ancho {
+        s.push('-');
+    }
+    s.push('\n');
+    s
 }
 
 fn linea_monto(label: &str, monto: f64, ancho: usize) -> String {
@@ -221,11 +281,75 @@ fn format_cantidad(cant: f64) -> String {
     }
 }
 
+/// Convierte un logo base64-PNG a bytes ESC/POS raster (GS v 0).
+/// Retorna None si falla cualquier paso (decodificar, parsear imagen, etc.)
+/// max_width: ancho máximo en píxeles (debe ser múltiplo de 8, se ajusta)
+fn logo_to_raster(logo_b64: &str, max_width: u32) -> Option<Vec<u8>> {
+    // Decodificar base64
+    let png_bytes = BASE64.decode(logo_b64).ok()?;
+
+    // Cargar imagen con el crate image
+    let img = image::load_from_memory(&png_bytes).ok()?;
+
+    // Escalar si es más ancho que max_width, manteniendo proporción
+    let (orig_w, orig_h) = (img.width(), img.height());
+    let (w, h) = if orig_w > max_width {
+        let scale = max_width as f64 / orig_w as f64;
+        let new_h = (orig_h as f64 * scale) as u32;
+        (max_width, new_h.max(1))
+    } else {
+        (orig_w, orig_h)
+    };
+
+    let resized = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+
+    // Convertir a escala de grises y luego a 1-bit B&W con umbral
+    let gray = resized.to_luma8();
+
+    // El ancho en bytes debe ser múltiplo de 8 bits
+    let width_pixels = gray.width();
+    let height_pixels = gray.height();
+    // Ancho en bytes (cada byte = 8 píxeles horizontales)
+    let bytes_per_row = ((width_pixels + 7) / 8) as usize;
+
+    // Construir bitmap 1-bit: 1 = negro (punto), 0 = blanco
+    let mut bitmap: Vec<u8> = Vec::with_capacity(bytes_per_row * height_pixels as usize);
+    for y in 0..height_pixels {
+        for bx in 0..bytes_per_row as u32 {
+            let mut byte_val: u8 = 0;
+            for bit in 0..8u32 {
+                let px = bx * 8 + bit;
+                if px < width_pixels {
+                    let luma = gray.get_pixel(px, y)[0];
+                    // Umbral: < 128 = negro (bit 1), >= 128 = blanco (bit 0)
+                    if luma < 128 {
+                        byte_val |= 0x80 >> bit;
+                    }
+                }
+            }
+            bitmap.push(byte_val);
+        }
+    }
+
+    // Construir comando GS v 0: 0x1D 0x76 0x30 0x00 xL xH yL yH [data]
+    // xL xH = bytes por fila (little-endian)
+    // yL yH = número de filas (little-endian)
+    let xl = (bytes_per_row & 0xFF) as u8;
+    let xh = ((bytes_per_row >> 8) & 0xFF) as u8;
+    let yl = (height_pixels & 0xFF) as u8;
+    let yh = ((height_pixels >> 8) & 0xFF) as u8;
+
+    let mut cmd: Vec<u8> = Vec::with_capacity(8 + bitmap.len());
+    cmd.extend_from_slice(&[0x1D, 0x76, 0x30, 0x00, xl, xh, yl, yh]);
+    cmd.extend_from_slice(&bitmap);
+
+    Some(cmd)
+}
+
 /// Imprime bytes RAW a una impresora de Windows por nombre
 /// Usa la API Win32 de impresión (WritePrinter) via PowerShell para enviar datos RAW
 #[cfg(target_os = "windows")]
 pub fn imprimir_raw_windows(nombre_impresora: &str, datos: &[u8]) -> Result<(), String> {
-    use std::process::Command;
     use std::io::Write;
 
     // Escribir datos a archivo temporal
@@ -289,9 +413,9 @@ Write-Output "OK"
 "#
     );
 
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script])
-        .output()
+    let mut cmd = crate::utils::silent_command("powershell");
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps_script]);
+    let output = cmd.output()
         .map_err(|e| format!("Error al ejecutar PowerShell: {}", e))?;
 
     // Limpiar archivo temporal

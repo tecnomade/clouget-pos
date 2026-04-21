@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { obtenerVenta, registrarNotaCredito, emitirNotaCreditoSri, verificarPinAdmin } from "../services/api";
+import { obtenerVenta, registrarNotaCredito, emitirNotaCreditoSri, verificarPinAdmin, crearDevolucionInterna } from "../services/api";
+import { useSesion } from "../contexts/SesionContext";
 import type { VentaCompleta, VentaDetalle } from "../types";
 
 interface ItemNC {
@@ -16,6 +17,7 @@ interface ItemNC {
 interface ModalNotaCreditoProps {
   ventaId: number;
   ventaNumero: string;
+  esDevolucionInterna?: boolean; // true for NOTA_VENTA returns
   onClose: () => void;
   onCreada: () => void;
   toastExito: (msg: string) => void;
@@ -26,12 +28,14 @@ interface ModalNotaCreditoProps {
 export default function ModalNotaCredito({
   ventaId,
   ventaNumero,
+  esDevolucionInterna = false,
   onClose,
   onCreada,
   toastExito,
   toastError,
   toastWarning,
 }: ModalNotaCreditoProps) {
+  const { esAdmin, tienePermiso } = useSesion();
   const [pinAdmin, setPinAdmin] = useState("");
   const [pinError, setPinError] = useState("");
   const [pinVerificado, setPinVerificado] = useState(false);
@@ -42,6 +46,9 @@ export default function ModalNotaCredito({
   const [motivo, setMotivo] = useState("");
   const [procesando, setProcesando] = useState(false);
   const [error, setError] = useState("");
+
+  // If user is admin or has crear_nota_credito permission, skip PIN
+  const tienePermisoNC = esAdmin || tienePermiso("crear_nota_credito");
 
   const handleVerificarPin = async () => {
     if (!pinAdmin.trim()) {
@@ -59,6 +66,13 @@ export default function ModalNotaCredito({
       setVerificandoPin(false);
     }
   };
+
+  // If user has permission, auto-verify
+  useEffect(() => {
+    if (tienePermisoNC) {
+      setPinVerificado(true);
+    }
+  }, [tienePermisoNC]);
 
   useEffect(() => {
     if (!pinVerificado) return;
@@ -121,9 +135,12 @@ export default function ModalNotaCredito({
 
   const total = totalSinIva + totalConIva + totalIva;
 
+  const titulo = esDevolucionInterna ? "Devolucion" : "Nota de Credito";
+  const tituloRef = esDevolucionInterna ? "Nota de Venta" : "Factura";
+
   const handleCrear = async () => {
     if (!motivo.trim()) {
-      setError("Ingrese el motivo de la nota de credito");
+      setError(`Ingrese el motivo de la ${titulo.toLowerCase()}`);
       return;
     }
     if (itemsIncluidos.length === 0) {
@@ -134,46 +151,63 @@ export default function ModalNotaCredito({
     setProcesando(true);
 
     try {
-      const detalles: VentaDetalle[] = itemsIncluidos.map((it) => ({
-        producto_id: it.producto_id,
-        nombre_producto: it.nombre_producto,
-        cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario,
-        descuento: it.descuento,
-        iva_porcentaje: it.iva_porcentaje,
-        subtotal: calcularSubtotal(it),
-      }));
+      if (esDevolucionInterna) {
+        // Internal return for NOTA_VENTA
+        const itemsData = itemsIncluidos.map((it) => ({
+          producto_id: it.producto_id,
+          cantidad: it.cantidad,
+          precio_unitario: it.precio_unitario,
+          descuento: it.descuento,
+          iva_porcentaje: it.iva_porcentaje,
+        }));
 
-      const nc = await registrarNotaCredito({
-        venta_id: ventaId,
-        motivo: motivo.trim(),
-        items: detalles,
-      });
+        const nc = await crearDevolucionInterna(ventaId, motivo.trim(), itemsData);
+        toastExito(`Devolucion ${nc.numero} creada`);
+        onCreada();
+        onClose();
+      } else {
+        // SRI NC flow for FACTURA
+        const detalles: VentaDetalle[] = itemsIncluidos.map((it) => ({
+          producto_id: it.producto_id,
+          nombre_producto: it.nombre_producto,
+          cantidad: it.cantidad,
+          precio_unitario: it.precio_unitario,
+          descuento: it.descuento,
+          iva_porcentaje: it.iva_porcentaje,
+          subtotal: calcularSubtotal(it),
+        }));
 
-      toastExito(`Nota de credito ${nc.numero} creada`);
+        const nc = await registrarNotaCredito({
+          venta_id: ventaId,
+          motivo: motivo.trim(),
+          items: detalles,
+        });
 
-      // Intentar emitir al SRI
-      try {
-        const res = await emitirNotaCreditoSri(nc.id);
-        if (res.exito) {
-          toastExito("NC autorizada por el SRI");
-        } else {
-          toastWarning(`SRI NC: ${res.mensaje}`);
+        toastExito(`Nota de credito ${nc.numero} creada`);
+
+        // Intentar emitir al SRI
+        try {
+          const res = await emitirNotaCreditoSri(nc.id);
+          if (res.exito) {
+            toastExito("NC autorizada por el SRI");
+          } else {
+            toastWarning(`SRI NC: ${res.mensaje}`);
+          }
+        } catch (err) {
+          toastWarning("NC creada pero error al emitir al SRI: " + err);
         }
-      } catch (err) {
-        toastWarning("NC creada pero error al emitir al SRI: " + err);
-      }
 
-      onCreada();
-      onClose();
+        onCreada();
+        onClose();
+      }
     } catch (err) {
-      toastError("Error creando NC: " + err);
+      toastError(`Error creando ${titulo.toLowerCase()}: ${err}`);
     } finally {
       setProcesando(false);
     }
   };
 
-  // Paso 1: Verificar PIN admin
+  // Paso 1: Verificar PIN admin (only if user doesn't have permission)
   if (!pinVerificado) {
     return (
       <div className="modal-overlay" onClick={onClose}>
@@ -183,7 +217,7 @@ export default function ModalNotaCredito({
           </div>
           <div className="modal-body">
             <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-              Para crear una nota de credito de la factura <strong>{ventaNumero}</strong>,
+              Para crear una {titulo.toLowerCase()} de la {tituloRef.toLowerCase()} <strong>{ventaNumero}</strong>,
               ingrese el PIN de administrador.
             </p>
             <input
@@ -225,14 +259,14 @@ export default function ModalNotaCredito({
     );
   }
 
-  // Paso 3: Formulario NC
+  // Paso 3: Formulario NC / Devolucion
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 650 }}>
         <div className="modal-header">
-          <h3>Nota de Credito</h3>
+          <h3>{titulo}</h3>
           <span className="text-secondary" style={{ fontSize: 12 }}>
-            Factura: {ventaNumero}
+            {tituloRef}: {ventaNumero}
           </span>
         </div>
         <div className="modal-body">
@@ -243,7 +277,9 @@ export default function ModalNotaCredito({
             </label>
             <input
               className="input"
-              placeholder="Ej: Devolucion de producto, Error en facturacion..."
+              placeholder={esDevolucionInterna
+                ? "Ej: Devolucion de producto, Producto defectuoso..."
+                : "Ej: Devolucion de producto, Error en facturacion..."}
               value={motivo}
               onChange={(e) => { setMotivo(e.target.value); setError(""); }}
               autoFocus
@@ -254,7 +290,7 @@ export default function ModalNotaCredito({
           {/* Items */}
           <div style={{ marginBottom: 12 }}>
             <label style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, display: "block" }}>
-              Items a incluir en la NC
+              Items a {esDevolucionInterna ? "devolver" : "incluir en la NC"}
             </label>
             <div style={{ maxHeight: 250, overflow: "auto", border: "1px solid var(--color-border)", borderRadius: 6 }}>
               <table className="table" style={{ fontSize: 12 }}>
@@ -319,10 +355,16 @@ export default function ModalNotaCredito({
               <span>${totalIva.toFixed(2)}</span>
             </div>
             <div className="flex justify-between font-bold" style={{ borderTop: "1px solid var(--color-border)", paddingTop: 6, marginTop: 6 }}>
-              <span>TOTAL NC:</span>
+              <span>TOTAL {esDevolucionInterna ? "DEVOLUCION" : "NC"}:</span>
               <span style={{ color: "var(--color-danger)" }}>${total.toFixed(2)}</span>
             </div>
           </div>
+
+          {esDevolucionInterna && (
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, fontStyle: "italic" }}>
+              Esta devolucion es interna (no se envia al SRI).
+            </div>
+          )}
 
           {error && <div style={{ color: "var(--color-danger)", fontSize: 12, marginTop: 8 }}>{error}</div>}
         </div>
@@ -336,7 +378,7 @@ export default function ModalNotaCredito({
             disabled={procesando || itemsIncluidos.length === 0}
             style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
           >
-            {procesando ? "Procesando..." : "Crear Nota de Credito"}
+            {procesando ? "Procesando..." : esDevolucionInterna ? "Crear Devolucion" : "Crear Nota de Credito"}
           </button>
         </div>
       </div>

@@ -80,7 +80,7 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND anulada = 0",
+             AND anulada = 0 AND estado = 'COMPLETADA'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -90,7 +90,7 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COUNT(*) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND anulada = 0",
+             AND anulada = 0 AND estado = 'COMPLETADA'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -100,7 +100,7 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND forma_pago = 'EFECTIVO' AND anulada = 0",
+             AND forma_pago = 'EFECTIVO' AND anulada = 0 AND estado = 'COMPLETADA'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -144,7 +144,15 @@ pub fn cerrar_caja(
         )
         .unwrap_or(0.0);
 
-    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos;
+    let total_retiros: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros;
     let diferencia = monto_real - monto_esperado;
 
     conn.execute(
@@ -184,7 +192,130 @@ pub fn cerrar_caja(
         total_gastos,
         total_cobros_efectivo,
         total_cobros_banco,
+        total_retiros,
     })
+}
+
+#[tauri::command]
+pub fn registrar_retiro(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    monto: f64,
+    motivo: String,
+    banco_id: Option<i64>,
+    referencia: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // Get session user
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión para registrar un retiro".to_string())?;
+    let usuario_nombre = sesion_actual.nombre.clone();
+    let usuario_id = sesion_actual.usuario_id;
+    drop(sesion_guard);
+
+    if monto <= 0.0 {
+        return Err("El monto del retiro debe ser mayor a 0".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Find open caja
+    let caja_id: i64 = conn
+        .query_row(
+            "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| "No hay caja abierta para registrar el retiro".to_string())?;
+
+    let estado = if banco_id.is_some() { "EN_TRANSITO" } else { "SIN_DEPOSITO" };
+
+    conn.execute(
+        "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![caja_id, monto, motivo, banco_id, referencia, usuario_nombre, usuario_id, estado],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let id = conn.last_insert_rowid();
+    let fecha: String = conn
+        .query_row(
+            "SELECT fecha FROM retiros_caja WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "id": id,
+        "monto": monto,
+        "motivo": motivo,
+        "fecha": fecha,
+        "usuario": usuario_nombre,
+        "estado": estado,
+    }))
+}
+
+#[tauri::command]
+pub fn listar_retiros_caja(
+    db: State<Database>,
+    caja_id: i64,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT r.id, r.caja_id, r.monto, r.motivo, r.banco_id, r.referencia,
+                    r.usuario, r.usuario_id, r.fecha, cb.nombre as banco_nombre,
+                    r.estado, r.comprobante_imagen
+             FROM retiros_caja r
+             LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
+             WHERE r.caja_id = ?1
+             ORDER BY r.fecha DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let retiros = stmt
+        .query_map(rusqlite::params![caja_id], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "caja_id": row.get::<_, i64>(1)?,
+                "monto": row.get::<_, f64>(2)?,
+                "motivo": row.get::<_, String>(3)?,
+                "banco_id": row.get::<_, Option<i64>>(4)?,
+                "referencia": row.get::<_, Option<String>>(5)?,
+                "usuario": row.get::<_, String>(6)?,
+                "usuario_id": row.get::<_, Option<i64>>(7)?,
+                "fecha": row.get::<_, String>(8)?,
+                "banco_nombre": row.get::<_, Option<String>>(9)?,
+                "estado": row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "SIN_DEPOSITO".to_string()),
+                "comprobante_imagen": row.get::<_, Option<String>>(11)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(retiros)
+}
+
+#[tauri::command]
+pub fn confirmar_deposito(
+    db: State<Database>,
+    retiro_id: i64,
+    referencia: String,
+    comprobante_imagen: Option<String>,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let rows = conn.execute(
+        "UPDATE retiros_caja SET estado = 'DEPOSITADO', referencia = ?1, comprobante_imagen = ?2 WHERE id = ?3 AND estado = 'EN_TRANSITO'",
+        rusqlite::params![referencia, comprobante_imagen, retiro_id],
+    ).map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err("No se encontró el retiro en tránsito".to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]

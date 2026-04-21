@@ -7,6 +7,10 @@ pub mod cuenta;
 pub mod usuario;
 pub mod lista_precio;
 pub mod establecimiento;
+pub mod proveedor;
+pub mod compra;
+pub mod cuenta_pagar;
+pub mod orden_servicio;
 
 pub use producto::*;
 pub use cliente::*;
@@ -17,3 +21,7 @@ pub use cuenta::*;
 pub use usuario::*;
 pub use lista_precio::*;
 pub use establecimiento::*;
+pub use proveedor::*;
+pub use compra::*;
+pub use cuenta_pagar::*;
+pub use orden_servicio::*;

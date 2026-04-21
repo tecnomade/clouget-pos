@@ -1293,7 +1293,7 @@ pub fn imprimir_ride(
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &pdf_path])
             .spawn()
             .map_err(|e| format!("Error abriendo PDF: {}", e))?;
@@ -2098,7 +2098,7 @@ pub fn generar_ride_nc_pdf(
     // Abrir en visor del sistema
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("cmd")
+        crate::utils::silent_command("cmd")
             .args(["/C", "start", "", &pdf_path.to_string_lossy()])
             .spawn()
             .map_err(|e| format!("Error abriendo PDF: {}", e))?;

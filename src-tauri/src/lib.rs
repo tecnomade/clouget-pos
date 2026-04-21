@@ -8,6 +8,8 @@ mod server;
 mod sri;
 pub mod utils;
 
+use tauri::Manager;
+
 use db::{Database, SesionState};
 use std::sync::{Arc, Mutex};
 
@@ -62,6 +64,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Focus the existing window when a second instance is launched
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+                let _ = w.unminimize();
+            }
+        }))
         .setup(|app| {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -79,10 +88,31 @@ pub fn run() {
             commands::productos::listar_productos,
             commands::productos::productos_mas_vendidos,
             commands::productos::crear_categoria,
+            commands::productos::actualizar_categoria,
+            commands::productos::eliminar_categoria,
             commands::productos::listar_categorias,
+            commands::productos::listar_tipos_unidad,
+            commands::productos::crear_tipo_unidad,
+            commands::productos::actualizar_tipo_unidad,
+            commands::productos::eliminar_tipo_unidad,
             commands::productos::cargar_imagen_producto,
             commands::productos::eliminar_imagen_producto,
             commands::productos::listar_productos_tactil,
+            commands::productos::exportar_plantilla_productos,
+            commands::productos::exportar_productos_excel,
+            commands::productos::importar_productos_excel,
+            commands::productos::eliminar_producto,
+            commands::productos::registrar_series,
+            commands::productos::listar_series_producto,
+            commands::productos::series_disponibles,
+            commands::productos::marcar_serie_vendida,
+            commands::productos::buscar_serie,
+            commands::productos::devolver_serie,
+            commands::productos::registrar_lote_caducidad,
+            commands::productos::listar_lotes_producto,
+            commands::productos::alertas_caducidad,
+            commands::productos::eliminar_lote_caducidad,
+            commands::productos::ajustar_cantidad_lote,
             // Clientes
             commands::clientes::crear_cliente,
             commands::clientes::actualizar_cliente,
@@ -94,7 +124,9 @@ pub fn run() {
             commands::ventas::listar_ventas_dia,
             commands::ventas::obtener_venta,
             commands::ventas::registrar_nota_credito,
+            commands::ventas::crear_devolucion_interna,
             commands::ventas::listar_notas_credito_dia,
+            commands::ventas::listar_notas_credito,
             commands::ventas::listar_ventas_sesion_caja,
             commands::ventas::resumen_sesion_caja,
             commands::ventas::listar_notas_credito_sesion_caja,
@@ -108,17 +140,24 @@ pub fn run() {
             commands::ventas::convertir_guia_a_venta,
             commands::ventas::listar_choferes,
             commands::ventas::guardar_chofer,
+            commands::ventas::cambiar_estado_guia,
             // Caja
             commands::caja::abrir_caja,
             commands::caja::cerrar_caja,
             commands::caja::obtener_caja_abierta,
+            commands::caja::registrar_retiro,
+            commands::caja::listar_retiros_caja,
+            commands::caja::confirmar_deposito,
             // Configuración
             commands::config::obtener_config,
             commands::config::guardar_config,
             commands::config::cargar_logo_negocio,
             commands::config::eliminar_logo_negocio,
             commands::config::generar_token_servidor,
+            commands::config::obtener_secuenciales,
+            commands::config::actualizar_secuencial,
             commands::config::probar_conexion_servidor,
+            commands::config::resetear_base_datos,
             // Impresión
             commands::impresion::imprimir_ticket,
             commands::impresion::imprimir_ticket_pdf,
@@ -141,6 +180,8 @@ pub fn run() {
             commands::reportes::reporte_utilidad,
             commands::reportes::reporte_balance,
             commands::reportes::reporte_productos_rentabilidad,
+            commands::reportes::listar_libro_movimientos,
+            commands::reportes::reporte_iva_mensual,
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,
@@ -174,6 +215,9 @@ pub fn run() {
             commands::usuarios::actualizar_usuario,
             commands::usuarios::eliminar_usuario,
             commands::usuarios::verificar_pin_admin,
+            commands::usuarios::obtener_permisos_disponibles,
+            commands::usuarios::cambiar_password,
+            commands::usuarios::listar_usuarios_login,
             // Exportar CSV
             commands::exportar::exportar_ventas_csv,
             commands::exportar::exportar_gastos_csv,
@@ -207,6 +251,7 @@ pub fn run() {
             commands::inventario::registrar_movimiento,
             commands::inventario::listar_movimientos,
             commands::inventario::resumen_inventario,
+            commands::inventario::exportar_kardex_csv,
             // Demo
             commands::demo::activar_demo,
             commands::demo::salir_demo,
@@ -226,6 +271,44 @@ pub fn run() {
             commands::transferencias::actualizar_stock_establecimiento,
             // Etiquetas de productos
             commands::etiquetas::generar_etiquetas_pdf,
+            // Cotización PDF
+            commands::cotizacion_pdf::generar_cotizacion_pdf,
+            // Nota de Venta PDF
+            commands::nota_venta_pdf::generar_nota_venta_pdf,
+            // Proveedores
+            commands::proveedores::crear_proveedor,
+            commands::proveedores::actualizar_proveedor,
+            commands::proveedores::listar_proveedores,
+            commands::proveedores::buscar_proveedores,
+            commands::proveedores::eliminar_proveedor,
+            // Compras
+            commands::compras::registrar_compra,
+            commands::compras::listar_compras,
+            commands::compras::obtener_compra,
+            commands::compras::anular_compra,
+            commands::compras::preview_xml_compra,
+            commands::compras::importar_xml_compra,
+            // Cuentas por pagar
+            commands::cuentas_pagar::alertas_pagos_vencidos,
+            commands::cuentas_pagar::resumen_acreedores,
+            commands::cuentas_pagar::listar_cuentas_pagar,
+            commands::cuentas_pagar::registrar_pago_proveedor,
+            commands::cuentas_pagar::historial_pagos_proveedor,
+            commands::cuentas_pagar::listar_movimientos_bancarios,
+            // Servicio Técnico
+            commands::servicio_tecnico::crear_orden_servicio,
+            commands::servicio_tecnico::actualizar_orden_servicio,
+            commands::servicio_tecnico::cambiar_estado_orden,
+            commands::servicio_tecnico::obtener_orden_servicio,
+            commands::servicio_tecnico::listar_ordenes_servicio,
+            commands::servicio_tecnico::buscar_ordenes_por_equipo,
+            commands::servicio_tecnico::historial_movimientos_orden,
+            commands::servicio_tecnico::eliminar_orden_servicio,
+            commands::servicio_tecnico::agregar_imagen_orden,
+            commands::servicio_tecnico::listar_imagenes_orden,
+            commands::servicio_tecnico::eliminar_imagen_orden,
+            commands::servicio_tecnico::cobrar_orden_servicio,
+            commands::servicio_tecnico::imprimir_orden_servicio_pdf,
             // Offline (cola y cache para modo cliente)
             offline::cache::encolar_operacion,
             offline::cache::listar_cola_offline,

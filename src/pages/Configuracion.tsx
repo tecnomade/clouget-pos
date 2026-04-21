@@ -1,15 +1,21 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive } from "../services/api";
+import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
+import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
 import type { Categoria, LicenciaInfo, UsuarioInfo, EstadoSri, PlanSri, ConfigContratacion, PedidoCreado, ListaPrecio, CuentaBanco, Establecimiento, PuntoEmision } from "../types";
 
 export default function Configuracion() {
   const { toastExito, toastError } = useToast();
+  const { sesion } = useSesion();
   const [config, setConfig] = useState<Record<string, string>>({});
+  const [secuenciales, setSecuenciales] = useState<Record<string, number>>({});
   const [guardando, setGuardando] = useState(false);
+  const [mostrarReset, setMostrarReset] = useState(false);
+  const [confirmReset, setConfirmReset] = useState("");
+  const [resetEnProgreso, setResetEnProgreso] = useState(false);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [nuevaCat, setNuevaCat] = useState("");
   const [impresoras, setImpresoras] = useState<string[]>([]);
@@ -46,6 +52,12 @@ export default function Configuracion() {
   const [nuevoRol, setNuevoRol] = useState("CAJERO");
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [editPin, setEditPin] = useState("");
+  const [permisosDisponibles, setPermisosDisponibles] = useState<[string, string][]>([]);
+  const [editandoPermisosId, setEditandoPermisosId] = useState<number | null>(null);
+  const [permisosEditando, setPermisosEditando] = useState<Record<string, boolean>>({});
+  const [editandoPasswordId, setEditandoPasswordId] = useState<number | null>(null);
+  const [nuevaPassword, setNuevaPassword] = useState("");
+  const [modoLoginConfig, setModoLoginConfig] = useState("pin");
   // Ambiente SRI confirmation
   const [mostrarConfirmAmbiente, setMostrarConfirmAmbiente] = useState(false);
   const [ambientePendiente, setAmbientePendiente] = useState("");
@@ -84,6 +96,9 @@ export default function Configuracion() {
     setEstadoSri(sri);
     setListasPrecios(listas);
     setCuentasBanco(bancos);
+    setModoLoginConfig(cfg.modo_login || "pin");
+    obtenerPermisosDisponibles().then(setPermisosDisponibles).catch(() => {});
+    obtenerSecuenciales().then(setSecuenciales).catch(() => {});
 
     // Cargar establecimientos
     try {
@@ -177,6 +192,69 @@ export default function Configuracion() {
         <h2>Configuración</h2>
       </div>
       <div className="page-body">
+        {/* Módulos del Negocio */}
+        {(
+          <div className="card" style={{ maxWidth: 900, marginBottom: 24 }}>
+            <div className="card-header">Módulos del Negocio</div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>Active o desactive funcionalidades según las necesidades de su negocio.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.modulo_series_activo === "1"}
+                    onChange={(e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, modulo_series_activo: val });
+                      guardarConfig({ modulo_series_activo: val });
+                      toastExito(e.target.checked ? "Módulo de series activado" : "Módulo de series desactivado");
+                    }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Números de Serie</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Control de series por producto (equipos, dispositivos)</div>
+                  </div>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.modulo_caducidad === "1"}
+                    onChange={(e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, modulo_caducidad: val });
+                      guardarConfig({ modulo_caducidad: val });
+                      toastExito(e.target.checked ? "Módulo de caducidad activado" : "Módulo de caducidad desactivado");
+                    }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Control de Caducidad</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Lotes y fechas de vencimiento (alimentos, medicinas)</div>
+                  </div>
+                </label>
+                {config.modulo_caducidad === "1" && (
+                  <div style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px" }}>
+                    <label style={{ fontSize: 12 }}>Días de alerta antes de vencer:</label>
+                    <input type="number" min="1" max="365" className="input" style={{ width: 80 }}
+                      value={config.caducidad_dias_alerta || "7"}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setConfig({ ...config, caducidad_dias_alerta: val });
+                      }}
+                      onBlur={(e) => guardarConfig({ caducidad_dias_alerta: e.target.value })} />
+                  </div>
+                )}
+                <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.modulo_servicio_tecnico === "1"}
+                    onChange={(e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, modulo_servicio_tecnico: val });
+                      guardarConfig({ modulo_servicio_tecnico: val });
+                      toastExito(e.target.checked ? "Módulo de servicio técnico activado" : "Módulo desactivado");
+                    }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Servicio Técnico</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Órdenes de servicio (talleres electrónicos, automotrices)</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, maxWidth: 900 }}>
           {/* Datos del negocio */}
           <div className="card">
@@ -287,19 +365,27 @@ export default function Configuracion() {
                       <div>
                         <label className="text-secondary" style={{ fontSize: 11 }}>Factura {modoDemo && "🔒"}</label>
                         <input className="input" type="number" min={1} disabled={modoDemo}
-                          value={config.secuencial_factura ?? "1"}
-                          onChange={(e) => update("secuencial_factura", e.target.value)} />
+                          value={secuenciales.secuencial_factura ?? 1}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value) || 1;
+                            setSecuenciales(prev => ({ ...prev, secuencial_factura: v }));
+                            actualizarSecuencial(config.establecimiento ?? "001", config.punto_emision ?? "001", "FACTURA", v).catch(() => {});
+                          }} />
                         <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                          {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(config.secuencial_factura ?? "1").padStart(9, "0")}
+                          {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(secuenciales.secuencial_factura ?? 1).padStart(9, "0")}
                         </div>
                       </div>
                       <div>
                         <label className="text-secondary" style={{ fontSize: 11 }}>Nota de Crédito {modoDemo && "🔒"}</label>
                         <input className="input" type="number" min={1} disabled={modoDemo}
-                          value={config.secuencial_nota_credito ?? "1"}
-                          onChange={(e) => update("secuencial_nota_credito", e.target.value)} />
+                          value={secuenciales.secuencial_nc ?? 1}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value) || 1;
+                            setSecuenciales(prev => ({ ...prev, secuencial_nc: v }));
+                            actualizarSecuencial(config.establecimiento ?? "001", config.punto_emision ?? "001", "NOTA_CREDITO", v).catch(() => {});
+                          }} />
                         <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                          {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(config.secuencial_nota_credito ?? "1").padStart(9, "0")}
+                          {config.establecimiento ?? "001"}-{config.punto_emision ?? "001"}-{String(secuenciales.secuencial_nc ?? 1).padStart(9, "0")}
                         </div>
                       </div>
                     </div>
@@ -467,6 +553,12 @@ export default function Configuracion() {
                     {impresoras.map((imp) => (
                       <option key={imp} value={imp}>{imp}</option>
                     ))}
+                    {/* Si la impresora guardada no está en la lista actual, mostrarla como "no detectada" */}
+                    {config.impresora && config.impresora.trim() && !impresoras.includes(config.impresora) && (
+                      <option key={config.impresora} value={config.impresora}>
+                        {config.impresora} (no detectada)
+                      </option>
+                    )}
                   </select>
                   <button className="btn btn-outline" style={{ fontSize: 11, whiteSpace: "nowrap" }}
                     disabled={refrescandoImpresoras}
@@ -502,6 +594,17 @@ export default function Configuracion() {
                 </label>
                 <span className="text-secondary" style={{ fontSize: 11, marginLeft: 28, display: "block" }}>
                   Usar cuando la impresora termica no esta disponible
+                </span>
+              </div>
+              <div className="mt-2">
+                <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input type="checkbox"
+                    checked={config.abrir_cajon !== "0"}
+                    onChange={(e) => update("abrir_cajon", e.target.checked ? "1" : "0")} />
+                  Abrir cajón de dinero al imprimir ticket
+                </label>
+                <span className="text-secondary" style={{ fontSize: 11, marginLeft: 28, display: "block" }}>
+                  Envía comando ESC/POS para abrir el cajón conectado a la impresora
                 </span>
               </div>
               <button className="btn btn-primary mt-4" onClick={handleGuardar} disabled={guardando}>
@@ -675,6 +778,22 @@ export default function Configuracion() {
               </button>
             </div>
             <div className="card-body" style={{ padding: 0 }}>
+              {/* Modo de login */}
+              <div style={{ padding: 12, borderBottom: "1px solid var(--color-border)" }}>
+                <label style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, display: "block" }}>Modo de inicio de sesion</label>
+                <select className="input" value={modoLoginConfig} onChange={async (e) => {
+                  const val = e.target.value;
+                  setModoLoginConfig(val);
+                  try {
+                    await guardarConfig({ modo_login: val });
+                    toastExito("Modo de login actualizado");
+                  } catch (err) { toastError("Error: " + err); }
+                }}>
+                  <option value="pin">Solo PIN (rapido)</option>
+                  <option value="password">Solo Contrasena (seguro)</option>
+                  <option value="ambos">PIN o Contrasena (flexible)</option>
+                </select>
+              </div>
               {mostrarFormCajero && (
                 <div style={{ padding: 12, borderBottom: "1px solid var(--color-border)", background: "var(--color-surface-alt)" }}>
                   <div style={{ display: "grid", gap: 8 }}>
@@ -686,6 +805,7 @@ export default function Configuracion() {
                     <select className="input" value={nuevoRol} onChange={(e) => setNuevoRol(e.target.value)}>
                       <option value="CAJERO">Cajero</option>
                       <option value="ADMIN">Administrador</option>
+                      {config.modulo_servicio_tecnico === "1" && <option value="TECNICO">Técnico</option>}
                     </select>
                     <div className="flex gap-2">
                       <button className="btn btn-primary" style={{ flex: 1 }}
@@ -708,69 +828,151 @@ export default function Configuracion() {
                 <p className="text-secondary text-center" style={{ padding: 16 }}>No hay usuarios</p>
               ) : (
                 usuarios.map((u) => (
-                  <div key={u.id} style={{
-                    padding: "8px 12px", borderBottom: "1px solid var(--color-border)",
-                    display: "flex", alignItems: "center", gap: 8,
-                    opacity: u.activo ? 1 : 0.5,
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{u.nombre}</div>
-                      <span style={{
-                        fontSize: 10, padding: "1px 6px", borderRadius: 3,
-                        background: u.rol === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-hover)",
-                        color: u.rol === "ADMIN" ? "var(--color-primary)" : "var(--color-text-secondary)",
-                      }}>
-                        {u.rol}
-                      </span>
-                      {!u.activo && <span style={{ fontSize: 10, color: "var(--color-danger)", marginLeft: 6 }}>INACTIVO</span>}
+                  <div key={u.id}>
+                    <div style={{
+                      padding: "8px 12px", borderBottom: editandoPermisosId === u.id ? "none" : "1px solid var(--color-border)",
+                      display: "flex", alignItems: "center", gap: 8,
+                      opacity: u.activo ? 1 : 0.5,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{u.nombre}</div>
+                        <span style={{
+                          fontSize: 10, padding: "1px 6px", borderRadius: 3,
+                          background: u.rol === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-hover)",
+                          color: u.rol === "ADMIN" ? "var(--color-primary)" : "var(--color-text-secondary)",
+                        }}>
+                          {u.rol}
+                        </span>
+                        {!u.activo && <span style={{ fontSize: 10, color: "var(--color-danger)", marginLeft: 6 }}>INACTIVO</span>}
+                      </div>
+                      {editandoId === u.id ? (
+                        <div className="flex gap-2 items-center">
+                          <input className="input" placeholder="Nuevo PIN" type="password" maxLength={6}
+                            style={{ width: 100, fontSize: 12 }}
+                            value={editPin}
+                            onChange={(e) => { if (/^\d*$/.test(e.target.value)) setEditPin(e.target.value); }} />
+                          <button className="btn btn-primary" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={async () => {
+                              try {
+                                await actualizarUsuario(u.id, undefined, editPin || undefined);
+                                setEditandoId(null);
+                                setEditPin("");
+                                toastExito("PIN actualizado");
+                              } catch (err) { toastError("Error: " + err); }
+                            }}>OK</button>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => { setEditandoId(null); setEditPin(""); }}>x</button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          {u.rol === "CAJERO" && (
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                              onClick={() => {
+                                if (editandoPermisosId === u.id) {
+                                  setEditandoPermisosId(null);
+                                } else {
+                                  setEditandoPermisosId(u.id);
+                                  try { setPermisosEditando(JSON.parse(u.permisos || "{}")); } catch { setPermisosEditando({}); }
+                                }
+                              }}>
+                              Permisos
+                            </button>
+                          )}
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => { setEditandoId(u.id); setEditPin(""); setEditandoPasswordId(null); }}>
+                            PIN
+                          </button>
+                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                            onClick={() => { setEditandoPasswordId(editandoPasswordId === u.id ? null : u.id); setNuevaPassword(""); setEditandoId(null); }}>
+                            Contrasena
+                          </button>
+                          {u.activo ? (
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-danger)" }}
+                              onClick={async () => {
+                                try {
+                                  await eliminarUsuario(u.id);
+                                  setUsuarios(await listarUsuarios());
+                                  toastExito("Cajero desactivado");
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>
+                              Desactivar
+                            </button>
+                          ) : (
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-success)" }}
+                              onClick={async () => {
+                                try {
+                                  await actualizarUsuario(u.id, undefined, undefined, undefined, true);
+                                  setUsuarios(await listarUsuarios());
+                                  toastExito("Cajero activado");
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>
+                              Activar
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {editandoId === u.id ? (
-                      <div className="flex gap-2 items-center">
-                        <input className="input" placeholder="Nuevo PIN" type="password" maxLength={6}
-                          style={{ width: 100, fontSize: 12 }}
-                          value={editPin}
-                          onChange={(e) => { if (/^\d*$/.test(e.target.value)) setEditPin(e.target.value); }} />
-                        <button className="btn btn-primary" style={{ padding: "2px 8px", fontSize: 11 }}
+                    {editandoPermisosId === u.id && (
+                      <div style={{
+                        background: "var(--color-surface-alt)", padding: 12,
+                        borderRadius: "var(--radius)", marginTop: 8,
+                        borderBottom: "1px solid var(--color-border)",
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Permisos de {u.nombre}</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                          {permisosDisponibles.map(([key, label]) => (
+                            <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                              <input type="checkbox"
+                                checked={permisosEditando[key] === true}
+                                onChange={(e) => setPermisosEditando(prev => ({ ...prev, [key]: e.target.checked }))} />
+                              {label}
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex gap-2" style={{ marginTop: 10 }}>
+                          <button className="btn btn-primary" style={{ padding: "4px 12px", fontSize: 12 }}
+                            onClick={async () => {
+                              try {
+                                await actualizarUsuario(u.id, undefined, undefined, undefined, undefined, JSON.stringify(permisosEditando));
+                                setUsuarios(await listarUsuarios());
+                                setEditandoPermisosId(null);
+                                toastExito("Permisos actualizados");
+                              } catch (err) { toastError("Error: " + err); }
+                            }}>
+                            Guardar
+                          </button>
+                          <button className="btn btn-outline" style={{ padding: "4px 12px", fontSize: 12 }}
+                            onClick={() => setEditandoPermisosId(null)}>
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {editandoPasswordId === u.id && (
+                      <div style={{
+                        background: "var(--color-surface-alt)", padding: 12,
+                        borderBottom: "1px solid var(--color-border)",
+                        display: "flex", gap: 8, alignItems: "center",
+                      }}>
+                        <input className="input" type="password" placeholder="Nueva contrasena (min 6 caracteres)"
+                          style={{ flex: 1, fontSize: 12 }}
+                          value={nuevaPassword}
+                          onChange={(e) => setNuevaPassword(e.target.value)} />
+                        <button className="btn btn-primary" style={{ padding: "4px 12px", fontSize: 12 }}
                           onClick={async () => {
                             try {
-                              await actualizarUsuario(u.id, undefined, editPin || undefined);
-                              setEditandoId(null);
-                              setEditPin("");
-                              toastExito("PIN actualizado");
+                              await cambiarPassword(u.id, nuevaPassword);
+                              setEditandoPasswordId(null);
+                              setNuevaPassword("");
+                              toastExito("Contrasena actualizada");
                             } catch (err) { toastError("Error: " + err); }
-                          }}>OK</button>
-                        <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
-                          onClick={() => { setEditandoId(null); setEditPin(""); }}>x</button>
-                      </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
-                          onClick={() => { setEditandoId(u.id); setEditPin(""); }}>
-                          PIN
+                          }}>
+                          Guardar
                         </button>
-                        {u.activo ? (
-                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-danger)" }}
-                            onClick={async () => {
-                              try {
-                                await eliminarUsuario(u.id);
-                                setUsuarios(await listarUsuarios());
-                                toastExito("Cajero desactivado");
-                              } catch (err) { toastError("Error: " + err); }
-                            }}>
-                            Desactivar
-                          </button>
-                        ) : (
-                          <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11, color: "var(--color-success)" }}
-                            onClick={async () => {
-                              try {
-                                await actualizarUsuario(u.id, undefined, undefined, undefined, true);
-                                setUsuarios(await listarUsuarios());
-                                toastExito("Cajero activado");
-                              } catch (err) { toastError("Error: " + err); }
-                            }}>
-                            Activar
-                          </button>
-                        )}
+                        <button className="btn btn-outline" style={{ padding: "4px 12px", fontSize: 12 }}
+                          onClick={() => { setEditandoPasswordId(null); setNuevaPassword(""); }}>
+                          Cancelar
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1118,8 +1320,8 @@ export default function Configuracion() {
                     {verificandoSri ? "Verificando..." : "Verificar suscripcion"}
                   </button>
 
-                  {/* Seccion 2: Certificado P12 */}
-                  {(estadoSri.suscripcion_autorizada || estadoSri.facturas_usadas < estadoSri.facturas_gratis) && !estadoSri.certificado_cargado && (
+                  {/* Seccion 2: Certificado P12 (siempre disponible si no está cargado) */}
+                  {!estadoSri.certificado_cargado && (
                     <>
                       <hr style={{ border: "none", borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />
                       <div style={{ background: "rgba(245, 158, 11, 0.15)", padding: 10, borderRadius: "var(--radius)", color: "var(--color-warning)", fontSize: 12 }}>
@@ -1643,6 +1845,49 @@ export default function Configuracion() {
         }}
         onCancelar={() => setMostrarConfirmAmbiente(false)}
       />
+
+      {sesion?.rol === "ADMIN" && (
+        <div style={{ maxWidth: 400, marginTop: 40, opacity: 0.7 }}>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 8, cursor: "pointer" }}
+            onClick={() => setMostrarReset(!mostrarReset)}>
+            ▸ Zona de peligro
+          </div>
+          {mostrarReset && (
+          <div className="card" style={{ borderColor: "var(--color-danger)" }}>
+          <div className="card-body">
+            <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+              Acciones irreversibles. Solo usar después de terminar las pruebas iniciales.
+            </p>
+            <div style={{ background: "rgba(239, 68, 68, 0.1)", padding: 12, borderRadius: "var(--radius)", fontSize: 12 }}>
+              <p style={{ fontWeight: 700, color: "var(--color-danger)", marginBottom: 6 }}>Se eliminarán ventas, compras, gastos, caja, notas de crédito y secuenciales.</p>
+              <p style={{ marginBottom: 6 }}>Se conservan: productos, clientes, usuarios, config.</p>
+              <p style={{ fontWeight: 700, marginBottom: 6 }}>Escriba RESETEAR para confirmar:</p>
+              <div className="flex gap-2">
+                <input className="input" placeholder="RESETEAR" value={confirmReset.trim()}
+                  onChange={e => setConfirmReset(e.target.value)} style={{ width: 150, fontSize: 12 }} />
+                <button className="btn" style={{ background: "var(--color-danger)", color: "#fff", fontSize: 12, padding: "4px 12px" }}
+                  disabled={confirmReset.trim() !== "RESETEAR" || resetEnProgreso}
+                  onClick={async () => {
+                    setResetEnProgreso(true);
+                    try {
+                      await resetearBaseDatos(confirmReset.trim());
+                      toastExito("Base de datos reseteada");
+                      setMostrarReset(false);
+                      setConfirmReset("");
+                    } catch (err) { toastError("Error: " + err); }
+                    finally { setResetEnProgreso(false); }
+                  }}>
+                  {resetEnProgreso ? "..." : "Confirmar"}
+                </button>
+                <button className="btn btn-outline" style={{ fontSize: 12, padding: "4px 12px" }}
+                  onClick={() => { setMostrarReset(false); setConfirmReset(""); }}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+          </div>
+          )}
+        </div>
+      )}
     </>
   );
 }

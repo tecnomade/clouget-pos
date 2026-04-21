@@ -1,11 +1,13 @@
-import { useState, useEffect } from "react";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig } from "../services/api";
+import { useState, useEffect, Fragment } from "react";
+import { useNavigate } from "react-router-dom";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
 import type { Caja, ResumenCaja } from "../types";
 
 export default function CajaPage() {
+  const navigate = useNavigate();
   const { toastExito, toastError } = useToast();
   const { sesion, cerrarSesion } = useSesion();
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null);
@@ -17,6 +19,16 @@ export default function CajaPage() {
   const [confirmarCierre, setConfirmarCierre] = useState(false);
   const [ticketUsarPdf, setTicketUsarPdf] = useState(false);
   const [imprimiendo, setImprimiendo] = useState(false);
+  const [mostrarRetiro, setMostrarRetiro] = useState(false);
+  const [retiroMonto, setRetiroMonto] = useState("");
+  const [retiroMotivo, setRetiroMotivo] = useState("");
+  const [retiroBancoId, setRetiroBancoId] = useState<number | null>(null);
+  const [retiroReferencia, setRetiroReferencia] = useState("");
+  const [retiros, setRetiros] = useState<any[]>([]);
+  const [cuentasBanco, setCuentasBanco] = useState<any[]>([]);
+  const [confirmandoRetiroId, setConfirmandoRetiroId] = useState<number | null>(null);
+  const [confirmRef, setConfirmRef] = useState("");
+  const [confirmImg, setConfirmImg] = useState<string | null>(null);
 
   const cargar = async () => {
     setCargando(true);
@@ -29,6 +41,12 @@ export default function CajaPage() {
   useEffect(() => {
     obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
   }, []);
+  useEffect(() => {
+    if (cajaAbierta && cajaAbierta.id) {
+      listarRetirosCaja(cajaAbierta.id).then(setRetiros).catch(() => {});
+      listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+    }
+  }, [cajaAbierta]);
 
   const handleAbrir = async () => {
     try {
@@ -60,6 +78,37 @@ export default function CajaPage() {
     setResumen(null);
     // El backend ya cerro la sesion, solo actualizamos el frontend
     await cerrarSesion();
+  };
+
+  const handleRetiro = async () => {
+    const monto = parseFloat(retiroMonto);
+    if (!monto || monto <= 0) { toastError("Monto inválido"); return; }
+    try {
+      await registrarRetiro(monto, retiroMotivo, retiroBancoId || undefined, retiroReferencia || undefined);
+      toastExito(`Retiro de $${monto.toFixed(2)} registrado`);
+      setMostrarRetiro(false);
+      setRetiroMonto(""); setRetiroMotivo(""); setRetiroBancoId(null); setRetiroReferencia("");
+      if (cajaAbierta?.id) listarRetirosCaja(cajaAbierta.id).then(setRetiros).catch(() => {});
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const handleConfirmarDeposito = async () => {
+    if (!confirmRef.trim()) { toastError("Ingrese el número de comprobante"); return; }
+    try {
+      await confirmarDeposito(confirmandoRetiroId!, confirmRef, confirmImg || undefined);
+      toastExito("Depósito confirmado");
+      setConfirmandoRetiroId(null); setConfirmRef(""); setConfirmImg(null);
+      if (cajaAbierta?.id) listarRetirosCaja(cajaAbierta.id).then(setRetiros).catch(() => {});
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  const handleImagenComprobante = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setConfirmImg(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
   if (cargando) return <div className="page-body text-center text-secondary">Cargando...</div>;
@@ -110,6 +159,12 @@ export default function CajaPage() {
                   <span className="text-secondary">Total gastos:</span>
                   <div className="text-lg font-bold">${resumen.total_gastos.toFixed(2)}</div>
                 </div>
+                {(resumen.total_retiros ?? 0) > 0 && (
+                  <div>
+                    <span className="text-secondary" style={{ color: "var(--color-danger)" }}>(-) Retiros:</span>
+                    <div className="text-lg font-bold" style={{ color: "var(--color-danger)" }}>${resumen.total_retiros.toFixed(2)}</div>
+                  </div>
+                )}
                 {(resumen.total_cobros_efectivo > 0 || resumen.total_cobros_banco > 0) && (
                   <>
                     <div>
@@ -227,7 +282,7 @@ export default function CajaPage() {
         )}
 
         {!resumen && cajaAbierta && (
-          <div className="card" style={{ maxWidth: 400, margin: "40px auto" }}>
+          <div className="card" style={{ maxWidth: 500, margin: "40px auto" }}>
             <div className="card-header">Cerrar Caja</div>
             <div className="card-body">
               <div className="mb-4">
@@ -242,10 +297,16 @@ export default function CajaPage() {
                   <span className="text-secondary">Ventas en efectivo:</span>
                   <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
                 </div>
+                {retiros.length > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "var(--color-danger)" }}>
+                    <span>(-) Retiros:</span>
+                    <span>-${retiros.reduce((s: number, r: any) => s + r.monto, 0).toFixed(2)}</span>
+                  </div>
+                )}
                 <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
                   <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja:</span>
                   <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
-                    ${(cajaAbierta.monto_inicial + (cajaAbierta.monto_ventas ?? 0)).toFixed(2)}
+                    ${(cajaAbierta.monto_inicial + (cajaAbierta.monto_ventas ?? 0) - retiros.reduce((s: number, r: any) => s + r.monto, 0)).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -268,10 +329,134 @@ export default function CajaPage() {
                   onChange={(e) => setObservacion(e.target.value)}
                 />
               </div>
-              <button className="btn btn-danger btn-lg mt-4" style={{ width: "100%" }} onClick={() => setConfirmarCierre(true)}>
-                Cerrar Caja
-              </button>
+              <div className="flex gap-2 mt-4">
+                <button
+                  className="btn btn-success"
+                  style={{ flex: 1, fontWeight: 600 }}
+                  onClick={() => navigate("/pos")}
+                >
+                  + Nueva Venta
+                </button>
+                <button
+                  className="btn btn-outline"
+                  style={{ flex: 1, borderColor: "var(--color-warning)", color: "var(--color-warning)" }}
+                  onClick={() => setMostrarRetiro(!mostrarRetiro)}
+                >
+                  Retiro de Caja
+                </button>
+                <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => setConfirmarCierre(true)}>
+                  Cerrar Caja
+                </button>
+              </div>
             </div>
+
+            {mostrarRetiro && (
+              <div className="card" style={{ marginTop: 12 }}>
+                <div className="card-header">Registrar Retiro de Efectivo</div>
+                <div className="card-body">
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Monto *</label>
+                      <input className="input" type="number" step="0.01" min="0" placeholder="0.00"
+                        value={retiroMonto} onChange={e => setRetiroMonto(e.target.value)} autoFocus />
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Motivo</label>
+                      <input className="input" placeholder="Ej: Depósito banco, pago proveedor..."
+                        value={retiroMotivo} onChange={e => setRetiroMotivo(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Depositar en cuenta (opcional)</label>
+                      <select className="input" value={retiroBancoId ?? ""} onChange={e => setRetiroBancoId(e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">Sin depósito bancario</option>
+                        {cuentasBanco.map(cb => <option key={cb.id} value={cb.id}>{cb.nombre}{cb.numero_cuenta ? ` — ${cb.numero_cuenta}` : ""}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Referencia</label>
+                      <input className="input" placeholder="Nro. comprobante" value={retiroReferencia} onChange={e => setRetiroReferencia(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button className="btn btn-outline" onClick={() => setMostrarRetiro(false)}>Cancelar</button>
+                    <button className="btn btn-primary" onClick={handleRetiro}>Registrar Retiro</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {retiros.length > 0 && (
+              <div className="card" style={{ marginTop: 12 }}>
+                <div className="card-header">
+                  Retiros del día ({retiros.length})
+                  <span style={{ float: "right", fontWeight: 700, color: "var(--color-danger)" }}>
+                    -${retiros.reduce((s: number, r: any) => s + r.monto, 0).toFixed(2)}
+                  </span>
+                </div>
+                <div className="card-body" style={{ padding: 0 }}>
+                  <table className="table">
+                    <thead><tr><th>Hora</th><th>Monto</th><th>Motivo</th><th>Cuenta</th><th>Estado</th><th>Usuario</th></tr></thead>
+                    <tbody>
+                      {retiros.map((r: any) => (
+                        <Fragment key={r.id}>
+                          <tr>
+                            <td style={{ fontSize: 12 }}>{r.fecha?.slice(11, 16)}</td>
+                            <td style={{ color: "var(--color-danger)", fontWeight: 600 }}>-${r.monto.toFixed(2)}</td>
+                            <td style={{ fontSize: 12 }}>{r.motivo || "-"}</td>
+                            <td style={{ fontSize: 12 }}>{r.banco_nombre || "-"}</td>
+                            <td style={{ fontSize: 12 }}>
+                              {r.estado === "EN_TRANSITO" && (
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)", fontSize: 11, fontWeight: 600 }}>En tránsito</span>
+                                  <button className="btn" style={{ padding: "2px 8px", fontSize: 11, minHeight: 0 }}
+                                    onClick={() => { setConfirmandoRetiroId(r.id); setConfirmRef(r.referencia || ""); setConfirmImg(null); }}>
+                                    Confirmar
+                                  </button>
+                                </span>
+                              )}
+                              {r.estado === "DEPOSITADO" && (
+                                <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)", fontSize: 11, fontWeight: 600 }}>Depositado</span>
+                              )}
+                              {(r.estado === "SIN_DEPOSITO" || !r.estado) && (
+                                <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(148, 148, 148, 0.15)", color: "var(--color-text-secondary)", fontSize: 11, fontWeight: 600 }}>Sin depósito</span>
+                              )}
+                            </td>
+                            <td style={{ fontSize: 12 }}>{r.usuario}</td>
+                          </tr>
+                          {confirmandoRetiroId === r.id && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: "8px 12px", background: "rgba(245, 158, 11, 0.05)" }}>
+                                <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+                                  <div style={{ flex: 1, minWidth: 150 }}>
+                                    <label className="text-secondary" style={{ fontSize: 11 }}>Nro. Comprobante *</label>
+                                    <input className="input" style={{ fontSize: 13 }} placeholder="Referencia del depósito"
+                                      value={confirmRef} onChange={e => setConfirmRef(e.target.value)} autoFocus />
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 150 }}>
+                                    <label className="text-secondary" style={{ fontSize: 11 }}>Imagen comprobante (opcional)</label>
+                                    <input type="file" accept="image/*" style={{ fontSize: 12 }}
+                                      onChange={handleImagenComprobante} />
+                                    {confirmImg && <span style={{ fontSize: 11, color: "var(--color-success)" }}>Imagen cargada</span>}
+                                  </div>
+                                  <button className="btn btn-success" style={{ fontSize: 12, padding: "6px 12px" }}
+                                    onClick={handleConfirmarDeposito}>
+                                    Confirmar Depósito
+                                  </button>
+                                  <button className="btn btn-outline" style={{ fontSize: 12, padding: "6px 12px" }}
+                                    onClick={() => { setConfirmandoRetiroId(null); setConfirmRef(""); setConfirmImg(null); }}>
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -37,7 +37,7 @@ function primerDiaMes(): string {
 
 export default function VentasDia() {
   const { toastExito, toastError, toastWarning } = useToast();
-  const { esAdmin } = useSesion();
+  const { esAdmin, tienePermiso } = useSesion();
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [fechaDesde, setFechaDesde] = useState(fechaHoy);
   const [fechaHasta, setFechaHasta] = useState(fechaHoy);
@@ -51,11 +51,13 @@ export default function VentasDia() {
   const [alertas, setAlertas] = useState<AlertaStock[]>([]);
   const [ticketUsarPdf, setTicketUsarPdf] = useState(false);
   const [notasCredito, setNotasCredito] = useState<NotaCreditoInfo[]>([]);
-  const [ncVenta, setNcVenta] = useState<{ id: number; numero: string } | null>(null);
+  const [ncVenta, setNcVenta] = useState<{ id: number; numero: string; esDevolucion?: boolean } | null>(null);
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
+  const [ncLista, setNcLista] = useState<any[]>([]);
+  const [ncFiltroEstado, setNcFiltroEstado] = useState<string>("");
 
   const abrirDetalle = async (ventaId: number) => {
     try {
@@ -143,6 +145,24 @@ export default function VentasDia() {
   useEffect(() => {
     obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
   }, []);
+
+  // Cargar notas de crédito cuando se selecciona la pestaña NC
+  useEffect(() => {
+    if (filtroTipo === "nc" && esAdmin) {
+      listarNotasCredito(fechaDesde, fechaHasta, ncFiltroEstado || undefined)
+        .then(setNcLista)
+        .catch(() => setNcLista([]));
+    }
+  }, [filtroTipo, fechaDesde, fechaHasta, ncFiltroEstado]);
+
+  // Resumen de NCs
+  const ncResumen = filtroTipo === "nc" ? {
+    total: ncLista.length,
+    totalMonto: ncLista.reduce((sum, nc) => sum + (nc.total || 0), 0),
+    autorizadas: ncLista.filter(nc => nc.estado_sri === "AUTORIZADA").length,
+    pendientes: ncLista.filter(nc => nc.estado_sri === "PENDIENTE").length,
+    rechazadas: ncLista.filter(nc => nc.estado_sri === "RECHAZADA").length,
+  } : null;
 
   // Helper para mostrar datos del resumen (funciona tanto para diario como periodo)
   const r = resumenRango || resumen;
@@ -323,6 +343,7 @@ export default function VentasDia() {
                   { key: "BORRADOR", label: "Borradores" },
                   { key: "COTIZACION", label: "Cotizaciones" },
                   { key: "GUIA_REMISION", label: "Guías" },
+                  { key: "nc", label: "N. Crédito" },
                   { key: "TODOS", label: "Todos" },
                 ].map(f => (
                   <button key={f.key}
@@ -334,9 +355,182 @@ export default function VentasDia() {
                 ))}
               </div>
               <span className="text-secondary" style={{ fontSize: 12 }}>
-                {ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length} registro{ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length !== 1 ? "s" : ""}
+                {filtroTipo === "nc"
+                  ? `${ncLista.length} registro${ncLista.length !== 1 ? "s" : ""}`
+                  : `${ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length} registro${ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length !== 1 ? "s" : ""}`
+                }
               </span>
             </div>
+            {filtroTipo === "nc" ? (
+              <>
+                {/* Resumen NC */}
+                {ncResumen && ncResumen.total > 0 && (
+                  <div style={{ display: "flex", gap: 12, padding: "10px 14px", borderBottom: "1px solid var(--color-border)", fontSize: 12 }}>
+                    <div>
+                      <span className="text-secondary">Total NCs: </span>
+                      <strong>{ncResumen.total}</strong>
+                    </div>
+                    <div>
+                      <span className="text-secondary">Monto: </span>
+                      <strong style={{ color: "var(--color-danger)" }}>-${ncResumen.totalMonto.toFixed(2)}</strong>
+                    </div>
+                    {ncResumen.autorizadas > 0 && (
+                      <div>
+                        <span style={{ color: "var(--color-success)", fontWeight: 600 }}>{ncResumen.autorizadas} Autoriz.</span>
+                      </div>
+                    )}
+                    {ncResumen.pendientes > 0 && (
+                      <div>
+                        <span style={{ color: "var(--color-warning)", fontWeight: 600 }}>{ncResumen.pendientes} Pend.</span>
+                      </div>
+                    )}
+                    {ncResumen.rechazadas > 0 && (
+                      <div>
+                        <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>{ncResumen.rechazadas} Rechaz.</span>
+                      </div>
+                    )}
+                    <div style={{ marginLeft: "auto" }}>
+                      <select className="input" style={{ fontSize: 11, padding: "2px 6px", width: 120 }}
+                        value={ncFiltroEstado}
+                        onChange={(e) => setNcFiltroEstado(e.target.value)}>
+                        <option value="">Todos</option>
+                        <option value="AUTORIZADA">Autorizadas</option>
+                        <option value="PENDIENTE">Pendientes</option>
+                        <option value="RECHAZADA">Rechazadas</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+                <div style={{ maxHeight: 400, overflow: "auto" }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Numero</th>
+                        <th>Fecha</th>
+                        <th>Venta Original</th>
+                        <th>Cliente</th>
+                        <th>Motivo</th>
+                        <th className="text-right">Total</th>
+                        <th>Estado</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ncLista.map((nc) => (
+                        <tr key={nc.id}>
+                          <td>
+                            <strong>{nc.numero_factura_nc || nc.numero}</strong>
+                          </td>
+                          <td className="text-secondary" style={{ fontSize: 12 }}>
+                            {nc.fecha
+                              ? new Date(nc.fecha).toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit" })
+                                + " " + new Date(nc.fecha).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })
+                              : "-"}
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 11, color: "var(--color-primary)", cursor: "pointer" }}
+                              onClick={() => nc.venta_id && abrirDetalle(nc.venta_id)}
+                              title="Ver venta original">
+                              {nc.venta_numero}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 12 }}>{nc.cliente_nombre}</td>
+                          <td style={{ fontSize: 12, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                            title={nc.motivo}>
+                            {nc.motivo}
+                          </td>
+                          <td className="text-right font-bold" style={{ color: "var(--color-danger)" }}>
+                            -${nc.total?.toFixed(2)}
+                          </td>
+                          <td>
+                            <span style={{
+                              fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 600,
+                              background: nc.estado_sri === "AUTORIZADA" ? "rgba(34, 197, 94, 0.15)"
+                                : nc.estado_sri === "PENDIENTE" ? "rgba(245, 158, 11, 0.15)"
+                                : "rgba(239, 68, 68, 0.1)",
+                              color: nc.estado_sri === "AUTORIZADA" ? "var(--color-success)"
+                                : nc.estado_sri === "PENDIENTE" ? "var(--color-warning)"
+                                : "var(--color-danger)",
+                            }}>
+                              {nc.estado_sri}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="flex gap-1">
+                              {(nc.estado_sri === "PENDIENTE" || nc.estado_sri === "RECHAZADA") && (
+                                <button className="btn btn-outline" style={{
+                                  padding: "2px 6px", fontSize: 10,
+                                  color: "var(--color-primary)", borderColor: "rgba(59, 130, 246, 0.3)",
+                                }}
+                                  disabled={reintentandoNcSri === nc.id}
+                                  onClick={async () => {
+                                    setReintentandoNcSri(nc.id);
+                                    try {
+                                      const res = await emitirNotaCreditoSri(nc.id);
+                                      if (res.exito) {
+                                        toastExito("NC autorizada por el SRI");
+                                      } else {
+                                        toastWarning(`SRI NC: ${res.mensaje}`);
+                                      }
+                                      // Refrescar lista NC
+                                      listarNotasCredito(fechaDesde, fechaHasta, ncFiltroEstado || undefined)
+                                        .then(setNcLista).catch(() => {});
+                                    } catch (err) {
+                                      toastError("Error SRI NC: " + err);
+                                    } finally {
+                                      setReintentandoNcSri(null);
+                                    }
+                                  }}>
+                                  {reintentandoNcSri === nc.id ? "..." : "SRI"}
+                                </button>
+                              )}
+                              {nc.clave_acceso && (
+                                <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 10 }}
+                                  title="Descargar XML firmado"
+                                  onClick={async () => {
+                                    try {
+                                      // Use the venta's XML endpoint via the NC's venta_id
+                                      const xml = await obtenerXmlFirmado(nc.venta_id);
+                                      const destino = await save({
+                                        defaultPath: `nc-${(nc.numero_factura_nc || nc.numero).replace(/[\/\\:]/g, "-")}.xml`,
+                                        filters: [{ name: "XML", extensions: ["xml"] }],
+                                      });
+                                      if (destino) {
+                                        await invoke("guardar_archivo_texto", { ruta: destino, contenido: xml });
+                                        toastExito("XML guardado");
+                                      }
+                                    } catch (err) {
+                                      toastError("Error XML: " + err);
+                                    }
+                                  }}>
+                                  XML
+                                </button>
+                              )}
+                              {nc.estado_sri === "AUTORIZADA" && (
+                                <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 10 }}
+                                  title="Imprimir RIDE NC (PDF A4)"
+                                  onClick={() => generarRideNcPdf(nc.id)
+                                    .then(() => toastExito("RIDE NC abierto"))
+                                    .catch((e) => toastError("Error RIDE NC: " + e))}>
+                                  RIDE
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {ncLista.length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="text-center text-secondary" style={{ padding: 30 }}>
+                            No hay notas de credito para {esRango ? "este periodo" : "esta fecha"}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
             <div style={{ maxHeight: 400, overflow: "auto" }}>
               <table className="table">
                 <thead>
@@ -497,24 +691,45 @@ export default function VentasDia() {
                                   .catch((e) => toastError("Error RIDE: " + e))}>
                                 RIDE
                               </button>
-                              {!notasCredito.some(nc => nc.venta_id === v.id) ? (
-                                <button className="btn btn-outline" style={{
-                                  padding: "2px 6px", fontSize: 10,
-                                  color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
-                                }}
-                                  title="Crear Nota de Credito"
-                                  onClick={() => v.id && setNcVenta({ id: v.id, numero: v.numero_factura || v.numero })}>
-                                  NC
-                                </button>
-                              ) : (
-                                <span style={{
-                                  fontSize: 9, padding: "2px 5px", borderRadius: 3,
-                                  background: "rgba(239, 68, 68, 0.1)", color: "var(--color-danger)", fontWeight: 600,
-                                }} title="Ya tiene nota de credito">
-                                  NC
-                                </span>
+                              {(esAdmin || tienePermiso("crear_nota_credito")) && (
+                                !notasCredito.some(nc => nc.venta_id === v.id) ? (
+                                  <button className="btn btn-outline" style={{
+                                    padding: "2px 6px", fontSize: 10,
+                                    color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
+                                  }}
+                                    title="Crear Nota de Credito"
+                                    onClick={() => v.id && setNcVenta({ id: v.id, numero: v.numero_factura || v.numero })}>
+                                    NC
+                                  </button>
+                                ) : (
+                                  <span style={{
+                                    fontSize: 9, padding: "2px 5px", borderRadius: 3,
+                                    background: "rgba(239, 68, 68, 0.1)", color: "var(--color-danger)", fontWeight: 600,
+                                  }} title="Ya tiene nota de credito">
+                                    NC
+                                  </span>
+                                )
                               )}
                             </>
+                          )}
+                          {v.tipo_documento === "NOTA_VENTA" && (esAdmin || tienePermiso("crear_nota_credito")) && (
+                            !notasCredito.some(nc => nc.venta_id === v.id) ? (
+                              <button className="btn btn-outline" style={{
+                                padding: "2px 6px", fontSize: 10,
+                                color: "var(--color-warning)", borderColor: "rgba(245, 158, 11, 0.4)",
+                              }}
+                                title="Crear Devolucion"
+                                onClick={() => v.id && setNcVenta({ id: v.id, numero: v.numero, esDevolucion: true })}>
+                                Dev.
+                              </button>
+                            ) : (
+                              <span style={{
+                                fontSize: 9, padding: "2px 5px", borderRadius: 3,
+                                background: "rgba(245, 158, 11, 0.1)", color: "var(--color-warning)", fontWeight: 600,
+                              }} title="Ya tiene devolucion">
+                                Dev.
+                              </span>
+                            )
                           )}
                           <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 11 }}
                             onClick={() => {
@@ -540,6 +755,7 @@ export default function VentasDia() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           {/* Panel lateral */}
@@ -656,6 +872,7 @@ export default function VentasDia() {
         <ModalNotaCredito
           ventaId={ncVenta.id}
           ventaNumero={ncVenta.numero}
+          esDevolucionInterna={ncVenta.esDevolucion}
           onClose={() => setNcVenta(null)}
           onCreada={() => cargar()}
           toastExito={toastExito}

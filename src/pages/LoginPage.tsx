@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { iniciarSesion } from "../services/api";
+import { iniciarSesion, obtenerConfig, listarUsuariosLogin } from "../services/api";
 import type { SesionActiva } from "../types";
 
 interface Novedad {
@@ -39,8 +39,31 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
   const [shake, setShake] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [promo, setPromo] = useState<PromoData>(NOVEDADES_DEFAULT);
+  // Modo login: pin, password, ambos
+  const [modoLogin, setModoLogin] = useState<string>("pin");
+  const [modoActivo, setModoActivo] = useState<"pin" | "password">("pin"); // para tabs en modo 'ambos'
+  const [passwordInput, setPasswordInput] = useState("");
+  const [usuariosLista, setUsuariosLista] = useState<[number, string][]>([]);
+  const [usuarioSeleccionado, setUsuarioSeleccionado] = useState<number>(0);
 
   useEffect(() => {
+    // Cargar modo_login desde config
+    obtenerConfig().then((cfg) => {
+      const modo = cfg.modo_login || "pin";
+      setModoLogin(modo);
+      if (modo === "password") {
+        setModoActivo("password");
+      }
+    }).catch(() => {});
+
+    // Cargar lista de usuarios para modo password
+    listarUsuariosLogin().then((usrs) => {
+      setUsuariosLista(usrs);
+      if (usrs.length > 0) {
+        setUsuarioSeleccionado(usrs[0][0]);
+      }
+    }).catch(() => {});
+
     // Intentar cargar promo desde Supabase (si hay internet)
     const SUPABASE_URL = "https://zakquzflkvfqflqnxpxj.supabase.co";
     const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpha3F1emZsa3ZmcWZscW54cHhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzY2MDcxNjQsImV4cCI6MjA1MjE4MzE2NH0.sxaKNMkNguqQnvmUXh2JVRjqXDDqgsKb2LKPSGFp9bE";
@@ -92,7 +115,32 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
     setCargando(false);
   };
 
+  const handleLoginPassword = async () => {
+    if (!passwordInput || passwordInput.length < 6) {
+      setError("Ingrese una contraseña valida (min 6 caracteres)");
+      return;
+    }
+    if (!usuarioSeleccionado) {
+      setError("Seleccione un usuario");
+      return;
+    }
+    setCargando(true);
+    try {
+      const sesion = await iniciarSesion("", passwordInput);
+      onLogin(sesion);
+    } catch (err: any) {
+      setError(String(err) || "Contraseña incorrecta");
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+      setPasswordInput("");
+    }
+    setCargando(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Only handle numeric keypad in PIN mode
+    const enModoPinActivo = modoLogin === "pin" || (modoLogin === "ambos" && modoActivo === "pin");
+    if (!enModoPinActivo) return;
     if (e.key >= "0" && e.key <= "9") {
       handleDigit(e.key);
     } else if (e.key === "Backspace") {
@@ -146,30 +194,29 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           Punto de Venta
         </p>
 
-        {/* PIN dots */}
-        <div
-          className={shake ? "login-shake" : ""}
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div
-              key={i}
+        {/* Tabs para modo 'ambos' */}
+        {modoLogin === "ambos" && (
+          <div style={{ display: "flex", gap: 0, marginBottom: 24, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,0.15)" }}>
+            <button
+              onClick={() => { setModoActivo("pin"); setError(""); setPasswordInput(""); }}
               style={{
-                width: 16,
-                height: 16,
-                borderRadius: "50%",
-                border: "2px solid rgba(255,255,255,0.3)",
-                background: i < pin.length ? "var(--color-primary)" : "transparent",
-                transition: "background 0.15s",
+                flex: 1, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                border: "none",
+                background: modoActivo === "pin" ? "var(--color-primary)" : "rgba(255,255,255,0.06)",
+                color: "white",
               }}
-            />
-          ))}
-        </div>
+            >PIN</button>
+            <button
+              onClick={() => { setModoActivo("password"); setError(""); setPin(""); }}
+              style={{
+                flex: 1, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                border: "none",
+                background: modoActivo === "password" ? "var(--color-primary)" : "rgba(255,255,255,0.06)",
+                color: "white",
+              }}
+            >Contrasena</button>
+          </div>
+        )}
 
         {/* Error */}
         <div
@@ -183,58 +230,161 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           {error}
         </div>
 
-        {/* Teclado numerico */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
-            gap: 8,
-            maxWidth: 260,
-            margin: "0 auto",
-          }}
-        >
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
-            <button
-              key={d}
-              className="login-key"
-              onClick={() => handleDigit(String(d))}
-              disabled={cargando}
+        {/* PIN mode */}
+        {modoActivo === "pin" && (
+          <>
+            {/* PIN dots */}
+            <div
+              className={shake ? "login-shake" : ""}
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                gap: 12,
+                marginBottom: 16,
+              }}
             >
-              {d}
-            </button>
-          ))}
-          <button
-            className="login-key login-key-secondary"
-            onClick={handleDelete}
-            disabled={cargando}
-          >
-            ←
-          </button>
-          <button
-            className="login-key"
-            onClick={() => handleDigit("0")}
-            disabled={cargando}
-          >
-            0
-          </button>
-          <button
-            className="login-key login-key-enter"
-            onClick={handleSubmit}
-            disabled={cargando || pin.length < 4}
-          >
-            {cargando ? "..." : "OK"}
-          </button>
-        </div>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: "50%",
+                    border: "2px solid rgba(255,255,255,0.3)",
+                    background: i < pin.length ? "var(--color-primary)" : "transparent",
+                    transition: "background 0.15s",
+                  }}
+                />
+              ))}
+            </div>
 
-        <p
-          style={{
-            fontSize: 11,
-            opacity: 0.3,
-            marginTop: 32,
-          }}
-        >
-          Ingrese su PIN para iniciar sesion
-        </p>
+            {/* Teclado numerico */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3, 1fr)",
+                gap: 8,
+                maxWidth: 260,
+                margin: "0 auto",
+              }}
+            >
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
+                <button
+                  key={d}
+                  className="login-key"
+                  onClick={() => handleDigit(String(d))}
+                  disabled={cargando}
+                >
+                  {d}
+                </button>
+              ))}
+              <button
+                className="login-key login-key-secondary"
+                onClick={handleDelete}
+                disabled={cargando}
+              >
+                ←
+              </button>
+              <button
+                className="login-key"
+                onClick={() => handleDigit("0")}
+                disabled={cargando}
+              >
+                0
+              </button>
+              <button
+                className="login-key login-key-enter"
+                onClick={handleSubmit}
+                disabled={cargando || pin.length < 4}
+              >
+                {cargando ? "..." : "OK"}
+              </button>
+            </div>
+
+            <p
+              style={{
+                fontSize: 11,
+                opacity: 0.3,
+                marginTop: 24,
+              }}
+            >
+              Ingrese su PIN para iniciar sesion
+            </p>
+
+            {modoLogin === "pin" && (
+              <button
+                onClick={() => setModoActivo("password")}
+                style={{
+                  marginTop: 12, background: "none", border: "none", color: "rgba(255,255,255,0.4)",
+                  fontSize: 12, cursor: "pointer", textDecoration: "underline",
+                }}
+              >
+                Iniciar con usuario y contraseña
+              </button>
+            )}
+          </>
+        )}
+
+        {/* Password mode */}
+        {(modoLogin === "password" || modoActivo === "password") && (
+          <div className={shake ? "login-shake" : ""} style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 280, margin: "0 auto" }}>
+            <div style={{ textAlign: "left" }}>
+              <label style={{ fontSize: 12, opacity: 0.6, marginBottom: 4, display: "block" }}>Usuario</label>
+              <select
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "white", fontSize: 14,
+                }}
+                value={usuarioSeleccionado}
+                onChange={(e) => setUsuarioSeleccionado(Number(e.target.value))}
+              >
+                {usuariosLista.map(([id, nombre]) => (
+                  <option key={id} value={id} style={{ background: "#1e293b", color: "white" }}>{nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ textAlign: "left" }}>
+              <label style={{ fontSize: 12, opacity: 0.6, marginBottom: 4, display: "block" }}>Contrasena</label>
+              <input
+                type="password"
+                style={{
+                  width: "100%", padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid rgba(255,255,255,0.15)",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "white", fontSize: 14,
+                  boxSizing: "border-box",
+                }}
+                value={passwordInput}
+                onChange={(e) => { setPasswordInput(e.target.value); setError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleLoginPassword(); }}
+                autoFocus
+                placeholder="Ingrese su contrasena"
+              />
+            </div>
+            <button
+              className="login-key login-key-enter"
+              style={{ width: "100%", marginTop: 8 }}
+              onClick={handleLoginPassword}
+              disabled={cargando || !passwordInput}
+            >
+              {cargando ? "..." : "Iniciar Sesion"}
+            </button>
+
+            {modoLogin === "pin" && (
+              <button
+                onClick={() => { setModoActivo("pin"); setError(""); setPasswordInput(""); }}
+                style={{
+                  marginTop: 12, background: "none", border: "none", color: "rgba(255,255,255,0.4)",
+                  fontSize: 12, cursor: "pointer", textDecoration: "underline",
+                }}
+              >
+                Volver a PIN
+              </button>
+            )}
+          </div>
+        )}
 
         {esDemo && (
           <div

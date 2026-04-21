@@ -18,6 +18,12 @@ pub struct Producto {
     pub es_servicio: bool,
     pub activo: bool,
     pub imagen: Option<String>,
+    #[serde(default)]
+    pub requiere_serie: bool,
+    #[serde(default)]
+    pub requiere_caducidad: bool,
+    #[serde(default)]
+    pub no_controla_stock: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +42,7 @@ pub struct ProductoTactil {
 pub struct ProductoBusqueda {
     pub id: i64,
     pub codigo: Option<String>,
+    pub codigo_barras: Option<String>,
     pub nombre: String,
     pub precio_venta: f64,
     pub iva_porcentaje: f64,

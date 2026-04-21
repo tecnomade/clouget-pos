@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listarDocumentosRecientes, eliminarBorrador, obtenerVenta, imprimirTicket, imprimirTicketPdf, imprimirRide, imprimirGuiaRemisionPdf } from "../services/api";
+import { listarDocumentosRecientes, eliminarBorrador, obtenerVenta, imprimirTicket, imprimirTicketPdf, imprimirRide, imprimirGuiaRemisionPdf, generarCotizacionPdf, generarNotaVentaPdf } from "../services/api";
 import { useToast } from "./Toast";
 import type { DocumentoReciente, VentaCompleta } from "../types";
 
@@ -202,6 +202,13 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                           onClick={() => handleImprimir(doc)}>
                           Ticket
                         </button>
+                        <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                          onClick={async () => {
+                            try { await generarNotaVentaPdf(doc.id); toastExito("PDF A4 generado"); }
+                            catch (e) { toastError("Error: " + e); }
+                          }}>
+                          A4
+                        </button>
                         {doc.tipo_documento === "FACTURA" && (
                           <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
                             onClick={() => handleRide(doc)}>
@@ -211,10 +218,19 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                       </>
                     )}
                     {doc.tipo_estado === "COTIZACION" && (
-                      <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
-                        onClick={() => handleImprimir(doc)}>
-                        Imprimir
-                      </button>
+                      <>
+                        <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                          onClick={() => handleImprimir(doc)}>
+                          Ticket
+                        </button>
+                        <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                          onClick={async () => {
+                            try { await generarCotizacionPdf(doc.id); toastExito("PDF A4 generado"); }
+                            catch (e) { toastError("Error: " + e); }
+                          }}>
+                          A4
+                        </button>
+                      </>
                     )}
                     {doc.tipo_estado === "GUIA_REMISION" && (
                       <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}

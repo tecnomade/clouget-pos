@@ -35,6 +35,7 @@ pub async fn dispatch_command(
                     Ok(ProductoBusqueda {
                         id: row.get(0)?,
                         codigo: row.get(1)?,
+                        codigo_barras: None,
                         nombre: row.get(2)?,
                         precio_venta: row.get(3)?,
                         iva_porcentaje: row.get(4)?,
@@ -84,7 +85,8 @@ pub async fn dispatch_command(
                 .prepare(
                     "SELECT id, codigo, codigo_barras, nombre, descripcion, categoria_id,
                      precio_costo, precio_venta, iva_porcentaje, incluye_iva,
-                     stock_actual, stock_minimo, unidad_medida, es_servicio, activo, imagen
+                     stock_actual, stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
+                     COALESCE(no_controla_stock, 0)
                      FROM productos ORDER BY nombre",
                 )
                 .map_err(|e| e.to_string())?;
@@ -108,6 +110,9 @@ pub async fn dispatch_command(
                         es_servicio: row.get(13)?,
                         activo: row.get(14)?,
                         imagen: row.get(15)?,
+                        requiere_serie: row.get::<_, i32>(16)? != 0,
+                        requiere_caducidad: row.get::<_, i32>(17)? != 0,
+                        no_controla_stock: row.get::<_, i32>(18)? != 0,
                     })
                 })
                 .map_err(|e| e.to_string())?
@@ -300,45 +305,70 @@ pub async fn dispatch_command(
 
         // --- Usuarios / Sesión ---
         "iniciar_sesion" => {
-            let pin: String = extract(&args, "pin")?;
+            let pin: String = extract(&args, "pin").unwrap_or_default();
+            let password: Option<String> = args.get("password")
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .filter(|s| !s.is_empty());
 
-            let usuarios: Vec<(i64, String, String, String, String)> = (|| -> Result<Vec<_>, String> {
+            let (modo_login, usuarios) = {
                 let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
+                let modo: String = conn
+                    .query_row("SELECT value FROM config WHERE key = 'modo_login'", [], |row| row.get(0))
+                    .unwrap_or_else(|_| "pin".to_string());
                 let mut stmt = conn
-                    .prepare("SELECT id, nombre, pin_hash, pin_salt, rol FROM usuarios WHERE activo = 1")
+                    .prepare("SELECT id, nombre, pin_hash, pin_salt, rol, permisos, password_hash, password_salt FROM usuarios WHERE activo = 1")
                     .map_err(|e| e.to_string())?;
-
-                let result = stmt.query_map([], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
+                let result: Vec<(i64, String, String, String, String, String, Option<String>, Option<String>)> = stmt.query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?))
                 })
                 .map_err(|e| e.to_string())?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
-                Ok(result)
-            })()?;
+                (modo, result)
+            };
 
-            for (id, nombre, hash, salt, rol) in &usuarios {
-                let pin_hash = crate::utils::hash_pin(salt, &pin);
-                if &pin_hash == hash {
-                    let sesion = crate::models::SesionActiva {
-                        usuario_id: *id,
-                        nombre: nombre.clone(),
-                        rol: rol.clone(),
-                    };
-                    let mut sesion_guard =
-                        state.sesion.sesion.lock().map_err(|e| e.to_string())?;
-                    *sesion_guard = Some(sesion.clone());
-                    return to_json(&sesion);
+            // Try PIN auth
+            if (modo_login == "pin" || modo_login == "ambos") && !pin.is_empty() {
+                for (id, nombre, hash, salt, rol, permisos, _, _) in &usuarios {
+                    let pin_hash = crate::utils::hash_pin(salt, &pin);
+                    if &pin_hash == hash {
+                        let sesion = crate::models::SesionActiva {
+                            usuario_id: *id, nombre: nombre.clone(), rol: rol.clone(), permisos: permisos.clone(),
+                        };
+                        let mut sesion_guard = state.sesion.sesion.lock().map_err(|e| e.to_string())?;
+                        *sesion_guard = Some(sesion.clone());
+                        return to_json(&sesion);
+                    }
+                }
+                if modo_login == "pin" {
+                    return Err("PIN incorrecto".to_string());
                 }
             }
 
-            Err("PIN incorrecto".to_string())
+            // Try password auth
+            if modo_login == "password" || modo_login == "ambos" {
+                if let Some(ref pwd) = password {
+                    for (id, nombre, _, _, rol, permisos, pw_hash, pw_salt) in &usuarios {
+                        if let (Some(h), Some(s)) = (pw_hash, pw_salt) {
+                            let hash_intento = crate::utils::hash_pin(s, pwd);
+                            if &hash_intento == h {
+                                let sesion = crate::models::SesionActiva {
+                                    usuario_id: *id, nombre: nombre.clone(), rol: rol.clone(), permisos: permisos.clone(),
+                                };
+                                let mut sesion_guard = state.sesion.sesion.lock().map_err(|e| e.to_string())?;
+                                *sesion_guard = Some(sesion.clone());
+                                return to_json(&sesion);
+                            }
+                        }
+                    }
+                    return Err("Contraseña incorrecta".to_string());
+                }
+                if modo_login == "password" {
+                    return Err("Debe ingresar una contraseña".to_string());
+                }
+            }
+
+            Err("Credenciales incorrectas".to_string())
         }
 
         "cerrar_sesion" => {

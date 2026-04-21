@@ -5,7 +5,7 @@ import { useToast } from "../components/Toast";
 import Modal from "../components/Modal";
 import type { Gasto } from "../types";
 
-const CATEGORIAS_GASTO = [
+const CATEGORIAS_GASTO_DEFAULT = [
   "Compra mercaderia",
   "Servicios basicos",
   "Alquiler",
@@ -32,7 +32,12 @@ export default function GastosPage() {
   const [descripcion, setDescripcion] = useState("");
   const [monto, setMonto] = useState("");
   const [categoria, setCategoria] = useState("Otro");
+  const [categoriasGasto, setCategoriasGasto] = useState<string[]>(CATEGORIAS_GASTO_DEFAULT);
+  const [mostrarNuevaCategoria, setMostrarNuevaCategoria] = useState(false);
+  const [nuevaCategoriaGasto, setNuevaCategoriaGasto] = useState("");
   const [observacion, setObservacion] = useState("");
+  const [esRecurrente, setEsRecurrente] = useState(false);
+  const [soloRecurrentes, setSoloRecurrentes] = useState(false);
 
   const cargar = async () => {
     try {
@@ -45,7 +50,15 @@ export default function GastosPage() {
 
   useEffect(() => { cargar(); }, [fecha]);
 
-  const totalDia = gastos.reduce((sum, g) => sum + g.monto, 0);
+  // Cargar categorías únicas de gastos existentes
+  useEffect(() => {
+    const catExistentes = gastos.map(g => g.categoria).filter((c): c is string => !!c);
+    const todas = [...new Set([...CATEGORIAS_GASTO_DEFAULT, ...catExistentes])];
+    setCategoriasGasto(todas);
+  }, [gastos]);
+
+  const gastosFiltrados = soloRecurrentes ? gastos.filter(g => g.es_recurrente) : gastos;
+  const totalDia = gastosFiltrados.reduce((sum, g) => sum + g.monto, 0);
 
   const handleExportarCSV = async () => {
     try {
@@ -73,12 +86,14 @@ export default function GastosPage() {
         monto: parseFloat(monto),
         categoria,
         observacion: observacion.trim() || undefined,
+        es_recurrente: esRecurrente,
       });
       toastExito("Gasto registrado");
       setDescripcion("");
       setMonto("");
       setCategoria("Otro");
       setObservacion("");
+      setEsRecurrente(false);
       setMostrarForm(false);
       cargar();
     } catch (err) {
@@ -103,6 +118,10 @@ export default function GastosPage() {
       <div className="page-header">
         <h2>Gastos</h2>
         <div className="flex gap-2 items-center">
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+            <input type="checkbox" checked={soloRecurrentes} onChange={(e) => setSoloRecurrentes(e.target.checked)} />
+            Solo recurrentes
+          </label>
           <input
             type="date"
             className="input"
@@ -161,15 +180,49 @@ export default function GastosPage() {
                 </div>
                 <div>
                   <label className="text-secondary" style={{ fontSize: 12 }}>Categoria</label>
-                  <select
-                    className="input"
-                    value={categoria}
-                    onChange={(e) => setCategoria(e.target.value)}
-                  >
-                    {CATEGORIAS_GASTO.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <select
+                      className="input"
+                      style={{ flex: 1 }}
+                      value={categoria}
+                      onChange={(e) => setCategoria(e.target.value)}
+                    >
+                      {categoriasGasto.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                    <button className="btn btn-outline" style={{ padding: "4px 10px", fontSize: 14, fontWeight: 700 }}
+                      title="Agregar nueva categoría"
+                      onClick={() => setMostrarNuevaCategoria(true)}>
+                      +
+                    </button>
+                  </div>
+                  {mostrarNuevaCategoria && (
+                    <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                      <input className="input" placeholder="Nueva categoría..." value={nuevaCategoriaGasto}
+                        style={{ flex: 1, fontSize: 12 }} autoFocus
+                        onChange={(e) => setNuevaCategoriaGasto(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && nuevaCategoriaGasto.trim()) {
+                            setCategoriasGasto(prev => [...prev.filter(c => c !== "Otro"), nuevaCategoriaGasto.trim(), "Otro"]);
+                            setCategoria(nuevaCategoriaGasto.trim());
+                            setNuevaCategoriaGasto("");
+                            setMostrarNuevaCategoria(false);
+                          }
+                        }} />
+                      <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 10px" }}
+                        onClick={() => {
+                          if (nuevaCategoriaGasto.trim()) {
+                            setCategoriasGasto(prev => [...prev.filter(c => c !== "Otro"), nuevaCategoriaGasto.trim(), "Otro"]);
+                            setCategoria(nuevaCategoriaGasto.trim());
+                            setNuevaCategoriaGasto("");
+                            setMostrarNuevaCategoria(false);
+                          }
+                        }}>OK</button>
+                      <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 8px" }}
+                        onClick={() => { setMostrarNuevaCategoria(false); setNuevaCategoriaGasto(""); }}>x</button>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="text-secondary" style={{ fontSize: 12 }}>Observacion</label>
@@ -181,6 +234,10 @@ export default function GastosPage() {
                   />
                 </div>
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+                <input type="checkbox" checked={esRecurrente} onChange={(e) => setEsRecurrente(e.target.checked)} />
+                <span style={{ fontSize: 13 }}>Es un gasto recurrente (mensual, trimestral, etc.)</span>
+              </label>
               <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
                 <button className="btn btn-outline" onClick={() => setMostrarForm(false)}>
                   Cancelar
@@ -202,19 +259,20 @@ export default function GastosPage() {
                 <th>Descripcion</th>
                 <th>Categoria</th>
                 <th>Observacion</th>
+                <th>Recurrente</th>
                 <th className="text-right">Monto</th>
                 <th style={{ width: 60 }}></th>
               </tr>
             </thead>
             <tbody>
-              {gastos.length === 0 ? (
+              {gastosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center text-secondary" style={{ padding: 40 }}>
+                  <td colSpan={7} className="text-center text-secondary" style={{ padding: 40 }}>
                     No hay gastos registrados para esta fecha
                   </td>
                 </tr>
               ) : (
-                gastos.map((g) => (
+                gastosFiltrados.map((g) => (
                   <tr key={g.id}>
                     <td className="text-secondary" style={{ fontSize: 12 }}>
                       {g.fecha ? new Date(g.fecha).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" }) : "-"}
@@ -222,6 +280,18 @@ export default function GastosPage() {
                     <td><strong>{g.descripcion}</strong></td>
                     <td className="text-secondary">{g.categoria ?? "-"}</td>
                     <td className="text-secondary" style={{ fontSize: 12 }}>{g.observacion ?? "-"}</td>
+                    <td>
+                      {g.es_recurrente ? (
+                        <span style={{
+                          fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 600,
+                          background: "rgba(59, 130, 246, 0.15)", color: "var(--color-primary, #3b82f6)",
+                        }}>
+                          Recurrente
+                        </span>
+                      ) : (
+                        <span className="text-secondary" style={{ fontSize: 11 }}>-</span>
+                      )}
+                    </td>
                     <td className="text-right font-bold" style={{ color: "var(--color-danger)" }}>
                       ${g.monto.toFixed(2)}
                     </td>
