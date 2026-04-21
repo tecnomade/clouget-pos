@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import NumericInput from "../components/NumericInput";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad } from "../services/api";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
@@ -36,6 +36,11 @@ function FormProducto({
     }
   );
   const [mostrarInfoIva, setMostrarInfoIva] = useState(false);
+
+  // Multi-unidad de venta (presentaciones)
+  type UnidadProd = { id?: number; nombre: string; abreviatura?: string; factor: number; precio: number; es_base: boolean };
+  const [unidades, setUnidades] = useState<UnidadProd[]>([]);
+  const [mostrarInfoUnidades, setMostrarInfoUnidades] = useState(false);
   const [preciosLista, setPreciosLista] = useState<Record<number, string>>({});
   const [seriesCount, setSeriesCount] = useState<{ disponible: number; vendido: number; total: number }>({ disponible: 0, vendido: 0, total: 0 });
   const [mostrarRegistrarSeries, setMostrarRegistrarSeries] = useState(false);
@@ -86,6 +91,13 @@ function FormProducto({
       if (productoEditar.requiere_caducidad) {
         recargarLotes();
       }
+      // Cargar unidades / presentaciones del producto
+      listarUnidadesProducto(productoEditar.id).then((us) => {
+        setUnidades(us.map(u => ({
+          id: u.id, nombre: u.nombre, abreviatura: u.abreviatura ?? "",
+          factor: u.factor, precio: u.precio, es_base: u.es_base,
+        })));
+      }).catch(() => {});
     }
   }, [productoEditar?.id]);
 
@@ -109,6 +121,11 @@ function FormProducto({
       }
       if (preciosArr.length > 0) {
         await guardarPreciosProducto(productoId, preciosArr);
+      }
+      // Guardar unidades / presentaciones (solo las con nombre)
+      const unidadesValidas = unidades.filter(u => u.nombre.trim() && u.factor > 0);
+      if (unidadesValidas.length > 0 || form.id) {
+        await guardarUnidadesProducto(productoId, unidadesValidas).catch(() => {});
       }
       onGuardar();
     } catch (err: any) {
@@ -371,6 +388,98 @@ function FormProducto({
           </span>
         </div>
       )}
+
+      {/* Presentaciones / Unidades de venta (multi-unidad) */}
+      <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)", position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+            Presentaciones / Unidades de venta
+            <button type="button" onClick={() => setMostrarInfoUnidades(!mostrarInfoUnidades)}
+              title="Como funciona?"
+              style={{
+                background: "var(--color-primary)", color: "#fff", border: "none",
+                borderRadius: "50%", width: 16, height: 16, fontSize: 10, fontWeight: 700,
+                cursor: "pointer", lineHeight: 1, padding: 0, display: "flex",
+                alignItems: "center", justifyContent: "center",
+              }}>?</button>
+            <span style={{ fontSize: 10, color: "var(--color-text-secondary)", fontWeight: 400, marginLeft: 8 }}>
+              (opcional - solo si vendes en mas de una presentacion)
+            </span>
+          </label>
+          <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "3px 10px" }}
+            onClick={() => setUnidades([...unidades, { nombre: "", abreviatura: "", factor: 1, precio: form.precio_venta, es_base: false }])}>
+            + Agregar
+          </button>
+        </div>
+        {mostrarInfoUnidades && (
+          <div onClick={() => setMostrarInfoUnidades(false)}
+            style={{
+              position: "absolute", top: 36, right: 12, marginTop: 4,
+              background: "var(--color-surface)", border: "1px solid var(--color-border)",
+              borderRadius: 6, padding: 12, fontSize: 11, lineHeight: 1.5,
+              width: 360, zIndex: 30, boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+            }}>
+            <div style={{ fontWeight: 700, marginBottom: 6, color: "var(--color-primary)" }}>
+              Como funciona "Presentaciones"?
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              Permite vender el mismo producto en varias unidades. Por ejemplo una cerveza:
+            </div>
+            <div style={{ marginBottom: 6, padding: 6, background: "var(--color-surface-alt)", borderRadius: 4 }}>
+              <strong>UND</strong> (factor 1) → $1.50<br/>
+              <strong>SIXPACK</strong> (factor 6) → $8.00<br/>
+              <strong>JABA</strong> (factor 12) → $15.00
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              <strong>Factor</strong>: cuantas unidades base consume esta presentacion. Si vendes 1 SIXPACK, se descuentan 6 del stock.
+            </div>
+            <div style={{ marginBottom: 6 }}>
+              En el POS, al agregar el producto el cajero podra elegir la presentacion.
+            </div>
+            <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 6 }}>
+              No es obligatorio. Si solo vendes en una unidad, dejalo vacio.
+            </div>
+            <div style={{ fontSize: 10, marginTop: 8, textAlign: "center", color: "var(--color-text-secondary)" }}>
+              Click para cerrar
+            </div>
+          </div>
+        )}
+        {unidades.length === 0 ? (
+          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", textAlign: "center", padding: 8, fontStyle: "italic" }}>
+            Sin presentaciones. Click "+ Agregar" para crear una (opcional).
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 0.7fr 0.9fr 30px", gap: 6, fontSize: 10, color: "var(--color-text-secondary)", fontWeight: 600 }}>
+              <span>Nombre</span><span>Abreviatura</span><span>Factor</span><span>Precio $</span><span></span>
+            </div>
+            {unidades.map((u, idx) => (
+              <div key={idx} style={{ display: "grid", gridTemplateColumns: "1.5fr 0.7fr 0.7fr 0.9fr 30px", gap: 6, alignItems: "center" }}>
+                <input className="input" placeholder="Ej: SIXPACK" style={{ fontSize: 12 }}
+                  value={u.nombre} onChange={(e) => {
+                    const ar = [...unidades]; ar[idx] = { ...ar[idx], nombre: e.target.value }; setUnidades(ar);
+                  }} />
+                <input className="input" placeholder="6PK" style={{ fontSize: 12 }}
+                  value={u.abreviatura ?? ""} onChange={(e) => {
+                    const ar = [...unidades]; ar[idx] = { ...ar[idx], abreviatura: e.target.value }; setUnidades(ar);
+                  }} />
+                <input className="input" type="number" step="0.01" min="0.01" placeholder="6" style={{ fontSize: 12 }}
+                  value={u.factor} onChange={(e) => {
+                    const ar = [...unidades]; ar[idx] = { ...ar[idx], factor: parseFloat(e.target.value) || 1 }; setUnidades(ar);
+                  }} />
+                <input className="input" type="number" step="0.01" min="0" placeholder="0.00" style={{ fontSize: 12 }}
+                  value={u.precio} onChange={(e) => {
+                    const ar = [...unidades]; ar[idx] = { ...ar[idx], precio: parseFloat(e.target.value) || 0 }; setUnidades(ar);
+                  }} />
+                <button type="button" title="Quitar"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16, padding: 0 }}
+                  onClick={() => setUnidades(unidades.filter((_, i) => i !== idx))}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Imagen del producto */}
       <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
         <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>

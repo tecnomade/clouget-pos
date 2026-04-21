@@ -883,5 +883,43 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_pagos_venta_venta ON pagos_venta(venta_id);
     ");
 
+    // --- Migracion: Presentaciones / unidades multiples por producto ---
+    // Un producto puede venderse en varias unidades (UND, SIXPACK=6, JABA=12, CAJA=24)
+    // Cada presentacion tiene su factor de conversion a la unidad base y su precio propio.
+    // Stock se descuenta como cantidad * factor (en unidades base).
+    // Si el producto no tiene presentaciones, se vende como unidad base (factor=1).
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS unidades_producto (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            abreviatura TEXT,
+            factor REAL NOT NULL DEFAULT 1,
+            precio REAL NOT NULL DEFAULT 0,
+            es_base INTEGER NOT NULL DEFAULT 0,
+            orden INTEGER NOT NULL DEFAULT 0,
+            activa INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_unidades_producto ON unidades_producto(producto_id);
+
+        -- Precios por unidad y lista (opcional, override del precio base de la unidad)
+        CREATE TABLE IF NOT EXISTS precios_unidad_lista (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            unidad_id INTEGER NOT NULL,
+            lista_precio_id INTEGER NOT NULL,
+            precio REAL NOT NULL,
+            FOREIGN KEY (unidad_id) REFERENCES unidades_producto(id) ON DELETE CASCADE,
+            FOREIGN KEY (lista_precio_id) REFERENCES listas_precios(id) ON DELETE CASCADE,
+            UNIQUE(unidad_id, lista_precio_id)
+        );
+    ");
+
+    // Columna en venta_detalles para registrar la unidad de venta usada (factor multiplicador)
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN unidad_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN unidad_nombre TEXT", []);
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN factor_unidad REAL DEFAULT 1", []);
+
     Ok(())
 }

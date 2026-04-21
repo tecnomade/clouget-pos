@@ -105,6 +105,9 @@ export default function PuntoVenta() {
   const [descuentoTipo, setDescuentoTipo] = useState<"monto" | "porcentaje">("porcentaje");
   const [descuentoValor, setDescuentoValor] = useState("");
 
+  // Modal seleccion de unidad (multi-unidad)
+  const [seleccionUnidad, setSeleccionUnidad] = useState<{ producto: ProductoBusqueda; unidades: any[] } | null>(null);
+
   // Pago mixto: lista de pagos y modal para agregar
   const [pagosMixtos, setPagosMixtos] = useState<{ forma_pago: string; monto: number; banco_id?: number | null; referencia?: string | null }[]>([]);
   const [modoPagoMixto, setModoPagoMixto] = useState(false);
@@ -298,7 +301,7 @@ export default function PuntoVenta() {
     }
   };
 
-  const agregarAlCarrito = async (producto: ProductoBusqueda) => {
+  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any) => {
     // Debounce para scanner de código de barras
     const now = Date.now();
     if (lastAddRef.current.id === producto.id && now - lastAddRef.current.time < 500) {
@@ -307,7 +310,20 @@ export default function PuntoVenta() {
     }
     lastAddRef.current = { id: producto.id, time: now };
 
-    const precioEfectivo = producto.precio_lista ?? producto.precio_venta;
+    // Multi-unidad: si el producto tiene presentaciones y no se eligio una, mostrar selector
+    if (!unidadElegida) {
+      try {
+        const { listarUnidadesProducto } = await import("../services/api");
+        const unidades = await listarUnidadesProducto(producto.id);
+        if (unidades.length > 0) {
+          setSeleccionUnidad({ producto, unidades });
+          setBusqueda(""); setResultados([]);
+          return;
+        }
+      } catch { /* ignore - producto sin unidades */ }
+    }
+
+    const precioEfectivo = unidadElegida?.precio ?? producto.precio_lista ?? producto.precio_venta;
 
     // Check if already in cart
     const existente = carrito.find((i) => i.producto_id === producto.id);
@@ -338,7 +354,7 @@ export default function PuntoVenta() {
         {
           producto_id: producto.id,
           codigo: producto.codigo ?? undefined,
-          nombre: producto.nombre,
+          nombre: unidadElegida ? `${producto.nombre} (${unidadElegida.abreviatura || unidadElegida.nombre})` : producto.nombre,
           cantidad: 1,
           precio_unitario: precioEfectivo,
           descuento: 0,
@@ -350,7 +366,10 @@ export default function PuntoVenta() {
           precio_base: producto.precio_venta,
           precios_disponibles: preciosDisponibles,
           lista_seleccionada: listaSel,
-        },
+          unidad_id: unidadElegida?.id,
+          unidad_nombre: unidadElegida?.nombre,
+          factor_unidad: unidadElegida?.factor,
+        } as any,
       ]);
     }
     setBusqueda("");
@@ -518,6 +537,9 @@ export default function PuntoVenta() {
           iva_porcentaje: i.iva_porcentaje,
           subtotal: d.subtotal,
           info_adicional: i.info_adicional || null,
+          unidad_id: i.unidad_id ?? null,
+          unidad_nombre: i.unidad_nombre ?? null,
+          factor_unidad: i.factor_unidad ?? null,
         };
       }),
       forma_pago: usarMixto ? "MIXTO" : formaPago,
@@ -1930,6 +1952,66 @@ export default function PuntoVenta() {
               }}>
                 Confirmar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Seleccionar unidad de venta (multi-unidad) */}
+      {seleccionUnidad && (
+        <div className="modal-overlay" onClick={() => setSeleccionUnidad(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header"><h3>Seleccionar presentacion - {seleccionUnidad.producto.nombre}</h3></div>
+            <div className="modal-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Este producto tiene varias presentaciones. Elija la que va a vender:
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {/* Opcion: unidad base (sin presentacion) */}
+                <button type="button"
+                  style={{
+                    padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+                    background: "var(--color-surface-alt)",
+                    border: "1px solid var(--color-border)",
+                    color: "var(--color-text)",
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    fontWeight: 500,
+                  }}
+                  onClick={() => {
+                    const p = seleccionUnidad.producto;
+                    setSeleccionUnidad(null);
+                    agregarAlCarrito(p, { id: null, nombre: seleccionUnidad.producto.precio_venta != null ? "Unidad base" : "UND", abreviatura: "UND", factor: 1, precio: p.precio_lista ?? p.precio_venta });
+                  }}>
+                  <span>📦 Unidad individual (UND)</span>
+                  <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${(seleccionUnidad.producto.precio_lista ?? seleccionUnidad.producto.precio_venta).toFixed(2)}</span>
+                </button>
+                {seleccionUnidad.unidades.map((u) => (
+                  <button key={u.id} type="button"
+                    style={{
+                      padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+                      background: "rgba(59,130,246,0.1)",
+                      border: "1px solid rgba(59,130,246,0.4)",
+                      color: "var(--color-text)",
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      fontWeight: 500,
+                    }}
+                    onClick={() => {
+                      const p = seleccionUnidad.producto;
+                      setSeleccionUnidad(null);
+                      agregarAlCarrito(p, u);
+                    }}>
+                    <span>
+                      <strong>{u.nombre}</strong>
+                      {u.abreviatura && u.abreviatura !== u.nombre && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-text-secondary)" }}>({u.abreviatura})</span>}
+                      <span style={{ marginLeft: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>= {u.factor} und base</span>
+                    </span>
+                    <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${u.precio.toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn btn-outline" onClick={() => setSeleccionUnidad(null)}>Cancelar</button>
             </div>
           </div>
         </div>

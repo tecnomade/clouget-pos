@@ -61,6 +61,14 @@ pub struct VentaDetalle {
     pub subtotal: f64,
     #[serde(default)]
     pub info_adicional: Option<String>,
+    /// Unidad de medida usada (opcional). Si presente, factor_unidad indica cuantas
+    /// unidades base equivale 1 unidad de venta (ej: SIXPACK = 6 unidades base)
+    #[serde(default)]
+    pub unidad_id: Option<i64>,
+    #[serde(default)]
+    pub unidad_nombre: Option<String>,
+    #[serde(default)]
+    pub factor_unidad: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -1129,3 +1129,68 @@ pub fn ajustar_cantidad_lote(db: State<Database>, lote_id: i64, cantidad: f64) -
     ).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ============================================================================
+// PRESENTACIONES / UNIDADES MULTIPLES POR PRODUCTO (v1.9.7)
+// ============================================================================
+
+/// Lista las unidades/presentaciones de un producto, ordenadas por orden y nombre
+#[tauri::command]
+pub fn listar_unidades_producto(db: State<Database>, producto_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, abreviatura, factor, precio, es_base, orden, activa
+         FROM unidades_producto
+         WHERE producto_id = ?1 AND activa = 1
+         ORDER BY orden, factor"
+    ).map_err(|e| e.to_string())?;
+
+    let unidades = stmt.query_map(rusqlite::params![producto_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "nombre": row.get::<_, String>(1)?,
+            "abreviatura": row.get::<_, Option<String>>(2)?,
+            "factor": row.get::<_, f64>(3)?,
+            "precio": row.get::<_, f64>(4)?,
+            "es_base": row.get::<_, i32>(5)? != 0,
+            "orden": row.get::<_, i32>(6)?,
+            "activa": row.get::<_, i32>(7)? != 0,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| e.to_string())?;
+    Ok(unidades)
+}
+
+/// Reemplaza todas las unidades de un producto (operación atómica)
+#[tauri::command]
+pub fn guardar_unidades_producto(
+    db: State<Database>,
+    producto_id: i64,
+    unidades: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Borrar las existentes (CASCADE limpia precios_unidad_lista)
+    conn.execute("DELETE FROM unidades_producto WHERE producto_id = ?1",
+        rusqlite::params![producto_id]).map_err(|e| e.to_string())?;
+
+    for (i, u) in unidades.iter().enumerate() {
+        let nombre = u.get("nombre").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let abreviatura = u.get("abreviatura").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let factor = u.get("factor").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let precio = u.get("precio").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let es_base = u.get("es_base").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        if nombre.trim().is_empty() { continue; }
+        if factor <= 0.0 { return Err(format!("Factor invalido para {}", nombre)); }
+
+        conn.execute(
+            "INSERT INTO unidades_producto (producto_id, nombre, abreviatura, factor, precio, es_base, orden, activa)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+            rusqlite::params![producto_id, nombre.trim(), abreviatura, factor, precio, es_base as i32, i as i32],
+        ).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+

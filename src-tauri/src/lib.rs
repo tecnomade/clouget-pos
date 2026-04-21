@@ -113,6 +113,8 @@ pub fn run() {
             commands::productos::alertas_caducidad,
             commands::productos::eliminar_lote_caducidad,
             commands::productos::ajustar_cantidad_lote,
+            commands::productos::listar_unidades_producto,
+            commands::productos::guardar_unidades_producto,
             // Clientes
             commands::clientes::crear_cliente,
             commands::clientes::actualizar_cliente,

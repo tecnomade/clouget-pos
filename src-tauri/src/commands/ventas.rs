@@ -168,10 +168,15 @@ pub fn registrar_venta(
             )
             .unwrap_or(0.0);
 
+        // Multi-unidad: factor de conversion (default 1 = unidad base)
+        let factor_unidad = item.factor_unidad.unwrap_or(1.0);
+        let cantidad_base = item.cantidad * factor_unidad; // cantidad real a descontar del stock
+
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
-             descuento, iva_porcentaje, subtotal, info_adicional, precio_costo)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             descuento, iva_porcentaje, subtotal, info_adicional, precio_costo,
+             unidad_id, unidad_nombre, factor_unidad)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -182,6 +187,9 @@ pub fn registrar_venta(
                 subtotal,
                 item.info_adicional,
                 precio_costo_prod,
+                item.unidad_id,
+                item.unidad_nombre,
+                factor_unidad,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -197,13 +205,13 @@ pub fn registrar_venta(
 
         let omite_stock = es_servicio || no_controla_stock;
 
-        // Descontar stock (si no es servicio y controla stock)
+        // Descontar stock (cantidad_base = cantidad x factor de la unidad de venta)
         if !omite_stock {
             conn.execute(
                 "UPDATE productos SET stock_actual = stock_actual - ?1,
                  updated_at = datetime('now','localtime')
                  WHERE id = ?2",
-                rusqlite::params![item.cantidad, item.producto_id],
+                rusqlite::params![cantidad_base, item.producto_id],
             )
             .map_err(|e| e.to_string())?;
         }
@@ -214,7 +222,7 @@ pub fn registrar_venta(
                 conn.execute(
                     "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
                      WHERE producto_id = ?2 AND establecimiento_id = ?3",
-                    rusqlite::params![item.cantidad, item.producto_id, eid],
+                    rusqlite::params![cantidad_base, item.producto_id, eid],
                 ).ok();
             }
         }
@@ -226,9 +234,9 @@ pub fn registrar_venta(
                  VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 rusqlite::params![
                     item.producto_id,
-                    -(item.cantidad),
+                    -(cantidad_base),
                     stock_antes,
-                    stock_antes - item.cantidad,
+                    stock_antes - cantidad_base,
                     item.precio_unitario,
                     venta_id,
                     usuario_nombre,
@@ -257,6 +265,7 @@ pub fn registrar_venta(
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
             info_adicional: item.info_adicional.clone(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
         });
     }
 
@@ -537,6 +546,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1352,6 +1362,7 @@ fn guardar_documento_pendiente(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
         });
     }
 
@@ -1536,6 +1547,7 @@ pub fn guardar_guia_remision(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
         });
     }
 
@@ -1857,6 +1869,7 @@ pub fn convertir_guia_a_venta(
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()

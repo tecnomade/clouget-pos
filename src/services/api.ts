@@ -980,6 +980,13 @@ export const reporteIvaMensual = (anio: number, mes: number) =>
     iva_a_pagar: number; total_ventas: number; total_compras: number;
   }>("reporte_iva_mensual", { anio, mes });
 
+// --- Multi-unidad (v1.9.7) ---
+export const listarUnidadesProducto = (productoId: number) =>
+  smartInvoke<Array<{ id: number; nombre: string; abreviatura: string | null; factor: number; precio: number; es_base: boolean; orden: number; activa: boolean }>>(
+    "listar_unidades_producto", { productoId });
+export const guardarUnidadesProducto = (productoId: number, unidades: any[]) =>
+  smartInvoke<void>("guardar_unidades_producto", { productoId, unidades });
+
 // --- Reportes detallados (v1.9.4) ---
 export const reporteCxcPorCliente = () => smartInvoke<any[]>("reporte_cxc_por_cliente");
 export const reporteCxcDetalleCliente = (clienteId: number) =>

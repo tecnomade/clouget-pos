@@ -71,6 +71,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -193,6 +194,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1263,6 +1265,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None,
             })
         })
         .map_err(|e| e.to_string())?

@@ -168,6 +168,9 @@ export interface VentaDetalle {
   iva_porcentaje: number;
   subtotal: number;
   info_adicional?: string | null;
+  unidad_id?: number | null;
+  unidad_nombre?: string | null;
+  factor_unidad?: number | null;
 }
 
 export interface PagoMixto {
@@ -577,4 +580,8 @@ export interface ItemCarrito {
   precios_disponibles?: PrecioProductoDetalle[];
   lista_seleccionada?: string;
   info_adicional?: string;
+  // Multi-unidad: presentacion seleccionada
+  unidad_id?: number;
+  unidad_nombre?: string;
+  factor_unidad?: number;
 }
