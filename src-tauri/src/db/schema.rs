@@ -837,6 +837,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE compras ADD COLUMN banco_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE compras ADD COLUMN referencia_pago TEXT", []);
 
+    // Sesion persistente entre reinicios de app (v2.3.8)
+    // Default: NO persistir — el usuario debe loguearse cada vez que abre la app.
+    // Si se activa, la sesion se restaura desde config al iniciar.
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('sesion_persistente', '0')", []);
+
     // === CAJA ANTI-FRAUDE FASE 1 (v2.3.1) ===
     // Motivo de la diferencia entre apertura y cierre anterior (si aplica)
     let _ = conn.execute("ALTER TABLE caja ADD COLUMN motivo_diferencia_apertura TEXT", []);

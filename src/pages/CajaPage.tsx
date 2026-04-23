@@ -56,17 +56,23 @@ export default function CajaPage() {
 
   const cargar = async () => {
     setCargando(true);
-    const caja = await obtenerCajaAbierta();
-    setCajaAbierta(caja);
-    // Si no hay caja abierta, cargar info del ultimo cierre para sugerencia
-    if (!caja) {
-      try {
-        const uc = await obtenerUltimoCierre();
-        setUltimoCierre(uc);
-        if (uc?.monto_real != null) {
-          setMontoInicial(uc.monto_real.toString());
-        }
-      } catch { /* ignore */ }
+    try {
+      const caja = await obtenerCajaAbierta().catch(() => null);
+      setCajaAbierta(caja);
+      // Si no hay caja abierta, cargar info del ultimo cierre para sugerencia
+      if (!caja) {
+        try {
+          const uc = await obtenerUltimoCierre();
+          setUltimoCierre(uc);
+          if (uc?.monto_real != null) {
+            setMontoInicial(uc.monto_real.toString());
+          }
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      // Cualquier error al cargar no debe romper la pagina
+      console.error("[CajaPage] Error en cargar():", err);
+      toastError("Error cargando caja: " + err);
     }
     setCargando(false);
   };

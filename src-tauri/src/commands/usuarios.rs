@@ -60,12 +60,21 @@ pub fn iniciar_sesion(
                     };
                     let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
                     *sesion_guard = Some(nueva_sesion.clone());
-                    // Persistir sesión en config para sobrevivir reinicios
-                    if let Ok(json) = serde_json::to_string(&nueva_sesion) {
-                        let _ = conn.execute(
-                            "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
-                            rusqlite::params![json],
-                        );
+                    // Persistir sesión solo si config sesion_persistente = '1' (default: NO)
+                    let persistir: bool = conn.query_row(
+                        "SELECT value FROM config WHERE key = 'sesion_persistente'",
+                        [], |r| r.get::<_, String>(0)
+                    ).map(|v| v == "1").unwrap_or(false);
+                    if persistir {
+                        if let Ok(json) = serde_json::to_string(&nueva_sesion) {
+                            let _ = conn.execute(
+                                "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                                rusqlite::params![json],
+                            );
+                        }
+                    } else {
+                        // Limpiar cualquier sesion previa persistida
+                        let _ = conn.execute("DELETE FROM config WHERE key = 'sesion_activa'", []);
                     }
                     return Ok(nueva_sesion);
                 }
@@ -93,12 +102,20 @@ pub fn iniciar_sesion(
                             };
                             let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
                             *sesion_guard = Some(nueva_sesion.clone());
-                            // Persistir sesión en config para sobrevivir reinicios
-                            if let Ok(json) = serde_json::to_string(&nueva_sesion) {
-                                let _ = conn.execute(
-                                    "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
-                                    rusqlite::params![json],
-                                );
+                            // Persistir sesión solo si config sesion_persistente = '1'
+                            let persistir: bool = conn.query_row(
+                                "SELECT value FROM config WHERE key = 'sesion_persistente'",
+                                [], |r| r.get::<_, String>(0)
+                            ).map(|v| v == "1").unwrap_or(false);
+                            if persistir {
+                                if let Ok(json) = serde_json::to_string(&nueva_sesion) {
+                                    let _ = conn.execute(
+                                        "INSERT INTO config (key, value) VALUES ('sesion_activa', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                                        rusqlite::params![json],
+                                    );
+                                }
+                            } else {
+                                let _ = conn.execute("DELETE FROM config WHERE key = 'sesion_activa'", []);
                             }
                             return Ok(nueva_sesion);
                         }
@@ -135,8 +152,17 @@ pub fn obtener_sesion_actual(
     if sesion_guard.is_some() {
         return Ok(sesion_guard.clone());
     }
-    // Intentar restaurar desde config
+    // Intentar restaurar desde config SOLO si sesion_persistente = '1'
     if let Ok(conn) = db.conn.lock() {
+        let persistir: bool = conn.query_row(
+            "SELECT value FROM config WHERE key = 'sesion_persistente'",
+            [], |r| r.get::<_, String>(0)
+        ).map(|v| v == "1").unwrap_or(false);
+        if !persistir {
+            // Limpiar cualquier sesion vieja que pudo haber quedado de versiones anteriores
+            let _ = conn.execute("DELETE FROM config WHERE key = 'sesion_activa'", []);
+            return Ok(None);
+        }
         let json: Result<String, _> = conn.query_row(
             "SELECT value FROM config WHERE key = 'sesion_activa'",
             [],

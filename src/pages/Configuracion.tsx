@@ -240,6 +240,23 @@ export default function Configuracion() {
                     <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Órdenes de servicio (talleres electrónicos, automotrices)</div>
                   </div>
                 </label>
+                {/* Sesion persistente entre reinicios */}
+                <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={config.sesion_persistente === "1"}
+                    onChange={(e) => {
+                      const val = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, sesion_persistente: val });
+                      guardarConfig({ sesion_persistente: val });
+                      toastExito(e.target.checked ? "Sesión persistirá entre reinicios" : "La sesión se cierra al cerrar la app");
+                    }} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Mantener sesión activa entre reinicios</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Si está activo, al cerrar y reabrir la app el último usuario quedará logueado.
+                      Recomendado solo en POS dedicados con un solo cajero.
+                    </div>
+                  </div>
+                </label>
                 {/* Control de stock negativo (transversal a todos los modulos) */}
                 <div style={{ gridColumn: "1 / -1", padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
                   <div>
