@@ -9,9 +9,38 @@ mod sri;
 pub mod utils;
 
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 
 use db::{Database, SesionState};
 use std::sync::{Arc, Mutex};
+
+/// Comando custom: verifica e instala update desde un endpoint dinamico (segun canal).
+/// El plugin oficial solo lee endpoints estaticos del tauri.conf.json.
+/// Este comando permite consultar el endpoint del canal beta sin recompilar la app.
+#[tauri::command]
+async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<Option<String>, String> {
+    let canal_safe = if canal == "beta" { "beta" } else { "stable" };
+    let endpoint_url = format!(
+        "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest?canal={}",
+        canal_safe
+    );
+    let url = url::Url::parse(&endpoint_url).map_err(|e| e.to_string())?;
+
+    let updater = app.updater_builder()
+        .endpoints(vec![url]).map_err(|e| e.to_string())?
+        .build().map_err(|e| e.to_string())?;
+
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(update) => {
+            let new_version = update.version.clone();
+            // Descargar e instalar
+            update.download_and_install(|_, _| {}, || {}).await
+                .map_err(|e| e.to_string())?;
+            Ok(Some(new_version))
+        }
+        None => Ok(None),
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -80,6 +109,7 @@ pub fn run() {
         .manage(sesion_state)
         .manage(offline_db)
         .invoke_handler(tauri::generate_handler![
+            verificar_update_canal,
             // Productos
             commands::productos::crear_producto,
             commands::productos::actualizar_producto,

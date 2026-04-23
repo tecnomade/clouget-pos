@@ -752,6 +752,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "tower-http 0.5.2",
+ "url",
  "uuid",
  "winreg",
  "x509-parser 0.16.0",

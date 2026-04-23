@@ -1,11 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { invoke } from "@tauri-apps/api/core";
 import { obtenerConfig } from "../services/api";
-
-// Endpoint de manifest controlado por admin (Supabase edge function)
-const ENDPOINT_MANIFEST = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpha3F1emZsa3ZmcWZscW54cHhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MDc4NjAsImV4cCI6MjA4NjM4Mzg2MH0.dqdWxSYpyG2fKJt7VR2SjyX5lW__v7BuwQlVrm3ddGg";
 
 type Estado = "idle" | "disponible" | "descargando" | "instalado" | "error";
 
@@ -62,29 +59,25 @@ export default function UpdateChecker() {
       } catch { /* fallback a stable */ }
 
       if (canal === "beta") {
-        // Canal BETA: consulta al edge function Supabase con canal=beta
-        // (el plugin de Tauri solo soporta endpoints estaticos, asi que para beta
-        // consultamos manualmente; el user puede descargar la nueva version si quiere)
+        // Canal BETA: usa el comando Rust 'verificar_update_canal' que construye un
+        // updater con endpoint dinamico (Supabase con ?canal=beta) y descarga+instala
         try {
-          const resp = await fetch(`${ENDPOINT_MANIFEST}?canal=beta`, {
-            headers: {
-              "apikey": SUPABASE_ANON_KEY,
-              "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-            },
-          });
-          if (resp.ok && resp.status !== 204) {
-            const betaManifest = await resp.json();
-            const current = __APP_VERSION__;
-            console.log(`[Updater] Canal BETA. Actual: ${current}, disponible: ${betaManifest.version}`);
-            if (betaManifest.version && betaManifest.version !== current) {
-              setUpdate({ version: betaManifest.version } as any);
-              setEstado("disponible");
-            }
-          } else if (resp.status === 204) {
-            console.log("[Updater] Canal BETA sin version configurada en admin");
+          console.log("[Updater] Canal BETA: verificando via comando Rust...");
+          setEstado("descargando");
+          setProgreso(0);
+          const nuevaVersion = await invoke<string | null>("verificar_update_canal", { canal: "beta" });
+          if (nuevaVersion) {
+            console.log(`[Updater] Beta v${nuevaVersion} instalada, reiniciando...`);
+            setUpdate({ version: nuevaVersion } as any);
+            setEstado("instalado");
+            setTimeout(async () => { await relaunch(); }, 1500);
+          } else {
+            console.log("[Updater] Canal BETA: ya en ultima version");
+            setEstado("idle");
           }
         } catch (e) {
-          console.warn("[Updater] No se pudo consultar canal beta:", e);
+          console.warn("[Updater] Error canal beta:", e);
+          setEstado("idle");
         }
         return;
       }
