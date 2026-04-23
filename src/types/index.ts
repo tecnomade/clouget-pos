@@ -541,6 +541,8 @@ export interface NuevaCompra {
   es_credito: boolean;
   observacion?: string;
   dias_credito?: number;
+  banco_id?: number | null;
+  referencia_pago?: string | null;
 }
 
 // Cuentas por Pagar

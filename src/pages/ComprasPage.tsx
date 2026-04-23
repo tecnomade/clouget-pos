@@ -153,6 +153,10 @@ export default function ComprasPage() {
   const [esCredito, setEsCredito] = useState(false);
   const [diasCredito, setDiasCredito] = useState("30");
   const [observacion, setObservacion] = useState("");
+  // Banco + referencia para pagos no-efectivo (DEBITO/TRANSFERENCIA/CHEQUE)
+  const [bancoIdCompra, setBancoIdCompra] = useState<number | null>(null);
+  const [referenciaCompra, setReferenciaCompra] = useState("");
+  const [cuentasBancoCompra, setCuentasBancoCompra] = useState<CuentaBanco[]>([]);
   const [items, setItems] = useState<(ItemCompra & { _key: number; nombre_display: string; requiere_caducidad?: boolean })[]>([]);
   const [buscandoProducto, setBuscandoProducto] = useState("");
   const [resultadosBusqueda, setResultadosBusqueda] = useState<ProductoBusqueda[]>([]);
@@ -473,6 +477,11 @@ export default function ComprasPage() {
         return;
       }
     }
+    const reqBanco = ["DEBITO", "TRANSFERENCIA", "CHEQUE"].includes(formaPago);
+    if (reqBanco && !bancoIdCompra) {
+      toastError("Seleccione una cuenta bancaria para esta forma de pago");
+      return;
+    }
     try {
       await registrarCompra({
         proveedor_id: proveedorId as number,
@@ -489,7 +498,9 @@ export default function ComprasPage() {
         es_credito: esCredito,
         observacion: observacion.trim() || undefined,
         dias_credito: esCredito ? parseInt(diasCredito) : undefined,
-      });
+        banco_id: reqBanco ? bancoIdCompra! : null,
+        referencia_pago: reqBanco && referenciaCompra.trim() ? referenciaCompra.trim() : null,
+      } as any);
       toastExito("Compra registrada exitosamente");
       setMostrarFormCompra(false);
       setProveedorId("");
@@ -498,6 +509,8 @@ export default function ComprasPage() {
       setEsCredito(false);
       setDiasCredito("30");
       setObservacion("");
+      setBancoIdCompra(null);
+      setReferenciaCompra("");
       setItems([]);
       cargarCompras();
     } catch (err) {
@@ -567,7 +580,14 @@ export default function ComprasPage() {
             >
               Importar XML
             </button>
-            <button className="btn btn-primary" onClick={() => { setMostrarFormCompra(!mostrarFormCompra); if (!mostrarFormCompra) agregarItemVacio(); }}>
+            <button className="btn btn-primary" onClick={async () => {
+              const nuevo = !mostrarFormCompra;
+              setMostrarFormCompra(nuevo);
+              if (nuevo) {
+                agregarItemVacio();
+                try { setCuentasBancoCompra(await listarCuentasBanco()); } catch { /* */ }
+              }
+            }}>
               + Nueva Compra
             </button>
           </div>
@@ -614,7 +634,7 @@ export default function ComprasPage() {
                     </div>
                     <div>
                       <label className="text-secondary" style={{ fontSize: 12 }}>Forma de pago</label>
-                      <select className="input" value={formaPago} onChange={(e) => setFormaPago(e.target.value)}>
+                      <select className="input" value={formaPago} onChange={(e) => { setFormaPago(e.target.value); setBancoIdCompra(null); setReferenciaCompra(""); }}>
                         <option value="EFECTIVO">Efectivo</option>
                         <option value="TRANSFERENCIA">Transferencia</option>
                         <option value="DEBITO">Débito Bancario</option>
@@ -622,6 +642,39 @@ export default function ComprasPage() {
                       </select>
                     </div>
                   </div>
+
+                  {/* Banco + referencia para pagos no-efectivo */}
+                  {(["DEBITO", "TRANSFERENCIA", "CHEQUE"].includes(formaPago)) && (
+                    <div style={{ marginTop: 12, padding: 10, background: "rgba(59,130,246,0.06)", borderRadius: 6, border: "1px solid rgba(59,130,246,0.25)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div>
+                          <label className="text-secondary" style={{ fontSize: 11, fontWeight: 600 }}>Cuenta bancaria *</label>
+                          <select className="input" style={{ fontSize: 12 }}
+                            value={bancoIdCompra === null ? "" : String(bancoIdCompra)}
+                            onChange={(e) => setBancoIdCompra(e.target.value ? parseInt(e.target.value) : null)}>
+                            <option value="">— Seleccione cuenta —</option>
+                            {cuentasBancoCompra.map((b: any) => (
+                              <option key={b.id} value={b.id}>
+                                {b.nombre}{b.numero_cuenta ? ` · ${b.numero_cuenta}` : ""}{b.tipo_cuenta ? ` (${b.tipo_cuenta})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-secondary" style={{ fontSize: 11, fontWeight: 600 }}>Referencia / N° transacción</label>
+                          <input className="input" style={{ fontSize: 12 }}
+                            placeholder="Opcional"
+                            value={referenciaCompra}
+                            onChange={(e) => setReferenciaCompra(e.target.value)} />
+                        </div>
+                      </div>
+                      {cuentasBancoCompra.length === 0 && (
+                        <div style={{ fontSize: 11, color: "var(--color-warning)", marginTop: 6 }}>
+                          ⚠ No hay cuentas bancarias registradas. Cree una en Configuración → Cuentas Bancarias.
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Fila 2: Credito + Dias + Observacion */}
                   <div style={{ display: "grid", gridTemplateColumns: "auto 120px 1fr", gap: 12, marginTop: 12, alignItems: "end" }}>
