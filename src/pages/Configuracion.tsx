@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, crearCategoria, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos } from "../services/api";
+import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
@@ -16,8 +16,9 @@ export default function Configuracion() {
   const [mostrarReset, setMostrarReset] = useState(false);
   const [confirmReset, setConfirmReset] = useState("");
   const [resetEnProgreso, setResetEnProgreso] = useState(false);
-  const [categorias, setCategorias] = useState<Categoria[]>([]);
-  const [nuevaCat, setNuevaCat] = useState("");
+  // Categorias de productos: gestion movida a la pagina Productos.
+  // Mantenemos el state mientras se carga (otros usos potenciales) pero no se renderiza aqui.
+  const [, setCategorias] = useState<Categoria[]>([]);
   const [impresoras, setImpresoras] = useState<string[]>([]);
   const [refrescandoImpresoras, setRefrescandoImpresoras] = useState(false);
   const [rutaDb, setRutaDb] = useState("");
@@ -136,17 +137,6 @@ export default function Configuracion() {
       toastError("Error: " + err);
     }
     setGuardando(false);
-  };
-
-  const handleCrearCategoria = async () => {
-    if (!nuevaCat.trim()) return;
-    try {
-      await crearCategoria({ nombre: nuevaCat.trim(), activo: true });
-      setNuevaCat("");
-      setCategorias(await listarCategorias());
-    } catch (err) {
-      toastError("Error: " + err);
-    }
   };
 
   const handleCrearRespaldo = async () => {
@@ -706,43 +696,7 @@ export default function Configuracion() {
             </div>
           </div>
 
-          {/* Categorías */}
-          <div className="card">
-            <div className="card-header">Categorías de Productos</div>
-            <div className="card-body">
-              <div className="flex gap-2 mb-4">
-                <input
-                  className="input"
-                  placeholder="Nueva categoría..."
-                  value={nuevaCat}
-                  onChange={(e) => setNuevaCat(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleCrearCategoria(); }}
-                />
-                <button className="btn btn-primary" onClick={handleCrearCategoria}>Agregar</button>
-              </div>
-              {categorias.length === 0 ? (
-                <p className="text-secondary text-center" style={{ padding: 16 }}>
-                  No hay categorías creadas
-                </p>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {categorias.map((c) => (
-                    <div
-                      key={c.id}
-                      style={{
-                        padding: "8px 12px",
-                        background: "var(--color-bg)",
-                        borderRadius: "var(--radius)",
-                        fontSize: 13,
-                      }}
-                    >
-                      {c.nombre}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Categorías de Productos: gestionarlo en pagina Productos (eliminado de aqui) */}
 
           {/* Listas de Precios */}
           <div className="card">
