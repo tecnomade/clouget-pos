@@ -99,6 +99,25 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
         )
         .map_err(|e| e.to_string())?;
 
+        // v2.2.0: si viene fecha_caducidad, crear lote automaticamente
+        if let Some(prod_id) = item.producto_id {
+            if let Some(fecha_cad) = &item.lote_fecha_caducidad {
+                if !fecha_cad.trim().is_empty() {
+                    let lote_num = item.lote_numero.clone().filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| {
+                            // Auto-generar: LOT-YYYYMMDD-{compra_id}
+                            let fecha_hoy = chrono::Local::now().format("%Y%m%d").to_string();
+                            format!("LOT-{}-{}", fecha_hoy, compra_id)
+                        });
+                    conn.execute(
+                        "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, compra_id, fecha_elaboracion)
+                         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6)",
+                        rusqlite::params![prod_id, lote_num, fecha_cad, item.cantidad, compra_id, item.lote_fecha_elaboracion],
+                    ).ok();
+                }
+            }
+        }
+
         let detalle_id = conn.last_insert_rowid();
         detalles.push(CompraDetalle {
             id: Some(detalle_id),

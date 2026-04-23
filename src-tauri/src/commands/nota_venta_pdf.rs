@@ -561,7 +561,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(10).ok(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
             };
             let codigo: String = row.get(9)?;
             Ok((det, codigo))

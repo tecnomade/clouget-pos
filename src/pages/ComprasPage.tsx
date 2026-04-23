@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   listarProveedores,
   buscarProveedores,
@@ -151,7 +151,7 @@ export default function ComprasPage() {
   const [esCredito, setEsCredito] = useState(false);
   const [diasCredito, setDiasCredito] = useState("30");
   const [observacion, setObservacion] = useState("");
-  const [items, setItems] = useState<(ItemCompra & { _key: number; nombre_display: string })[]>([]);
+  const [items, setItems] = useState<(ItemCompra & { _key: number; nombre_display: string; requiere_caducidad?: boolean })[]>([]);
   const [buscandoProducto, setBuscandoProducto] = useState("");
   const [resultadosBusqueda, setResultadosBusqueda] = useState<ProductoBusqueda[]>([]);
   const [itemBuscaIndex, setItemBuscaIndex] = useState<number | null>(null);
@@ -405,16 +405,24 @@ export default function ComprasPage() {
     }, 300);
   };
 
-  const seleccionarProducto = (prod: ProductoBusqueda, index: number) => {
+  const seleccionarProducto = async (prod: ProductoBusqueda, index: number) => {
+    // Consultar si el producto requiere caducidad (buscamos en productos completo)
+    let requiereCaducidad = false;
+    try {
+      const { obtenerProducto } = await import("../services/api");
+      const p: any = await obtenerProducto(prod.id);
+      requiereCaducidad = !!p?.requiere_caducidad;
+    } catch { /* ignore */ }
+
     const newItems = [...items];
     newItems[index] = {
       ...newItems[index],
       producto_id: prod.id,
       nombre_display: prod.nombre,
       descripcion: prod.nombre,
-      // Precio de COMPRA = precio_costo actual del producto (no precio de venta)
       precio_unitario: prod.precio_costo ?? 0,
       iva_porcentaje: prod.iva_porcentaje,
+      requiere_caducidad: requiereCaducidad,
     };
     setItems(newItems);
     setBuscandoProducto("");
@@ -456,8 +464,13 @@ export default function ComprasPage() {
       await registrarCompra({
         proveedor_id: proveedorId as number,
         numero_factura: numeroFactura.trim() || undefined,
-        items: items.map(({ producto_id, descripcion, cantidad, precio_unitario, iva_porcentaje }) => ({
-          producto_id, descripcion: descripcion?.trim() || undefined, cantidad, precio_unitario, iva_porcentaje,
+        items: items.map(({ producto_id, descripcion, cantidad, precio_unitario, iva_porcentaje, lote_numero, lote_fecha_caducidad, lote_fecha_elaboracion }) => ({
+          producto_id,
+          descripcion: descripcion?.trim() || undefined,
+          cantidad, precio_unitario, iva_porcentaje,
+          lote_numero: lote_numero?.trim() || undefined,
+          lote_fecha_caducidad: lote_fecha_caducidad || undefined,
+          lote_fecha_elaboracion: lote_fecha_elaboracion || undefined,
         })),
         forma_pago: formaPago,
         es_credito: esCredito,
@@ -653,7 +666,8 @@ export default function ComprasPage() {
                       </thead>
                       <tbody>
                         {items.map((item, idx) => (
-                          <tr key={item._key}>
+                          <React.Fragment key={item._key}>
+                          <tr>
                             <td style={{ position: "relative" }}>
                               <input
                                 className="input"
@@ -750,6 +764,37 @@ export default function ComprasPage() {
                               </button>
                             </td>
                           </tr>
+                          {/* Sub-fila de LOTE si el producto requiere caducidad */}
+                          {item.requiere_caducidad && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: "4px 8px 8px 30px", background: "rgba(245, 158, 11, 0.04)" }}>
+                                <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
+                                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-warning)" }}>
+                                    🕐 Caducidad:
+                                  </span>
+                                  <div>
+                                    <label style={{ fontSize: 10, color: "var(--color-text-secondary)", display: "block" }}>Nro. Lote (auto si vacio)</label>
+                                    <input className="input" style={{ fontSize: 12 }} placeholder="LOT-001"
+                                      value={item.lote_numero || ""}
+                                      onChange={(e) => actualizarItem(idx, "lote_numero", e.target.value)} />
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: 10, color: "var(--color-text-secondary)", display: "block" }}>Fecha elaboracion</label>
+                                    <input type="date" className="input" style={{ fontSize: 12 }}
+                                      value={item.lote_fecha_elaboracion || ""}
+                                      onChange={(e) => actualizarItem(idx, "lote_fecha_elaboracion", e.target.value)} />
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: 10, color: "var(--color-text-secondary)", display: "block" }}>Fecha caducidad *</label>
+                                    <input type="date" className="input" style={{ fontSize: 12 }}
+                                      value={item.lote_fecha_caducidad || ""}
+                                      onChange={(e) => actualizarItem(idx, "lote_fecha_caducidad", e.target.value)} />
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          </React.Fragment>
                         ))}
                         {items.length === 0 && (
                           <tr>

@@ -31,6 +31,8 @@ export interface ProductoTactil {
   categoria_id?: number;
   categoria_nombre?: string;
   imagen?: string;
+  es_servicio?: boolean;
+  no_controla_stock?: boolean;
 }
 
 export interface ProductoBusqueda {
@@ -173,6 +175,7 @@ export interface VentaDetalle {
   unidad_id?: number | null;
   unidad_nombre?: string | null;
   factor_unidad?: number | null;
+  lote_id?: number | null;
 }
 
 export interface PagoMixto {
@@ -518,6 +521,10 @@ export interface ItemCompra {
   cantidad: number;
   precio_unitario: number;
   iva_porcentaje: number;
+  // Lote de caducidad (opcional, si producto requiere_caducidad)
+  lote_numero?: string;
+  lote_fecha_caducidad?: string;
+  lote_fecha_elaboracion?: string;
 }
 
 export interface NuevaCompra {
@@ -586,4 +593,9 @@ export interface ItemCarrito {
   unidad_id?: number;
   unidad_nombre?: string;
   factor_unidad?: number;
+  // Lote de caducidad seleccionado (v2.2.0)
+  lote_id?: number;
+  lote_numero?: string;
+  lote_fecha_caducidad?: string;
+  lote_dias_restantes?: number;
 }

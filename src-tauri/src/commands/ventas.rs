@@ -172,11 +172,33 @@ pub fn registrar_venta(
         let factor_unidad = item.factor_unidad.unwrap_or(1.0);
         let cantidad_base = item.cantidad * factor_unidad; // cantidad real a descontar del stock
 
+        // Lote de caducidad (v2.2.0): si producto requiere caducidad y no viene lote_id,
+        // aplicar FEFO automatico (el que vence primero con stock disponible)
+        let requiere_caducidad: bool = conn.query_row(
+            "SELECT COALESCE(requiere_caducidad, 0) FROM productos WHERE id = ?1",
+            rusqlite::params![item.producto_id],
+            |row| row.get::<_, i32>(0).map(|v| v != 0)
+        ).unwrap_or(false);
+
+        let lote_id_final: Option<i64> = if let Some(lid) = item.lote_id {
+            Some(lid)
+        } else if requiere_caducidad {
+            // Auto FEFO: lote con fecha_caducidad mas proxima que tenga stock
+            conn.query_row(
+                "SELECT id FROM lotes_caducidad WHERE producto_id = ?1 AND cantidad >= ?2
+                 ORDER BY fecha_caducidad ASC LIMIT 1",
+                rusqlite::params![item.producto_id, cantidad_base],
+                |row| row.get(0)
+            ).ok()
+        } else {
+            None
+        };
+
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
              descuento, iva_porcentaje, subtotal, info_adicional, precio_costo,
-             unidad_id, unidad_nombre, factor_unidad)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             unidad_id, unidad_nombre, factor_unidad, lote_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -190,9 +212,18 @@ pub fn registrar_venta(
                 item.unidad_id,
                 item.unidad_nombre,
                 factor_unidad,
+                lote_id_final,
             ],
         )
         .map_err(|e| e.to_string())?;
+
+        // Descontar del lote (si aplica)
+        if let Some(lid) = lote_id_final {
+            conn.execute(
+                "UPDATE lotes_caducidad SET cantidad = MAX(cantidad - ?1, 0) WHERE id = ?2",
+                rusqlite::params![cantidad_base, lid],
+            ).ok();
+        }
 
         // Obtener stock antes de descontar y verificar si es servicio o no controla stock
         let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
@@ -266,7 +297,7 @@ pub fn registrar_venta(
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
             info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
         });
     }
 
@@ -551,7 +582,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1372,7 +1403,7 @@ fn guardar_documento_pendiente(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
         });
     }
 
@@ -1564,7 +1595,7 @@ pub fn guardar_guia_remision(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
         });
     }
 
@@ -1889,7 +1920,7 @@ pub fn convertir_guia_a_venta(
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
-            unidad_id: None, unidad_nombre: None, factor_unidad: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
@@ -2095,17 +2126,18 @@ pub fn anular_venta(
     } else { None };
 
     // Reintegrar stock de cada item (considerando factor_unidad para multi-unidad)
+    // y lote_id para reintegrar al lote correspondiente
     let mut stmt = conn.prepare(
-        "SELECT producto_id, cantidad, COALESCE(factor_unidad, 1) as factor FROM venta_detalles WHERE venta_id = ?1"
+        "SELECT producto_id, cantidad, COALESCE(factor_unidad, 1) as factor, lote_id FROM venta_detalles WHERE venta_id = ?1"
     ).map_err(|e| e.to_string())?;
-    let items: Vec<(i64, f64, f64)> = stmt.query_map(rusqlite::params![venta_id], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    let items: Vec<(i64, f64, f64, Option<i64>)> = stmt.query_map(rusqlite::params![venta_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
     }).map_err(|e| e.to_string())?
     .filter_map(|r| r.ok())
     .collect();
     drop(stmt);
 
-    for (prod_id, cant, factor) in &items {
+    for (prod_id, cant, factor, lote_id) in &items {
         let cant_base = cant * factor;
         let omite: bool = conn.query_row(
             "SELECT (COALESCE(es_servicio, 0) + COALESCE(no_controla_stock, 0)) > 0 FROM productos WHERE id = ?1",
@@ -2113,6 +2145,14 @@ pub fn anular_venta(
             |row| row.get::<_, i64>(0).map(|v| v > 0)
         ).unwrap_or(false);
         if omite { continue; }
+
+        // Reversar al lote si existe
+        if let Some(lid) = lote_id {
+            conn.execute(
+                "UPDATE lotes_caducidad SET cantidad = cantidad + ?1 WHERE id = ?2",
+                rusqlite::params![cant_base, lid],
+            ).ok();
+        }
 
         let stock_antes: f64 = conn.query_row(
             "SELECT stock_actual FROM productos WHERE id = ?1",

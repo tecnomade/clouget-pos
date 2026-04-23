@@ -71,6 +71,9 @@ pub struct VentaDetalle {
     pub unidad_nombre: Option<String>,
     #[serde(default)]
     pub factor_unidad: Option<f64>,
+    /// Lote de caducidad del que se vendio este item (v2.2.0)
+    #[serde(default)]
+    pub lote_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

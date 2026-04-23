@@ -53,4 +53,11 @@ pub struct ItemCompra {
     pub cantidad: f64,
     pub precio_unitario: f64,
     pub iva_porcentaje: f64,
+    /// Info para crear lote automatico (si el producto requiere_caducidad) - v2.2.0
+    #[serde(default)]
+    pub lote_numero: Option<String>,
+    #[serde(default)]
+    pub lote_fecha_caducidad: Option<String>,
+    #[serde(default)]
+    pub lote_fecha_elaboracion: Option<String>,
 }

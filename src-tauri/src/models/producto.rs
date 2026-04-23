@@ -37,6 +37,8 @@ pub struct ProductoTactil {
     pub categoria_id: Option<i64>,
     pub categoria_nombre: Option<String>,
     pub imagen: Option<String>,
+    pub es_servicio: bool,
+    pub no_controla_stock: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

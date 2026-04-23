@@ -435,7 +435,8 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva, p.stock_actual,
-                    p.categoria_id, c.nombre, p.imagen
+                    p.categoria_id, c.nombre, p.imagen,
+                    COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0)
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              WHERE p.activo = 1
@@ -455,6 +456,8 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 categoria_id: row.get(6)?,
                 categoria_nombre: row.get(7)?,
                 imagen: row.get(8)?,
+                es_servicio: row.get::<_, i32>(9)? != 0,
+                no_controla_stock: row.get::<_, i32>(10)? != 0,
             })
         })
         .map_err(|e| e.to_string())?

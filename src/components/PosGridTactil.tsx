@@ -175,56 +175,87 @@ export default function PosGridTactil({
                   👁
                 </button>
               )}
+              {(() => {
+                // Productos sin control de stock (servicios, granel, digitales) NO se opacan
+                const omiteStock = p.es_servicio || p.no_controla_stock;
+                const sinStock = !omiteStock && p.stock_actual <= 0;
+                const hayImagen = !!p.imagen;
+                return (
               <button
                 onClick={() => handleTap(p)}
                 style={{
-                  display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center",
-                  padding: 10, border: "1px solid var(--color-border)",
+                  display: "block", position: "relative",
+                  padding: 0, border: "1px solid var(--color-border)",
                   borderRadius: 12, background: "var(--color-surface)",
                   color: "var(--color-text)",
-                  cursor: "pointer", minHeight: 140, width: "100%",
+                  cursor: "pointer",
+                  width: "100%", aspectRatio: "1 / 1",
+                  overflow: "hidden",
                   boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-                  opacity: p.stock_actual <= 0 ? 0.4 : 1,
+                  opacity: sinStock ? 0.5 : 1,
                   transition: "transform 0.1s, box-shadow 0.1s",
                 }}
-                onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.95)")}
+                onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.96)")}
                 onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
                 onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
               >
-              {p.imagen ? (
-                <img
-                  src={`data:image/png;base64,${p.imagen}`}
-                  alt={p.nombre}
-                  style={{ width: 80, height: 80, objectFit: "contain", borderRadius: 6 }}
-                />
-              ) : (
+                {/* Imagen ocupa todo el card */}
+                {hayImagen ? (
+                  <img
+                    src={`data:image/png;base64,${p.imagen}`}
+                    alt={p.nombre}
+                    style={{
+                      width: "100%", height: "100%", objectFit: "cover",
+                      display: "block",
+                    }}
+                  />
+                ) : (
+                  <div style={{
+                    width: "100%", height: "100%",
+                    background: "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.05) 100%)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "var(--color-primary)", fontSize: 56, fontWeight: 800,
+                  }}>
+                    {p.nombre.charAt(0).toUpperCase()}
+                  </div>
+                )}
+
+                {/* Overlay con nombre + precio en parte inferior (gradient para legibilidad) */}
                 <div style={{
-                  width: 80, height: 80, background: "var(--color-surface-alt)", borderRadius: 6,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "var(--color-text-secondary)", fontSize: 22, fontWeight: 700,
+                  position: "absolute", left: 0, right: 0, bottom: 0,
+                  padding: "20px 8px 6px",
+                  background: "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 60%, rgba(0,0,0,0.95) 100%)",
+                  color: "#fff",
                 }}>
-                  {p.nombre.charAt(0).toUpperCase()}
+                  <div style={{
+                    fontSize: 11, fontWeight: 700, lineHeight: 1.15,
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                    textShadow: "0 1px 2px rgba(0,0,0,0.8)",
+                  }}>
+                    {p.nombre}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 3 }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#60a5fa", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>
+                      ${p.precio_venta.toFixed(2)}
+                    </span>
+                    {omiteStock ? (
+                      <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                        background: "rgba(59,130,246,0.85)", color: "#fff", fontWeight: 700 }}>
+                        SERVICIO
+                      </span>
+                    ) : sinStock ? (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#fca5a5" }}>Sin stock</span>
+                    ) : (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#d1d5db" }}>
+                        Stock: <strong style={{ color: "#fff" }}>{p.stock_actual}</strong>
+                      </span>
+                    )}
+                  </div>
                 </div>
-              )}
-              <span style={{
-                fontSize: 11, fontWeight: 600, marginTop: 4,
-                textAlign: "center", lineHeight: 1.2,
-                overflow: "hidden", textOverflow: "ellipsis",
-                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                width: "100%",
-              }}>
-                {p.nombre}
-              </span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--color-primary)", marginTop: 2 }}>
-                ${p.precio_venta.toFixed(2)}
-              </span>
-              {p.stock_actual <= 0 ? (
-                <span style={{ fontSize: 12, color: "var(--color-danger)", marginTop: 2, fontWeight: 700 }}>Sin stock</span>
-              ) : (
-                <span style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 2, fontWeight: 600 }}>Stock: <strong style={{ color: "var(--color-text)" }}>{p.stock_actual}</strong></span>
-              )}
               </button>
+                );
+              })()}
             </div>
           ))
         )}

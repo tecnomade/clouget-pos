@@ -5,6 +5,7 @@ import { obtenerConfig } from "../services/api";
 
 // Endpoint de manifest controlado por admin (Supabase edge function)
 const ENDPOINT_MANIFEST = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpha3F1emZsa3ZmcWZscW54cHhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MDc4NjAsImV4cCI6MjA4NjM4Mzg2MH0.dqdWxSYpyG2fKJt7VR2SjyX5lW__v7BuwQlVrm3ddGg";
 
 type Estado = "idle" | "disponible" | "descargando" | "instalado" | "error";
 
@@ -65,7 +66,12 @@ export default function UpdateChecker() {
         // (el plugin de Tauri solo soporta endpoints estaticos, asi que para beta
         // consultamos manualmente; el user puede descargar la nueva version si quiere)
         try {
-          const resp = await fetch(`${ENDPOINT_MANIFEST}?canal=beta`);
+          const resp = await fetch(`${ENDPOINT_MANIFEST}?canal=beta`, {
+            headers: {
+              "apikey": SUPABASE_ANON_KEY,
+              "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+          });
           if (resp.ok && resp.status !== 204) {
             const betaManifest = await resp.json();
             const current = __APP_VERSION__;

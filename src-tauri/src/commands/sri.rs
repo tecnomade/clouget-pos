@@ -1227,7 +1227,7 @@ pub fn generar_ride_pdf(
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(),
+                factor_unidad: row.get(11).ok(), lote_id: None,
                 ..Default::default()
             };
             let codigo: String = row.get(9)?;

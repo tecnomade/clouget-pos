@@ -109,6 +109,15 @@ export default function PuntoVenta() {
   // Modal seleccion de unidad (multi-unidad)
   const [seleccionUnidad, setSeleccionUnidad] = useState<{ producto: ProductoBusqueda; unidades: any[] } | null>(null);
 
+  // Modal seleccion de lote (caducidad)
+  const [seleccionLote, setSeleccionLote] = useState<{
+    producto: ProductoBusqueda;
+    unidadElegida?: any;
+    lotes: any[];
+  } | null>(null);
+  // Modal cambiar lote de item ya en carrito
+  const [cambiarLoteItem, setCambiarLoteItem] = useState<{ idx: number; lotes: any[] } | null>(null);
+
   // Pago mixto: lista de pagos y modal para agregar
   const [pagosMixtos, setPagosMixtos] = useState<{ forma_pago: string; monto: number; banco_id?: number | null; referencia?: string | null }[]>([]);
   const [modoPagoMixto, setModoPagoMixto] = useState(false);
@@ -305,7 +314,7 @@ export default function PuntoVenta() {
     }
   };
 
-  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any) => {
+  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any, loteElegido?: any) => {
     // Debounce para scanner de código de barras
     const now = Date.now();
     if (lastAddRef.current.id === producto.id && now - lastAddRef.current.time < 500) {
@@ -327,13 +336,35 @@ export default function PuntoVenta() {
       } catch { /* ignore - producto sin unidades */ }
     }
 
+    // Caducidad: si el producto requiere_caducidad y no se especifico lote, abrir selector
+    if (!loteElegido) {
+      try {
+        const prodFull = await obtenerProducto(producto.id);
+        if (prodFull && prodFull.requiere_caducidad) {
+          const lotes = await listarLotesProducto(producto.id);
+          const lotesConStock = lotes.filter((l: any) => l.cantidad > 0);
+          if (lotesConStock.length > 0) {
+            // Abrir modal para que escoja (con FEFO pre-seleccionado)
+            setSeleccionLote({ producto, unidadElegida, lotes: lotesConStock });
+            setBusqueda(""); setResultados([]);
+            return;
+          } else {
+            toastWarning(`${producto.nombre}: sin lotes registrados. Agregue en Productos.`);
+            // Continuar agregando sin lote (fallback a venta sin control de caducidad)
+          }
+        }
+      } catch { /* producto sin caducidad, seguir */ }
+    }
+
     const precioEfectivo = unidadElegida?.precio ?? producto.precio_lista ?? producto.precio_venta;
 
-    // Check if already in cart MISMA unidad: solo agrupar si tiene la MISMA presentacion
-    // (si alguno ya en carrito es SIXPACK y ahora agregas UND, son items separados)
+    // Check if already in cart MISMA unidad + MISMO lote
     const unidadId = unidadElegida?.id ?? null;
+    const loteId = loteElegido?.id ?? null;
     const existente = carrito.find((i) =>
-      i.producto_id === producto.id && (i.unidad_id ?? null) === unidadId
+      i.producto_id === producto.id
+      && (i.unidad_id ?? null) === unidadId
+      && (i.lote_id ?? null) === loteId
     );
     if (existente) {
       setCarrito((prev) =>
@@ -357,6 +388,11 @@ export default function PuntoVenta() {
         listaSel = match?.lista_nombre;
       }
 
+      // Calcular dias restantes del lote (si aplica)
+      const diasRestantes = loteElegido?.fecha_caducidad
+        ? Math.floor((new Date(loteElegido.fecha_caducidad).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+        : undefined;
+
       setCarrito((prev) => [
         ...prev,
         {
@@ -377,6 +413,10 @@ export default function PuntoVenta() {
           unidad_id: unidadElegida?.id,
           unidad_nombre: unidadElegida?.nombre,
           factor_unidad: unidadElegida?.factor,
+          lote_id: loteElegido?.id,
+          lote_numero: loteElegido?.lote,
+          lote_fecha_caducidad: loteElegido?.fecha_caducidad,
+          lote_dias_restantes: diasRestantes,
         } as any,
       ]);
     }
@@ -384,24 +424,15 @@ export default function PuntoVenta() {
     setResultados([]);
     inputRef.current?.focus();
 
-    // Verificar caducidad si el producto lo requiere
-    try {
-      const prodFull = await obtenerProducto(producto.id);
-      if (prodFull && prodFull.requiere_caducidad) {
-        const lotes = await listarLotesProducto(producto.id);
-        const ahora = new Date();
-        const vencidos = lotes.filter((l: any) => new Date(l.fecha_caducidad) < ahora);
-        const porVencer = lotes.filter((l: any) => {
-          const dias = Math.floor((new Date(l.fecha_caducidad).getTime() - ahora.getTime()) / (1000 * 60 * 60 * 24));
-          return dias >= 0 && dias <= 7;
-        });
-        if (vencidos.length > 0) {
-          toastWarning(`${producto.nombre}: tiene ${vencidos.length} lote(s) VENCIDOS - revise antes de vender`);
-        } else if (porVencer.length > 0) {
-          toastWarning(`${producto.nombre}: ${porVencer.length} lote(s) por vencer pronto`);
-        }
+    // Aviso si el lote elegido esta por vencer
+    if (loteElegido?.fecha_caducidad) {
+      const dias = Math.floor((new Date(loteElegido.fecha_caducidad).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+      if (dias < 0) {
+        toastWarning(`⚠ Lote ${loteElegido.lote || ""} esta VENCIDO (hace ${Math.abs(dias)} dias)`);
+      } else if (dias <= 7) {
+        toastWarning(`🕐 Lote ${loteElegido.lote || ""} vence en ${dias} dia(s)`);
       }
-    } catch { /* ignore */ }
+    }
   };
 
   const actualizarCantidad = (idx: number, cantidad: number) => {
@@ -548,6 +579,7 @@ export default function PuntoVenta() {
           unidad_id: i.unidad_id ?? null,
           unidad_nombre: i.unidad_nombre ?? null,
           factor_unidad: i.factor_unidad ?? null,
+          lote_id: i.lote_id ?? null,
         };
       }),
       forma_pago: usarMixto ? "MIXTO" : formaPago,
@@ -1336,6 +1368,39 @@ export default function PuntoVenta() {
                           </span>
                         )}
                       </div>
+                      {/* Badge del lote (caducidad) */}
+                      {item.lote_id && (
+                        <div
+                          style={{ fontSize: 10, cursor: "pointer", marginTop: 2 }}
+                          title="Click para cambiar de lote"
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const lotes = await listarLotesProducto(item.producto_id);
+                              setCambiarLoteItem({ idx, lotes: lotes.filter((l: any) => l.cantidad > 0 || l.id === item.lote_id) });
+                            } catch { /* ignore */ }
+                          }}>
+                          <span style={{
+                            padding: "1px 6px", borderRadius: 3,
+                            background: (item.lote_dias_restantes ?? 99) < 0 ? "rgba(239,68,68,0.2)"
+                              : (item.lote_dias_restantes ?? 99) <= 7 ? "rgba(245,158,11,0.2)"
+                              : "rgba(34,197,94,0.15)",
+                            color: (item.lote_dias_restantes ?? 99) < 0 ? "var(--color-danger)"
+                              : (item.lote_dias_restantes ?? 99) <= 7 ? "var(--color-warning)"
+                              : "var(--color-success)",
+                            fontWeight: 600,
+                          }}>
+                            🕐 Lote {item.lote_numero || "#" + item.lote_id}
+                            {" · "}
+                            {item.lote_dias_restantes != null && (
+                              item.lote_dias_restantes < 0
+                                ? `Vencido (${Math.abs(item.lote_dias_restantes)}d)`
+                                : `Vence en ${item.lote_dias_restantes}d`
+                            )}
+                            <span style={{ marginLeft: 4, fontSize: 9, textDecoration: "underline" }}>cambiar</span>
+                          </span>
+                        </div>
+                      )}
                       {item.info_adicional && <div style={{ fontSize: 10, color: "var(--color-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.info_adicional}</div>}
                     </div>
                     <span style={{ color: "var(--color-primary)", cursor: tienePermiso("editar_precio") ? "pointer" : "default", fontSize: 11, flexShrink: 0 }}
@@ -1986,6 +2051,146 @@ export default function PuntoVenta() {
           </div>
         </div>
       )}
+
+      {/* Modal: Seleccionar lote de caducidad (FEFO) */}
+      {seleccionLote && (() => {
+        // Lotes ordenados por fecha caducidad ascendente (FEFO)
+        const sorted = [...seleccionLote.lotes].sort((a, b) =>
+          new Date(a.fecha_caducidad).getTime() - new Date(b.fecha_caducidad).getTime()
+        );
+        return (
+          <div className="modal-overlay" onClick={() => setSeleccionLote(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+              <div className="modal-header">
+                <h3>🕐 Seleccionar lote - {seleccionLote.producto.nombre}</h3>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                  El sistema sugiere el lote con fecha mas proxima a vencer (FEFO).
+                  Click para seleccionar otro si es necesario.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {sorted.map((l, idx) => {
+                    const dias = Math.floor((new Date(l.fecha_caducidad).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                    const esVencido = dias < 0;
+                    const esPorVencer = !esVencido && dias <= 7;
+                    const esFEFO = idx === 0;
+                    return (
+                      <button key={l.id} type="button"
+                        style={{
+                          padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+                          textAlign: "left",
+                          background: esVencido ? "rgba(239,68,68,0.1)" : esPorVencer ? "rgba(245,158,11,0.1)" : esFEFO ? "rgba(34,197,94,0.1)" : "var(--color-surface-alt)",
+                          border: `1px solid ${esVencido ? "rgba(239,68,68,0.4)" : esPorVencer ? "rgba(245,158,11,0.4)" : esFEFO ? "rgba(34,197,94,0.4)" : "var(--color-border)"}`,
+                          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                        }}
+                        onClick={() => {
+                          const prod = seleccionLote.producto;
+                          const uni = seleccionLote.unidadElegida;
+                          setSeleccionLote(null);
+                          agregarAlCarrito(prod, uni, l);
+                        }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: esVencido ? "var(--color-danger)" : undefined }}>
+                            {esFEFO && <span style={{ fontSize: 10, marginRight: 6, padding: "1px 5px", borderRadius: 3, background: "var(--color-success)", color: "#fff" }}>FEFO</span>}
+                            Lote {l.lote || `#${l.id}`}
+                            {esVencido && <span style={{ marginLeft: 6, fontSize: 11 }}>⚠ VENCIDO</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            {l.fecha_elaboracion && <>Elab: {l.fecha_elaboracion} · </>}
+                            Vence: <strong>{l.fecha_caducidad}</strong>
+                            {" "}
+                            {esVencido ? `(hace ${Math.abs(dias)}d)` : `(en ${dias}d)`}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: 12 }}>
+                          <div style={{ fontWeight: 700 }}>{l.cantidad}</div>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>disponibles</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between" }}>
+                <button className="btn btn-outline" style={{ fontSize: 11 }}
+                  onClick={() => {
+                    const prod = seleccionLote.producto;
+                    const uni = seleccionLote.unidadElegida;
+                    setSeleccionLote(null);
+                    agregarAlCarrito(prod, uni, { id: null }); // sin lote
+                  }}>
+                  Vender sin especificar lote
+                </button>
+                <button className="btn btn-outline" onClick={() => setSeleccionLote(null)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal: Cambiar lote de item ya en carrito */}
+      {cambiarLoteItem && (() => {
+        const sorted = [...cambiarLoteItem.lotes].sort((a, b) =>
+          new Date(a.fecha_caducidad).getTime() - new Date(b.fecha_caducidad).getTime()
+        );
+        const itemActual = carrito[cambiarLoteItem.idx];
+        return (
+          <div className="modal-overlay" onClick={() => setCambiarLoteItem(null)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+              <div className="modal-header"><h3>🕐 Cambiar lote - {itemActual?.nombre}</h3></div>
+              <div className="modal-body">
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {sorted.map((l) => {
+                    const dias = Math.floor((new Date(l.fecha_caducidad).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                    const esActual = l.id === itemActual?.lote_id;
+                    const esVencido = dias < 0;
+                    return (
+                      <button key={l.id} type="button"
+                        style={{
+                          padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+                          textAlign: "left",
+                          background: esActual ? "rgba(59,130,246,0.15)" : esVencido ? "rgba(239,68,68,0.08)" : "var(--color-surface-alt)",
+                          border: `2px solid ${esActual ? "var(--color-primary)" : "var(--color-border)"}`,
+                          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                        }}
+                        onClick={() => {
+                          const idx = cambiarLoteItem.idx;
+                          setCarrito(prev => prev.map((it, k) => k === idx ? {
+                            ...it,
+                            lote_id: l.id,
+                            lote_numero: l.lote,
+                            lote_fecha_caducidad: l.fecha_caducidad,
+                            lote_dias_restantes: dias,
+                          } : it));
+                          setCambiarLoteItem(null);
+                        }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>
+                            {esActual && <span style={{ fontSize: 10, marginRight: 6, padding: "1px 5px", borderRadius: 3, background: "var(--color-primary)", color: "#fff" }}>ACTUAL</span>}
+                            Lote {l.lote || `#${l.id}`}
+                            {esVencido && <span style={{ marginLeft: 6, fontSize: 11, color: "var(--color-danger)" }}>⚠ VENCIDO</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            Vence: <strong>{l.fecha_caducidad}</strong> {esVencido ? `(hace ${Math.abs(dias)}d)` : `(en ${dias}d)`}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: 12 }}>
+                          <div style={{ fontWeight: 700 }}>{l.cantidad}</div>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>disp.</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button className="btn btn-outline" onClick={() => setCambiarLoteItem(null)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal: Seleccionar unidad de venta (multi-unidad) */}
       {seleccionUnidad && (

@@ -828,6 +828,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Migracion: agregar fecha_elaboracion (fecha de expedicion/fabricacion) a lotes
     let _ = conn.execute("ALTER TABLE lotes_caducidad ADD COLUMN fecha_elaboracion TEXT", []);
 
+    // Migracion: lote_id en venta_detalles (FIFO/FEFO - v2.2.0)
+    // Permite saber de que lote especifico se vendio cada item
+    let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_id INTEGER", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_venta_detalles_lote ON venta_detalles(lote_id)", []);
+
     // Módulo Servicio Técnico
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modulo_servicio_tecnico', '0')", []);
     let _ = conn.execute_batch("
