@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -46,6 +46,8 @@ export default function CajaPage() {
   const [historialTab, setHistorialTab] = useState<"sesiones" | "descuadres">("sesiones");
   const [historialData, setHistorialData] = useState<any>(null);
   const [sesionesData, setSesionesData] = useState<any[]>([]);
+  const [sesionExpandida, setSesionExpandida] = useState<number | null>(null);
+  const [eventosCache, setEventosCache] = useState<Record<number, any[]>>({});
   const [historialDesde, setHistorialDesde] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
@@ -713,6 +715,7 @@ export default function CajaPage() {
                   <table className="table" style={{ width: "100%" }}>
                     <thead>
                       <tr>
+                        <th style={{ width: 24 }}></th>
                         <th>Apertura</th>
                         <th>Cierre</th>
                         <th>Cajero apertura</th>
@@ -729,32 +732,114 @@ export default function CajaPage() {
                       {sesionesData.map((s: any) => {
                         const dif = Number(s.diferencia ?? 0);
                         const descuadrada = s.estado === "CERRADA" && Math.abs(dif) > 0.01;
+                        const expandida = sesionExpandida === s.id;
+                        const eventos = eventosCache[s.id] || [];
                         return (
-                          <tr key={s.id} style={{ background: descuadrada ? "rgba(245,158,11,0.06)" : undefined }}>
-                            <td style={{ fontSize: 11 }}>{s.fecha_apertura?.slice(0, 16).replace("T", " ")}</td>
-                            <td style={{ fontSize: 11 }}>{s.fecha_cierre?.slice(0, 16).replace("T", " ") || "-"}</td>
-                            <td>{s.usuario_apertura || "-"}</td>
-                            <td>{s.usuario_cierre || "-"}</td>
-                            <td className="text-right">${s.monto_inicial.toFixed(2)}</td>
-                            <td className="text-right">${s.monto_ventas.toFixed(2)}</td>
-                            <td className="text-right">${s.monto_esperado.toFixed(2)}</td>
-                            <td className="text-right font-bold">{s.monto_real != null ? `$${s.monto_real.toFixed(2)}` : "-"}</td>
-                            <td className="text-right" style={{
-                              color: dif < 0 ? "var(--color-danger)" : dif > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
-                              fontWeight: descuadrada ? 700 : undefined,
-                            }}>
-                              {s.diferencia != null ? `$${dif.toFixed(2)}` : "-"}
-                            </td>
-                            <td>
-                              <span style={{
-                                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 3,
-                                background: s.estado === "ABIERTA" ? "rgba(34,197,94,0.15)" : descuadrada ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.15)",
-                                color: s.estado === "ABIERTA" ? "var(--color-success)" : descuadrada ? "var(--color-warning)" : "var(--color-text-secondary)",
+                          <Fragment key={s.id}>
+                            <tr style={{ background: descuadrada ? "rgba(245,158,11,0.06)" : undefined, cursor: "pointer" }}
+                              onClick={async () => {
+                                if (expandida) {
+                                  setSesionExpandida(null);
+                                } else {
+                                  setSesionExpandida(s.id);
+                                  // Lazy load eventos si no estan cacheados
+                                  if (!eventosCache[s.id]) {
+                                    try {
+                                      const evs = await listarEventosCaja(s.id);
+                                      setEventosCache({ ...eventosCache, [s.id]: evs });
+                                    } catch (err) { toastError("Error eventos: " + err); }
+                                  }
+                                }
                               }}>
-                                {s.estado}{descuadrada ? " ⚠" : ""}
-                              </span>
-                            </td>
-                          </tr>
+                              <td style={{ textAlign: "center", fontSize: 11, color: "var(--color-text-secondary)" }}>
+                                {expandida ? "▼" : "▶"}
+                              </td>
+                              <td style={{ fontSize: 11 }}>{s.fecha_apertura?.slice(0, 16).replace("T", " ")}</td>
+                              <td style={{ fontSize: 11 }}>{s.fecha_cierre?.slice(0, 16).replace("T", " ") || "-"}</td>
+                              <td>{s.usuario_apertura || "-"}</td>
+                              <td>{s.usuario_cierre || "-"}</td>
+                              <td className="text-right">${s.monto_inicial.toFixed(2)}</td>
+                              <td className="text-right">${s.monto_ventas.toFixed(2)}</td>
+                              <td className="text-right">${s.monto_esperado.toFixed(2)}</td>
+                              <td className="text-right font-bold">{s.monto_real != null ? `$${s.monto_real.toFixed(2)}` : "-"}</td>
+                              <td className="text-right" style={{
+                                color: dif < 0 ? "var(--color-danger)" : dif > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
+                                fontWeight: descuadrada ? 700 : undefined,
+                              }}>
+                                {s.diferencia != null ? `$${dif.toFixed(2)}` : "-"}
+                              </td>
+                              <td>
+                                <span style={{
+                                  fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 3,
+                                  background: s.estado === "ABIERTA" ? "rgba(34,197,94,0.15)" : descuadrada ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.15)",
+                                  color: s.estado === "ABIERTA" ? "var(--color-success)" : descuadrada ? "var(--color-warning)" : "var(--color-text-secondary)",
+                                }}>
+                                  {s.estado}{descuadrada ? " ⚠" : ""}
+                                </span>
+                              </td>
+                            </tr>
+                            {expandida && (
+                              <tr>
+                                <td colSpan={11} style={{ background: "var(--color-surface-alt)", padding: 12, fontSize: 11 }}>
+                                  {/* Datos resumen + motivos */}
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 10 }}>
+                                    {s.caja_anterior_id && (
+                                      <div><strong>Cierre anterior:</strong> #{s.caja_anterior_id}</div>
+                                    )}
+                                    {s.motivo_diferencia_apertura && (
+                                      <div style={{ gridColumn: "1 / -1", padding: "6px 8px", background: "rgba(59,130,246,0.08)", borderRadius: 4 }}>
+                                        <strong>📋 Motivo dif. apertura:</strong> {s.motivo_diferencia_apertura}
+                                      </div>
+                                    )}
+                                    {s.motivo_descuadre && (
+                                      <div style={{ gridColumn: "1 / -1", padding: "6px 8px", background: "rgba(245,158,11,0.08)", borderRadius: 4, color: "var(--color-warning)" }}>
+                                        <strong>⚠ Motivo descuadre:</strong> {s.motivo_descuadre}
+                                      </div>
+                                    )}
+                                    {s.observacion && (
+                                      <div style={{ gridColumn: "1 / -1" }}>
+                                        <strong>Observación:</strong> {s.observacion}
+                                      </div>
+                                    )}
+                                  </div>
+                                  {/* Audit log */}
+                                  <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 12 }}>🔍 Audit log</div>
+                                  {eventos.length === 0 ? (
+                                    <div style={{ color: "var(--color-text-secondary)", fontStyle: "italic" }}>
+                                      {eventosCache[s.id] ? "Sin eventos registrados (sesión anterior a la auditoría)" : "Cargando..."}
+                                    </div>
+                                  ) : (
+                                    <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse" }}>
+                                      <thead>
+                                        <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                                          <th style={{ textAlign: "left", padding: "3px 6px" }}>Fecha/hora</th>
+                                          <th style={{ textAlign: "left", padding: "3px 6px" }}>Evento</th>
+                                          <th style={{ textAlign: "left", padding: "3px 6px" }}>Usuario</th>
+                                          <th style={{ textAlign: "left", padding: "3px 6px" }}>Motivo</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {eventos.map((e: any) => {
+                                          const evColor = e.evento === "DESCUADRE_GRAVE" ? "var(--color-danger)" :
+                                                          e.evento === "DEPOSITO" ? "var(--color-primary)" :
+                                                          e.evento === "CIERRE" ? "var(--color-warning)" :
+                                                          "var(--color-text)";
+                                          return (
+                                            <tr key={e.id}>
+                                              <td style={{ padding: "3px 6px" }}>{e.timestamp?.slice(0, 16).replace("T", " ")}</td>
+                                              <td style={{ padding: "3px 6px", fontWeight: 600, color: evColor }}>{e.evento}</td>
+                                              <td style={{ padding: "3px 6px" }}>{e.usuario || "-"}</td>
+                                              <td style={{ padding: "3px 6px" }}>{e.motivo || <span style={{ color: "var(--color-text-secondary)" }}>-</span>}</td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         );
                       })}
                     </tbody>

@@ -466,7 +466,8 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
         .prepare(
             "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva, p.stock_actual,
                     p.categoria_id, c.nombre, p.imagen,
-                    COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0)
+                    COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
+                    COALESCE(p.tipo_producto, 'SIMPLE') as tipo_producto
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              WHERE p.activo = 1
@@ -474,7 +475,7 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
         )
         .map_err(|e| e.to_string())?;
 
-    let productos = stmt
+    let mut productos: Vec<ProductoTactil> = stmt
         .query_map([], |row| {
             Ok(ProductoTactil {
                 id: row.get(0)?,
@@ -488,11 +489,22 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 imagen: row.get(8)?,
                 es_servicio: row.get::<_, i32>(9)? != 0,
                 no_controla_stock: row.get::<_, i32>(10)? != 0,
+                tipo_producto: row.get(11)?,
+                stock_combo: None,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+
+    // Calcular stock dinamico para COMBO_FIJO (MIN(stock_hijo / cantidad_componente))
+    // Saltar componentes que son servicios o sin control de stock.
+    for prod in productos.iter_mut() {
+        if prod.tipo_producto == "COMBO_FIJO" {
+            let stock = crate::commands::combos::calcular_stock_combo(&conn, prod.id).ok().flatten();
+            prod.stock_combo = stock;
+        }
+    }
 
     Ok(productos)
 }

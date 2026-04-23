@@ -47,13 +47,18 @@ export default function PosGridTactil({
   }, [productosTactil, categoriaActiva, busqueda]);
 
   const handleTap = (p: ProductoTactil) => {
+    // Para COMBO_FIJO usamos el stock_combo (MIN componentes) como stock_actual efectivo
+    // para que las validaciones del POS y backend funcionen correctamente.
+    const stockEfectivo = p.tipo_producto === "COMBO_FIJO" && p.stock_combo != null
+      ? p.stock_combo
+      : p.stock_actual;
     const busquedaCompatible: ProductoBusqueda = {
       id: p.id,
       nombre: p.nombre,
       precio_venta: p.precio_venta,
       iva_porcentaje: p.iva_porcentaje,
       incluye_iva: p.incluye_iva ?? false,
-      stock_actual: p.stock_actual,
+      stock_actual: stockEfectivo,
       stock_minimo: 0,
       categoria_nombre: p.categoria_nombre,
       precio_lista: undefined,
@@ -178,7 +183,15 @@ export default function PosGridTactil({
               {(() => {
                 // Productos sin control de stock (servicios, granel, digitales) NO se opacan
                 const omiteStock = p.es_servicio || p.no_controla_stock;
-                const sinStock = !omiteStock && p.stock_actual <= 0;
+                // Combos: usar stock dinamico calculado (MIN componentes) en vez de stock_actual del padre
+                const esComboFijo = p.tipo_producto === "COMBO_FIJO";
+                const esComboFlex = p.tipo_producto === "COMBO_FLEXIBLE";
+                const stockMostrar = esComboFijo
+                  ? (p.stock_combo ?? 0)
+                  : esComboFlex
+                    ? null   // no se puede precalcular, depende de seleccion
+                    : p.stock_actual;
+                const sinStock = !omiteStock && !esComboFlex && (stockMostrar !== null && stockMostrar <= 0);
                 const hayImagen = !!p.imagen;
                 return (
               <button
@@ -244,11 +257,26 @@ export default function PosGridTactil({
                         background: "rgba(59,130,246,0.85)", color: "#fff", fontWeight: 700 }}>
                         SERVICIO
                       </span>
+                    ) : esComboFlex ? (
+                      <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3,
+                        background: "rgba(168,85,247,0.85)", color: "#fff", fontWeight: 700 }}
+                        title="Combo flexible — el cliente elige componentes">
+                        🍽 COMBO
+                      </span>
                     ) : sinStock ? (
-                      <span style={{ fontSize: 10, fontWeight: 700, color: "#fca5a5" }}>Sin stock</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#fca5a5" }}>
+                        {esComboFijo ? "Sin componentes" : "Sin stock"}
+                      </span>
                     ) : (
                       <span style={{ fontSize: 10, fontWeight: 700, color: "#d1d5db" }}>
-                        Stock: <strong style={{ color: "#fff" }}>{p.stock_actual}</strong>
+                        {esComboFijo && (
+                          <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3,
+                            background: "rgba(168,85,247,0.7)", color: "#fff", marginRight: 4 }}
+                            title="Combo fijo — stock = MIN(componentes)">
+                            🎁
+                          </span>
+                        )}
+                        Stock: <strong style={{ color: "#fff" }}>{stockMostrar}</strong>
                       </span>
                     )}
                   </div>

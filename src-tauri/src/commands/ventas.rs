@@ -215,6 +215,22 @@ pub fn registrar_venta(
         ).unwrap_or(false);
 
         let lote_id_final: Option<i64> = if let Some(lid) = item.lote_id {
+            // Validar que el lote tenga stock suficiente — anti-fraude/error UX
+            let stock_lote: f64 = conn.query_row(
+                "SELECT cantidad FROM lotes_caducidad WHERE id = ?1 AND producto_id = ?2",
+                rusqlite::params![lid, item.producto_id],
+                |r| r.get(0),
+            ).unwrap_or(0.0);
+            if cantidad_base > stock_lote + 1e-9 {
+                let nombre_prod: String = conn.query_row(
+                    "SELECT nombre FROM productos WHERE id = ?1",
+                    rusqlite::params![item.producto_id], |r| r.get(0)
+                ).unwrap_or_else(|_| format!("ID {}", item.producto_id));
+                return Err(format!(
+                    "El lote #{} de '{}' solo tiene {:.2} unidades. Intentas vender {:.2}. Reduce la cantidad o agrega otro lote/sin lote.",
+                    lid, nombre_prod, stock_lote, cantidad_base
+                ));
+            }
             Some(lid)
         } else if requiere_caducidad {
             // Auto FEFO: lote con fecha_caducidad mas proxima que tenga stock

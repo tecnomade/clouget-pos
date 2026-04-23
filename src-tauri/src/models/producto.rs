@@ -84,6 +84,12 @@ pub struct ProductoTactil {
     pub imagen: Option<String>,
     pub es_servicio: bool,
     pub no_controla_stock: bool,
+    /// 'SIMPLE' | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
+    #[serde(default = "default_tipo_producto")]
+    pub tipo_producto: String,
+    /// Stock calculado para COMBO_FIJO (MIN de stock_hijo/cant). None para SIMPLE y COMBO_FLEXIBLE.
+    #[serde(default)]
+    pub stock_combo: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

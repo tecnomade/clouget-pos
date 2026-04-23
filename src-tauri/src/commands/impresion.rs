@@ -1250,6 +1250,113 @@ fn generar_reporte_caja_pdf(
             .styled(s_big),
     );
 
+    // === ANTI-FRAUDE / TRAZABILIDAD ===
+    let tiene_trazabilidad = r.caja_anterior_id.is_some()
+        || r.motivo_diferencia_apertura.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+        || r.motivo_descuadre.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+        || r.usuario_cierre.is_some();
+    if tiene_trazabilidad {
+        doc.push(Break::new(0.7));
+        doc.push(Paragraph::new("TRAZABILIDAD").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut traza_table = TableLayout::new(vec![1, 2]);
+        if let Some(prev_id) = r.caja_anterior_id {
+            let label = format!("Cierre anterior #{}:", prev_id);
+            let valor = if let Some(monto) = r.monto_cierre_anterior {
+                let dif_apertura = r.caja.monto_inicial - monto;
+                if dif_apertura.abs() > 0.01 {
+                    format!("${:.2} (dif. apertura ${:.2})", monto, dif_apertura)
+                } else {
+                    format!("${:.2}", monto)
+                }
+            } else { "-".to_string() };
+            traza_table.row()
+                .element(Paragraph::new(label).styled(s_bold))
+                .element(Paragraph::new(valor).styled(s_normal))
+                .push().map_err(|e| format!("Error: {}", e))?;
+        }
+        if let Some(ref motivo) = r.motivo_diferencia_apertura {
+            if !motivo.is_empty() {
+                traza_table.row()
+                    .element(Paragraph::new("Motivo dif. apertura:").styled(s_bold))
+                    .element(Paragraph::new(motivo.clone()).styled(s_normal))
+                    .push().map_err(|e| format!("Error: {}", e))?;
+            }
+        }
+        if let Some(ref motivo) = r.motivo_descuadre {
+            if !motivo.is_empty() {
+                traza_table.row()
+                    .element(Paragraph::new("Motivo descuadre:").styled(s_bold))
+                    .element(Paragraph::new(motivo.clone()).styled(s_normal))
+                    .push().map_err(|e| format!("Error: {}", e))?;
+            }
+        }
+        if let Some(ref uc) = r.usuario_cierre {
+            if r.caja.usuario.as_deref() != Some(uc) {
+                traza_table.row()
+                    .element(Paragraph::new("Cerrado por:").styled(s_bold))
+                    .element(Paragraph::new(uc.clone()).styled(s_normal))
+                    .push().map_err(|e| format!("Error: {}", e))?;
+            }
+        }
+        doc.push(traza_table);
+    }
+
+    // === DEPOSITOS A BANCO ===
+    if !r.depositos.is_empty() {
+        doc.push(Break::new(0.7));
+        doc.push(Paragraph::new("DEPOSITOS A BANCO").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut dep_table = TableLayout::new(vec![3, 2, 1]);
+        // Header
+        dep_table.row()
+            .element(Paragraph::new("Banco / Referencia").styled(s_bold))
+            .element(Paragraph::new("Monto").aligned(Alignment::Right).styled(s_bold))
+            .element(Paragraph::new("Estado").aligned(Alignment::Center).styled(s_bold))
+            .push().map_err(|e| format!("Error: {}", e))?;
+        for d in &r.depositos {
+            let banco = d.banco_nombre.clone().unwrap_or_else(|| "-".to_string());
+            let texto_banco = if let Some(ref refer) = d.referencia {
+                if !refer.is_empty() { format!("{} (Ref: {})", banco, refer) } else { banco }
+            } else { banco };
+            let estado_label = match d.estado.as_str() {
+                "DEPOSITADO" => "Confirmado",
+                "EN_TRANSITO" => "En tránsito",
+                _ => "-",
+            };
+            dep_table.row()
+                .element(Paragraph::new(texto_banco).styled(s_small))
+                .element(Paragraph::new(format!("${:.2}", d.monto)).aligned(Alignment::Right).styled(s_normal))
+                .element(Paragraph::new(estado_label).aligned(Alignment::Center).styled(s_small))
+                .push().map_err(|e| format!("Error: {}", e))?;
+        }
+        doc.push(dep_table);
+    }
+
+    // === AUDIT LOG ===
+    if !r.eventos.is_empty() {
+        doc.push(Break::new(0.7));
+        doc.push(Paragraph::new("AUDIT LOG (cronología)").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut audit_table = TableLayout::new(vec![2, 2, 2, 4]);
+        audit_table.row()
+            .element(Paragraph::new("Fecha/hora").styled(s_bold))
+            .element(Paragraph::new("Evento").styled(s_bold))
+            .element(Paragraph::new("Usuario").styled(s_bold))
+            .element(Paragraph::new("Motivo").styled(s_bold))
+            .push().map_err(|e| format!("Error: {}", e))?;
+        for e in &r.eventos {
+            let ts = e.timestamp.get(0..16).unwrap_or(&e.timestamp).replace("T", " ");
+            audit_table.row()
+                .element(Paragraph::new(ts).styled(s_small))
+                .element(Paragraph::new(e.evento.clone()).styled(s_small))
+                .element(Paragraph::new(e.usuario.clone().unwrap_or_default()).styled(s_small))
+                .element(Paragraph::new(e.motivo.clone().unwrap_or_default()).styled(s_small))
+                .push().map_err(|err| format!("Error: {}", err))?;
+        }
+        doc.push(audit_table);
+    }
+
     // Observacion
     if let Some(ref obs) = r.caja.observacion {
         if !obs.is_empty() {

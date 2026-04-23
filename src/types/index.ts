@@ -35,6 +35,10 @@ export interface ProductoTactil {
   imagen?: string;
   es_servicio?: boolean;
   no_controla_stock?: boolean;
+  /** SIMPLE | COMBO_FIJO | COMBO_FLEXIBLE */
+  tipo_producto?: string;
+  /** Stock dinamico para COMBO_FIJO (MIN componentes). null para SIMPLE/FLEXIBLE */
+  stock_combo?: number | null;
 }
 
 export interface ProductoBusqueda {

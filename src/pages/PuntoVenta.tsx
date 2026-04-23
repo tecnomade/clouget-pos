@@ -454,6 +454,17 @@ export default function PuntoVenta() {
       && (i.lote_id ?? null) === loteId
     );
     if (existente) {
+      // Validar contra stock del lote antes de incrementar
+      const loteCantDisp = (existente as any).lote_cantidad_disponible;
+      if (existente.lote_id && typeof loteCantDisp === "number" && loteCantDisp > 0) {
+        const factor = existente.factor_unidad ?? 1;
+        const nuevaCantBase = (existente.cantidad + cantidadAAgregar) * factor;
+        if (nuevaCantBase > loteCantDisp + 1e-9) {
+          toastError(`El lote ${existente.lote_numero || "#" + existente.lote_id} solo tiene ${loteCantDisp} unidades disponibles. Ya tienes ${existente.cantidad * factor} en carrito.`);
+          setBusqueda(""); setResultados([]); inputRef.current?.focus();
+          return;
+        }
+      }
       setCarrito((prev) =>
         prev.map((i) =>
           (i.producto_id === producto.id
@@ -506,6 +517,8 @@ export default function PuntoVenta() {
           lote_numero: loteElegido?.lote,
           lote_fecha_caducidad: loteElegido?.fecha_caducidad,
           lote_dias_restantes: diasRestantes,
+          // Cantidad disponible del lote al momento de agregar (para validar incrementos en carrito)
+          lote_cantidad_disponible: loteElegido?.cantidad,
           // Combo: selección de componentes (solo COMBO_FLEXIBLE)
           combo_seleccion: comboSeleccion && comboSeleccion.length > 0 ? comboSeleccion : undefined,
         } as any,
@@ -530,6 +543,32 @@ export default function PuntoVenta() {
     if (cantidad <= 0) {
       setCarrito((prev) => prev.filter((_, k) => k !== idx));
       return;
+    }
+    // Validar contra stock del lote si el item tiene lote asignado
+    const item = carrito[idx] as any;
+    const loteCantDisp = item?.lote_cantidad_disponible;
+    if (item?.lote_id && typeof loteCantDisp === "number" && loteCantDisp > 0) {
+      const factor = item.factor_unidad ?? 1;
+      const cantidadBase = cantidad * factor;
+      if (cantidadBase > loteCantDisp + 1e-9) {
+        const maxPosibleEnUnidades = Math.floor(loteCantDisp / factor);
+        toastError(`El lote ${item.lote_numero || "#" + item.lote_id} solo tiene ${loteCantDisp} unidades disponibles${factor > 1 ? ` (máx ${maxPosibleEnUnidades} en esta presentación)` : ""}. Para vender más, agregue otra línea con lote diferente o "Sin lote".`);
+        return;
+      }
+    }
+    // Validar contra stock_disponible (general) si stockModo bloqueante
+    if (stockModo !== "PERMITIR" && item) {
+      const omiteStock = (item as any).combo_seleccion || (item.stock_disponible == null);
+      if (!omiteStock) {
+        const factor = item.factor_unidad ?? 1;
+        const cantidadBase = cantidad * factor;
+        // Sumar lo que ya esta en el carrito de OTROS items del mismo producto
+        const otroEnCarrito = carrito.reduce((s, it, k) => k === idx ? s : (it.producto_id === item.producto_id ? s + (Number(it.cantidad) || 0) * (Number(it.factor_unidad) || 1) : s), 0);
+        if (otroEnCarrito + cantidadBase > (item.stock_disponible || 0) + 1e-9) {
+          toastError(`Sin stock: ${item.nombre}. Disponible: ${item.stock_disponible}, ya en otras líneas: ${otroEnCarrito.toFixed(2)}.`);
+          return;
+        }
+      }
     }
     setCarrito((prev) =>
       prev.map((i, k) =>
