@@ -453,8 +453,25 @@ export async function abrirCaja(montoInicial: number, motivoDiferencia?: string,
   return smartInvoke("abrir_caja", { montoInicial, motivoDiferencia: motivoDiferencia ?? null, desglose: desglose ?? null });
 }
 
-export async function cerrarCaja(montoReal: number, observacion?: string, motivoDescuadre?: string, desglose?: string): Promise<ResumenCaja> {
-  return smartInvoke("cerrar_caja", { montoReal, observacion: observacion ?? null, motivoDescuadre: motivoDescuadre ?? null, desglose: desglose ?? null });
+export async function cerrarCaja(montoReal: number, observacion?: string, motivoDescuadre?: string, desglose?: string, pinSupervisor?: string): Promise<ResumenCaja> {
+  return smartInvoke("cerrar_caja", { montoReal, observacion: observacion ?? null, motivoDescuadre: motivoDescuadre ?? null, desglose: desglose ?? null, pinSupervisor: pinSupervisor ?? null });
+}
+
+export async function listarSesionesCaja(fechaDesde?: string, fechaHasta?: string, usuario?: string, soloDescuadradas?: boolean): Promise<any[]> {
+  return smartInvoke("listar_sesiones_caja", {
+    fechaDesde: fechaDesde ?? null,
+    fechaHasta: fechaHasta ?? null,
+    usuario: usuario ?? null,
+    soloDescuadradas: soloDescuadradas ?? null,
+  });
+}
+
+export async function registrarDepositoCierre(cajaId: number, monto: number, bancoId: number, referencia?: string, comprobanteImagen?: string): Promise<{ id: number; estado: string }> {
+  return smartInvoke("registrar_deposito_cierre", {
+    cajaId, monto, bancoId,
+    referencia: referencia ?? null,
+    comprobanteImagen: comprobanteImagen ?? null,
+  });
 }
 
 export async function obtenerCajaAbierta(): Promise<Caja | null> {

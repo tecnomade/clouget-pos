@@ -451,6 +451,63 @@ fn obtener_datos_reporte_caja(
         rows
     };
 
+    // === Anti-fraude: leer info adicional ===
+    let (motivo_diferencia_apertura, motivo_descuadre, usuario_cierre, caja_anterior_id): (Option<String>, Option<String>, Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT motivo_diferencia_apertura, motivo_descuadre, usuario_cierre, caja_anterior_id
+             FROM caja WHERE id = ?1",
+            rusqlite::params![caja_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap_or((None, None, None, None));
+
+    let monto_cierre_anterior: Option<f64> = if let Some(prev_id) = caja_anterior_id {
+        conn.query_row(
+            "SELECT monto_real FROM caja WHERE id = ?1",
+            rusqlite::params![prev_id],
+            |r| r.get(0),
+        ).ok().flatten()
+    } else { None };
+
+    // Eventos de auditoria
+    let eventos: Vec<crate::models::EventoCajaReporte> = {
+        let mut stmt = conn.prepare(
+            "SELECT timestamp, evento, usuario, motivo FROM caja_eventos WHERE caja_id = ?1 ORDER BY timestamp ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![caja_id], |r| Ok(crate::models::EventoCajaReporte {
+            timestamp: r.get(0)?,
+            evento: r.get(1)?,
+            usuario: r.get(2)?,
+            motivo: r.get(3)?,
+        })).map_err(|e| e.to_string())?;
+        let collected: Vec<crate::models::EventoCajaReporte> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        collected
+    };
+
+    // Depositos / retiros con banco asociado
+    let depositos: Vec<crate::models::DepositoReporte> = {
+        let mut stmt = conn.prepare(
+            "SELECT r.monto, cb.nombre, r.referencia, COALESCE(r.estado, 'SIN_DEPOSITO'), r.fecha
+             FROM retiros_caja r
+             LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
+             WHERE r.caja_id = ?1 AND r.banco_id IS NOT NULL
+             ORDER BY r.fecha ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![caja_id], |r| Ok(crate::models::DepositoReporte {
+            monto: r.get(0)?,
+            banco_nombre: r.get(1)?,
+            referencia: r.get(2)?,
+            estado: r.get(3)?,
+            fecha: r.get(4)?,
+        })).map_err(|e| e.to_string())?;
+        let collected: Vec<crate::models::DepositoReporte> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        collected
+    };
+
     Ok(crate::models::ResumenCajaReporte {
         caja,
         total_ventas,
@@ -468,6 +525,13 @@ fn obtener_datos_reporte_caja(
         ruc,
         direccion,
         ventas_por_categoria,
+        motivo_diferencia_apertura,
+        motivo_descuadre,
+        usuario_cierre,
+        caja_anterior_id,
+        monto_cierre_anterior,
+        eventos,
+        depositos,
     })
 }
 
@@ -696,6 +760,82 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
     t.extend_from_slice(esc_bold_off);
     t.extend_from_slice(esc_left);
 
+    // === ANTI-FRAUDE / TRAZABILIDAD ===
+    // Cierre anterior (continuidad)
+    if let Some(prev_id) = r.caja_anterior_id {
+        t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"TRAZABILIDAD\n");
+        t.extend_from_slice(esc_bold_off);
+        if let Some(prev_monto) = r.monto_cierre_anterior {
+            t.extend_from_slice(format!("Cierre anterior #{}: ${:.2}\n", prev_id, prev_monto).as_bytes());
+            let dif_apertura = r.caja.monto_inicial - prev_monto;
+            if dif_apertura.abs() > 0.01 {
+                t.extend_from_slice(format!("Dif. apertura: ${:.2}\n", dif_apertura).as_bytes());
+            }
+        }
+    }
+    if let Some(ref motivo) = r.motivo_diferencia_apertura {
+        if !motivo.is_empty() {
+            t.extend_from_slice(b"Motivo dif. apertura:\n");
+            for chunk in wrap_text(motivo, ancho).iter() {
+                t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
+            }
+        }
+    }
+    if let Some(ref motivo) = r.motivo_descuadre {
+        if !motivo.is_empty() {
+            t.extend_from_slice(b"Motivo descuadre:\n");
+            for chunk in wrap_text(motivo, ancho).iter() {
+                t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
+            }
+        }
+    }
+    if let Some(ref uc) = r.usuario_cierre {
+        if r.caja.usuario.as_deref() != Some(uc) {
+            t.extend_from_slice(format!("Cerrado por: {}\n", uc).as_bytes());
+        }
+    }
+
+    // Depositos a banco
+    if !r.depositos.is_empty() {
+        t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"DEPOSITOS A BANCO\n");
+        t.extend_from_slice(esc_bold_off);
+        for d in &r.depositos {
+            let banco = d.banco_nombre.as_deref().unwrap_or("?");
+            let estado = match d.estado.as_str() {
+                "DEPOSITADO" => "OK",
+                "EN_TRANSITO" => "Pdte",
+                _ => "-",
+            };
+            t.extend_from_slice(linea_monto_r(
+                &format!("{} [{}]", banco, estado),
+                &format!("${:.2}", d.monto),
+                ancho,
+            ).as_bytes());
+            if let Some(ref refer) = d.referencia {
+                if !refer.is_empty() {
+                    t.extend_from_slice(format!("  Ref: {}\n", refer).as_bytes());
+                }
+            }
+        }
+    }
+
+    // Audit log de eventos (apertura, cierre, descuadre_grave, deposito)
+    if !r.eventos.is_empty() {
+        t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"AUDIT LOG\n");
+        t.extend_from_slice(esc_bold_off);
+        for e in &r.eventos {
+            let hora = e.timestamp.get(11..16).unwrap_or(&e.timestamp);
+            let usuario = e.usuario.as_deref().unwrap_or("?");
+            t.extend_from_slice(format!("{} {} {}\n", hora, e.evento, usuario).as_bytes());
+        }
+    }
+
     // Observacion
     if let Some(ref obs) = r.caja.observacion {
         if !obs.is_empty() {
@@ -712,6 +852,23 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
     t.extend_from_slice(esc_cut);
 
     t
+}
+
+/// Helper: divide texto en chunks que caben en un ancho dado (wrap simple por palabras)
+fn wrap_text(text: &str, ancho: usize) -> Vec<String> {
+    let max = ancho.saturating_sub(2);
+    let mut result = Vec::new();
+    let mut linea = String::new();
+    for palabra in text.split_whitespace() {
+        if linea.len() + palabra.len() + 1 > max && !linea.is_empty() {
+            result.push(linea.clone());
+            linea.clear();
+        }
+        if !linea.is_empty() { linea.push(' '); }
+        linea.push_str(palabra);
+    }
+    if !linea.is_empty() { result.push(linea); }
+    result
 }
 
 fn linea_sep(ancho: usize, ch: char) -> String {

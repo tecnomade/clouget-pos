@@ -189,6 +189,8 @@ pub fn run() {
             commands::caja::obtener_ultimo_cierre,
             commands::caja::listar_eventos_caja,
             commands::caja::historial_descuadres_caja,
+            commands::caja::listar_sesiones_caja,
+            commands::caja::registrar_deposito_cierre,
             commands::caja::registrar_retiro,
             commands::caja::listar_retiros_caja,
             commands::caja::confirmar_deposito,

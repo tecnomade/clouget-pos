@@ -153,6 +153,7 @@ pub fn cerrar_caja(
     observacion: Option<String>,
     motivo_descuadre: Option<String>,
     desglose: Option<String>,
+    pin_supervisor: Option<String>,
 ) -> Result<ResumenCaja, String> {
     // Obtener usuario actual (puede ser distinto al que abrio)
     let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
@@ -161,9 +162,42 @@ pub fn cerrar_caja(
         .ok_or("Debe iniciar sesión para cerrar la caja".to_string())?;
     let usuario_cierre = sesion_actual.nombre.clone();
     let usuario_cierre_id = sesion_actual.usuario_id;
+    let usuario_rol = sesion_actual.rol.clone();
+    let usuario_permisos = sesion_actual.permisos.clone();
     drop(sesion_guard);
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // === Validar permiso para cerrar caja ===
+    // Tienen permiso: rol ADMIN, o quienes tengan permiso "cerrar_caja"
+    let es_admin = usuario_rol == "ADMIN";
+    let tiene_permiso_cerrar = es_admin || serde_json::from_str::<serde_json::Value>(&usuario_permisos)
+        .ok()
+        .and_then(|v| v.get("cerrar_caja")?.as_bool())
+        .unwrap_or(false);
+    if !tiene_permiso_cerrar {
+        // Requiere PIN de supervisor
+        let pin = pin_supervisor.as_deref().map(|s| s.trim()).unwrap_or("");
+        if pin.is_empty() {
+            return Err("REQUIERE_PIN_SUPERVISOR:Su rol no tiene permiso para cerrar caja. Solicite a un administrador o supervisor su PIN para autorizar el cierre.".to_string());
+        }
+        // Validar PIN admin
+        let mut stmt = conn.prepare("SELECT pin_hash, pin_salt FROM usuarios WHERE activo = 1 AND rol = 'ADMIN'")
+            .map_err(|e| e.to_string())?;
+        let admins: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        drop(stmt);
+        let mut valido = false;
+        for (hash, salt) in admins {
+            if crate::utils::hash_pin(&salt, pin) == hash {
+                valido = true; break;
+            }
+        }
+        if !valido {
+            return Err("REQUIERE_PIN_SUPERVISOR:PIN de supervisor incorrecto.".to_string());
+        }
+    }
 
     let caja_id: i64 = conn
         .query_row(
@@ -268,16 +302,49 @@ pub fn cerrar_caja(
         let umbral_pct: f64 = conn
             .query_row("SELECT value FROM config WHERE key = 'caja_descuadre_umbral_pct'", [], |r| r.get::<_, String>(0))
             .ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+        let requiere_pin_descuadre: bool = conn
+            .query_row("SELECT value FROM config WHERE key = 'caja_requiere_pin_descuadre'", [], |r| r.get::<_, String>(0))
+            .map(|v| v == "1").unwrap_or(false);
         let umbral_monto = (umbral_pct / 100.0) * monto_esperado.max(1.0);
         let pct_real = if monto_esperado > 0.0 { diferencia.abs() / monto_esperado * 100.0 } else { 0.0 };
+
         if diferencia.abs() > umbral_monto {
-            // Solo informativo en el response — el cierre procede pero queda marcado
-            // La UI puede pedir PIN admin si caja_requiere_pin_descuadre = '1' (validacion en UI)
+            // Si la config exige PIN para descuadres graves: exigirlo (si el usuario actual no tiene 'aprobar_descuadre')
+            let tiene_aprobar = es_admin || serde_json::from_str::<serde_json::Value>(&usuario_permisos)
+                .ok()
+                .and_then(|v| v.get("aprobar_descuadre")?.as_bool())
+                .unwrap_or(false);
+            if requiere_pin_descuadre && !tiene_aprobar {
+                let pin = pin_supervisor.as_deref().map(|s| s.trim()).unwrap_or("");
+                if pin.is_empty() {
+                    return Err(format!(
+                        "REQUIERE_PIN_DESCUADRE:{:.2}:{:.2}:Descuadre de ${:.2} ({:.1}%) supera el umbral del {:.1}%. Requiere autorización con PIN de supervisor.",
+                        umbral_monto, diferencia.abs(), diferencia.abs(), pct_real, umbral_pct
+                    ));
+                }
+                // Validar el PIN nuevamente (puede que ya haya pasado el filtro de permiso cerrar_caja, pero igual revalidamos)
+                let mut stmt2 = conn.prepare("SELECT pin_hash, pin_salt FROM usuarios WHERE activo = 1 AND rol = 'ADMIN'")
+                    .map_err(|e| e.to_string())?;
+                let admins: Vec<(String, String)> = stmt2.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+                drop(stmt2);
+                let mut valido = false;
+                for (hash, salt) in admins {
+                    if crate::utils::hash_pin(&salt, pin) == hash {
+                        valido = true; break;
+                    }
+                }
+                if !valido {
+                    return Err("REQUIERE_PIN_DESCUADRE:PIN de supervisor incorrecto para autorizar descuadre.".to_string());
+                }
+            }
+            // Registrar evento DESCUADRE_GRAVE
             let _ = conn.execute(
                 "INSERT INTO caja_eventos (caja_id, evento, usuario, usuario_id, motivo, metadatos)
                  VALUES (?1, 'DESCUADRE_GRAVE', ?2, ?3, ?4, ?5)",
                 rusqlite::params![caja_id, usuario_cierre, usuario_cierre_id, motivo_descuadre,
-                    serde_json::json!({"diferencia": diferencia, "umbral_pct": umbral_pct, "umbral_monto": umbral_monto, "pct_real": pct_real}).to_string()
+                    serde_json::json!({"diferencia": diferencia, "umbral_pct": umbral_pct, "umbral_monto": umbral_monto, "pct_real": pct_real, "pin_validado": requiere_pin_descuadre && !tiene_aprobar}).to_string()
                 ],
             );
         }
@@ -489,6 +556,126 @@ pub fn listar_eventos_caja(db: State<Database>, caja_id: i64) -> Result<Vec<serd
         }))
     }).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// Lista TODAS las sesiones de caja (abiertas y cerradas) con filtros opcionales.
+/// Util para auditoria completa, no solo descuadres.
+#[tauri::command]
+pub fn listar_sesiones_caja(
+    db: State<Database>,
+    fecha_desde: Option<String>,
+    fecha_hasta: Option<String>,
+    usuario: Option<String>,
+    solo_descuadradas: Option<bool>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
+
+    let mut sql = String::from(
+        "SELECT c.id, c.fecha_apertura, COALESCE(c.cerrada_at, c.fecha_cierre) as fecha_cierre,
+                c.monto_inicial, c.monto_ventas, c.monto_esperado, c.monto_real, c.diferencia,
+                c.estado, c.usuario, c.usuario_id,
+                COALESCE(c.usuario_cierre, c.usuario) as usuario_cierre,
+                c.observacion, c.motivo_descuadre, c.motivo_diferencia_apertura, c.caja_anterior_id
+         FROM caja c
+         WHERE date(c.fecha_apertura) >= date(?1) AND date(c.fecha_apertura) <= date(?2)"
+    );
+    let mut params_vec: Vec<rusqlite::types::Value> = vec![desde.into(), hasta.into()];
+    if let Some(u) = usuario.as_ref().filter(|s| !s.is_empty()) {
+        sql.push_str(" AND (c.usuario LIKE ?3 OR c.usuario_cierre LIKE ?3)");
+        params_vec.push(format!("%{}%", u).into());
+    }
+    if solo_descuadradas.unwrap_or(false) {
+        sql.push_str(" AND c.estado = 'CERRADA' AND ABS(COALESCE(c.diferencia, 0)) > 0.01");
+    }
+    sql.push_str(" ORDER BY c.id DESC LIMIT 200");
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
+    let sesiones = stmt.query_map(rusqlite::params_from_iter(params_refs.iter()), |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "fecha_apertura": r.get::<_, Option<String>>(1)?,
+            "fecha_cierre": r.get::<_, Option<String>>(2)?,
+            "monto_inicial": r.get::<_, f64>(3)?,
+            "monto_ventas": r.get::<_, f64>(4)?,
+            "monto_esperado": r.get::<_, f64>(5)?,
+            "monto_real": r.get::<_, Option<f64>>(6)?,
+            "diferencia": r.get::<_, Option<f64>>(7)?,
+            "estado": r.get::<_, String>(8)?,
+            "usuario_apertura": r.get::<_, Option<String>>(9)?,
+            "usuario_id": r.get::<_, Option<i64>>(10)?,
+            "usuario_cierre": r.get::<_, Option<String>>(11)?,
+            "observacion": r.get::<_, Option<String>>(12)?,
+            "motivo_descuadre": r.get::<_, Option<String>>(13)?,
+            "motivo_diferencia_apertura": r.get::<_, Option<String>>(14)?,
+            "caja_anterior_id": r.get::<_, Option<i64>>(15)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(sesiones)
+}
+
+/// Registra un deposito a banco POST-CIERRE de caja (cuando el dinero contado
+/// va al banco). Crea entrada en retiros_caja con estado EN_TRANSITO si requiere
+/// confirmacion, o DEPOSITADO directo si se sube comprobante.
+#[tauri::command]
+pub fn registrar_deposito_cierre(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    caja_id: i64,
+    monto: f64,
+    banco_id: i64,
+    referencia: Option<String>,
+    comprobante_imagen: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión".to_string())?;
+    let usuario_nombre = sesion_actual.nombre.clone();
+    let usuario_id = sesion_actual.usuario_id;
+    drop(sesion_guard);
+
+    if monto <= 0.0 {
+        return Err("El monto del depósito debe ser mayor a 0".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Verificar que la caja existe (puede estar abierta o cerrada)
+    let _: i64 = conn.query_row(
+        "SELECT id FROM caja WHERE id = ?1",
+        rusqlite::params![caja_id], |r| r.get(0),
+    ).map_err(|_| "Caja no encontrada".to_string())?;
+
+    let estado = if comprobante_imagen.is_some() && referencia.is_some() {
+        "DEPOSITADO"
+    } else {
+        "EN_TRANSITO"
+    };
+
+    let motivo = format!("Depósito a banco (cierre caja #{})", caja_id);
+    conn.execute(
+        "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado, comprobante_imagen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![caja_id, monto, motivo, banco_id, referencia, usuario_nombre, usuario_id, estado, comprobante_imagen],
+    ).map_err(|e| e.to_string())?;
+
+    let id = conn.last_insert_rowid();
+
+    // Log evento DEPOSITO en caja_eventos
+    let snapshot = serde_json::json!({
+        "monto": monto,
+        "banco_id": banco_id,
+        "referencia": referencia,
+        "estado": estado,
+    }).to_string();
+    log_evento_caja(&conn, caja_id, "DEPOSITO", &usuario_nombre, usuario_id,
+        None, Some(&snapshot), Some(&motivo));
+
+    Ok(serde_json::json!({ "id": id, "estado": estado }))
 }
 
 /// Historial de cierres con descuadre. Util para detectar patrones por cajero.

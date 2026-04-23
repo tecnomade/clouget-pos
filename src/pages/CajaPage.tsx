@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -33,9 +33,19 @@ export default function CajaPage() {
   const [ultimoCierre, setUltimoCierre] = useState<any>(null);
   const [motivoApertura, setMotivoApertura] = useState("");
   const [motivoDescuadre, setMotivoDescuadre] = useState("");
+  // PIN supervisor modal (cuando rol no tiene permiso cerrar_caja o descuadre alto)
+  const [pinPrompt, setPinPrompt] = useState<{ tipo: "permiso" | "descuadre"; mensaje: string } | null>(null);
+  const [pinSupervisor, setPinSupervisor] = useState("");
+  // Deposito post-cierre
+  const [mostrarDeposito, setMostrarDeposito] = useState(false);
+  const [depositoMonto, setDepositoMonto] = useState("");
+  const [depositoBancoId, setDepositoBancoId] = useState<number | null>(null);
+  const [depositoReferencia, setDepositoReferencia] = useState("");
   // Modal historial descuadres
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  const [historialTab, setHistorialTab] = useState<"sesiones" | "descuadres">("sesiones");
   const [historialData, setHistorialData] = useState<any>(null);
+  const [sesionesData, setSesionesData] = useState<any[]>([]);
   const [historialDesde, setHistorialDesde] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
@@ -96,33 +106,44 @@ export default function CajaPage() {
     }
   };
 
-  const handleCerrar = async () => {
-    setConfirmarCierre(false);
+  const intentarCerrarCaja = async (pinOverride?: string) => {
     const monto = parseFloat(montoReal) || 0;
-    // Calcular descuadre esperado para validar motivo localmente
     const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
     const esperado = (cajaAbierta?.monto_inicial || 0) + (cajaAbierta?.monto_ventas || 0) - totalRetiros;
     const dif = monto - esperado;
     if (Math.abs(dif) > 0.01 && motivoDescuadre.trim().length < 5) {
       toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
-      return;
+      return false;
     }
     try {
-      const res = await cerrarCaja(monto, observacion || undefined, motivoDescuadre.trim() || undefined);
+      const res = await cerrarCaja(monto, observacion || undefined, motivoDescuadre.trim() || undefined, undefined, pinOverride);
       setResumen(res);
       setCajaAbierta(null);
       setMontoReal("");
       setObservacion("");
       setMotivoDescuadre("");
       toastExito("Caja cerrada correctamente");
+      return true;
     } catch (err) {
       const msg = String(err);
-      if (msg.includes("DESCUADRE_CIERRE")) {
+      if (msg.includes("REQUIERE_PIN_SUPERVISOR")) {
+        // Pedir PIN supervisor (rol no tiene permiso cerrar_caja)
+        setPinPrompt({ tipo: "permiso", mensaje: msg.split(":").slice(1).join(":").trim() });
+      } else if (msg.includes("REQUIERE_PIN_DESCUADRE")) {
+        // Pedir PIN supervisor (descuadre supera umbral)
+        setPinPrompt({ tipo: "descuadre", mensaje: msg.split(":").slice(3).join(":").trim() });
+      } else if (msg.includes("DESCUADRE_CIERRE")) {
         toastError(msg.split(":").slice(3).join(":").trim() || msg);
       } else {
         toastError("Error: " + err);
       }
+      return false;
     }
+  };
+
+  const handleCerrar = async () => {
+    setConfirmarCierre(false);
+    await intentarCerrarCaja();
   };
 
   const handleFinalizarTurno = async () => {
@@ -189,12 +210,17 @@ export default function CajaPage() {
           <button className="btn btn-outline" style={{ fontSize: 11 }}
             onClick={async () => {
               setMostrarHistorial(true);
+              setHistorialTab("sesiones");
               try {
-                const d = await historialDescuadresCaja(historialDesde, historialHasta);
-                setHistorialData(d);
+                const [sesiones, descuadres] = await Promise.all([
+                  listarSesionesCaja(historialDesde, historialHasta),
+                  historialDescuadresCaja(historialDesde, historialHasta),
+                ]);
+                setSesionesData(sesiones);
+                setHistorialData(descuadres);
               } catch (err) { toastError("Error: " + err); }
             }}>
-            📊 Historial descuadres
+            📊 Historial caja
           </button>
         </div>
       </div>
@@ -304,6 +330,19 @@ export default function CajaPage() {
                   {imprimiendo ? "..." : "Reporte A4 (PDF)"}
                 </button>
               </div>
+
+              {/* Botón depósito a banco */}
+              <button
+                className="btn btn-outline mt-3"
+                style={{ width: "100%", borderColor: "var(--color-primary)", color: "var(--color-primary)", fontWeight: 600 }}
+                onClick={() => {
+                  setDepositoMonto((resumen.caja.monto_real || 0).toFixed(2));
+                  setMostrarDeposito(true);
+                }}
+              >
+                🏦 Registrar depósito a banco
+              </button>
+
               <button
                 className="btn btn-primary btn-lg mt-4"
                 style={{ width: "100%" }}
@@ -614,14 +653,30 @@ export default function CajaPage() {
         onCancelar={() => setConfirmarCierre(false)}
       />
 
-      {/* Modal: Historial de descuadres */}
+      {/* Modal: Historial completo de caja (sesiones + descuadres) */}
       {mostrarHistorial && (
         <div className="modal-overlay" onClick={() => setMostrarHistorial(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, maxHeight: "90vh", overflowY: "auto" }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 1000, maxHeight: "90vh", overflowY: "auto" }}>
             <div className="modal-header">
-              <h3>📊 Historial de descuadres de caja</h3>
+              <h3>📊 Historial de caja</h3>
             </div>
             <div className="modal-body">
+              {/* Tabs */}
+              <div style={{ display: "flex", gap: 4, marginBottom: 12, borderBottom: "1px solid var(--color-border)" }}>
+                <button
+                  className={`btn ${historialTab === "sesiones" ? "btn-primary" : "btn-outline"}`}
+                  style={{ fontSize: 12, padding: "6px 14px", borderRadius: "6px 6px 0 0" }}
+                  onClick={() => setHistorialTab("sesiones")}>
+                  📋 Todas las sesiones ({sesionesData.length})
+                </button>
+                <button
+                  className={`btn ${historialTab === "descuadres" ? "btn-primary" : "btn-outline"}`}
+                  style={{ fontSize: 12, padding: "6px 14px", borderRadius: "6px 6px 0 0" }}
+                  onClick={() => setHistorialTab("descuadres")}>
+                  ⚠ Descuadres ({historialData?.total_descuadrados || 0})
+                </button>
+              </div>
+
               <div style={{ display: "flex", gap: 8, alignItems: "end", marginBottom: 14, flexWrap: "wrap" }}>
                 <div>
                   <label className="text-secondary" style={{ fontSize: 11 }}>Desde</label>
@@ -638,7 +693,11 @@ export default function CajaPage() {
                 <button className="btn btn-primary" style={{ fontSize: 12 }}
                   onClick={async () => {
                     try {
-                      const d = await historialDescuadresCaja(historialDesde, historialHasta);
+                      const [sesiones, d] = await Promise.all([
+                        listarSesionesCaja(historialDesde, historialHasta),
+                        historialDescuadresCaja(historialDesde, historialHasta),
+                      ]);
+                      setSesionesData(sesiones);
                       setHistorialData(d);
                     } catch (err) { toastError("Error: " + err); }
                   }}>
@@ -646,7 +705,65 @@ export default function CajaPage() {
                 </button>
               </div>
 
-              {!historialData ? (
+              {/* TAB: Todas las sesiones */}
+              {historialTab === "sesiones" && (
+                sesionesData.length === 0 ? (
+                  <div className="text-center text-secondary" style={{ padding: 30 }}>Sin sesiones en este período</div>
+                ) : (
+                  <table className="table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th>Apertura</th>
+                        <th>Cierre</th>
+                        <th>Cajero apertura</th>
+                        <th>Cajero cierre</th>
+                        <th className="text-right">Inicial</th>
+                        <th className="text-right">Ventas</th>
+                        <th className="text-right">Esperado</th>
+                        <th className="text-right">Contado</th>
+                        <th className="text-right">Dif.</th>
+                        <th>Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sesionesData.map((s: any) => {
+                        const dif = Number(s.diferencia ?? 0);
+                        const descuadrada = s.estado === "CERRADA" && Math.abs(dif) > 0.01;
+                        return (
+                          <tr key={s.id} style={{ background: descuadrada ? "rgba(245,158,11,0.06)" : undefined }}>
+                            <td style={{ fontSize: 11 }}>{s.fecha_apertura?.slice(0, 16).replace("T", " ")}</td>
+                            <td style={{ fontSize: 11 }}>{s.fecha_cierre?.slice(0, 16).replace("T", " ") || "-"}</td>
+                            <td>{s.usuario_apertura || "-"}</td>
+                            <td>{s.usuario_cierre || "-"}</td>
+                            <td className="text-right">${s.monto_inicial.toFixed(2)}</td>
+                            <td className="text-right">${s.monto_ventas.toFixed(2)}</td>
+                            <td className="text-right">${s.monto_esperado.toFixed(2)}</td>
+                            <td className="text-right font-bold">{s.monto_real != null ? `$${s.monto_real.toFixed(2)}` : "-"}</td>
+                            <td className="text-right" style={{
+                              color: dif < 0 ? "var(--color-danger)" : dif > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
+                              fontWeight: descuadrada ? 700 : undefined,
+                            }}>
+                              {s.diferencia != null ? `$${dif.toFixed(2)}` : "-"}
+                            </td>
+                            <td>
+                              <span style={{
+                                fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 3,
+                                background: s.estado === "ABIERTA" ? "rgba(34,197,94,0.15)" : descuadrada ? "rgba(245,158,11,0.15)" : "rgba(148,163,184,0.15)",
+                                color: s.estado === "ABIERTA" ? "var(--color-success)" : descuadrada ? "var(--color-warning)" : "var(--color-text-secondary)",
+                              }}>
+                                {s.estado}{descuadrada ? " ⚠" : ""}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )
+              )}
+
+              {/* TAB: Descuadres (contenido original) */}
+              {historialTab === "descuadres" && (!historialData ? (
                 <div className="text-center text-secondary" style={{ padding: 30 }}>Cargando...</div>
               ) : (
                 <>
@@ -748,10 +865,121 @@ export default function CajaPage() {
                     </table>
                   )}
                 </>
-              )}
+              ))}
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setMostrarHistorial(false)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal PIN supervisor (cuando rol no tiene permiso o descuadre alto) */}
+      {pinPrompt && (
+        <div className="modal-overlay" onClick={() => { setPinPrompt(null); setPinSupervisor(""); }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h3>🔐 Autorización requerida</h3>
+            </div>
+            <div className="modal-body">
+              <div style={{
+                padding: "10px 12px", marginBottom: 12, borderRadius: 6,
+                background: pinPrompt.tipo === "descuadre" ? "rgba(245,158,11,0.12)" : "rgba(59,130,246,0.1)",
+                border: `1px solid ${pinPrompt.tipo === "descuadre" ? "rgba(245,158,11,0.4)" : "rgba(59,130,246,0.3)"}`,
+                fontSize: 12, color: pinPrompt.tipo === "descuadre" ? "var(--color-warning)" : "var(--color-text)",
+              }}>
+                {pinPrompt.mensaje}
+              </div>
+              <label className="text-secondary" style={{ fontSize: 12 }}>PIN de supervisor (administrador)</label>
+              <input
+                type="password"
+                className="input mt-2"
+                placeholder="••••"
+                value={pinSupervisor}
+                onChange={(e) => setPinSupervisor(e.target.value)}
+                autoFocus
+                onKeyDown={async (e) => {
+                  if (e.key === "Enter" && pinSupervisor.length >= 4) {
+                    const ok = await intentarCerrarCaja(pinSupervisor);
+                    if (ok) { setPinPrompt(null); setPinSupervisor(""); }
+                  }
+                }} />
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between" }}>
+              <button className="btn btn-outline" onClick={() => { setPinPrompt(null); setPinSupervisor(""); }}>Cancelar</button>
+              <button className="btn btn-primary"
+                disabled={pinSupervisor.length < 4}
+                onClick={async () => {
+                  const ok = await intentarCerrarCaja(pinSupervisor);
+                  if (ok) { setPinPrompt(null); setPinSupervisor(""); }
+                }}>
+                Autorizar y cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: registrar deposito a banco post-cierre */}
+      {mostrarDeposito && resumen && (
+        <div className="modal-overlay" onClick={() => setMostrarDeposito(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h3>🏦 Depósito a banco</h3>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Registra el depósito del efectivo contado al banco. Queda atado a esta caja para auditoría.
+              </p>
+              <label className="text-secondary" style={{ fontSize: 12 }}>Monto a depositar</label>
+              <input className="input mt-2" type="number" step="0.01"
+                placeholder={resumen.caja.monto_real?.toFixed(2) || "0.00"}
+                value={depositoMonto}
+                onChange={(e) => setDepositoMonto(e.target.value)} />
+              <div className="mt-3">
+                <label className="text-secondary" style={{ fontSize: 12 }}>Cuenta bancaria *</label>
+                <select className="input mt-2"
+                  value={depositoBancoId === null ? "" : String(depositoBancoId)}
+                  onChange={(e) => setDepositoBancoId(e.target.value ? parseInt(e.target.value) : null)}>
+                  <option value="">— Seleccione cuenta —</option>
+                  {cuentasBanco.map((b: any) => (
+                    <option key={b.id} value={b.id}>
+                      {b.nombre}{b.numero_cuenta ? ` · ${b.numero_cuenta}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="mt-3">
+                <label className="text-secondary" style={{ fontSize: 12 }}>Referencia / N° transacción (opcional)</label>
+                <input className="input mt-2"
+                  placeholder="Ej: 0012345"
+                  value={depositoReferencia}
+                  onChange={(e) => setDepositoReferencia(e.target.value)} />
+              </div>
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8 }}>
+                💡 Si tienes la referencia, el depósito se marca como CONFIRMADO. Si no, queda EN_TRANSITO hasta confirmar.
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between" }}>
+              <button className="btn btn-outline" onClick={() => setMostrarDeposito(false)}>Cancelar</button>
+              <button className="btn btn-primary"
+                disabled={!depositoBancoId || !depositoMonto || parseFloat(depositoMonto) <= 0}
+                onClick={async () => {
+                  if (!resumen.caja.id || !depositoBancoId) return;
+                  try {
+                    await registrarDepositoCierre(
+                      resumen.caja.id,
+                      parseFloat(depositoMonto),
+                      depositoBancoId,
+                      depositoReferencia.trim() || undefined,
+                    );
+                    toastExito("Depósito registrado");
+                    setMostrarDeposito(false);
+                    setDepositoMonto(""); setDepositoBancoId(null); setDepositoReferencia("");
+                  } catch (err) { toastError("Error: " + err); }
+                }}>
+                Registrar depósito
+              </button>
             </div>
           </div>
         </div>

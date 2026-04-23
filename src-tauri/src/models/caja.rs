@@ -47,4 +47,36 @@ pub struct ResumenCajaReporte {
     pub ruc: String,
     pub direccion: String,
     pub ventas_por_categoria: Vec<(String, f64)>,
+    // Anti-fraude (v2.3.x)
+    #[serde(default)]
+    pub motivo_diferencia_apertura: Option<String>,
+    #[serde(default)]
+    pub motivo_descuadre: Option<String>,
+    #[serde(default)]
+    pub usuario_cierre: Option<String>,
+    #[serde(default)]
+    pub caja_anterior_id: Option<i64>,
+    #[serde(default)]
+    pub monto_cierre_anterior: Option<f64>,
+    #[serde(default)]
+    pub eventos: Vec<EventoCajaReporte>,
+    #[serde(default)]
+    pub depositos: Vec<DepositoReporte>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct EventoCajaReporte {
+    pub timestamp: String,
+    pub evento: String,
+    pub usuario: Option<String>,
+    pub motivo: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct DepositoReporte {
+    pub monto: f64,
+    pub banco_nombre: Option<String>,
+    pub referencia: Option<String>,
+    pub estado: String,
+    pub fecha: String,
 }
