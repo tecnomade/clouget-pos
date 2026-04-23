@@ -95,6 +95,19 @@ export default function ServicioTecnicoPage() {
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [productosResultados, setProductosResultados] = useState<any[]>([]);
 
+  // Tecla Esc cierra los drawers (form / detalle)
+  useEffect(() => {
+    if (!mostrarForm && !detalle) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (mostrarCobrar) return; // dejar que el modal cobrar maneje su propio cierre
+      if (mostrarForm) setMostrarForm(false);
+      else if (detalle) { setDetalle(null); setDetalleId(null); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [mostrarForm, detalle, mostrarCobrar]);
+
   const cargar = async () => {
     try {
       if (busqueda.trim()) {
@@ -317,14 +330,37 @@ export default function ServicioTecnicoPage() {
         )}
       </div>
 
-      {/* Modal Form Crear/Editar */}
+      {/* Drawer lateral derecho: Form Crear/Editar */}
       {mostrarForm && (
-        <div className="modal-overlay" onClick={() => setMostrarForm(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 700, maxHeight: "90vh", overflowY: "auto" }}>
-            <div className="modal-header">
-              <h3>{form.id ? `Editar ${labels.ordenLabel}` : `Nueva ${labels.ordenLabel}`}</h3>
+        <>
+          <div onClick={() => setMostrarForm(false)} style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+            zIndex: 999, animation: "stFadeIn 0.15s ease-out",
+          }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            position: "fixed", top: 0, right: 0, bottom: 0,
+            width: "min(96vw, 760px)",
+            background: "var(--color-bg)",
+            boxShadow: "-4px 0 20px rgba(0,0,0,0.25)",
+            zIndex: 1000, display: "flex", flexDirection: "column",
+            animation: "stSlideInRight 0.2s ease-out",
+          }}>
+            <style>{`
+              @keyframes stSlideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+              @keyframes stFadeIn { from { opacity: 0; } to { opacity: 1; } }
+            `}</style>
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "12px 20px", borderBottom: "1px solid var(--color-border)",
+              flexShrink: 0,
+            }}>
+              <h3 style={{ margin: 0 }}>{form.id ? `Editar ${labels.ordenLabel}` : `Nueva ${labels.ordenLabel}`}</h3>
+              <button
+                onClick={() => setMostrarForm(false)}
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 24, color: "var(--color-text-secondary)", padding: "0 8px", lineHeight: 1 }}
+                title="Cerrar (Esc)">×</button>
             </div>
-            <div className="modal-body">
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
               {/* Cliente */}
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, fontWeight: 600 }}>Cliente</label>
@@ -460,23 +496,41 @@ export default function ServicioTecnicoPage() {
                 </div>
               </div>
             </div>
-            <div className="modal-footer">
+            <div style={{
+              padding: "10px 20px", borderTop: "1px solid var(--color-border)",
+              display: "flex", justifyContent: "flex-end", gap: 8, flexShrink: 0,
+            }}>
               <button className="btn btn-outline" onClick={() => setMostrarForm(false)}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleSubmit}>{form.id ? "Actualizar" : `Crear ${labels.ordenLabel}`}</button>
             </div>
           </div>
-        </div>
+        </>
       )}
 
-      {/* Modal Detalle */}
+      {/* Drawer lateral derecho: Detalle de la orden */}
       {detalle && !mostrarCobrar && (
-        <div className="modal-overlay" onClick={() => { setDetalle(null); setDetalleId(null); }}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 800, maxHeight: "90vh", overflowY: "auto" }}>
-            <div className="modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <>
+          <div onClick={() => { setDetalle(null); setDetalleId(null); }} style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+            zIndex: 999, animation: "stFadeIn 0.15s ease-out",
+          }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            position: "fixed", top: 0, right: 0, bottom: 0,
+            width: "min(96vw, 900px)",
+            background: "var(--color-bg)",
+            boxShadow: "-4px 0 20px rgba(0,0,0,0.25)",
+            zIndex: 1000, display: "flex", flexDirection: "column",
+            animation: "stSlideInRight 0.2s ease-out",
+          }}>
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "12px 20px", borderBottom: "1px solid var(--color-border)",
+              flexShrink: 0,
+            }}>
               <h3 style={{ margin: 0 }}>{detalle.numero} <span style={{ background: ESTADOS_COLORS[detalle.estado || "RECIBIDO"], color: "#fff", padding: "2px 10px", borderRadius: 4, fontSize: 11, marginLeft: 8 }}>{detalle.estado}</span></h3>
-              <button onClick={() => { setDetalle(null); setDetalleId(null); }} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--color-text)" }}>×</button>
+              <button onClick={() => { setDetalle(null); setDetalleId(null); }} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "var(--color-text-secondary)", padding: "0 8px", lineHeight: 1 }} title="Cerrar (Esc)">×</button>
             </div>
-            <div className="modal-body">
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
               {/* Cliente y Equipo */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
                 <div className="card" style={{ padding: 12 }}>
@@ -594,7 +648,10 @@ export default function ServicioTecnicoPage() {
                 </div>
               )}
             </div>
-            <div className="modal-footer" style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <div style={{
+              padding: "10px 20px", borderTop: "1px solid var(--color-border)",
+              display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap", flexShrink: 0,
+            }}>
               {esAdmin && (
                 <button className="btn btn-danger" style={{ fontSize: 11 }}
                   onClick={async () => {
@@ -610,7 +667,7 @@ export default function ServicioTecnicoPage() {
               )}
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Modal Cobrar */}
