@@ -655,6 +655,10 @@ export async function contarPagosPendientes(): Promise<number> {
   return smartInvoke("contar_pagos_pendientes");
 }
 
+export async function listarPagosPendientesConfirmacion(): Promise<any[]> {
+  return smartInvoke("listar_pagos_pendientes_confirmacion");
+}
+
 // --- Respaldo ---
 
 export async function obtenerRutaDb(): Promise<string> {

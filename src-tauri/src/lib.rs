@@ -253,6 +253,7 @@ pub fn run() {
             commands::cuentas::confirmar_pago_cuenta,
             commands::cuentas::rechazar_pago_cuenta,
             commands::cuentas::contar_pagos_pendientes,
+            commands::cuentas::listar_pagos_pendientes_confirmacion,
             // Respaldo
             commands::respaldo::obtener_ruta_db,
             commands::respaldo::crear_respaldo,

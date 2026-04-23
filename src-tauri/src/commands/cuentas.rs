@@ -169,7 +169,18 @@ pub fn obtener_cuenta_detalle(db: State<Database>, id: i64) -> Result<CuentaDeta
 }
 
 #[tauri::command]
-pub fn registrar_pago_cuenta(db: State<Database>, pago: PagoCuenta) -> Result<CuentaPorCobrar, String> {
+pub fn registrar_pago_cuenta(
+    db: State<Database>,
+    sesion: State<crate::db::SesionState>,
+    pago: PagoCuenta,
+) -> Result<CuentaPorCobrar, String> {
+    // Determinar si quien registra es ADMIN (en cuyo caso el pago se confirma directo
+    // sin esperar aprobación posterior; los cajeros sí necesitan confirmación admin).
+    let es_admin = sesion.sesion.lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.rol == "ADMIN"))
+        .unwrap_or(false);
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Obtener saldo actual
@@ -209,8 +220,10 @@ pub fn registrar_pago_cuenta(db: State<Database>, pago: PagoCuenta) -> Result<Cu
         ));
     }
 
-    // EFECTIVO → CONFIRMADO inmediato; TRANSFERENCIA → PENDIENTE hasta que admin confirme
-    let estado_pago = if forma_pago == "EFECTIVO" { "CONFIRMADO" } else { "PENDIENTE" };
+    // EFECTIVO → CONFIRMADO inmediato.
+    // Otros (TRANSFER, CHEQUE, etc.) → si lo registra ADMIN se confirma directo,
+    //   si lo registra otro rol queda PENDIENTE de aprobación admin.
+    let estado_pago = if forma_pago == "EFECTIVO" || es_admin { "CONFIRMADO" } else { "PENDIENTE" };
 
     conn.execute(
         "INSERT INTO pagos_cuenta (cuenta_id, monto, observacion, forma_pago, banco_id, numero_comprobante, comprobante_imagen, estado)
@@ -228,8 +241,10 @@ pub fn registrar_pago_cuenta(db: State<Database>, pago: PagoCuenta) -> Result<Cu
     )
     .map_err(|e| e.to_string())?;
 
-    // Solo aplicar saldo y caja para pagos CONFIRMADOS (efectivo)
-    if forma_pago == "EFECTIVO" {
+    // Aplicar saldo (siempre que el pago haya quedado CONFIRMADO).
+    // Caja solo se afecta si el pago es EFECTIVO (transferencias confirmadas por admin
+    // van al banco, no a la caja física).
+    if estado_pago == "CONFIRMADO" {
         let nuevo_saldo = saldo_actual - pago.monto;
         let nuevo_estado = if nuevo_saldo <= 0.01 { "PAGADA" } else { "PENDIENTE" };
 
@@ -242,14 +257,17 @@ pub fn registrar_pago_cuenta(db: State<Database>, pago: PagoCuenta) -> Result<Cu
         )
         .map_err(|e| e.to_string())?;
 
-        // Sumar al monto esperado de caja abierta
-        let _ = conn.execute(
-            "UPDATE caja SET monto_ventas = monto_ventas + ?1, monto_esperado = monto_esperado + ?1
-             WHERE estado = 'ABIERTA'",
-            rusqlite::params![pago.monto],
-        );
+        if forma_pago == "EFECTIVO" {
+            // Sumar al monto esperado de caja abierta (solo efectivo)
+            let _ = conn.execute(
+                "UPDATE caja SET monto_ventas = monto_ventas + ?1, monto_esperado = monto_esperado + ?1
+                 WHERE estado = 'ABIERTA'",
+                rusqlite::params![pago.monto],
+            );
+        }
     }
-    // Transferencias: no tocan saldo ni caja hasta confirmación de admin
+    // Pagos PENDIENTE (cajero registró transferencia/cheque): no tocan saldo ni caja
+    // hasta que un admin los confirme.
 
     // Retornar cuenta actualizada
     conn.query_row(
@@ -465,6 +483,49 @@ pub fn rechazar_pago_cuenta(
 
     drop(conn);
     obtener_cuenta_detalle(db, cuenta_id)
+}
+
+/// Lista pagos pendientes de confirmación con datos enriquecidos (cliente, cuenta, venta).
+/// Solo admin puede llamarlo (devuelve lista vacía si no es admin).
+#[tauri::command]
+pub fn listar_pagos_pendientes_confirmacion(
+    db: State<Database>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT pc.id, pc.cuenta_id, pc.monto, pc.fecha, pc.forma_pago, pc.observacion,
+                pc.numero_comprobante, pc.banco_id, pc.comprobante_imagen,
+                cb.nombre AS banco_nombre,
+                cpc.saldo, cpc.monto_total,
+                cl.nombre AS cliente_nombre, cl.identificacion AS cliente_identificacion,
+                v.numero AS venta_numero, v.fecha AS venta_fecha
+         FROM pagos_cuenta pc
+         JOIN cuentas_por_cobrar cpc ON pc.cuenta_id = cpc.id
+         JOIN clientes cl ON cpc.cliente_id = cl.id
+         LEFT JOIN ventas v ON cpc.venta_id = v.id
+         LEFT JOIN cuentas_banco cb ON pc.banco_id = cb.id
+         WHERE pc.estado = 'PENDIENTE'
+         ORDER BY pc.fecha DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| Ok(serde_json::json!({
+        "pago_id": r.get::<_, i64>(0)?,
+        "cuenta_id": r.get::<_, i64>(1)?,
+        "monto": r.get::<_, f64>(2)?,
+        "fecha": r.get::<_, String>(3)?,
+        "forma_pago": r.get::<_, String>(4)?,
+        "observacion": r.get::<_, Option<String>>(5)?,
+        "numero_comprobante": r.get::<_, Option<String>>(6)?,
+        "banco_id": r.get::<_, Option<i64>>(7)?,
+        "comprobante_imagen": r.get::<_, Option<String>>(8)?,
+        "banco_nombre": r.get::<_, Option<String>>(9)?,
+        "cuenta_saldo": r.get::<_, f64>(10)?,
+        "cuenta_total": r.get::<_, f64>(11)?,
+        "cliente_nombre": r.get::<_, String>(12)?,
+        "cliente_identificacion": r.get::<_, Option<String>>(13)?,
+        "venta_numero": r.get::<_, Option<String>>(14)?,
+        "venta_fecha": r.get::<_, Option<String>>(15)?,
+    }))).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
 #[tauri::command]

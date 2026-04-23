@@ -11,6 +11,7 @@ import {
   confirmarPagoCuenta,
   rechazarPagoCuenta,
   contarPagosPendientes,
+  listarPagosPendientesConfirmacion,
 } from "../services/api";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSesion } from "../contexts/SesionContext";
@@ -21,6 +22,9 @@ export default function CuentasPage() {
   const { toastExito, toastError } = useToast();
   const { esAdmin } = useSesion();
   const [vista, setVista] = useState<"resumen" | "detalle" | "historial">("resumen");
+  // Drawer pagos pendientes de confirmar (solo admin)
+  const [mostrarPendientes, setMostrarPendientes] = useState(false);
+  const [pagosPendientes, setPagosPendientes] = useState<any[]>([]);
   const [deudores, setDeudores] = useState<ResumenCliente[]>([]);
   const [cuentasCliente, setCuentasCliente] = useState<CuentaConCliente[]>([]);
   const [clienteNombre, setClienteNombre] = useState("");
@@ -130,9 +134,11 @@ export default function CuentasPage() {
         comprobante_imagen: comprobanteImagen || undefined,
       });
       toastExito(
-        formaPago === "TRANSFERENCIA"
+        formaPago === "TRANSFERENCIA" && !esAdmin
           ? "Transferencia registrada - pendiente de confirmacion del administrador"
-          : "Pago registrado"
+          : formaPago === "TRANSFERENCIA"
+            ? "Transferencia registrada y confirmada"
+            : "Pago registrado"
       );
       resetPagoForm();
       cargarPendientes();
@@ -688,13 +694,25 @@ export default function CuentasPage() {
             </div>
           </div>
           {esAdmin && pagosPendientesCount > 0 && (
-            <div className="card" style={{ flex: 1, maxWidth: 220, border: "1px solid #fbbf24" }}>
+            <div className="card" style={{ flex: 1, maxWidth: 240, border: "1px solid #fbbf24", cursor: "pointer", transition: "transform 0.1s" }}
+              onClick={async () => {
+                try {
+                  const lista = await listarPagosPendientesConfirmacion();
+                  setPagosPendientes(lista);
+                  setMostrarPendientes(true);
+                } catch (err) { toastError("Error: " + err); }
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.02)")}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              title="Click para revisar y confirmar/rechazar">
               <div className="card-body text-center">
-                <span className="text-secondary" style={{ fontSize: 12 }}>Transferencias pendientes</span>
+                <span className="text-secondary" style={{ fontSize: 12 }}>⚠ Transferencias pendientes</span>
                 <div className="text-xl font-bold" style={{ color: "#92400e" }}>
                   {pagosPendientesCount}
                 </div>
-                <span style={{ fontSize: 10, color: "#92400e" }}>Requieren confirmacion</span>
+                <span style={{ fontSize: 10, color: "#92400e", textDecoration: "underline" }}>
+                  Click para revisar →
+                </span>
               </div>
             </div>
           )}
@@ -742,6 +760,136 @@ export default function CuentasPage() {
           </table>
         </div>
       </div>
+
+      {/* Drawer lateral derecho: pagos pendientes de confirmar (admin) */}
+      {mostrarPendientes && (
+        <>
+          <div onClick={() => setMostrarPendientes(false)} style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+            zIndex: 999, animation: "cpFadeIn 0.15s ease-out",
+          }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            position: "fixed", top: 0, right: 0, bottom: 0,
+            width: "min(96vw, 980px)",
+            background: "var(--color-bg)",
+            boxShadow: "-4px 0 20px rgba(0,0,0,0.25)",
+            zIndex: 1000, display: "flex", flexDirection: "column",
+            animation: "cpSlideInRight 0.2s ease-out",
+          }}>
+            <style>{`
+              @keyframes cpSlideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+              @keyframes cpFadeIn { from { opacity: 0; } to { opacity: 1; } }
+            `}</style>
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "12px 20px", borderBottom: "1px solid var(--color-border)", flexShrink: 0,
+            }}>
+              <h3 style={{ margin: 0 }}>⚠ Transferencias pendientes de confirmar</h3>
+              <button onClick={() => setMostrarPendientes(false)}
+                style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "var(--color-text-secondary)", padding: "0 8px", lineHeight: 1 }}
+                title="Cerrar">×</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                Pagos registrados por cajeros que requieren tu aprobación. Verifica el comprobante y confirma o rechaza.
+              </p>
+              {pagosPendientes.length === 0 ? (
+                <div className="text-center text-secondary" style={{ padding: 40 }}>
+                  ✓ No hay pagos pendientes de confirmar
+                </div>
+              ) : (
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Cliente</th>
+                      <th>Venta</th>
+                      <th className="text-right">Monto</th>
+                      <th>Pago</th>
+                      <th>Comprobante</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagosPendientes.map((p: any) => (
+                      <tr key={p.pago_id}>
+                        <td style={{ fontSize: 11 }}>{p.fecha?.slice(0, 16).replace("T", " ")}</td>
+                        <td>
+                          <strong>{p.cliente_nombre}</strong>
+                          {p.cliente_identificacion && (
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{p.cliente_identificacion}</div>
+                          )}
+                        </td>
+                        <td style={{ fontSize: 11 }}>
+                          {p.venta_numero || `Cuenta #${p.cuenta_id}`}
+                          {p.venta_fecha && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{p.venta_fecha?.slice(0, 10)}</div>}
+                        </td>
+                        <td className="text-right font-bold" style={{ color: "var(--color-primary)" }}>${p.monto.toFixed(2)}</td>
+                        <td style={{ fontSize: 11 }}>
+                          <div>{p.forma_pago}</div>
+                          {p.banco_nombre && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>🏦 {p.banco_nombre}</div>}
+                          {p.numero_comprobante && <div style={{ fontSize: 10, fontFamily: "monospace" }}>Ref: {p.numero_comprobante}</div>}
+                          {p.observacion && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }} title={p.observacion}>{p.observacion.length > 30 ? p.observacion.substring(0, 30) + "..." : p.observacion}</div>}
+                        </td>
+                        <td>
+                          {p.comprobante_imagen ? (
+                            <img src={`data:image/png;base64,${p.comprobante_imagen}`} alt="Comprobante"
+                              style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4, cursor: "pointer", border: "1px solid var(--color-border)" }}
+                              onClick={() => {
+                                const w = window.open();
+                                if (w) w.document.write(`<img src="data:image/png;base64,${p.comprobante_imagen}" style="max-width:100%" />`);
+                              }}
+                              title="Click para ampliar" />
+                          ) : (
+                            <span className="text-secondary" style={{ fontSize: 10 }}>(sin imagen)</span>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button className="btn btn-success" style={{ fontSize: 11, padding: "3px 10px" }}
+                              onClick={async () => {
+                                try {
+                                  await confirmarPagoCuenta(p.pago_id);
+                                  toastExito(`Pago de $${p.monto.toFixed(2)} confirmado`);
+                                  // Recargar lista + contador
+                                  const nueva = await listarPagosPendientesConfirmacion();
+                                  setPagosPendientes(nueva);
+                                  await cargarPendientes();
+                                  await cargarResumen();
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>✓ Confirmar</button>
+                            <button className="btn btn-danger" style={{ fontSize: 11, padding: "3px 10px" }}
+                              onClick={async () => {
+                                const motivo = prompt("Motivo del rechazo (opcional):");
+                                if (motivo === null) return; // cancelado
+                                try {
+                                  await rechazarPagoCuenta(p.pago_id, motivo.trim() || undefined);
+                                  toastExito(`Pago rechazado`);
+                                  const nueva = await listarPagosPendientesConfirmacion();
+                                  setPagosPendientes(nueva);
+                                  await cargarPendientes();
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>✗ Rechazar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div style={{
+              padding: "10px 20px", borderTop: "1px solid var(--color-border)",
+              display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0,
+            }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                💡 Las transferencias confirmadas reducen el saldo del cliente. Las rechazadas no afectan la cuenta.
+              </span>
+              <button className="btn btn-outline" onClick={() => setMostrarPendientes(false)}>Cerrar</button>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
