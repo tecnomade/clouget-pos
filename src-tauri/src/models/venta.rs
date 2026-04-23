@@ -74,6 +74,18 @@ pub struct VentaDetalle {
     /// Lote de caducidad del que se vendio este item (v2.2.0)
     #[serde(default)]
     pub lote_id: Option<i64>,
+    /// Para combos: seleccion de componentes (COMBO_FLEXIBLE) o vacio (COMBO_FIJO usa la definicion).
+    /// Lista de (producto_hijo_id, cantidad). Solo aplica si producto_id es un combo.
+    #[serde(default)]
+    pub combo_seleccion: Option<Vec<ComboSeleccion>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ComboSeleccion {
+    pub producto_hijo_id: i64,
+    pub cantidad: f64,
+    #[serde(default)]
+    pub grupo_id: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

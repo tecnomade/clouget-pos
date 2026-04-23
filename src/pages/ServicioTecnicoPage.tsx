@@ -5,7 +5,7 @@ import {
   historialMovimientosOrden, eliminarOrdenServicio,
   agregarImagenOrden, listarImagenesOrden, eliminarImagenOrden,
   cobrarOrdenServicio, imprimirOrdenServicioPdf,
-  buscarClientes, listarUsuarios, buscarProductos,
+  buscarClientes, listarUsuarios, buscarProductos, obtenerConfig,
 } from "../services/api";
 import type { OrdenServicio } from "../services/api";
 import { useToast } from "../components/Toast";
@@ -29,11 +29,29 @@ const TIPOS_EQUIPO = [
   { value: "ELECTRODOMESTICO", label: "Electrodoméstico", icon: "🔌", color: "#22c55e" },
 ];
 
-const formNuevo = (): OrdenServicio => ({
+// Labels adaptativas segun tipo de taller configurado.
+// MIXTO mantiene el comportamiento actual (escoger por orden).
+type TallerLabels = {
+  titulo: string;
+  ordenLabel: string;        // "Orden de Servicio" / "Orden de Trabajo" / "Orden de Reparacion"
+  nuevaOrden: string;        // texto del boton crear
+  equipoSingular: string;    // "Equipo" / "Vehiculo" / "Aparato"
+  buscarPh: string;
+  defaultTipoEquipo: string;
+};
+const TALLER_LABELS: Record<string, TallerLabels> = {
+  MIXTO:           { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar placa, serie, cliente...", defaultTipoEquipo: "GENERAL" },
+  GENERAL:         { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar serie, cliente...",        defaultTipoEquipo: "GENERAL" },
+  TECNOLOGIA:      { titulo: "Taller de Tecnología",        ordenLabel: "Orden de Reparación", nuevaOrden: "+ Nueva Reparación",   equipoSingular: "Equipo",    buscarPh: "Buscar modelo, serie, cliente...", defaultTipoEquipo: "TECNOLOGIA" },
+  AUTOMOTRIZ:      { titulo: "Taller Mecánico",             ordenLabel: "Orden de Trabajo",    nuevaOrden: "+ Nueva Orden de Trabajo", equipoSingular: "Vehículo", buscarPh: "Buscar placa, marca, cliente...", defaultTipoEquipo: "AUTOMOTRIZ" },
+  ELECTRODOMESTICO:{ titulo: "Servicio de Electrodomésticos", ordenLabel: "Orden de Servicio", nuevaOrden: "+ Nueva Orden",        equipoSingular: "Aparato",   buscarPh: "Buscar marca, serie, cliente...", defaultTipoEquipo: "ELECTRODOMESTICO" },
+};
+
+const formNuevo = (defaultTipoEquipo: string = "GENERAL"): OrdenServicio => ({
   cliente_id: null,
   cliente_nombre: "",
   cliente_telefono: "",
-  tipo_equipo: "GENERAL",
+  tipo_equipo: defaultTipoEquipo,
   equipo_descripcion: "",
   equipo_marca: "",
   equipo_modelo: "",
@@ -56,7 +74,10 @@ export default function ServicioTecnicoPage() {
   const [busqueda, setBusqueda] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("");
   const [mostrarForm, setMostrarForm] = useState(false);
-  const [form, setForm] = useState<OrdenServicio>(formNuevo());
+  const [tipoTaller, setTipoTaller] = useState<string>("MIXTO");
+  const labels = TALLER_LABELS[tipoTaller] || TALLER_LABELS.MIXTO;
+  const tallerEsMixto = tipoTaller === "MIXTO";
+  const [form, setForm] = useState<OrdenServicio>(formNuevo(labels.defaultTipoEquipo));
   const [detalleId, setDetalleId] = useState<number | null>(null);
   const [detalle, setDetalle] = useState<OrdenServicio | null>(null);
   const [movimientos, setMovimientos] = useState<any[]>([]);
@@ -89,6 +110,10 @@ export default function ServicioTecnicoPage() {
   useEffect(() => { cargar(); }, [filtroEstado]);
   useEffect(() => {
     listarUsuarios().then((us: any[]) => setTecnicos(us.filter((u: any) => u.rol === "TECNICO" || u.rol === "ADMIN"))).catch(() => {});
+    obtenerConfig().then((cfg: any) => {
+      const t = (cfg.tipo_taller || "MIXTO").toUpperCase();
+      setTipoTaller(TALLER_LABELS[t] ? t : "MIXTO");
+    }).catch(() => {});
   }, []);
 
   const ordenesPorEstado = useMemo(() => {
@@ -115,7 +140,7 @@ export default function ServicioTecnicoPage() {
         toastExito("Orden creada");
       }
       setMostrarForm(false);
-      setForm(formNuevo());
+      setForm(formNuevo(labels.defaultTipoEquipo));
       cargar();
     } catch (err) { toastError("Error: " + err); }
   };
@@ -193,15 +218,15 @@ export default function ServicioTecnicoPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Servicio Técnico</h2>
+        <h2>{labels.titulo}</h2>
         <div className="flex gap-2 items-center">
           <input className="input" style={{ width: 280, fontSize: 12 }}
-            placeholder="Buscar placa, serie, cliente..."
+            placeholder={labels.buscarPh}
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") cargar(); }} />
           <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={cargar}>Buscar</button>
-          <button className="btn btn-primary" onClick={() => { setForm(formNuevo()); setMostrarForm(true); }}>+ Nueva Orden</button>
+          <button className="btn btn-primary" onClick={() => { setForm(formNuevo(labels.defaultTipoEquipo)); setMostrarForm(true); }}>{labels.nuevaOrden}</button>
         </div>
       </div>
       <div className="page-body">
@@ -297,7 +322,7 @@ export default function ServicioTecnicoPage() {
         <div className="modal-overlay" onClick={() => setMostrarForm(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 700, maxHeight: "90vh", overflowY: "auto" }}>
             <div className="modal-header">
-              <h3>{form.id ? "Editar Orden" : "Nueva Orden de Servicio"}</h3>
+              <h3>{form.id ? `Editar ${labels.ordenLabel}` : `Nueva ${labels.ordenLabel}`}</h3>
             </div>
             <div className="modal-body">
               {/* Cliente */}
@@ -330,25 +355,31 @@ export default function ServicioTecnicoPage() {
                 )}
               </div>
 
-              {/* Equipo */}
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de Equipo</label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {TIPOS_EQUIPO.map(t => (
-                    <button key={t.value} type="button"
-                      className={`btn ${form.tipo_equipo === t.value ? "btn-primary" : "btn-outline"}`}
-                      style={{ fontSize: 11, padding: "4px 10px" }}
-                      onClick={() => setForm({ ...form, tipo_equipo: t.value })}>
-                      {t.icon} {t.label}
-                    </button>
-                  ))}
+              {/* Tipo de Equipo - solo visible en modo MIXTO */}
+              {tallerEsMixto && (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de {labels.equipoSingular}</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {TIPOS_EQUIPO.map(t => (
+                      <button key={t.value} type="button"
+                        className={`btn ${form.tipo_equipo === t.value ? "btn-primary" : "btn-outline"}`}
+                        style={{ fontSize: 11, padding: "4px 10px" }}
+                        onClick={() => setForm({ ...form, tipo_equipo: t.value })}>
+                        {t.icon} {t.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Descripción del equipo *</label>
-                  <input className="input" placeholder="Ej: Laptop HP Pavilion 15"
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>Descripción del {labels.equipoSingular.toLowerCase()} *</label>
+                  <input className="input" placeholder={
+                      form.tipo_equipo === "AUTOMOTRIZ" ? "Ej: Toyota Hilux 2020" :
+                      form.tipo_equipo === "ELECTRODOMESTICO" ? "Ej: Refrigeradora LG 250L" :
+                      "Ej: Laptop HP Pavilion 15"
+                    }
                     value={form.equipo_descripcion}
                     onChange={(e) => setForm({ ...form, equipo_descripcion: e.target.value })} />
                 </div>
@@ -363,7 +394,7 @@ export default function ServicioTecnicoPage() {
                     onChange={(e) => setForm({ ...form, equipo_modelo: e.target.value })} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Serie</label>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>{form.tipo_equipo === "AUTOMOTRIZ" ? "Chasis / VIN" : "Serie"}</label>
                   <input className="input" value={form.equipo_serie || ""}
                     onChange={(e) => setForm({ ...form, equipo_serie: e.target.value })} />
                 </div>
@@ -431,7 +462,7 @@ export default function ServicioTecnicoPage() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-outline" onClick={() => setMostrarForm(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSubmit}>{form.id ? "Actualizar" : "Crear Orden"}</button>
+              <button className="btn btn-primary" onClick={handleSubmit}>{form.id ? "Actualizar" : `Crear ${labels.ordenLabel}`}</button>
             </div>
           </div>
         </div>

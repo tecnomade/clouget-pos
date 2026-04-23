@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import NumericInput from "../components/NumericInput";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto } from "../services/api";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
@@ -70,6 +70,14 @@ function FormProducto({
   const [nuevoLoteFecha, setNuevoLoteFecha] = useState("");
   const [nuevoLoteCantidad, setNuevoLoteCantidad] = useState("");
   const [nuevoLoteFechaElab, setNuevoLoteFechaElab] = useState("");
+  // Combos
+  const [comboGrupos, setComboGrupos] = useState<any[]>([]);
+  const [comboComponentes, setComboComponentes] = useState<any[]>([]);
+  const [comboBuscar, setComboBuscar] = useState("");
+  const [comboBuscarRes, setComboBuscarRes] = useState<ProductoBusqueda[]>([]);
+  const [comboBuscarGrupoId, setComboBuscarGrupoId] = useState<number | null | "raiz">("raiz"); // donde agregar el item
+  // Cada grupo en el form usa un id temporal negativo si es nuevo (para asociar componentes antes de tener id real)
+  const nextTempIdRef = useRef(-1);
 
   // Cargar config global (para detectar modulo_caducidad y default incluye_iva)
   useEffect(() => {
@@ -111,6 +119,12 @@ function FormProducto({
       if (productoEditar.requiere_caducidad) {
         recargarLotes();
       }
+      // Cargar componentes si es combo
+      const tp = (productoEditar as any).tipo_producto;
+      if (tp === "COMBO_FIJO" || tp === "COMBO_FLEXIBLE") {
+        listarComboGrupos(productoEditar.id).then(setComboGrupos).catch(() => {});
+        listarComboComponentes(productoEditar.id).then(setComboComponentes).catch(() => {});
+      }
       // Cargar unidades / presentaciones del producto (incluye precios por lista)
       listarUnidadesProducto(productoEditar.id).then((us: any[]) => {
         setUnidades(us.map((u: any) => ({
@@ -148,6 +162,17 @@ function FormProducto({
       const unidadesValidas = unidades.filter(u => u.nombre.trim() && u.factor > 0);
       if (unidadesValidas.length > 0 || form.id) {
         await guardarUnidadesProducto(productoId, unidadesValidas).catch(() => {});
+      }
+      // Guardar estructura de combo si aplica
+      if (form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") {
+        // Resolver producto_padre_id en cada componente y grupo (puede ser nuevo)
+        const grpsToSave = comboGrupos.map(g => ({ ...g, producto_padre_id: productoId, id: g.id && g.id > 0 ? g.id : undefined }));
+        const compsToSave = comboComponentes.map(c => ({ ...c, producto_padre_id: productoId, id: c.id && c.id > 0 ? c.id : undefined }));
+        try {
+          await guardarComboEstructura(productoId, grpsToSave as any, compsToSave as any);
+        } catch (e) {
+          toastError("Error guardando combo: " + e);
+        }
       }
       onGuardar();
     } catch (err: any) {
@@ -596,11 +621,14 @@ function FormProducto({
                     multiple: false,
                   });
                   if (!path) return;
+                  // Para producto nuevo (sin id): leer en memoria, se persiste al guardar.
+                  // Para producto existente: actualiza DB de inmediato.
                   if (form.id) {
                     const b64 = await cargarImagenProducto(form.id, path as string);
                     setForm({ ...form, imagen: b64 });
                   } else {
-                    toastError("Guarde el producto primero, luego agregue la imagen");
+                    const b64 = await leerImagenArchivo(path as string);
+                    setForm({ ...form, imagen: b64 });
                   }
                 } catch (err) {
                   toastError("Error: " + err);
@@ -612,6 +640,7 @@ function FormProducto({
               <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)" }}
                 onClick={async () => {
                   try {
+                    // Si ya existe en DB, eliminar de DB. Si es nuevo, solo limpiar form.
                     if (form.id) await eliminarImagenProducto(form.id);
                     setForm({ ...form, imagen: undefined });
                   } catch (err) {
@@ -651,6 +680,221 @@ function FormProducto({
               onChange={(e) => setForm({ ...form, requiere_caducidad: e.target.checked })} />
             Requiere control de caducidad (alimentos, medicinas)
           </label>
+        )}
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed var(--color-border)" }}>
+          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Tipo de producto</label>
+          <select className="input" style={{ marginTop: 4, fontSize: 13 }}
+            value={form.tipo_producto || "SIMPLE"}
+            onChange={(e) => setForm({ ...form, tipo_producto: e.target.value })}>
+            <option value="SIMPLE">Simple (producto individual)</option>
+            <option value="COMBO_FIJO">Combo / Kit fijo (canasta, paquete con componentes definidos)</option>
+            <option value="COMBO_FLEXIBLE">Combo flexible (cliente elige: ej. plato + bebida + postre)</option>
+          </select>
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
+            Los combos descuentan stock de sus componentes al vender. El precio del combo es independiente.
+          </span>
+        </div>
+
+        {/* Panel de Componentes (visible solo si es combo) */}
+        {(form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") && (
+          <div style={{ marginTop: 16, padding: 12, background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "var(--radius)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>
+                {form.tipo_producto === "COMBO_FIJO" ? "🎁 Componentes del Combo" : "🍽 Grupos del Combo Flexible"}
+              </div>
+              <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                {form.tipo_producto === "COMBO_FIJO"
+                  ? "Productos que forman parte del kit. Se descuentan del stock al vender."
+                  : "El cliente elige componentes de cada grupo. Define mín/máx por grupo."}
+              </span>
+            </div>
+
+            {/* COMBO_FLEXIBLE: lista de grupos */}
+            {form.tipo_producto === "COMBO_FLEXIBLE" && (
+              <div style={{ marginBottom: 10 }}>
+                <button type="button" className="btn btn-outline" style={{ fontSize: 11, marginBottom: 6 }}
+                  onClick={() => {
+                    const id = nextTempIdRef.current--;
+                    setComboGrupos([...comboGrupos, { id, producto_padre_id: form.id || 0, nombre: "Nuevo grupo", minimo: 1, maximo: 1, orden: comboGrupos.length }]);
+                  }}>
+                  + Agregar grupo
+                </button>
+                {comboGrupos.length === 0 && (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Sin grupos. Crea uno (ej: "Plato", "Bebida", "Postre") y luego agrega componentes a cada uno.
+                  </div>
+                )}
+                {comboGrupos.map((g) => {
+                  const compsGrupo = comboComponentes.filter(c => c.grupo_id === g.id);
+                  return (
+                    <div key={g.id} style={{ marginTop: 6, padding: 8, background: "var(--color-surface)", borderRadius: 4, border: "1px solid var(--color-border)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px auto", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                        <input className="input" style={{ fontSize: 12 }} placeholder="Nombre del grupo (ej: Plato)"
+                          value={g.nombre}
+                          onChange={(e) => setComboGrupos(comboGrupos.map(x => x.id === g.id ? { ...x, nombre: e.target.value } : x))} />
+                        <input className="input" type="number" min="0" style={{ fontSize: 12 }} title="Mínimo a escoger" placeholder="Mín"
+                          value={g.minimo}
+                          onChange={(e) => setComboGrupos(comboGrupos.map(x => x.id === g.id ? { ...x, minimo: parseInt(e.target.value) || 0 } : x))} />
+                        <input className="input" type="number" min="1" style={{ fontSize: 12 }} title="Máximo a escoger" placeholder="Máx"
+                          value={g.maximo}
+                          onChange={(e) => setComboGrupos(comboGrupos.map(x => x.id === g.id ? { ...x, maximo: parseInt(e.target.value) || 1 } : x))} />
+                        <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)" }}
+                          onClick={() => {
+                            if (!confirm(`Eliminar grupo "${g.nombre}" y sus opciones?`)) return;
+                            setComboGrupos(comboGrupos.filter(x => x.id !== g.id));
+                            setComboComponentes(comboComponentes.filter(c => c.grupo_id !== g.id));
+                          }}>Eliminar grupo</button>
+                      </div>
+                      {/* Opciones del grupo */}
+                      <div style={{ paddingLeft: 16, fontSize: 11 }}>
+                        {compsGrupo.length === 0 ? (
+                          <div style={{ color: "var(--color-text-secondary)", marginBottom: 4 }}>Sin opciones aún.</div>
+                        ) : compsGrupo.map((c, ix) => (
+                          <div key={`${c.id ?? c.producto_hijo_id}-${ix}`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                            <span style={{ flex: 1 }}>{c.hijo_nombre || `Producto #${c.producto_hijo_id}`}</span>
+                            <input className="input" type="number" min="0.01" step="any" style={{ width: 70, fontSize: 11 }} title="Cantidad por unidad de combo"
+                              value={c.cantidad}
+                              onChange={(e) => setComboComponentes(comboComponentes.map(x => x === c ? { ...x, cantidad: parseFloat(e.target.value) || 1 } : x))} />
+                            <span style={{ fontSize: 10, color: "var(--color-text-secondary)", width: 60 }}>{c.hijo_unidad_medida || ""}</span>
+                            <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "1px 6px", color: "var(--color-danger)" }}
+                              onClick={() => setComboComponentes(comboComponentes.filter(x => x !== c))}>×</button>
+                          </div>
+                        ))}
+                        <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", marginTop: 4 }}
+                          onClick={() => setComboBuscarGrupoId(g.id!)}>
+                          + Agregar opción a este grupo
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* COMBO_FIJO: lista plana de componentes */}
+            {form.tipo_producto === "COMBO_FIJO" && (
+              <div style={{ marginBottom: 10 }}>
+                {comboComponentes.length === 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                    Sin componentes. Agrega al menos uno usando el buscador de abajo.
+                  </div>
+                ) : (
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 6 }}>
+                    <thead>
+                      <tr style={{ textAlign: "left" }}>
+                        <th style={{ padding: "4px 6px", borderBottom: "1px solid var(--color-border)" }}>Componente</th>
+                        <th style={{ padding: "4px 6px", borderBottom: "1px solid var(--color-border)", width: 90 }}>Cantidad</th>
+                        <th style={{ padding: "4px 6px", borderBottom: "1px solid var(--color-border)", width: 60 }}>Stock</th>
+                        <th style={{ padding: "4px 6px", borderBottom: "1px solid var(--color-border)", width: 40 }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {comboComponentes.map((c, ix) => (
+                        <tr key={`${c.id ?? c.producto_hijo_id}-${ix}`}>
+                          <td style={{ padding: "4px 6px" }}>
+                            {c.hijo_nombre || `Producto #${c.producto_hijo_id}`}
+                            {c.hijo_codigo && <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 4 }}>({c.hijo_codigo})</span>}
+                          </td>
+                          <td style={{ padding: "4px 6px" }}>
+                            <input className="input" type="number" min="0.01" step="any" style={{ width: 70, fontSize: 12 }}
+                              value={c.cantidad}
+                              onChange={(e) => setComboComponentes(comboComponentes.map((x, i) => i === ix ? { ...x, cantidad: parseFloat(e.target.value) || 1 } : x))} />
+                          </td>
+                          <td style={{ padding: "4px 6px", fontSize: 11, color: (c.hijo_stock_actual ?? 0) > 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                            {c.hijo_stock_actual ?? 0}
+                          </td>
+                          <td style={{ padding: "4px 6px" }}>
+                            <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "1px 6px", color: "var(--color-danger)" }}
+                              onClick={() => setComboComponentes(comboComponentes.filter((_, i) => i !== ix))}>×</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <button type="button" className="btn btn-outline" style={{ fontSize: 11 }}
+                  onClick={() => setComboBuscarGrupoId("raiz")}>
+                  + Agregar componente
+                </button>
+              </div>
+            )}
+
+            {/* Buscador de productos para agregar componente */}
+            {comboBuscarGrupoId !== null && (
+              <div style={{ marginTop: 10, padding: 8, background: "var(--color-surface)", borderRadius: 4, border: "1px solid var(--color-border)" }}>
+                <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+                  <input className="input" style={{ flex: 1, fontSize: 12 }}
+                    placeholder="Buscar producto por nombre o código..."
+                    value={comboBuscar}
+                    autoFocus
+                    onChange={async (e) => {
+                      const q = e.target.value;
+                      setComboBuscar(q);
+                      if (q.trim().length < 2) { setComboBuscarRes([]); return; }
+                      try {
+                        const r = await buscarProductos(q.trim());
+                        // Excluir el propio producto y los que ya están agregados al mismo nivel
+                        const excluidos = new Set(comboComponentes
+                          .filter(c => (comboBuscarGrupoId === "raiz" ? c.grupo_id == null : c.grupo_id === comboBuscarGrupoId))
+                          .map(c => c.producto_hijo_id));
+                        if (form.id) excluidos.add(form.id);
+                        setComboBuscarRes(r.filter(p => !excluidos.has(p.id)).slice(0, 10));
+                      } catch { setComboBuscarRes([]); }
+                    }} />
+                  <button type="button" className="btn btn-outline" style={{ fontSize: 11 }}
+                    onClick={() => { setComboBuscarGrupoId(null); setComboBuscar(""); setComboBuscarRes([]); }}>
+                    Cerrar
+                  </button>
+                </div>
+                {comboBuscarRes.map((p) => (
+                  <div key={p.id} style={{ padding: "4px 6px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--color-border)" }}
+                    onClick={() => {
+                      setComboComponentes([
+                        ...comboComponentes,
+                        {
+                          id: nextTempIdRef.current--,
+                          producto_padre_id: form.id || 0,
+                          producto_hijo_id: p.id,
+                          cantidad: 1,
+                          grupo_id: comboBuscarGrupoId === "raiz" ? null : (comboBuscarGrupoId as number),
+                          orden: comboComponentes.length,
+                          hijo_nombre: p.nombre,
+                          hijo_codigo: p.codigo ?? undefined,
+                          hijo_precio_venta: p.precio_venta,
+                          hijo_stock_actual: p.stock_actual,
+                          hijo_unidad_medida: undefined,
+                        } as any
+                      ]);
+                      setComboBuscar("");
+                      setComboBuscarRes([]);
+                    }}>
+                    <strong>{p.nombre}</strong>
+                    {p.codigo && <span style={{ marginLeft: 6, color: "var(--color-text-secondary)" }}>({p.codigo})</span>}
+                    <span style={{ float: "right", color: "var(--color-text-secondary)", fontSize: 11 }}>
+                      Stock: {p.stock_actual} · ${p.precio_venta?.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stats del combo */}
+            {comboComponentes.length > 0 && (() => {
+              const costoTotal = comboComponentes.reduce((s, c) => s + (c.hijo_precio_costo || 0) * c.cantidad, 0);
+              const ventaSugerida = comboComponentes.reduce((s, c) => s + (c.hijo_precio_venta || 0) * c.cantidad, 0);
+              const margen = form.precio_venta > 0 ? ((form.precio_venta - costoTotal) / form.precio_venta * 100) : 0;
+              return (
+                <div style={{ marginTop: 8, padding: 8, background: "rgba(0,0,0,0.04)", borderRadius: 4, fontSize: 11, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  <span>Costo total componentes: <strong>${costoTotal.toFixed(2)}</strong></span>
+                  <span>Suma precios venta individuales: <strong>${ventaSugerida.toFixed(2)}</strong></span>
+                  <span>Precio combo: <strong>${form.precio_venta.toFixed(2)}</strong></span>
+                  <span style={{ color: margen > 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                    Margen: <strong>{margen.toFixed(1)}%</strong>
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
         )}
         <span className="text-secondary" style={{ fontSize: 10, marginTop: 4, display: "block" }}>
           Si activa, cada unidad necesita un numero de serie unico al vender.
@@ -706,9 +950,28 @@ function FormProducto({
       </div>
 
       {/* Lotes de caducidad */}
-      {form.requiere_caducidad && form.id && (
+      {form.requiere_caducidad && form.id && (() => {
+        const sumaLotes = lotes.reduce((a: number, l: any) => a + (Number(l.cantidad) || 0), 0);
+        const stockActual = Number(form.stock_actual ?? 0);
+        const disponible = stockActual - sumaLotes;
+        const excede = sumaLotes > stockActual;
+        return (
         <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Lotes de caducidad</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>Lotes de caducidad</div>
+            <div style={{ fontSize: 11, display: "flex", gap: 10 }}>
+              <span className="text-secondary">Stock: <strong style={{ color: "var(--color-text)" }}>{stockActual}</strong></span>
+              <span className="text-secondary">En lotes: <strong style={{ color: "var(--color-text)" }}>{sumaLotes}</strong></span>
+              <span style={{ color: excede ? "var(--color-danger)" : disponible > 0 ? "var(--color-success)" : "var(--color-text-secondary)", fontWeight: 600 }}>
+                Disponible: {disponible}
+              </span>
+            </div>
+          </div>
+          {excede && (
+            <div style={{ padding: "6px 10px", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 4, fontSize: 11, color: "var(--color-danger)", marginBottom: 8 }}>
+              ⚠ Los lotes suman {sumaLotes} pero el stock actual es {stockActual}. Hay {sumaLotes - stockActual} unidades de mas en lotes — elimine o ajuste el stock para que coincida.
+            </div>
+          )}
           {lotes.length > 0 ? (
             <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 8 }}>
               <thead>
@@ -764,6 +1027,8 @@ function FormProducto({
               <input type="number" min="0" step="any" className="input" value={nuevoLoteCantidad} onChange={(e) => setNuevoLoteCantidad(e.target.value)} style={{ fontSize: 12 }} />
             </div>
             <button type="button" className="btn btn-primary" style={{ fontSize: 12 }}
+              disabled={disponible <= 0}
+              title={disponible <= 0 ? "No queda stock disponible para asignar a un nuevo lote" : ""}
               onClick={async () => {
                 if (!nuevoLoteFecha || !nuevoLoteCantidad) {
                   toastError("Fecha y cantidad son requeridas");
@@ -772,6 +1037,10 @@ function FormProducto({
                 const cantNum = parseFloat(nuevoLoteCantidad);
                 if (isNaN(cantNum) || cantNum <= 0) {
                   toastError("Cantidad invalida");
+                  return;
+                }
+                if (cantNum > disponible) {
+                  toastError(`Cantidad excede lo disponible (${disponible}). Si recibio mas unidades, registre una compra.`);
                   return;
                 }
                 try {
@@ -787,7 +1056,8 @@ function FormProducto({
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
         <button type="button" className="btn btn-outline" onClick={onCancelar}>

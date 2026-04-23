@@ -134,6 +134,15 @@ export async function cargarImagenProducto(id: number, imagenPath: string): Prom
   return smartInvoke("cargar_imagen_producto", { id, imagenPath });
 }
 
+/**
+ * Lee y codifica una imagen en base64 sin tocar la DB.
+ * Para usar al crear un producto nuevo (cuando aun no hay id) — la imagen
+ * queda en el form y se persiste cuando se llama a crearProducto.
+ */
+export async function leerImagenArchivo(imagenPath: string): Promise<string> {
+  return smartInvoke("leer_imagen_archivo", { imagenPath });
+}
+
 export async function eliminarImagenProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_imagen_producto", { id });
 }
@@ -175,6 +184,54 @@ export const listarLotesProducto = (productoId: number) =>
 
 export const alertasCaducidad = () =>
   smartInvoke<{lotes: any[], vencidos: number, por_vencer: number, dias_alerta: number}>("alertas_caducidad");
+
+// --- Combos / Kits ---
+export interface ComboGrupo {
+  id?: number;
+  producto_padre_id: number;
+  nombre: string;
+  minimo: number;
+  maximo: number;
+  orden: number;
+}
+export interface ComboComponente {
+  id?: number;
+  producto_padre_id: number;
+  producto_hijo_id: number;
+  cantidad: number;
+  grupo_id?: number | null;
+  orden: number;
+  hijo_nombre?: string;
+  hijo_codigo?: string;
+  hijo_precio_venta?: number;
+  hijo_precio_costo?: number;
+  hijo_stock_actual?: number;
+  hijo_unidad_medida?: string;
+  hijo_no_controla_stock?: boolean;
+  hijo_es_servicio?: boolean;
+}
+export const listarComboGrupos = (productoPadreId: number) =>
+  smartInvoke<ComboGrupo[]>("listar_combo_grupos", { productoPadreId });
+export const listarComboComponentes = (productoPadreId: number) =>
+  smartInvoke<ComboComponente[]>("listar_combo_componentes", { productoPadreId });
+export const guardarComboEstructura = (productoPadreId: number, grupos: ComboGrupo[], componentes: ComboComponente[]) =>
+  smartInvoke<void>("guardar_combo_estructura", { productoPadreId, grupos, componentes });
+export const stockCombo = (productoPadreId: number) =>
+  smartInvoke<number | null>("stock_combo", { productoPadreId });
+export const infoComboResumen = (productoId: number) =>
+  smartInvoke<{ tipo_producto: string; es_combo: boolean; stock_calculado: number | null; total_componentes: number }>(
+    "info_combo_resumen", { productoId }
+  );
+
+export const listarTodosLotes = (filtroEstado?: string, busquedaProducto?: string, incluirAgotados?: boolean) =>
+  smartInvoke<{lotes: any[], vencidos: number, por_vencer: number, ok: number, total_unidades: number, dias_alerta: number}>(
+    "listar_todos_lotes",
+    {
+      filtroEstado: filtroEstado ?? null,
+      busquedaProducto: busquedaProducto ?? null,
+      incluirAgotados: incluirAgotados ?? null,
+    }
+  );
 
 export const eliminarLoteCaducidad = (loteId: number) =>
   smartInvoke<void>("eliminar_lote_caducidad", { loteId });
@@ -1097,6 +1154,8 @@ export interface ImportarXmlInput {
   items_mapeados: ItemMapeadoXml[];
   forma_pago: string;
   dias_credito?: number | null;
+  banco_id?: number | null;
+  referencia_pago?: string | null;
 }
 
 export const previewXmlCompra = (xmlContenido: string) =>

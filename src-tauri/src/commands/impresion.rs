@@ -75,7 +75,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -202,7 +202,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1277,7 +1277,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
             })
         })
         .map_err(|e| e.to_string())?

@@ -424,6 +424,8 @@ fn generar_nota_venta_pdf_bytes(
         ),
         s_bold,
     ));
+    let es_credito = matches!(venta.forma_pago.as_str(), "CREDITO" | "CRÉDITO" | "FIADO");
+
     if venta.forma_pago == "EFECTIVO" {
         pago_section.push(pp(
             &format!("Monto Recibido: ${}", format_dinero(venta.monto_recibido)),
@@ -435,6 +437,18 @@ fn generar_nota_venta_pdf_bytes(
                 s_normal,
             ));
         }
+    } else if !es_credito {
+        // Transferencia, tarjeta, débito, cheque: mostrar el valor pagado explícito
+        pago_section.push(pp(
+            &format!("Pagado: ${}", format_dinero(venta.total)),
+            s_normal,
+        ));
+    } else {
+        // Crédito: aclarar que queda pendiente
+        pago_section.push(pp(
+            &format!("Saldo pendiente (crédito): ${}", format_dinero(venta.total)),
+            s_normal,
+        ));
     }
     pago_section.push(Break::new(0.5));
     doc.push(pago_section);
@@ -561,7 +575,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(10).ok(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
             };
             let codigo: String = row.get(9)?;
             Ok((det, codigo))

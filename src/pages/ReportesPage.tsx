@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteIvaMensual,
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
@@ -47,6 +47,7 @@ export default function ReportesPage() {
   // Inventario
   const [inventario, setInventario] = useState<any | null>(null);
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
+  const [kardexExpandido, setKardexExpandido] = useState<number | null>(null);
   const [busquedaInv, setBusquedaInv] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK" | "STOCK_NEGATIVO">("TODOS");
   const [filtroCategoriaInv, setFiltroCategoriaInv] = useState<string>("TODAS");
@@ -1052,7 +1053,18 @@ export default function ReportesPage() {
           kardexProducto ? (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <button className="btn btn-outline" onClick={() => setKardexProducto(null)}>← Volver al inventario</button>
+                <button
+                  className="btn"
+                  onClick={() => setKardexProducto(null)}
+                  style={{
+                    background: "var(--color-primary)",
+                    color: "#fff",
+                    fontWeight: 600,
+                    border: "1px solid var(--color-primary)",
+                    boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+                  }}>
+                  ← Volver al inventario
+                </button>
                 <h3 style={{ margin: 0, flex: 1 }}>Kardex: {kardexProducto.producto.nombre}</h3>
                 <span style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
                   Stock actual: <strong>{kardexProducto.producto.stock_actual} {kardexProducto.producto.unidad_medida}</strong>
@@ -1063,31 +1075,92 @@ export default function ReportesPage() {
                 <table className="table" style={{ width: "100%" }}>
                   <thead>
                     <tr>
-                      <th>Fecha</th><th>Tipo</th><th className="text-right">Cantidad</th>
+                      <th></th>
+                      <th>Fecha</th><th>Tipo / Documento</th><th className="text-right">Cantidad</th>
                       <th className="text-right">Stock Anterior</th><th className="text-right">Stock Nuevo</th>
                       <th className="text-right">Costo</th><th>Motivo</th><th>Usuario</th>
                     </tr>
                   </thead>
                   <tbody>
                     {kardexProducto.movimientos.length === 0 ? (
-                      <tr><td colSpan={8} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin movimientos en este periodo</td></tr>
-                    ) : kardexProducto.movimientos.map((m: any) => (
-                      <tr key={m.id}>
-                        <td style={{ fontSize: 11 }}>{m.fecha?.slice(0, 16).replace("T", " ")}</td>
-                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                          background: m.tipo === "VENTA" ? "rgba(239,68,68,0.15)" : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") ? "rgba(34,197,94,0.15)" : "rgba(148,163,184,0.15)",
-                          color: m.tipo === "VENTA" ? "var(--color-danger)" : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") ? "var(--color-success)" : "var(--color-text-secondary)"
-                        }}>{m.tipo}</span></td>
-                        <td className="text-right" style={{ color: m.cantidad < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 600 }}>
-                          {m.cantidad > 0 ? "+" : ""}{m.cantidad}
-                        </td>
-                        <td className="text-right">{m.stock_anterior}</td>
-                        <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
-                        <td className="text-right">{m.costo_unitario ? fmt(m.costo_unitario) : "-"}</td>
-                        <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
-                        <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
-                      </tr>
-                    ))}
+                      <tr><td colSpan={9} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin movimientos en este periodo</td></tr>
+                    ) : kardexProducto.movimientos.map((m: any) => {
+                      const expandido = kardexExpandido === m.id;
+                      const tieneDetalle = m.documento || m.venta_cliente || m.compra_proveedor || m.venta_autorizacion;
+                      const esVenta = m.tipo === "VENTA" || m.tipo === "VENTA_COMBO";
+                      const esCompra = m.tipo?.startsWith("COMPRA") || m.tipo?.startsWith("INGRESO");
+                      const aut = m.venta_estado_sri === "AUTORIZADA";
+                      return (
+                        <React.Fragment key={m.id}>
+                          <tr style={{ cursor: tieneDetalle ? "pointer" : "default" }}
+                              onClick={() => tieneDetalle && setKardexExpandido(expandido ? null : m.id)}>
+                            <td style={{ width: 24, fontSize: 12, color: "var(--color-text-secondary)" }}>
+                              {tieneDetalle ? (expandido ? "▼" : "▶") : ""}
+                            </td>
+                            <td style={{ fontSize: 11 }}>{m.fecha?.slice(0, 16).replace("T", " ")}</td>
+                            <td>
+                              <span style={{
+                                fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                                background: esVenta ? "rgba(239,68,68,0.15)" : esCompra ? "rgba(34,197,94,0.15)" : "rgba(148,163,184,0.15)",
+                                color: esVenta ? "var(--color-danger)" : esCompra ? "var(--color-success)" : "var(--color-text-secondary)"
+                              }}>{m.tipo}</span>
+                              {m.documento && (
+                                <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600 }}>
+                                  {m.documento}
+                                </span>
+                              )}
+                              {esVenta && (
+                                <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3,
+                                  background: aut ? "rgba(34,197,94,0.15)" : "rgba(245,158,11,0.15)",
+                                  color: aut ? "var(--color-success)" : "var(--color-warning)" }}>
+                                  {aut ? "✓ SRI" : "Sin autorizar"}
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-right" style={{ color: m.cantidad < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 600 }}>
+                              {m.cantidad > 0 ? "+" : ""}{m.cantidad}
+                            </td>
+                            <td className="text-right">{m.stock_anterior}</td>
+                            <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
+                            <td className="text-right">{m.costo_unitario ? fmt(m.costo_unitario) : "-"}</td>
+                            <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
+                            <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
+                          </tr>
+                          {expandido && tieneDetalle && (
+                            <tr>
+                              <td colSpan={9} style={{ background: "var(--color-surface-alt)", padding: 12, fontSize: 11 }}>
+                                {esVenta && (
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                                    {m.venta_cliente && <div><strong>Cliente:</strong> {m.venta_cliente}</div>}
+                                    {m.venta_total != null && <div><strong>Total venta:</strong> {fmt(m.venta_total)}</div>}
+                                    {m.venta_numero && <div><strong>N° interno:</strong> {m.venta_numero}</div>}
+                                    {m.venta_numero_factura && <div><strong>N° factura SRI:</strong> {m.venta_numero_factura}</div>}
+                                    {m.venta_autorizacion && (
+                                      <div style={{ gridColumn: "1 / -1" }}>
+                                        <strong>Autorización SRI:</strong> <span style={{ fontFamily: "monospace", fontSize: 10 }}>{m.venta_autorizacion}</span>
+                                      </div>
+                                    )}
+                                    {m.venta_clave && (
+                                      <div style={{ gridColumn: "1 / -1" }}>
+                                        <strong>Clave de acceso:</strong> <span style={{ fontFamily: "monospace", fontSize: 10, wordBreak: "break-all" }}>{m.venta_clave}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {esCompra && (
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                                    {m.compra_proveedor && <div><strong>Proveedor:</strong> {m.compra_proveedor}</div>}
+                                    {m.compra_total != null && <div><strong>Total compra:</strong> {fmt(m.compra_total)}</div>}
+                                    {m.compra_numero && <div><strong>N° interno:</strong> {m.compra_numero}</div>}
+                                    {m.compra_numero_factura && <div><strong>N° factura proveedor:</strong> {m.compra_numero_factura}</div>}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

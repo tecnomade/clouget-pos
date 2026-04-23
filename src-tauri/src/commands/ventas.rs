@@ -33,6 +33,40 @@ pub fn registrar_venta(
         return Err("Debe abrir la caja antes de realizar ventas".to_string());
     }
 
+    // Validar stock segun config 'stock_negativo_modo'
+    // PERMITIR (default): permite vender aunque deje stock < 0
+    // BLOQUEAR | BLOQUEAR_OCULTAR: bloquea si la cantidad supera el stock disponible
+    let stock_modo: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'stock_negativo_modo'", [], |r| r.get(0))
+        .unwrap_or_else(|_| "PERMITIR".to_string());
+    if stock_modo == "BLOQUEAR" || stock_modo == "BLOQUEAR_OCULTAR" {
+        // Acumular cantidad necesaria por producto (sumar lineas duplicadas + factor unidad)
+        let mut requerido: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+        for it in &venta.items {
+            let factor = it.factor_unidad.unwrap_or(1.0);
+            *requerido.entry(it.producto_id).or_insert(0.0) += it.cantidad * factor;
+        }
+        for (pid, cant_req) in &requerido {
+            // Saltar productos sin control de stock o servicios
+            let (stock_actual, es_serv, no_ctrl): (f64, bool, bool) = conn.query_row(
+                "SELECT stock_actual, COALESCE(es_servicio,0), COALESCE(no_controla_stock,0) FROM productos WHERE id = ?1",
+                rusqlite::params![pid],
+                |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i32>(1)? != 0, r.get::<_, i32>(2)? != 0)),
+            ).unwrap_or((0.0, false, false));
+            if es_serv || no_ctrl { continue; }
+            if *cant_req > stock_actual + 1e-9 {
+                let nombre: String = conn.query_row(
+                    "SELECT nombre FROM productos WHERE id = ?1",
+                    rusqlite::params![pid], |r| r.get(0)
+                ).unwrap_or_else(|_| format!("ID {}", pid));
+                return Err(format!(
+                    "Stock insuficiente para '{}': requiere {:.2}, disponible {:.2}. Active 'Permitir stock negativo' en Configuracion o registre una compra.",
+                    nombre, cant_req, stock_actual
+                ));
+            }
+        }
+    }
+
     // Leer establecimiento y punto de emisión del terminal
     let terminal_est: String = conn
         .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
@@ -225,16 +259,18 @@ pub fn registrar_venta(
             ).ok();
         }
 
-        // Obtener stock antes de descontar y verificar si es servicio o no controla stock
-        let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
+        // Obtener stock antes de descontar y verificar si es servicio / no_controla_stock / combo
+        let (stock_antes, es_servicio, no_controla_stock, tipo_producto): (f64, bool, bool, String) = conn
             .query_row(
-                "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
+                "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0), COALESCE(tipo_producto, 'SIMPLE') FROM productos WHERE id = ?1",
                 rusqlite::params![item.producto_id],
-                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
+                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0, row.get::<_, String>(3)?)),
             )
-            .unwrap_or((0.0, false, false));
+            .unwrap_or((0.0, false, false, "SIMPLE".to_string()));
 
-        let omite_stock = es_servicio || no_controla_stock;
+        let es_combo = tipo_producto == "COMBO_FIJO" || tipo_producto == "COMBO_FLEXIBLE";
+        // Los combos no descuentan stock del padre — se gestiona via componentes mas abajo
+        let omite_stock = es_servicio || no_controla_stock || es_combo;
 
         // Descontar stock (cantidad_base = cantidad x factor de la unidad de venta)
         if !omite_stock {
@@ -286,8 +322,78 @@ pub fn registrar_venta(
             )
             .unwrap_or_default();
 
+        let detalle_id = conn.last_insert_rowid();
+
+        // === COMBOS: descontar stock de componentes ===
+        // Para COMBO_FIJO: usa la definicion guardada en producto_componentes
+        // Para COMBO_FLEXIBLE: usa item.combo_seleccion (lo que el cajero escogio)
+        if es_combo {
+            let mut componentes_a_descontar: Vec<(i64, f64)> = Vec::new();
+            if tipo_producto == "COMBO_FIJO" {
+                let mut stmt = conn.prepare(
+                    "SELECT producto_hijo_id, cantidad FROM producto_componentes WHERE producto_padre_id = ?1"
+                ).map_err(|e| e.to_string())?;
+                let rows = stmt.query_map(rusqlite::params![item.producto_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                for row in rows {
+                    let (hijo_id, cant) = row.map_err(|e| e.to_string())?;
+                    // Multiplica por la cantidad de combos vendidos
+                    componentes_a_descontar.push((hijo_id, cant * item.cantidad));
+                }
+            } else {
+                // COMBO_FLEXIBLE: requiere combo_seleccion
+                if let Some(sel) = &item.combo_seleccion {
+                    for c in sel {
+                        if c.cantidad > 0.0 {
+                            componentes_a_descontar.push((c.producto_hijo_id, c.cantidad * item.cantidad));
+                        }
+                    }
+                }
+                if componentes_a_descontar.is_empty() {
+                    return Err(format!("Combo flexible '{}' sin seleccion de componentes", nombre_prod));
+                }
+            }
+
+            for (hijo_id, cant_total) in componentes_a_descontar {
+                // Stock anterior del hijo + flags
+                let (stock_h_antes, es_serv_h, no_ctrl_h, costo_h): (f64, bool, bool, f64) = conn.query_row(
+                    "SELECT stock_actual, COALESCE(es_servicio,0), COALESCE(no_controla_stock,0), precio_costo
+                     FROM productos WHERE id = ?1",
+                    rusqlite::params![hijo_id],
+                    |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i32>(1)? != 0, r.get::<_, i32>(2)? != 0, r.get::<_, f64>(3)?)),
+                ).unwrap_or((0.0, false, false, 0.0));
+
+                let omite_h = es_serv_h || no_ctrl_h;
+
+                if !omite_h {
+                    conn.execute(
+                        "UPDATE productos SET stock_actual = stock_actual - ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+                        rusqlite::params![cant_total, hijo_id],
+                    ).map_err(|e| e.to_string())?;
+                    if let Some(eid) = est_id {
+                        conn.execute(
+                            "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
+                             WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                            rusqlite::params![cant_total, hijo_id, eid],
+                        ).ok();
+                    }
+                    let _ = conn.execute(
+                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                         VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario_nombre, est_id],
+                    );
+                }
+
+                // Registrar la entrega del componente
+                let _ = conn.execute(
+                    "INSERT INTO venta_detalle_combo (venta_detalle_id, producto_hijo_id, cantidad, grupo_id) VALUES (?1, ?2, ?3, NULL)",
+                    rusqlite::params![detalle_id, hijo_id, cant_total],
+                );
+            }
+        }
+
         detalles_guardados.push(VentaDetalle {
-            id: Some(conn.last_insert_rowid()),
+            id: Some(detalle_id),
             venta_id: Some(venta_id),
             producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod),
@@ -297,7 +403,7 @@ pub fn registrar_venta(
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
             info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
         });
     }
 
@@ -582,7 +688,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -1403,7 +1509,7 @@ fn guardar_documento_pendiente(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
         });
     }
 
@@ -1595,7 +1701,7 @@ pub fn guardar_guia_remision(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
         });
     }
 
@@ -1920,7 +2026,7 @@ pub fn convertir_guia_a_venta(
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()

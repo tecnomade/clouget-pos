@@ -52,11 +52,17 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
         }
     }
 
+    let tipo_producto = match producto.tipo_producto.as_str() {
+        "COMBO_FIJO" | "COMBO_FLEXIBLE" => producto.tipo_producto.clone(),
+        _ => "SIMPLE".to_string(),
+    };
+
     conn.execute(
         "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id,
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
-         unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad, no_controla_stock)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad, no_controla_stock,
+         tipo_producto)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         rusqlite::params![
             codigo,
             codigo_barras,
@@ -76,6 +82,7 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
             producto.requiere_serie as i32,
             producto.requiere_caducidad as i32,
             producto.no_controla_stock as i32,
+            tipo_producto,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -118,13 +125,18 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
         }
     }
 
+    let tipo_producto = match producto.tipo_producto.as_str() {
+        "COMBO_FIJO" | "COMBO_FLEXIBLE" => producto.tipo_producto.clone(),
+        _ => "SIMPLE".to_string(),
+    };
+
     conn.execute(
         "UPDATE productos SET codigo=?1, codigo_barras=?2, nombre=?3, descripcion=?4,
          categoria_id=?5, precio_costo=?6, precio_venta=?7, iva_porcentaje=?8,
          incluye_iva=?9, stock_actual=?10, stock_minimo=?11, unidad_medida=?12,
          es_servicio=?13, activo=?14, imagen=?15, requiere_serie=?16, requiere_caducidad=?17,
-         no_controla_stock=?18, updated_at=datetime('now','localtime')
-         WHERE id=?19",
+         no_controla_stock=?18, tipo_producto=?19, updated_at=datetime('now','localtime')
+         WHERE id=?20",
         rusqlite::params![
             producto.codigo,
             codigo_barras,
@@ -144,6 +156,7 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
             producto.requiere_serie as i32,
             producto.requiere_caducidad as i32,
             producto.no_controla_stock as i32,
+            tipo_producto,
             id,
         ],
     )
@@ -272,7 +285,7 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
         "SELECT id, codigo, codigo_barras, nombre, descripcion, categoria_id,
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual,
          stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
-         no_controla_stock
+         no_controla_stock, COALESCE(tipo_producto, 'SIMPLE') as tipo_producto
          FROM productos WHERE id = ?1",
         rusqlite::params![id],
         |row| {
@@ -296,6 +309,7 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
                 requiere_serie: row.get::<_, i32>(16)? != 0,
                 requiere_caducidad: row.get::<_, i32>(17)? != 0,
                 no_controla_stock: row.get::<_, i32>(18)? != 0,
+                tipo_producto: row.get(19)?,
             })
         },
     )
@@ -393,6 +407,22 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
 }
 
 // --- Imagen de producto ---
+
+/// Lee y codifica una imagen en base64 SIN tocar la DB.
+/// Se usa al crear un producto nuevo (cuando todavia no existe id):
+/// la imagen queda en memoria del formulario y se persiste al invocar
+/// crear_producto/actualizar_producto (el campo `imagen` del Producto ya se guarda).
+#[tauri::command]
+pub fn leer_imagen_archivo(imagen_path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&imagen_path)
+        .map_err(|e| format!("Error leyendo imagen: {}", e))?;
+
+    if bytes.len() > 500_000 {
+        return Err("La imagen es demasiado grande. Maximo 500KB.".to_string());
+    }
+
+    Ok(BASE64.encode(&bytes))
+}
 
 #[tauri::command]
 pub fn cargar_imagen_producto(db: State<Database>, id: i64, imagen_path: String) -> Result<String, String> {
@@ -1070,7 +1100,36 @@ pub fn registrar_lote_caducidad(
     observacion: Option<String>,
     fecha_elaboracion: Option<String>,
 ) -> Result<i64, String> {
+    if cantidad <= 0.0 {
+        return Err("La cantidad debe ser mayor a 0".into());
+    }
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validacion: la suma de lotes no puede superar el stock actual.
+    // Si compra_id viene seteado (lote auto-creado por una compra que ya sumo al stock),
+    // se omite la validacion para no rechazar el flujo legitimo de compras.
+    if compra_id.is_none() {
+        let stock_actual: f64 = conn.query_row(
+            "SELECT COALESCE(stock_actual, 0) FROM productos WHERE id = ?1",
+            rusqlite::params![producto_id],
+            |r| r.get(0),
+        ).map_err(|e| format!("Producto no encontrado: {}", e))?;
+
+        let suma_lotes: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cantidad), 0) FROM lotes_caducidad WHERE producto_id = ?1 AND cantidad > 0",
+            rusqlite::params![producto_id],
+            |r| r.get(0),
+        ).unwrap_or(0.0);
+
+        let disponible = stock_actual - suma_lotes;
+        if cantidad > disponible {
+            return Err(format!(
+                "No se puede agregar lote: stock actual {:.0}, ya asignados a lotes {:.0}, disponible para asignar {:.0}. Si recibio mas unidades, registre una COMPRA — esto crea el lote y suma al stock automaticamente.",
+                stock_actual, suma_lotes, disponible.max(0.0)
+            ));
+        }
+    }
+
     conn.execute(
         "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, compra_id, observacion, fecha_elaboracion) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
         rusqlite::params![producto_id, lote, fecha_caducidad, cantidad, compra_id, observacion, fecha_elaboracion],
@@ -1098,6 +1157,98 @@ pub fn listar_lotes_producto(db: State<Database>, producto_id: i64) -> Result<Ve
         }))
     }).map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// Lista TODOS los lotes con cantidad > 0 (no solo los en alerta), con filtros opcionales.
+/// Retorna producto enriched + estado calculado en base a dias_alerta.
+#[tauri::command]
+pub fn listar_todos_lotes(
+    db: State<Database>,
+    filtro_estado: Option<String>,    // "TODOS" | "OK" | "POR_VENCER" | "VENCIDO"
+    busqueda_producto: Option<String>, // busca en nombre/codigo
+    incluir_agotados: Option<bool>,   // por default false (cantidad > 0)
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let dias_alerta: i64 = conn.query_row("SELECT value FROM config WHERE key = 'caducidad_dias_alerta'", [], |r| r.get::<_, String>(0))
+        .ok().and_then(|s| s.parse().ok()).unwrap_or(7);
+
+    let incluir_agotados = incluir_agotados.unwrap_or(false);
+    let busqueda = busqueda_producto.unwrap_or_default().trim().to_lowercase();
+    let filtro_estado = filtro_estado.unwrap_or_else(|| "TODOS".to_string()).to_uppercase();
+
+    let mut where_parts: Vec<String> = Vec::new();
+    if !incluir_agotados {
+        where_parts.push("l.cantidad > 0".to_string());
+    }
+    let where_clause = if where_parts.is_empty() { String::new() } else { format!("WHERE {}", where_parts.join(" AND ")) };
+
+    let sql = format!(
+        "SELECT l.id, l.lote, l.fecha_caducidad, l.cantidad, l.cantidad_inicial,
+                p.id, p.nombre, p.codigo, p.unidad_medida,
+                CASE
+                    WHEN date(l.fecha_caducidad) < date('now', 'localtime') THEN 'VENCIDO'
+                    WHEN date(l.fecha_caducidad) <= date('now', 'localtime', '+' || ?1 || ' days') THEN 'POR_VENCER'
+                    ELSE 'OK'
+                END as estado,
+                CAST(julianday(l.fecha_caducidad) - julianday(date('now','localtime')) AS INTEGER) as dias_restantes,
+                l.fecha_elaboracion, l.fecha_ingreso, l.observacion, l.compra_id
+         FROM lotes_caducidad l
+         JOIN productos p ON l.producto_id = p.id
+         {}
+         ORDER BY l.fecha_caducidad ASC",
+        where_clause
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![dias_alerta], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "lote": row.get::<_, Option<String>>(1)?,
+            "fecha_caducidad": row.get::<_, String>(2)?,
+            "cantidad": row.get::<_, f64>(3)?,
+            "cantidad_inicial": row.get::<_, f64>(4)?,
+            "producto_id": row.get::<_, i64>(5)?,
+            "producto_nombre": row.get::<_, String>(6)?,
+            "producto_codigo": row.get::<_, Option<String>>(7)?,
+            "producto_unidad": row.get::<_, Option<String>>(8)?,
+            "estado": row.get::<_, String>(9)?,
+            "dias_restantes": row.get::<_, i64>(10)?,
+            "fecha_elaboracion": row.get::<_, Option<String>>(11)?,
+            "fecha_ingreso": row.get::<_, String>(12)?,
+            "observacion": row.get::<_, Option<String>>(13)?,
+            "compra_id": row.get::<_, Option<i64>>(14)?,
+        }))
+    }).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    // Filtrado en memoria para busqueda y estado (mas simple que armar SQL dinamico complejo)
+    let rows: Vec<serde_json::Value> = rows.into_iter().filter(|r| {
+        if filtro_estado != "TODOS" && r["estado"] != serde_json::Value::String(filtro_estado.clone()) {
+            return false;
+        }
+        if !busqueda.is_empty() {
+            let nombre = r["producto_nombre"].as_str().unwrap_or("").to_lowercase();
+            let codigo = r["producto_codigo"].as_str().unwrap_or("").to_lowercase();
+            if !nombre.contains(&busqueda) && !codigo.contains(&busqueda) {
+                return false;
+            }
+        }
+        true
+    }).collect();
+
+    let vencidos = rows.iter().filter(|r| r["estado"] == "VENCIDO").count();
+    let por_vencer = rows.iter().filter(|r| r["estado"] == "POR_VENCER").count();
+    let ok = rows.iter().filter(|r| r["estado"] == "OK").count();
+    let total_unidades: f64 = rows.iter().filter_map(|r| r["cantidad"].as_f64()).sum();
+
+    Ok(serde_json::json!({
+        "lotes": rows,
+        "vencidos": vencidos,
+        "por_vencer": por_vencer,
+        "ok": ok,
+        "total_unidades": total_unidades,
+        "dias_alerta": dias_alerta
+    }))
 }
 
 #[tauri::command]

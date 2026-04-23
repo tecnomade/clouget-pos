@@ -24,3 +24,4 @@ pub mod proveedores;
 pub mod compras;
 pub mod cuentas_pagar;
 pub mod servicio_tecnico;
+pub mod combos;

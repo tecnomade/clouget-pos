@@ -833,8 +833,67 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_id INTEGER", []);
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_venta_detalles_lote ON venta_detalles(lote_id)", []);
 
+    // Migracion: banco_id en compras (para pagos DEBITO/TRANSFERENCIA/CHEQUE)
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN banco_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN referencia_pago TEXT", []);
+
+    // Control de stock negativo:
+    //   PERMITIR (default): puede vender aunque deje stock < 0 (comportamiento historico)
+    //   BLOQUEAR: no permite agregar al carrito ni vender si no alcanza stock
+    //   BLOQUEAR_OCULTAR: igual a BLOQUEAR + oculta del grid POS productos con stock <= 0
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('stock_negativo_modo', 'PERMITIR')", []);
+
+    // Migracion: COMBOS / KITS - productos compuestos por otros productos
+    // tipo_producto: 'SIMPLE' (default) | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN tipo_producto TEXT NOT NULL DEFAULT 'SIMPLE'", []);
+    // Grupos de componentes (solo COMBO_FLEXIBLE):
+    //   Ejemplo "Combo Almuerzo": grupo "Plato" (escoger 1 de N), grupo "Bebida" (escoger 1 de N)
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS producto_componente_grupos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_padre_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            minimo INTEGER NOT NULL DEFAULT 1,
+            maximo INTEGER NOT NULL DEFAULT 1,
+            orden INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (producto_padre_id) REFERENCES productos(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_combo_grupos_padre ON producto_componente_grupos(producto_padre_id);
+
+        CREATE TABLE IF NOT EXISTS producto_componentes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_padre_id INTEGER NOT NULL,
+            producto_hijo_id INTEGER NOT NULL,
+            cantidad REAL NOT NULL DEFAULT 1,
+            grupo_id INTEGER,
+            orden INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (producto_padre_id) REFERENCES productos(id) ON DELETE CASCADE,
+            FOREIGN KEY (producto_hijo_id) REFERENCES productos(id),
+            FOREIGN KEY (grupo_id) REFERENCES producto_componente_grupos(id) ON DELETE SET NULL,
+            UNIQUE(producto_padre_id, producto_hijo_id, grupo_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_combo_comp_padre ON producto_componentes(producto_padre_id);
+        CREATE INDEX IF NOT EXISTS idx_combo_comp_hijo ON producto_componentes(producto_hijo_id);
+    ");
+
+    // Selecciones de combo flexible en cada venta (que escogio el cajero)
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS venta_detalle_combo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_detalle_id INTEGER NOT NULL,    -- linea del combo padre en venta_detalles
+            producto_hijo_id INTEGER NOT NULL,    -- el componente que se entrego
+            cantidad REAL NOT NULL,
+            grupo_id INTEGER,
+            FOREIGN KEY (venta_detalle_id) REFERENCES venta_detalles(id) ON DELETE CASCADE,
+            FOREIGN KEY (producto_hijo_id) REFERENCES productos(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_vd_combo_detalle ON venta_detalle_combo(venta_detalle_id);
+    ");
+
     // Módulo Servicio Técnico
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('modulo_servicio_tecnico', '0')", []);
+    // Tipo de taller: MIXTO (default, permite escoger por orden), GENERAL, TECNOLOGIA, AUTOMOTRIZ, ELECTRODOMESTICO
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('tipo_taller', 'MIXTO')", []);
     let _ = conn.execute_batch("
         CREATE TABLE IF NOT EXISTS ordenes_servicio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

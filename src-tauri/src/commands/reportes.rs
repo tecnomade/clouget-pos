@@ -1189,17 +1189,53 @@ pub fn reporte_kardex_producto(db: State<Database>, producto_id: i64, fecha_desd
     let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
     let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
 
+    // Enriquecer con info de venta cuando tipo IN ('VENTA','VENTA_COMBO')
+    // y de compra cuando tipo IN ('COMPRA','INGRESO_COMPRA')
     let mut stmt = conn.prepare(
-        "SELECT id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, motivo, usuario, created_at, referencia_id
-         FROM movimientos_inventario
-         WHERE producto_id = ?1 AND date(created_at) >= date(?2) AND date(created_at) <= date(?3)
-         ORDER BY created_at DESC, id DESC"
+        "SELECT m.id, m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo, m.costo_unitario, m.motivo, m.usuario, m.created_at, m.referencia_id,
+                v.numero AS v_numero, v.tipo_documento AS v_tipo_doc, v.estado_sri AS v_estado_sri, v.numero_factura AS v_numero_factura,
+                v.autorizacion_sri AS v_autorizacion, v.clave_acceso AS v_clave, v.total AS v_total, cl.nombre AS v_cliente,
+                c.numero AS c_numero, c.numero_factura AS c_numero_factura, c.total AS c_total, prov.nombre AS c_proveedor
+         FROM movimientos_inventario m
+         LEFT JOIN ventas v ON m.referencia_id = v.id AND m.tipo IN ('VENTA','VENTA_COMBO')
+         LEFT JOIN clientes cl ON v.cliente_id = cl.id
+         LEFT JOIN compras c ON m.referencia_id = c.id AND m.tipo LIKE 'COMPRA%'
+         LEFT JOIN proveedores prov ON c.proveedor_id = prov.id
+         WHERE m.producto_id = ?1 AND date(m.created_at) >= date(?2) AND date(m.created_at) <= date(?3)
+         ORDER BY m.created_at DESC, m.id DESC"
     ).map_err(|e| e.to_string())?;
 
     let movimientos = stmt.query_map(rusqlite::params![producto_id, desde, hasta], |row| {
+        let tipo: String = row.get(1)?;
+        let v_tipo_doc: Option<String> = row.get(11).ok();
+        let v_numero: Option<String> = row.get(10).ok();
+        let v_numero_factura: Option<String> = row.get(13).ok();
+        let v_estado_sri: Option<String> = row.get(12).ok();
+        // Etiqueta amigable: "Factura 001-001-... (autorizada)" o "Venta NV-000123"
+        let documento: Option<String> = if tipo == "VENTA" || tipo == "VENTA_COMBO" {
+            let aut = matches!(v_estado_sri.as_deref(), Some("AUTORIZADA"));
+            if aut {
+                let num = v_numero_factura.clone().or(v_numero.clone()).unwrap_or_else(|| "?".to_string());
+                Some(format!("Factura {}", num))
+            } else {
+                let num = v_numero.clone().unwrap_or_else(|| "?".to_string());
+                let label = match v_tipo_doc.as_deref() {
+                    Some("FACTURA") => "Factura no autorizada",
+                    Some("COTIZACION") => "Cotización",
+                    Some("BORRADOR") => "Borrador",
+                    _ => "Nota de Venta",
+                };
+                Some(format!("{} {}", label, num))
+            }
+        } else if tipo.starts_with("COMPRA") {
+            let num = row.get::<_, Option<String>>(18).ok().flatten().unwrap_or_else(|| "?".to_string());
+            let nf = row.get::<_, Option<String>>(19).ok().flatten();
+            Some(if let Some(n) = nf { format!("Compra {} (Fact. {})", num, n) } else { format!("Compra {}", num) })
+        } else { None };
+
         Ok(serde_json::json!({
             "id": row.get::<_, i64>(0)?,
-            "tipo": row.get::<_, String>(1)?,
+            "tipo": tipo,
             "cantidad": row.get::<_, f64>(2)?,
             "stock_anterior": row.get::<_, f64>(3)?,
             "stock_nuevo": row.get::<_, f64>(4)?,
@@ -1208,6 +1244,19 @@ pub fn reporte_kardex_producto(db: State<Database>, producto_id: i64, fecha_desd
             "usuario": row.get::<_, Option<String>>(7)?,
             "fecha": row.get::<_, String>(8)?,
             "referencia_id": row.get::<_, Option<i64>>(9)?,
+            "documento": documento,
+            "venta_numero": v_numero,
+            "venta_tipo_doc": v_tipo_doc,
+            "venta_estado_sri": v_estado_sri,
+            "venta_numero_factura": v_numero_factura,
+            "venta_autorizacion": row.get::<_, Option<String>>(14).ok().flatten(),
+            "venta_clave": row.get::<_, Option<String>>(15).ok().flatten(),
+            "venta_total": row.get::<_, Option<f64>>(16).ok().flatten(),
+            "venta_cliente": row.get::<_, Option<String>>(17).ok().flatten(),
+            "compra_numero": row.get::<_, Option<String>>(18).ok().flatten(),
+            "compra_numero_factura": row.get::<_, Option<String>>(19).ok().flatten(),
+            "compra_total": row.get::<_, Option<f64>>(20).ok().flatten(),
+            "compra_proveedor": row.get::<_, Option<String>>(21).ok().flatten(),
         }))
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()

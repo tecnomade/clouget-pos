@@ -250,6 +250,49 @@ export default function Configuracion() {
                     <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Órdenes de servicio (talleres electrónicos, automotrices)</div>
                   </div>
                 </label>
+                {/* Control de stock negativo (transversal a todos los modulos) */}
+                <div style={{ gridColumn: "1 / -1", padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Control de stock</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Define qué hacer cuando se intenta vender más unidades que las disponibles.
+                    </div>
+                  </div>
+                  <select className="input" style={{ width: 280, fontSize: 12 }}
+                    value={config.stock_negativo_modo || "PERMITIR"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setConfig({ ...config, stock_negativo_modo: val });
+                      guardarConfig({ stock_negativo_modo: val });
+                      toastExito("Control de stock actualizado");
+                    }}>
+                    <option value="PERMITIR">✅ Permitir vender sin stock (default)</option>
+                    <option value="BLOQUEAR">🚫 Bloquear venta si no hay stock</option>
+                    <option value="BLOQUEAR_OCULTAR">🚫 Bloquear + ocultar agotados del POS</option>
+                  </select>
+                </div>
+                {config.modulo_servicio_tecnico === "1" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginLeft: 24, background: "var(--color-surface-alt)", borderRadius: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de taller:</label>
+                    <select className="input" style={{ width: 220, fontSize: 12 }}
+                      value={config.tipo_taller || "MIXTO"}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setConfig({ ...config, tipo_taller: val });
+                        guardarConfig({ tipo_taller: val });
+                        toastExito("Tipo de taller actualizado");
+                      }}>
+                      <option value="MIXTO">🔧 Mixto (escoger por orden)</option>
+                      <option value="GENERAL">🔧 General</option>
+                      <option value="TECNOLOGIA">💻 Tecnología / Electrónica</option>
+                      <option value="AUTOMOTRIZ">🚗 Automotriz / Mecánica</option>
+                      <option value="ELECTRODOMESTICO">🔌 Electrodomésticos</option>
+                    </select>
+                    <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                      Adapta los títulos y campos del módulo a tu negocio.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

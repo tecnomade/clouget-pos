@@ -15,6 +15,12 @@ pub struct Compra {
     pub es_credito: bool,
     pub observacion: Option<String>,
     pub proveedor_nombre: Option<String>,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
+    #[serde(default)]
+    pub banco_nombre: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -44,6 +50,10 @@ pub struct NuevaCompra {
     pub es_credito: bool,
     pub observacion: Option<String>,
     pub dias_credito: Option<i64>,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

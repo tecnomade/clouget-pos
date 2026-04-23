@@ -37,10 +37,16 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
 
     let total = subtotal_total + iva_total;
 
+    // Validar que si la forma de pago requiere banco, se especifique
+    let req_banco = matches!(compra.forma_pago.as_str(), "DEBITO" | "TRANSFERENCIA" | "CHEQUE");
+    if req_banco && compra.banco_id.is_none() {
+        return Err("Debe seleccionar una cuenta bancaria para esta forma de pago".into());
+    }
+
     // Insertar compra
     conn.execute(
-        "INSERT INTO compras (numero, proveedor_id, numero_factura, subtotal, iva, total, forma_pago, es_credito, observacion)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO compras (numero, proveedor_id, numero_factura, subtotal, iva, total, forma_pago, es_credito, observacion, banco_id, referencia_pago)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             numero,
             compra.proveedor_id,
@@ -51,6 +57,8 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             compra.forma_pago,
             compra.es_credito,
             compra.observacion,
+            compra.banco_id,
+            compra.referencia_pago,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -179,6 +187,12 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
         )
         .ok();
 
+    let banco_id_saved = compra.banco_id;
+    let referencia_pago_saved = compra.referencia_pago.clone();
+    let banco_nombre_saved: Option<String> = if let Some(bid) = banco_id_saved {
+        conn.query_row("SELECT nombre FROM cuentas_banco WHERE id = ?1", rusqlite::params![bid], |r| r.get(0)).ok()
+    } else { None };
+
     Ok(CompraCompleta {
         compra: Compra {
             id: Some(compra_id),
@@ -194,6 +208,9 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             es_credito: compra.es_credito,
             observacion: compra.observacion,
             proveedor_nombre,
+            banco_id: banco_id_saved,
+            referencia_pago: referencia_pago_saved,
+            banco_nombre: banco_nombre_saved,
         },
         detalles,
     })
@@ -211,18 +228,20 @@ pub fn listar_compras(
         (Some(_), Some(_)) => {
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
+             LEFT JOIN cuentas_banco b ON c.banco_id = b.id
              WHERE date(c.fecha) >= date(?1) AND date(c.fecha) <= date(?2)
              ORDER BY c.fecha DESC"
         }
         _ => {
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
+             LEFT JOIN cuentas_banco b ON c.banco_id = b.id
              ORDER BY c.fecha DESC
              LIMIT 100"
         }
@@ -245,6 +264,9 @@ pub fn listar_compras(
             es_credito: row.get(10)?,
             observacion: row.get(11)?,
             proveedor_nombre: row.get(12)?,
+            banco_id: row.get(13).ok(),
+            referencia_pago: row.get(14).ok(),
+            banco_nombre: row.get(15).ok(),
         })
     };
 
@@ -274,9 +296,10 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
         .query_row(
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
+             LEFT JOIN cuentas_banco b ON c.banco_id = b.id
              WHERE c.id = ?1",
             rusqlite::params![id],
             |row| {
@@ -294,6 +317,9 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
                     es_credito: row.get(10)?,
                     observacion: row.get(11)?,
                     proveedor_nombre: row.get(12)?,
+                    banco_id: row.get(13).ok(),
+                    referencia_pago: row.get(14).ok(),
+                    banco_nombre: row.get(15).ok(),
                 })
             },
         )
@@ -744,8 +770,12 @@ pub struct ImportarXmlInput {
     pub numero_factura: String,
     pub fecha_emision: String,
     pub items_mapeados: Vec<ItemMapeado>,
-    pub forma_pago: String, // "EFECTIVO" | "CREDITO" | "TRANSFERENCIA"
+    pub forma_pago: String, // "EFECTIVO" | "CREDITO" | "TRANSFERENCIA" | "DEBITO" | "CHEQUE"
     pub dias_credito: Option<i64>,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
 }
 
 #[tauri::command]
@@ -886,9 +916,15 @@ pub fn importar_xml_compra(
         // fecha: si viene en formato dd/mm/yyyy la convertimos a ISO
         let fecha_iso = convertir_fecha_sri(&input.fecha_emision);
 
+        // Validar banco si forma de pago requiere cuenta bancaria
+        let req_banco = matches!(forma_pago_db.as_str(), "DEBITO" | "TRANSFERENCIA" | "CHEQUE");
+        if req_banco && input.banco_id.is_none() {
+            return Err("Debe seleccionar una cuenta bancaria para esta forma de pago".into());
+        }
+
         tx.execute(
-            "INSERT INTO compras (numero, proveedor_id, fecha, numero_factura, subtotal, iva, total, estado, forma_pago, es_credito, observacion) \
-             VALUES (?1, ?2, COALESCE(?3, datetime('now','localtime')), ?4, ?5, ?6, ?7, 'REGISTRADA', ?8, ?9, ?10)",
+            "INSERT INTO compras (numero, proveedor_id, fecha, numero_factura, subtotal, iva, total, estado, forma_pago, es_credito, observacion, banco_id, referencia_pago) \
+             VALUES (?1, ?2, COALESCE(?3, datetime('now','localtime')), ?4, ?5, ?6, ?7, 'REGISTRADA', ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 numero_compra,
                 input.proveedor_id,
@@ -899,7 +935,9 @@ pub fn importar_xml_compra(
                 total,
                 forma_pago_db,
                 es_credito as i64,
-                "Importado desde XML"
+                "Importado desde XML",
+                input.banco_id,
+                input.referencia_pago,
             ],
         )
         .map_err(|e| e.to_string())?;

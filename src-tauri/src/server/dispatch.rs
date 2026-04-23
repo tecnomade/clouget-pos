@@ -88,7 +88,7 @@ pub async fn dispatch_command(
                     "SELECT id, codigo, codigo_barras, nombre, descripcion, categoria_id,
                      precio_costo, precio_venta, iva_porcentaje, incluye_iva,
                      stock_actual, stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
-                     COALESCE(no_controla_stock, 0)
+                     COALESCE(no_controla_stock, 0), COALESCE(tipo_producto, 'SIMPLE')
                      FROM productos ORDER BY nombre",
                 )
                 .map_err(|e| e.to_string())?;
@@ -115,6 +115,7 @@ pub async fn dispatch_command(
                         requiere_serie: row.get::<_, i32>(16)? != 0,
                         requiere_caducidad: row.get::<_, i32>(17)? != 0,
                         no_controla_stock: row.get::<_, i32>(18)? != 0,
+                        tipo_producto: row.get(19)?,
                     })
                 })
                 .map_err(|e| e.to_string())?

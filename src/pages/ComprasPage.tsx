@@ -14,7 +14,9 @@ import {
   previewXmlCompra,
   importarXmlCompra,
   listarCategorias,
+  listarCuentasBanco,
 } from "../services/api";
+import type { CuentaBanco } from "../types";
 import type { PreviewXmlCompra, ItemMapeadoXml } from "../services/api";
 import { useToast } from "../components/Toast";
 import Modal from "../components/Modal";
@@ -165,6 +167,9 @@ export default function ComprasPage() {
   const [xmlProveedorId, setXmlProveedorId] = useState<number | "">("");
   const [xmlFormaPago, setXmlFormaPago] = useState<string>("EFECTIVO");
   const [xmlDiasCredito, setXmlDiasCredito] = useState<string>("30");
+  const [xmlBancoId, setXmlBancoId] = useState<number | "">("");
+  const [xmlReferencia, setXmlReferencia] = useState<string>("");
+  const [cuentasBancoXml, setCuentasBancoXml] = useState<CuentaBanco[]>([]);
   const [xmlProcesando, setXmlProcesando] = useState(false);
   const [categoriasXml, setCategoriasXml] = useState<Categoria[]>([]);
   // Búsqueda producto existente
@@ -224,8 +229,9 @@ export default function ComprasPage() {
         subtotal: it.subtotal,
       }));
       setXmlItems(items);
-      // Cargar categorías
+      // Cargar categorías + cuentas banco
       try { setCategoriasXml(await listarCategorias()); } catch { /* noop */ }
+      try { setCuentasBancoXml(await listarCuentasBanco()); } catch { /* noop */ }
     } catch (err) {
       toastError("Error al leer XML: " + err);
     } finally {
@@ -322,6 +328,11 @@ export default function ComprasPage() {
     }));
     try {
       setXmlProcesando(true);
+      const reqBanco = ["DEBITO", "TRANSFERENCIA", "CHEQUE"].includes(xmlFormaPago);
+      if (reqBanco && !xmlBancoId) {
+        toastError("Seleccione una cuenta bancaria para esta forma de pago");
+        return;
+      }
       const res = await importarXmlCompra({
         proveedor_id: xmlProveedorId as number,
         numero_factura: xmlPreview.numero_factura,
@@ -329,6 +340,8 @@ export default function ComprasPage() {
         items_mapeados: mapeados,
         forma_pago: xmlFormaPago,
         dias_credito: xmlFormaPago === "CREDITO" ? parseInt(xmlDiasCredito) || 30 : null,
+        banco_id: reqBanco ? (xmlBancoId as number) : null,
+        referencia_pago: reqBanco && xmlReferencia.trim() ? xmlReferencia.trim() : null,
       });
       const partes: string[] = [];
       if (res.productos_creados > 0) partes.push(`${res.productos_creados} producto(s) creado(s)`);
@@ -1355,10 +1368,11 @@ export default function ComprasPage() {
                   <div style={{ display: "grid", gridTemplateColumns: "auto 120px", gap: 8, alignItems: "end" }}>
                     <div>
                       <label className="text-secondary" style={{ fontSize: 12 }}>Forma de pago</label>
-                      <select className="input" value={xmlFormaPago} onChange={(e) => setXmlFormaPago(e.target.value)}>
+                      <select className="input" value={xmlFormaPago} onChange={(e) => { setXmlFormaPago(e.target.value); setXmlBancoId(""); setXmlReferencia(""); }}>
                         <option value="EFECTIVO">Efectivo</option>
                         <option value="TRANSFERENCIA">Transferencia</option>
                         <option value="DEBITO">Débito Bancario</option>
+                        <option value="CHEQUE">Cheque</option>
                         <option value="CREDITO">Credito</option>
                       </select>
                     </div>
@@ -1370,6 +1384,37 @@ export default function ComprasPage() {
                       </div>
                     )}
                   </div>
+                  {(["DEBITO", "TRANSFERENCIA", "CHEQUE"].includes(xmlFormaPago)) && (
+                    <div style={{ marginTop: 10, padding: 10, background: "rgba(59,130,246,0.06)", borderRadius: 6, border: "1px solid rgba(59,130,246,0.25)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div>
+                          <label className="text-secondary" style={{ fontSize: 11, fontWeight: 600 }}>Cuenta bancaria *</label>
+                          <select className="input" style={{ fontSize: 12 }}
+                            value={xmlBancoId === "" ? "" : String(xmlBancoId)}
+                            onChange={(e) => setXmlBancoId(e.target.value === "" ? "" : parseInt(e.target.value))}>
+                            <option value="">— Seleccione cuenta —</option>
+                            {cuentasBancoXml.map(b => (
+                              <option key={b.id} value={b.id}>
+                                {b.nombre}{b.numero_cuenta ? ` · ${b.numero_cuenta}` : ""}{b.tipo_cuenta ? ` (${b.tipo_cuenta})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-secondary" style={{ fontSize: 11, fontWeight: 600 }}>Referencia / N° transacción</label>
+                          <input className="input" style={{ fontSize: 12 }}
+                            placeholder="Opcional"
+                            value={xmlReferencia}
+                            onChange={(e) => setXmlReferencia(e.target.value)} />
+                        </div>
+                      </div>
+                      {cuentasBancoXml.length === 0 && (
+                        <div style={{ fontSize: 11, color: "var(--color-warning)", marginTop: 6 }}>
+                          ⚠ No hay cuentas bancarias registradas. Cree una en Configuración → Cuentas Bancarias.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div style={{ minWidth: 220, textAlign: "right", justifySelf: "end" }}>
                   <div className="flex justify-between" style={{ padding: "2px 0" }}>

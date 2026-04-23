@@ -24,6 +24,51 @@ pub struct Producto {
     pub requiere_caducidad: bool,
     #[serde(default)]
     pub no_controla_stock: bool,
+    /// 'SIMPLE' (default) | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
+    #[serde(default = "default_tipo_producto")]
+    pub tipo_producto: String,
+}
+
+fn default_tipo_producto() -> String { "SIMPLE".to_string() }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ComboGrupo {
+    pub id: Option<i64>,
+    pub producto_padre_id: i64,
+    pub nombre: String,
+    pub minimo: i64,
+    pub maximo: i64,
+    #[serde(default)]
+    pub orden: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ComboComponente {
+    pub id: Option<i64>,
+    pub producto_padre_id: i64,
+    pub producto_hijo_id: i64,
+    pub cantidad: f64,
+    #[serde(default)]
+    pub grupo_id: Option<i64>,
+    #[serde(default)]
+    pub orden: i64,
+    // Campos enriquecidos en lecturas (no se serializan al insert):
+    #[serde(default)]
+    pub hijo_nombre: Option<String>,
+    #[serde(default)]
+    pub hijo_codigo: Option<String>,
+    #[serde(default)]
+    pub hijo_precio_venta: Option<f64>,
+    #[serde(default)]
+    pub hijo_precio_costo: Option<f64>,
+    #[serde(default)]
+    pub hijo_stock_actual: Option<f64>,
+    #[serde(default)]
+    pub hijo_unidad_medida: Option<String>,
+    #[serde(default)]
+    pub hijo_no_controla_stock: Option<bool>,
+    #[serde(default)]
+    pub hijo_es_servicio: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
@@ -52,6 +52,9 @@ export default function PuntoVenta() {
   const [mostrarCrearCliente, setMostrarCrearCliente] = useState(false);
   const [nuevoClienteNombre, setNuevoClienteNombre] = useState("");
   const [nuevoClienteId, setNuevoClienteId] = useState("");
+  const [nuevoClienteTelefono, setNuevoClienteTelefono] = useState("");
+  const [nuevoClienteEmail, setNuevoClienteEmail] = useState("");
+  const [nuevoClienteDireccion, setNuevoClienteDireccion] = useState("");
   const [creandoCliente, setCreandoCliente] = useState(false);
   const [consultandoSri, setConsultandoSri] = useState(false);
 
@@ -64,6 +67,9 @@ export default function PuntoVenta() {
   const [comprobanteImagen, setComprobanteImagen] = useState<string | null>(null);
   const [autoImprimirTicket, setAutoImprimirTicket] = useState(false);
   const [autoImprimirSri, setAutoImprimirSri] = useState(false);
+  // Control de stock negativo (config 'stock_negativo_modo'):
+  //   PERMITIR | BLOQUEAR | BLOQUEAR_OCULTAR
+  const [stockModo, setStockModo] = useState<"PERMITIR" | "BLOQUEAR" | "BLOQUEAR_OCULTAR">("PERMITIR");
 
   // Panel documentos recientes
   const [mostrarRecientes, setMostrarRecientes] = useState(false);
@@ -117,6 +123,17 @@ export default function PuntoVenta() {
   } | null>(null);
   // Modal cambiar lote de item ya en carrito
   const [cambiarLoteItem, setCambiarLoteItem] = useState<{ idx: number; lotes: any[] } | null>(null);
+  // Cantidad a vender en el modal de seleccion de lote (default 1)
+  const [seleccionLoteCantidad, setSeleccionLoteCantidad] = useState<string>("1");
+  // Modal de seleccion de componentes para COMBO_FLEXIBLE
+  const [seleccionCombo, setSeleccionCombo] = useState<{
+    producto: ProductoBusqueda;
+    unidadElegida?: any;
+    grupos: any[];
+    componentes: any[];
+  } | null>(null);
+  // Selecciones del combo flexible: { grupoId: { hijoId: cantidad } }
+  const [comboSel, setComboSel] = useState<Record<string, Record<number, number>>>({});
 
   // Pago mixto: lista de pagos y modal para agregar
   const [pagosMixtos, setPagosMixtos] = useState<{ forma_pago: string; monto: number; banco_id?: number | null; referencia?: string | null }[]>([]);
@@ -214,6 +231,8 @@ export default function PuntoVenta() {
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
       setAutoImprimirTicket(cfg.auto_imprimir === "1");
       setAutoImprimirSri(cfg.auto_imprimir_sri === "1");
+      const modo = (cfg.stock_negativo_modo || "PERMITIR") as any;
+      setStockModo(modo === "BLOQUEAR" || modo === "BLOQUEAR_OCULTAR" ? modo : "PERMITIR");
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
@@ -265,10 +284,17 @@ export default function PuntoVenta() {
       else if (ident.length === 10) tipoId = "CEDULA";
       else if (ident.length > 0) tipoId = "PASAPORTE";
 
+      const telefono = nuevoClienteTelefono.trim() || undefined;
+      const email = nuevoClienteEmail.trim() || undefined;
+      const direccion = nuevoClienteDireccion.trim() || undefined;
+
       const id = await crearCliente({
         tipo_identificacion: tipoId,
         identificacion: ident || undefined,
         nombre: nuevoClienteNombre.trim().toUpperCase(),
+        telefono,
+        email,
+        direccion,
         activo: true,
       });
       const nuevoCliente: Cliente = {
@@ -276,6 +302,9 @@ export default function PuntoVenta() {
         tipo_identificacion: tipoId,
         identificacion: ident || undefined,
         nombre: nuevoClienteNombre.trim().toUpperCase(),
+        telefono,
+        email,
+        direccion,
         activo: true,
       };
       setClienteSeleccionado(nuevoCliente);
@@ -283,6 +312,9 @@ export default function PuntoVenta() {
       setMostrarCrearCliente(false);
       setNuevoClienteNombre("");
       setNuevoClienteId("");
+      setNuevoClienteTelefono("");
+      setNuevoClienteEmail("");
+      setNuevoClienteDireccion("");
       setBusquedaCliente("");
       setClientesResultados([]);
       toastExito(`Cliente ${nuevoCliente.nombre} creado`);
@@ -297,6 +329,9 @@ export default function PuntoVenta() {
             setMostrarCrearCliente(false);
             setNuevoClienteNombre("");
             setNuevoClienteId("");
+            setNuevoClienteTelefono("");
+            setNuevoClienteEmail("");
+            setNuevoClienteDireccion("");
             setBusquedaCliente("");
             setClientesResultados([]);
             toastWarning(`Cliente ya existe: ${existentes[0].nombre}`);
@@ -314,7 +349,7 @@ export default function PuntoVenta() {
     }
   };
 
-  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any, loteElegido?: any) => {
+  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any, loteElegido?: any, comboSeleccion?: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number | null; nombre?: string }>) => {
     // Debounce para scanner de código de barras
     const now = Date.now();
     if (lastAddRef.current.id === producto.id && now - lastAddRef.current.time < 500) {
@@ -322,6 +357,30 @@ export default function PuntoVenta() {
       return;
     }
     lastAddRef.current = { id: producto.id, time: now };
+
+    // Bloqueo por stock cuando config = BLOQUEAR | BLOQUEAR_OCULTAR
+    // Excepciones: servicios y productos sin control de stock siempre se permiten.
+    if (stockModo !== "PERMITIR") {
+      try {
+        const prodFull = await obtenerProducto(producto.id);
+        const omiteStock = prodFull && (prodFull.es_servicio || (prodFull as any).no_controla_stock);
+        if (!omiteStock) {
+          const stockActual = Number(producto.stock_actual ?? prodFull?.stock_actual ?? 0);
+          // Calcular cuanto ya esta en el carrito de este producto (todas las lineas)
+          const factor = unidadElegida?.factor ?? 1;
+          const cantNueva = factor; // 1 unidad de la presentacion seleccionada
+          const yaEnCarrito = carrito
+            .filter(it => it.producto_id === producto.id)
+            .reduce((s, it) => s + (Number(it.cantidad) || 0) * (Number(it.factor_unidad) || 1), 0);
+          if (yaEnCarrito + cantNueva > stockActual + 1e-9) {
+            const disponible = Math.max(0, stockActual - yaEnCarrito);
+            toastError(`Sin stock: ${producto.nombre}. Disponible: ${disponible.toFixed(2)}, ya en carrito: ${yaEnCarrito.toFixed(2)}.`);
+            setBusqueda(""); setResultados([]); inputRef.current?.focus();
+            return;
+          }
+        }
+      } catch { /* si falla la validacion seguimos (fail-open para no romper) */ }
+    }
 
     // Multi-unidad: si el producto tiene presentaciones y no se eligio una, mostrar selector
     if (!unidadElegida) {
@@ -335,6 +394,32 @@ export default function PuntoVenta() {
         }
       } catch { /* ignore - producto sin unidades */ }
     }
+
+    // Combos: verificar tipo_producto y procesar
+    try {
+      const prodFull = await obtenerProducto(producto.id);
+      const tp = (prodFull as any)?.tipo_producto;
+      if (tp === "COMBO_FLEXIBLE") {
+        // Abrir modal de seleccion de componentes
+        const [grupos, componentes] = await Promise.all([
+          listarComboGrupos(producto.id),
+          listarComboComponentes(producto.id),
+        ]);
+        if (grupos.length === 0) {
+          toastError("Combo flexible sin grupos configurados. Edite el producto para agregar grupos.");
+          return;
+        }
+        // Inicializar seleccion vacia
+        const initSel: Record<string, Record<number, number>> = {};
+        grupos.forEach((g: any) => { initSel[String(g.id)] = {}; });
+        setComboSel(initSel);
+        setSeleccionCombo({ producto, unidadElegida, grupos, componentes });
+        setBusqueda(""); setResultados([]);
+        return;
+      }
+      // COMBO_FIJO: continua normal, el backend descuenta componentes.
+      // Opcionalmente podriamos precargar componentes para mostrar en carrito.
+    } catch { /* producto sin info combo, seguir */ }
 
     // Caducidad: si el producto requiere_caducidad y no se especifico lote, abrir selector
     if (!loteElegido) {
@@ -361,6 +446,8 @@ export default function PuntoVenta() {
     // Check if already in cart MISMA unidad + MISMO lote
     const unidadId = unidadElegida?.id ?? null;
     const loteId = loteElegido?.id ?? null;
+    // Cantidad a agregar: si vino del modal de lote con _cantidadVenta, usarla; sino 1
+    const cantidadAAgregar = (loteElegido as any)?._cantidadVenta ?? 1;
     const existente = carrito.find((i) =>
       i.producto_id === producto.id
       && (i.unidad_id ?? null) === unidadId
@@ -369,8 +456,10 @@ export default function PuntoVenta() {
     if (existente) {
       setCarrito((prev) =>
         prev.map((i) =>
-          i.producto_id === producto.id
-            ? { ...i, cantidad: i.cantidad + 1, subtotal: (i.cantidad + 1) * i.precio_unitario - i.descuento }
+          (i.producto_id === producto.id
+            && (i.unidad_id ?? null) === unidadId
+            && (i.lote_id ?? null) === loteId)
+            ? { ...i, cantidad: i.cantidad + cantidadAAgregar, subtotal: (i.cantidad + cantidadAAgregar) * i.precio_unitario - i.descuento }
             : i
         )
       );
@@ -399,12 +488,12 @@ export default function PuntoVenta() {
           producto_id: producto.id,
           codigo: producto.codigo ?? undefined,
           nombre: unidadElegida ? `${producto.nombre} (${unidadElegida.abreviatura || unidadElegida.nombre})` : producto.nombre,
-          cantidad: 1,
+          cantidad: cantidadAAgregar,
           precio_unitario: precioEfectivo,
           descuento: 0,
           iva_porcentaje: producto.iva_porcentaje,
           incluye_iva: producto.incluye_iva ?? false,
-          subtotal: precioEfectivo,
+          subtotal: precioEfectivo * cantidadAAgregar,
           stock_disponible: producto.stock_actual,
           stock_minimo: producto.stock_minimo,
           precio_base: producto.precio_venta,
@@ -417,6 +506,8 @@ export default function PuntoVenta() {
           lote_numero: loteElegido?.lote,
           lote_fecha_caducidad: loteElegido?.fecha_caducidad,
           lote_dias_restantes: diasRestantes,
+          // Combo: selección de componentes (solo COMBO_FLEXIBLE)
+          combo_seleccion: comboSeleccion && comboSeleccion.length > 0 ? comboSeleccion : undefined,
         } as any,
       ]);
     }
@@ -580,7 +671,8 @@ export default function PuntoVenta() {
           unidad_nombre: i.unidad_nombre ?? null,
           factor_unidad: i.factor_unidad ?? null,
           lote_id: i.lote_id ?? null,
-        };
+          combo_seleccion: (i as any).combo_seleccion ?? null,
+        } as any;
       }),
       forma_pago: usarMixto ? "MIXTO" : formaPago,
       monto_recibido: usarMixto ? total : (esFiado ? 0 : parseFloat(montoRecibido || "0")),
@@ -1177,8 +1269,21 @@ export default function PuntoVenta() {
                       onChange={(e) => setNuevoClienteId(e.target.value)}
                       style={{ fontSize: 13 }}
                       autoFocus />
-                    <input className="input mb-2" placeholder="Nombre completo" value={nuevoClienteNombre}
+                    <input className="input mb-1" placeholder="Nombre completo *" value={nuevoClienteNombre}
                       onChange={(e) => setNuevoClienteNombre(e.target.value)}
+                      style={{ fontSize: 13 }} />
+                    <input className="input mb-1" placeholder="Telefono" value={nuevoClienteTelefono}
+                      onChange={(e) => setNuevoClienteTelefono(e.target.value)}
+                      style={{ fontSize: 13 }}
+                      type="tel"
+                      inputMode="tel" />
+                    <input className="input mb-1" placeholder="Email" value={nuevoClienteEmail}
+                      onChange={(e) => setNuevoClienteEmail(e.target.value)}
+                      style={{ fontSize: 13 }}
+                      type="email"
+                      inputMode="email" />
+                    <input className="input mb-2" placeholder="Direccion" value={nuevoClienteDireccion}
+                      onChange={(e) => setNuevoClienteDireccion(e.target.value)}
                       style={{ fontSize: 13 }}
                       onKeyDown={(e) => { if (e.key === "Enter") handleCrearClienteRapido(); }} />
                     <div className="flex gap-1">
@@ -1252,7 +1357,11 @@ export default function PuntoVenta() {
           <div style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, minWidth: 0 }}>
             <PosGridTactil
               categorias={categoriasTactil}
-              productosTactil={productosTactil}
+              productosTactil={
+                stockModo === "BLOQUEAR_OCULTAR"
+                  ? productosTactil.filter(p => (p as any).es_servicio || (p as any).no_controla_stock || p.stock_actual > 0)
+                  : productosTactil
+              }
               onAgregarProducto={agregarAlCarrito}
               puedeVerDetalle={esAdmin}
               onVerDetalle={async (pid) => {
@@ -1402,6 +1511,13 @@ export default function PuntoVenta() {
                         </div>
                       )}
                       {item.info_adicional && <div style={{ fontSize: 10, color: "var(--color-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.info_adicional}</div>}
+                      {(item as any).combo_seleccion && (item as any).combo_seleccion.length > 0 && (
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, paddingLeft: 4, borderLeft: "2px solid rgba(168,85,247,0.5)" }}>
+                          {(item as any).combo_seleccion.map((c: any, ix: number) => (
+                            <div key={ix}>🍽 {c.nombre || `Producto #${c.producto_hijo_id}`} × {c.cantidad}</div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <span style={{ color: "var(--color-primary)", cursor: tienePermiso("editar_precio") ? "pointer" : "default", fontSize: 11, flexShrink: 0 }}
                       onClick={() => {
@@ -2052,14 +2168,129 @@ export default function PuntoVenta() {
         </div>
       )}
 
+      {/* Modal: Seleccionar componentes de un COMBO_FLEXIBLE */}
+      {seleccionCombo && (() => {
+        const { producto, unidadElegida, grupos, componentes } = seleccionCombo;
+        // Validacion mín/máx por grupo
+        const validaciones = grupos.map((g: any) => {
+          const sels = comboSel[String(g.id)] || {};
+          const totalSel = Object.values(sels).reduce((a, b) => a + (Number(b) || 0), 0);
+          const ok = totalSel >= g.minimo && totalSel <= g.maximo;
+          return { grupo: g, total: totalSel, ok };
+        });
+        const todoOk = validaciones.every(v => v.ok);
+        return (
+          <div className="modal-overlay" onClick={() => { setSeleccionCombo(null); setComboSel({}); }}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620, maxHeight: "85vh", overflowY: "auto" }}>
+              <div className="modal-header">
+                <h3>🍽 Personalizar combo - {producto.nombre}</h3>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                  Escoge los componentes para este combo según las reglas de cada grupo.
+                </p>
+                {grupos.map((g: any) => {
+                  const opciones = componentes.filter((c: any) => c.grupo_id === g.id);
+                  const sels = comboSel[String(g.id)] || {};
+                  const totalSel = Object.values(sels).reduce((a, b) => a + (Number(b) || 0), 0);
+                  const ok = totalSel >= g.minimo && totalSel <= g.maximo;
+                  return (
+                    <div key={g.id} style={{ marginBottom: 14, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, border: `1px solid ${ok ? "var(--color-success)" : "var(--color-warning)"}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <div style={{ fontWeight: 700, fontSize: 13 }}>{g.nombre}</div>
+                        <div style={{ fontSize: 11, color: ok ? "var(--color-success)" : "var(--color-warning)" }}>
+                          {g.minimo === g.maximo
+                            ? `Selecciona exactamente ${g.minimo} (tienes ${totalSel})`
+                            : `Selecciona entre ${g.minimo} y ${g.maximo} (tienes ${totalSel})`}
+                        </div>
+                      </div>
+                      {opciones.length === 0 ? (
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Sin opciones configuradas en este grupo.</div>
+                      ) : opciones.map((c: any) => {
+                        const cantSel = sels[c.producto_hijo_id] || 0;
+                        const stockHijo = c.hijo_stock_actual ?? 0;
+                        return (
+                          <div key={c.id ?? c.producto_hijo_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px dashed var(--color-border)" }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600 }}>{c.hijo_nombre}</div>
+                              <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                                Cantidad por combo: {c.cantidad} · Stock: {stockHijo} {c.hijo_unidad_medida || ""}
+                              </div>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => {
+                                  if (cantSel <= 0) return;
+                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [c.producto_hijo_id]: cantSel - 1 } });
+                                }}>−</button>
+                              <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700, fontSize: 13 }}>{cantSel}</span>
+                              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                disabled={totalSel >= g.maximo}
+                                title={totalSel >= g.maximo ? "Máximo alcanzado en este grupo" : ""}
+                                onClick={() => {
+                                  if (totalSel >= g.maximo) return;
+                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [c.producto_hijo_id]: cantSel + 1 } });
+                                }}>+</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <button className="btn btn-outline" onClick={() => { setSeleccionCombo(null); setComboSel({}); }}>Cancelar</button>
+                <button className="btn btn-primary"
+                  disabled={!todoOk}
+                  title={todoOk ? "" : "Completa los grupos según mín/máx"}
+                  onClick={() => {
+                    // Construir la seleccion final como array
+                    const seleccion: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number; nombre?: string }> = [];
+                    grupos.forEach((g: any) => {
+                      const sels = comboSel[String(g.id)] || {};
+                      Object.entries(sels).forEach(([hijoIdStr, cant]) => {
+                        if (Number(cant) > 0) {
+                          const compRef = componentes.find((c: any) => c.producto_hijo_id === Number(hijoIdStr) && c.grupo_id === g.id);
+                          // cantidad por unidad de combo = c.cantidad * (cant escogido)
+                          // Pero como cantidad de combos vendido es 1 aqui (se multiplica en backend con item.cantidad),
+                          // mandamos: cantidad_total_componente_por_combo = compRef.cantidad * cant
+                          const cantPorCombo = (compRef?.cantidad || 1) * Number(cant);
+                          seleccion.push({
+                            producto_hijo_id: Number(hijoIdStr),
+                            cantidad: cantPorCombo,
+                            grupo_id: g.id,
+                            nombre: compRef?.hijo_nombre,
+                          });
+                        }
+                      });
+                    });
+                    const prod = producto;
+                    const uni = unidadElegida;
+                    setSeleccionCombo(null);
+                    setComboSel({});
+                    agregarAlCarrito(prod, uni, undefined, seleccion);
+                  }}>
+                  Agregar al carrito
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Modal: Seleccionar lote de caducidad (FEFO) */}
       {seleccionLote && (() => {
         // Lotes ordenados por fecha caducidad ascendente (FEFO)
         const sorted = [...seleccionLote.lotes].sort((a, b) =>
           new Date(a.fecha_caducidad).getTime() - new Date(b.fecha_caducidad).getTime()
         );
+        const sumaLotes = sorted.reduce((a, l) => a + (Number(l.cantidad) || 0), 0);
+        const stockProd = Number(seleccionLote.producto.stock_actual ?? 0);
+        const stockLibre = Math.max(0, stockProd - sumaLotes);
+        const cantPedida = Math.max(1, parseFloat(seleccionLoteCantidad) || 1);
         return (
-          <div className="modal-overlay" onClick={() => setSeleccionLote(null)}>
+          <div className="modal-overlay" onClick={() => { setSeleccionLote(null); setSeleccionLoteCantidad("1"); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
               <div className="modal-header">
                 <h3>🕐 Seleccionar lote - {seleccionLote.producto.nombre}</h3>
@@ -2069,30 +2300,76 @@ export default function PuntoVenta() {
                   El sistema sugiere el lote con fecha mas proxima a vencer (FEFO).
                   Click para seleccionar otro si es necesario.
                 </p>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 10, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  <span>Stock total: <strong style={{ color: "var(--color-text)" }}>{stockProd}</strong></span>
+                  <span>En lotes: <strong style={{ color: "var(--color-text)" }}>{sumaLotes}</strong></span>
+                  <span style={{ color: stockLibre > 0 ? "var(--color-warning)" : "var(--color-text-secondary)" }}>
+                    Stock libre (sin lote): <strong>{stockLibre}</strong>
+                  </span>
+                </div>
+
+                {/* Input: cantidad a vender */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 12, background: "var(--color-surface-alt)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>Cantidad a vender:</label>
+                  <input className="input" type="number" min="0.01" step="any"
+                    style={{ width: 90, fontSize: 13, textAlign: "right" }}
+                    value={seleccionLoteCantidad}
+                    onChange={(e) => setSeleccionLoteCantidad(e.target.value)}
+                    autoFocus />
+                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    {seleccionLote.unidadElegida?.nombre || ""}
+                  </span>
+                </div>
+
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {sorted.map((l, idx) => {
                     const dias = Math.floor((new Date(l.fecha_caducidad).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
                     const esVencido = dias < 0;
                     const esPorVencer = !esVencido && dias <= 7;
                     const esFEFO = idx === 0;
+                    const cantLote = Number(l.cantidad) || 0;
+                    const cubreCompleto = cantLote >= cantPedida;
+                    const cubreParcial = cantLote > 0 && cantLote < cantPedida;
+                    const faltante = Math.max(0, cantPedida - cantLote);
+                    // Color por disponibilidad: VENCIDO rojo, POR_VENCER ambar, OK con suficiente verde, parcial amarillo
+                    const colorEstado = esVencido
+                      ? { bg: "rgba(239,68,68,0.10)", border: "rgba(239,68,68,0.4)" }
+                      : cubreParcial
+                        ? { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.5)" }
+                        : esPorVencer
+                          ? { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.35)" }
+                          : cubreCompleto
+                            ? { bg: "rgba(34,197,94,0.10)", border: "rgba(34,197,94,0.4)" }
+                            : { bg: "var(--color-surface-alt)", border: "var(--color-border)" };
+                    const disabled = !cubreCompleto && !cubreParcial; // sin nada
                     return (
                       <button key={l.id} type="button"
+                        disabled={disabled}
                         style={{
-                          padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+                          padding: "10px 14px", borderRadius: 6,
+                          cursor: disabled ? "not-allowed" : "pointer",
+                          opacity: disabled ? 0.5 : 1,
                           textAlign: "left",
-                          background: esVencido ? "rgba(239,68,68,0.1)" : esPorVencer ? "rgba(245,158,11,0.1)" : esFEFO ? "rgba(34,197,94,0.1)" : "var(--color-surface-alt)",
-                          border: `1px solid ${esVencido ? "rgba(239,68,68,0.4)" : esPorVencer ? "rgba(245,158,11,0.4)" : esFEFO ? "rgba(34,197,94,0.4)" : "var(--color-border)"}`,
+                          background: colorEstado.bg,
+                          border: `1px solid ${colorEstado.border}`,
                           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
                         }}
+                        title={cubreParcial ? `Solo cubre ${cantLote} de ${cantPedida}. Faltarian ${faltante} (puedes complementar con stock libre o otro lote despues).` : ""}
                         onClick={() => {
+                          if (disabled) return;
                           const prod = seleccionLote.producto;
                           const uni = seleccionLote.unidadElegida;
+                          // Si solo cubre parcial, agregamos lo que tiene el lote (cantLote);
+                          // el cajero puede luego agregar otro lote para completar.
+                          const cantFinal = cubreCompleto ? cantPedida : cantLote;
                           setSeleccionLote(null);
-                          agregarAlCarrito(prod, uni, l);
+                          setSeleccionLoteCantidad("1");
+                          agregarAlCarrito(prod, uni, { ...l, _cantidadVenta: cantFinal });
                         }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, color: esVencido ? "var(--color-danger)" : undefined }}>
-                            {esFEFO && <span style={{ fontSize: 10, marginRight: 6, padding: "1px 5px", borderRadius: 3, background: "var(--color-success)", color: "#fff" }}>FEFO</span>}
+                            {esFEFO && cubreCompleto && <span style={{ fontSize: 10, marginRight: 6, padding: "1px 5px", borderRadius: 3, background: "var(--color-success)", color: "#fff" }}>FEFO</span>}
+                            {cubreParcial && <span style={{ fontSize: 10, marginRight: 6, padding: "1px 5px", borderRadius: 3, background: "var(--color-warning)", color: "#fff" }}>PARCIAL</span>}
                             Lote {l.lote || `#${l.id}`}
                             {esVencido && <span style={{ marginLeft: 6, fontSize: 11 }}>⚠ VENCIDO</span>}
                           </div>
@@ -2101,10 +2378,13 @@ export default function PuntoVenta() {
                             Vence: <strong>{l.fecha_caducidad}</strong>
                             {" "}
                             {esVencido ? `(hace ${Math.abs(dias)}d)` : `(en ${dias}d)`}
+                            {cubreParcial && <span style={{ color: "var(--color-warning)" }}> · faltarian {faltante}</span>}
                           </div>
                         </div>
                         <div style={{ textAlign: "right", fontSize: 12 }}>
-                          <div style={{ fontWeight: 700 }}>{l.cantidad}</div>
+                          <div style={{ fontWeight: 700, color: cubreCompleto ? "var(--color-success)" : cubreParcial ? "var(--color-warning)" : undefined }}>
+                            {cantLote}
+                          </div>
                           <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>disponibles</div>
                         </div>
                       </button>
@@ -2112,17 +2392,27 @@ export default function PuntoVenta() {
                   })}
                 </div>
               </div>
-              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between" }}>
-                <button className="btn btn-outline" style={{ fontSize: 11 }}
-                  onClick={() => {
-                    const prod = seleccionLote.producto;
-                    const uni = seleccionLote.unidadElegida;
-                    setSeleccionLote(null);
-                    agregarAlCarrito(prod, uni, { id: null }); // sin lote
-                  }}>
-                  Vender sin especificar lote
-                </button>
-                <button className="btn btn-outline" onClick={() => setSeleccionLote(null)}>Cancelar</button>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                {stockLibre > 0 ? (
+                  <button className="btn btn-outline"
+                    style={{ fontSize: 11, opacity: stockLibre >= cantPedida ? 1 : 0.6 }}
+                    disabled={stockLibre < cantPedida}
+                    title={stockLibre >= cantPedida
+                      ? `Vende ${cantPedida} del stock libre (no asignado a lote). Libre actual: ${stockLibre}`
+                      : `No hay stock libre suficiente: pedido ${cantPedida}, libre ${stockLibre}`}
+                    onClick={() => {
+                      const prod = seleccionLote.producto;
+                      const uni = seleccionLote.unidadElegida;
+                      setSeleccionLote(null);
+                      setSeleccionLoteCantidad("1");
+                      agregarAlCarrito(prod, uni, { id: null, _cantidadVenta: cantPedida });
+                    }}>
+                    {stockLibre >= cantPedida
+                      ? `Vender ${cantPedida} sin lote (libre: ${stockLibre})`
+                      : `Sin lote insuficiente (${stockLibre} disp.)`}
+                  </button>
+                ) : <span />}
+                <button className="btn btn-outline" onClick={() => { setSeleccionLote(null); setSeleccionLoteCantidad("1"); }}>Cancelar</button>
               </div>
             </div>
           </div>

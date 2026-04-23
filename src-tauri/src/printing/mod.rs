@@ -179,12 +179,43 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
 
     // Pago (skip for cotizacion and borrador)
     if !es_cotizacion && !es_borrador {
-        ticket.extend_from_slice(
-            format!("Forma pago: {}\n", venta.venta.forma_pago).as_bytes(),
-        );
-        if venta.venta.monto_recibido > 0.0 {
+        let forma = venta.venta.forma_pago.as_str();
+        let forma_label = match forma {
+            "EFECTIVO" => "Efectivo",
+            "TRANSFERENCIA" | "TRANSFER" => "Transferencia",
+            "TARJETA" => "Tarjeta",
+            "CHEQUE" => "Cheque",
+            "CREDITO" | "CRÉDITO" | "FIADO" => "Credito",
+            other => other,
+        };
+        ticket.extend_from_slice(format!("Forma pago: {}\n", forma_label).as_bytes());
+
+        let es_credito = matches!(forma, "CREDITO" | "CRÉDITO" | "FIADO");
+
+        // Banco + referencia (transferencia / cheque / tarjeta)
+        if let Some(ref banco) = venta.venta.banco_nombre {
+            if !banco.is_empty() {
+                ticket.extend_from_slice(format!("Banco: {}\n", banco).as_bytes());
+            }
+        }
+        if let Some(ref refp) = venta.venta.referencia_pago {
+            if !refp.is_empty() {
+                ticket.extend_from_slice(format!("Ref: {}\n", refp).as_bytes());
+            }
+        }
+
+        // Monto pagado (siempre visible para no-credito), cambio solo si efectivo
+        if !es_credito {
+            ticket.extend_from_slice(linea_monto("Pagado:", venta.venta.total, ancho).as_bytes());
+        }
+        if venta.venta.monto_recibido > 0.0 && forma == "EFECTIVO" {
             ticket.extend_from_slice(linea_monto("Recibido:", venta.venta.monto_recibido, ancho).as_bytes());
-            ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
+            if venta.venta.cambio > 0.0 {
+                ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
+            }
+        }
+        if es_credito {
+            ticket.extend_from_slice(linea_monto("Saldo pendiente:", venta.venta.total, ancho).as_bytes());
         }
     }
 

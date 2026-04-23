@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
@@ -61,6 +61,7 @@ export default function VentasDia() {
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
+  const [ventaExpandida, setVentaExpandida] = useState<number | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
   const [ncLista, setNcLista] = useState<any[]>([]);
   const [ncFiltroEstado, setNcFiltroEstado] = useState<string>("");
@@ -541,6 +542,7 @@ export default function VentasDia() {
               <table className="table">
                 <thead>
                   <tr>
+                    <th style={{ width: 24 }}></th>
                     <th>Numero</th>
                     <th>{esRango ? "Fecha" : "Hora"}</th>
                     <th>Tipo</th>
@@ -551,8 +553,14 @@ export default function VentasDia() {
                 </thead>
                 <tbody>
                   {ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).map((v) => (
-                    <tr key={v.id} onClick={() => v.id && abrirDetalle(v.id)}
-                      style={{ cursor: "pointer" }} title="Ver detalle">
+                    <React.Fragment key={v.id}>
+                    <tr onClick={() => v.id && abrirDetalle(v.id)}
+                      style={{ cursor: "pointer" }} title="Click para ver detalle completo">
+                      <td onClick={(e) => { e.stopPropagation(); setVentaExpandida(ventaExpandida === v.id ? null : (v.id ?? null)); }}
+                          style={{ cursor: "pointer", textAlign: "center", color: "var(--color-text-secondary)", fontSize: 11 }}
+                          title="Expandir info rápida">
+                        {ventaExpandida === v.id ? "▼" : "▶"}
+                      </td>
                       <td>
                         <strong>{v.numero}</strong>
                         {v.numero_factura && (
@@ -780,10 +788,56 @@ export default function VentasDia() {
                         </div>
                       </td>
                     </tr>
+                    {ventaExpandida === v.id && (
+                      <tr>
+                        <td colSpan={7} style={{ background: "var(--color-surface-alt)", padding: 12, fontSize: 11 }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
+                            {(v as any).cliente_nombre && <div><strong>Cliente:</strong> {(v as any).cliente_nombre}</div>}
+                            <div><strong>Forma de pago:</strong> {v.forma_pago}{(v as any).banco_nombre ? ` · ${(v as any).banco_nombre}` : ""}</div>
+                            {(v as any).referencia_pago && <div><strong>Referencia:</strong> {(v as any).referencia_pago}</div>}
+                            {v.tipo_documento === "FACTURA" && (
+                              <>
+                                <div>
+                                  <strong>Estado SRI:</strong>{" "}
+                                  <span style={{
+                                    fontSize: 10, padding: "1px 6px", borderRadius: 3,
+                                    background: v.estado_sri === "AUTORIZADA" ? "rgba(34,197,94,0.15)" : v.estado_sri === "RECHAZADA" ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
+                                    color: v.estado_sri === "AUTORIZADA" ? "var(--color-success)" : v.estado_sri === "RECHAZADA" ? "var(--color-danger)" : "var(--color-warning)",
+                                  }}>{v.estado_sri || "PENDIENTE"}</span>
+                                </div>
+                                {v.numero_factura && <div><strong>N° factura SRI:</strong> {v.numero_factura}</div>}
+                                {v.autorizacion_sri && (
+                                  <div style={{ gridColumn: "1 / -1" }}>
+                                    <strong>Autorización SRI:</strong> <span style={{ fontFamily: "monospace", fontSize: 10 }}>{v.autorizacion_sri}</span>
+                                  </div>
+                                )}
+                                {v.clave_acceso && (
+                                  <div style={{ gridColumn: "1 / -1" }}>
+                                    <strong>Clave de acceso:</strong> <span style={{ fontFamily: "monospace", fontSize: 10, wordBreak: "break-all" }}>{v.clave_acceso}</span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                            {v.tipo_documento !== "FACTURA" && (
+                              <div style={{ gridColumn: "1 / -1", color: "var(--color-text-secondary)" }}>
+                                <em>Nota de venta — sin autorización SRI (no es comprobante tributario oficial).</em>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ marginTop: 8 }}>
+                            <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 10px" }}
+                              onClick={(e) => { e.stopPropagation(); v.id && abrirDetalle(v.id); }}>
+                              Ver items y totales completos →
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   ))}
                   {ventas.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="text-center text-secondary" style={{ padding: 30 }}>
+                      <td colSpan={7} className="text-center text-secondary" style={{ padding: 30 }}>
                         No hay ventas para {esRango ? "este periodo" : "esta fecha"}
                       </td>
                     </tr>

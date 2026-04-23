@@ -19,6 +19,8 @@ export interface Producto {
   requiere_serie?: boolean;
   requiere_caducidad?: boolean;
   no_controla_stock?: boolean;
+  /** SIMPLE (default) | COMBO_FIJO | COMBO_FLEXIBLE */
+  tipo_producto?: string;
 }
 
 export interface ProductoTactil {
