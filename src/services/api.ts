@@ -449,16 +449,41 @@ export async function ultimasVentasDia(limite: number = 5): Promise<UltimaVenta[
 
 // --- Caja ---
 
-export async function abrirCaja(montoInicial: number): Promise<Caja> {
-  return smartInvoke("abrir_caja", { montoInicial });
+export async function abrirCaja(montoInicial: number, motivoDiferencia?: string, desglose?: string): Promise<Caja> {
+  return smartInvoke("abrir_caja", { montoInicial, motivoDiferencia: motivoDiferencia ?? null, desglose: desglose ?? null });
 }
 
-export async function cerrarCaja(montoReal: number, observacion?: string): Promise<ResumenCaja> {
-  return smartInvoke("cerrar_caja", { montoReal, observacion });
+export async function cerrarCaja(montoReal: number, observacion?: string, motivoDescuadre?: string, desglose?: string): Promise<ResumenCaja> {
+  return smartInvoke("cerrar_caja", { montoReal, observacion: observacion ?? null, motivoDescuadre: motivoDescuadre ?? null, desglose: desglose ?? null });
 }
 
 export async function obtenerCajaAbierta(): Promise<Caja | null> {
   return smartInvoke("obtener_caja_abierta");
+}
+
+export async function obtenerUltimoCierre(): Promise<{
+  caja_id: number;
+  monto_real: number | null;
+  cerrada_at: string | null;
+  usuario_cierre: string | null;
+  diferencia_cierre: number | null;
+} | null> {
+  return smartInvoke("obtener_ultimo_cierre");
+}
+
+export async function listarEventosCaja(cajaId: number): Promise<any[]> {
+  return smartInvoke("listar_eventos_caja", { cajaId });
+}
+
+export async function historialDescuadresCaja(fechaDesde?: string, fechaHasta?: string): Promise<{
+  cierres: any[];
+  total_descuadrados: number;
+  total_faltantes: number;
+  total_sobrantes: number;
+  neto: number;
+  por_usuario: any[];
+}> {
+  return smartInvoke("historial_descuadres_caja", { fechaDesde: fechaDesde ?? null, fechaHasta: fechaHasta ?? null });
 }
 
 // --- Retiros de Caja ---

@@ -2,11 +2,57 @@ use crate::db::{Database, SesionState};
 use crate::models::{Caja, ResumenCaja};
 use tauri::State;
 
+/// Helper interno: registra evento de auditoria en caja_eventos
+fn log_evento_caja(
+    conn: &rusqlite::Connection,
+    caja_id: i64,
+    evento: &str,
+    usuario: &str,
+    usuario_id: i64,
+    valor_anterior: Option<&str>,
+    valor_nuevo: Option<&str>,
+    motivo: Option<&str>,
+) {
+    let _ = conn.execute(
+        "INSERT INTO caja_eventos (caja_id, evento, usuario, usuario_id, valor_anterior, valor_nuevo, motivo)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![caja_id, evento, usuario, usuario_id, valor_anterior, valor_nuevo, motivo],
+    );
+}
+
+/// Devuelve info del ultimo cierre: monto_real, fecha_cierre, usuario_cierre, id.
+/// Se usa al abrir caja para sugerir el monto inicial y advertir si difiere.
+#[tauri::command]
+pub fn obtener_ultimo_cierre(db: State<Database>) -> Result<Option<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let res = conn.query_row(
+        "SELECT id, monto_real, COALESCE(cerrada_at, fecha_cierre) as cerrada_at, usuario_cierre, usuario, diferencia
+         FROM caja
+         WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
+         ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok(serde_json::json!({
+            "caja_id": r.get::<_, i64>(0)?,
+            "monto_real": r.get::<_, Option<f64>>(1)?,
+            "cerrada_at": r.get::<_, Option<String>>(2)?,
+            "usuario_cierre": r.get::<_, Option<String>>(3)?.or_else(|| r.get::<_, Option<String>>(4).ok().flatten()),
+            "diferencia_cierre": r.get::<_, Option<f64>>(5)?,
+        })),
+    );
+    match res {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
 pub fn abrir_caja(
     db: State<Database>,
     sesion: State<SesionState>,
     monto_inicial: f64,
+    motivo_diferencia: Option<String>,
+    desglose: Option<String>,
 ) -> Result<Caja, String> {
     // Obtener usuario de la sesión
     let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
@@ -16,6 +62,10 @@ pub fn abrir_caja(
     let usuario_nombre = sesion_actual.nombre.clone();
     let usuario_id = sesion_actual.usuario_id;
     drop(sesion_guard);
+
+    if monto_inicial < 0.0 {
+        return Err("Monto inicial no puede ser negativo".to_string());
+    }
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
@@ -33,14 +83,51 @@ pub fn abrir_caja(
         return Err("Ya existe una caja abierta. Ciérrela primero.".to_string());
     }
 
+    // Buscar ultimo cierre para validar continuidad
+    let ultimo: Option<(i64, f64)> = conn.query_row(
+        "SELECT id, COALESCE(monto_real, 0) FROM caja
+         WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
+         ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).ok();
+
+    let (caja_anterior_id, monto_esperado_apertura) = match ultimo {
+        Some((id, m)) => (Some(id), m),
+        None => (None, 0.0),
+    };
+
+    // Si difiere del cierre anterior, exigir motivo
+    let difiere = (monto_inicial - monto_esperado_apertura).abs() > 0.01;
+    if difiere && caja_anterior_id.is_some() {
+        let motivo_str = motivo_diferencia.as_deref().map(|s| s.trim()).unwrap_or("");
+        if motivo_str.len() < 5 {
+            return Err(format!(
+                "DESCUADRE_APERTURA:{:.2}:{:.2}:El monto inicial difiere del cierre anterior. Cierre anterior: ${:.2}, apertura intentada: ${:.2}, diferencia: ${:.2}. Debe justificar la diferencia (mínimo 5 caracteres).",
+                monto_esperado_apertura, monto_inicial,
+                monto_esperado_apertura, monto_inicial, monto_inicial - monto_esperado_apertura
+            ));
+        }
+    }
+
     conn.execute(
-        "INSERT INTO caja (monto_inicial, monto_esperado, estado, usuario, usuario_id)
-         VALUES (?1, ?1, 'ABIERTA', ?2, ?3)",
-        rusqlite::params![monto_inicial, usuario_nombre, usuario_id],
+        "INSERT INTO caja (monto_inicial, monto_esperado, estado, usuario, usuario_id, motivo_diferencia_apertura, caja_anterior_id, desglose_apertura)
+         VALUES (?1, ?1, 'ABIERTA', ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![monto_inicial, usuario_nombre, usuario_id, motivo_diferencia, caja_anterior_id, desglose],
     )
     .map_err(|e| e.to_string())?;
 
     let id = conn.last_insert_rowid();
+
+    // Log evento APERTURA
+    let snapshot_nuevo = serde_json::json!({
+        "monto_inicial": monto_inicial,
+        "caja_anterior_id": caja_anterior_id,
+        "monto_esperado_apertura": monto_esperado_apertura,
+        "diferencia_apertura": monto_inicial - monto_esperado_apertura,
+    }).to_string();
+    log_evento_caja(&conn, id, "APERTURA", &usuario_nombre, usuario_id,
+        None, Some(&snapshot_nuevo), motivo_diferencia.as_deref());
 
     Ok(Caja {
         id: Some(id),
@@ -64,7 +151,18 @@ pub fn cerrar_caja(
     sesion: State<SesionState>,
     monto_real: f64,
     observacion: Option<String>,
+    motivo_descuadre: Option<String>,
+    desglose: Option<String>,
 ) -> Result<ResumenCaja, String> {
+    // Obtener usuario actual (puede ser distinto al que abrio)
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión para cerrar la caja".to_string())?;
+    let usuario_cierre = sesion_actual.nombre.clone();
+    let usuario_cierre_id = sesion_actual.usuario_id;
+    drop(sesion_guard);
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     let caja_id: i64 = conn
@@ -155,14 +253,65 @@ pub fn cerrar_caja(
     let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros;
     let diferencia = monto_real - monto_esperado;
 
+    // Anti-fraude: si hay descuadre, exigir motivo (mínimo 5 caracteres)
+    let descuadra = diferencia.abs() > 0.01;
+    if descuadra {
+        let motivo_str = motivo_descuadre.as_deref().map(|s| s.trim()).unwrap_or("");
+        if motivo_str.len() < 5 {
+            return Err(format!(
+                "DESCUADRE_CIERRE:{:.2}:{:.2}:Hay un descuadre de ${:.2} (esperado ${:.2}, contado ${:.2}). Debe explicar el motivo (mínimo 5 caracteres).",
+                monto_esperado, monto_real, diferencia, monto_esperado, monto_real
+            ));
+        }
+
+        // Validar umbral configurable
+        let umbral_pct: f64 = conn
+            .query_row("SELECT value FROM config WHERE key = 'caja_descuadre_umbral_pct'", [], |r| r.get::<_, String>(0))
+            .ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+        let umbral_monto = (umbral_pct / 100.0) * monto_esperado.max(1.0);
+        let pct_real = if monto_esperado > 0.0 { diferencia.abs() / monto_esperado * 100.0 } else { 0.0 };
+        if diferencia.abs() > umbral_monto {
+            // Solo informativo en el response — el cierre procede pero queda marcado
+            // La UI puede pedir PIN admin si caja_requiere_pin_descuadre = '1' (validacion en UI)
+            let _ = conn.execute(
+                "INSERT INTO caja_eventos (caja_id, evento, usuario, usuario_id, motivo, metadatos)
+                 VALUES (?1, 'DESCUADRE_GRAVE', ?2, ?3, ?4, ?5)",
+                rusqlite::params![caja_id, usuario_cierre, usuario_cierre_id, motivo_descuadre,
+                    serde_json::json!({"diferencia": diferencia, "umbral_pct": umbral_pct, "umbral_monto": umbral_monto, "pct_real": pct_real}).to_string()
+                ],
+            );
+        }
+    }
+
+    // Snapshot anterior para auditoria
+    let snapshot_anterior = serde_json::json!({
+        "estado": "ABIERTA",
+        "monto_inicial": monto_inicial,
+    }).to_string();
+
     conn.execute(
         "UPDATE caja SET fecha_cierre = datetime('now','localtime'),
+         cerrada_at = datetime('now','localtime'),
          monto_ventas = ?1, monto_esperado = ?2, monto_real = ?3,
-         diferencia = ?4, estado = 'CERRADA', observacion = ?5
-         WHERE id = ?6",
-        rusqlite::params![total_ventas, monto_esperado, monto_real, diferencia, observacion, caja_id],
+         diferencia = ?4, estado = 'CERRADA', observacion = ?5,
+         motivo_descuadre = ?6, desglose_cierre = ?7, usuario_cierre = ?8
+         WHERE id = ?9",
+        rusqlite::params![total_ventas, monto_esperado, monto_real, diferencia, observacion,
+                          motivo_descuadre, desglose, usuario_cierre, caja_id],
     )
     .map_err(|e| e.to_string())?;
+
+    // Log evento CIERRE
+    let snapshot_nuevo = serde_json::json!({
+        "estado": "CERRADA",
+        "monto_real": monto_real,
+        "monto_esperado": monto_esperado,
+        "diferencia": diferencia,
+        "total_ventas": total_ventas,
+        "total_efectivo": total_efectivo,
+    }).to_string();
+    log_evento_caja(&conn, caja_id, "CIERRE", &usuario_cierre, usuario_cierre_id,
+        Some(&snapshot_anterior), Some(&snapshot_nuevo), motivo_descuadre.as_deref());
 
     // Auto-cerrar sesión al cerrar caja
     drop(conn);
@@ -316,6 +465,110 @@ pub fn confirmar_deposito(
         return Err("No se encontró el retiro en tránsito".to_string());
     }
     Ok(())
+}
+
+/// Lista los eventos de auditoria de una caja especifica
+#[tauri::command]
+pub fn listar_eventos_caja(db: State<Database>, caja_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, evento, usuario, usuario_id, valor_anterior, valor_nuevo, motivo, metadatos, timestamp
+         FROM caja_eventos WHERE caja_id = ?1 ORDER BY timestamp ASC, id ASC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![caja_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "evento": r.get::<_, String>(1)?,
+            "usuario": r.get::<_, Option<String>>(2)?,
+            "usuario_id": r.get::<_, Option<i64>>(3)?,
+            "valor_anterior": r.get::<_, Option<String>>(4)?,
+            "valor_nuevo": r.get::<_, Option<String>>(5)?,
+            "motivo": r.get::<_, Option<String>>(6)?,
+            "metadatos": r.get::<_, Option<String>>(7)?,
+            "timestamp": r.get::<_, String>(8)?,
+        }))
+    }).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// Historial de cierres con descuadre. Util para detectar patrones por cajero.
+#[tauri::command]
+pub fn historial_descuadres_caja(
+    db: State<Database>,
+    fecha_desde: Option<String>,
+    fecha_hasta: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
+
+    let mut stmt = conn.prepare(
+        "SELECT c.id, COALESCE(c.cerrada_at, c.fecha_cierre) as fecha_cierre,
+                c.fecha_apertura, c.monto_inicial, c.monto_esperado, c.monto_real, c.diferencia,
+                COALESCE(c.usuario_cierre, c.usuario) as usuario, c.motivo_descuadre, c.motivo_diferencia_apertura,
+                c.observacion
+         FROM caja c
+         WHERE c.estado = 'CERRADA'
+           AND c.diferencia IS NOT NULL
+           AND ABS(c.diferencia) > 0.01
+           AND date(COALESCE(c.cerrada_at, c.fecha_cierre)) >= date(?1)
+           AND date(COALESCE(c.cerrada_at, c.fecha_cierre)) <= date(?2)
+         ORDER BY c.id DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let cierres: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![desde, hasta], |r| {
+        Ok(serde_json::json!({
+            "caja_id": r.get::<_, i64>(0)?,
+            "fecha_cierre": r.get::<_, Option<String>>(1)?,
+            "fecha_apertura": r.get::<_, Option<String>>(2)?,
+            "monto_inicial": r.get::<_, f64>(3)?,
+            "monto_esperado": r.get::<_, f64>(4)?,
+            "monto_real": r.get::<_, Option<f64>>(5)?,
+            "diferencia": r.get::<_, Option<f64>>(6)?,
+            "usuario": r.get::<_, Option<String>>(7)?,
+            "motivo_descuadre": r.get::<_, Option<String>>(8)?,
+            "motivo_diferencia_apertura": r.get::<_, Option<String>>(9)?,
+            "observacion": r.get::<_, Option<String>>(10)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    // Resumen por usuario
+    let mut por_usuario: std::collections::HashMap<String, (i64, f64, f64, f64)> = std::collections::HashMap::new();
+    for c in &cierres {
+        let usuario = c["usuario"].as_str().unwrap_or("?").to_string();
+        let dif = c["diferencia"].as_f64().unwrap_or(0.0);
+        let entry = por_usuario.entry(usuario).or_insert((0, 0.0, 0.0, 0.0));
+        entry.0 += 1;
+        entry.1 += dif; // suma neta (sobrante - faltante)
+        if dif < 0.0 { entry.2 += dif.abs(); } // total faltantes
+        if dif > 0.0 { entry.3 += dif; } // total sobrantes
+    }
+    let resumen_usuarios: Vec<serde_json::Value> = por_usuario.into_iter().map(|(u, (n, neto, falt, sobr))| {
+        serde_json::json!({
+            "usuario": u,
+            "total_cierres_descuadrados": n,
+            "diferencia_neta": neto,
+            "total_faltantes": falt,
+            "total_sobrantes": sobr,
+        })
+    }).collect();
+
+    let total_faltantes: f64 = cierres.iter()
+        .filter_map(|c| c["diferencia"].as_f64())
+        .filter(|d| *d < 0.0).map(|d| d.abs()).sum();
+    let total_sobrantes: f64 = cierres.iter()
+        .filter_map(|c| c["diferencia"].as_f64())
+        .filter(|d| *d > 0.0).sum();
+
+    Ok(serde_json::json!({
+        "cierres": cierres,
+        "total_descuadrados": cierres.len(),
+        "total_faltantes": total_faltantes,
+        "total_sobrantes": total_sobrantes,
+        "neto": total_sobrantes - total_faltantes,
+        "por_usuario": resumen_usuarios,
+    }))
 }
 
 #[tauri::command]

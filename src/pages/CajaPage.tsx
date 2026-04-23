@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -29,11 +29,33 @@ export default function CajaPage() {
   const [confirmandoRetiroId, setConfirmandoRetiroId] = useState<number | null>(null);
   const [confirmRef, setConfirmRef] = useState("");
   const [confirmImg, setConfirmImg] = useState<string | null>(null);
+  // Anti-fraude: info del ultimo cierre + motivos
+  const [ultimoCierre, setUltimoCierre] = useState<any>(null);
+  const [motivoApertura, setMotivoApertura] = useState("");
+  const [motivoDescuadre, setMotivoDescuadre] = useState("");
+  // Modal historial descuadres
+  const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  const [historialData, setHistorialData] = useState<any>(null);
+  const [historialDesde, setHistorialDesde] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [historialHasta, setHistorialHasta] = useState(() => new Date().toISOString().slice(0, 10));
 
   const cargar = async () => {
     setCargando(true);
     const caja = await obtenerCajaAbierta();
     setCajaAbierta(caja);
+    // Si no hay caja abierta, cargar info del ultimo cierre para sugerencia
+    if (!caja) {
+      try {
+        const uc = await obtenerUltimoCierre();
+        setUltimoCierre(uc);
+        if (uc?.monto_real != null) {
+          setMontoInicial(uc.monto_real.toString());
+        }
+      } catch { /* ignore */ }
+    }
     setCargando(false);
   };
 
@@ -49,28 +71,57 @@ export default function CajaPage() {
   }, [cajaAbierta]);
 
   const handleAbrir = async () => {
+    const monto = parseFloat(montoInicial) || 0;
+    // Validar motivo si difiere del ultimo cierre
+    const cierreEsperado = ultimoCierre?.monto_real;
+    if (cierreEsperado != null && Math.abs(monto - cierreEsperado) > 0.01 && motivoApertura.trim().length < 5) {
+      toastError(`El monto inicial difiere del cierre anterior ($${cierreEsperado.toFixed(2)}). Debe explicar el motivo (mínimo 5 caracteres).`);
+      return;
+    }
     try {
-      const caja = await abrirCaja(parseFloat(montoInicial) || 0);
+      const caja = await abrirCaja(monto, motivoApertura.trim() || undefined);
       setCajaAbierta(caja);
       setMontoInicial("");
+      setMotivoApertura("");
+      setUltimoCierre(null);
       toastExito("Caja abierta correctamente");
     } catch (err) {
-      toastError("Error: " + err);
+      const msg = String(err);
+      if (msg.includes("DESCUADRE_APERTURA")) {
+        // Backend ya devolvio mensaje detallado, mostrar tal cual
+        toastError(msg.split(":").slice(3).join(":").trim() || msg);
+      } else {
+        toastError("Error: " + err);
+      }
     }
   };
 
   const handleCerrar = async () => {
     setConfirmarCierre(false);
+    const monto = parseFloat(montoReal) || 0;
+    // Calcular descuadre esperado para validar motivo localmente
+    const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
+    const esperado = (cajaAbierta?.monto_inicial || 0) + (cajaAbierta?.monto_ventas || 0) - totalRetiros;
+    const dif = monto - esperado;
+    if (Math.abs(dif) > 0.01 && motivoDescuadre.trim().length < 5) {
+      toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
+      return;
+    }
     try {
-      const res = await cerrarCaja(parseFloat(montoReal) || 0, observacion || undefined);
+      const res = await cerrarCaja(monto, observacion || undefined, motivoDescuadre.trim() || undefined);
       setResumen(res);
       setCajaAbierta(null);
       setMontoReal("");
       setObservacion("");
+      setMotivoDescuadre("");
       toastExito("Caja cerrada correctamente");
-      // Nota: el backend ya cerro la sesion. Mostramos el resumen primero.
     } catch (err) {
-      toastError("Error: " + err);
+      const msg = String(err);
+      if (msg.includes("DESCUADRE_CIERRE")) {
+        toastError(msg.split(":").slice(3).join(":").trim() || msg);
+      } else {
+        toastError("Error: " + err);
+      }
     }
   };
 
@@ -135,6 +186,16 @@ export default function CajaPage() {
               Abierta por: {cajaAbierta.usuario}
             </span>
           )}
+          <button className="btn btn-outline" style={{ fontSize: 11 }}
+            onClick={async () => {
+              setMostrarHistorial(true);
+              try {
+                const d = await historialDescuadresCaja(historialDesde, historialHasta);
+                setHistorialData(d);
+              } catch (err) { toastError("Error: " + err); }
+            }}>
+            📊 Historial descuadres
+          </button>
         </div>
       </div>
       <div className="page-body">
@@ -255,7 +316,7 @@ export default function CajaPage() {
         )}
 
         {!resumen && !cajaAbierta && (
-          <div className="card" style={{ maxWidth: 400, margin: "40px auto" }}>
+          <div className="card" style={{ maxWidth: 460, margin: "40px auto" }}>
             <div className="card-header">Abrir Caja</div>
             <div className="card-body">
               {sesion && (
@@ -264,6 +325,34 @@ export default function CajaPage() {
                   <span className="font-bold" style={{ marginLeft: 8 }}>{sesion.nombre}</span>
                 </div>
               )}
+
+              {/* Banner: info del ultimo cierre */}
+              {ultimoCierre && (
+                <div style={{
+                  padding: "10px 12px", marginBottom: 12, borderRadius: 6,
+                  background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)",
+                  fontSize: 12,
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>📋 Cierre anterior</div>
+                  <div>
+                    Monto contado: <strong style={{ color: "var(--color-primary)" }}>${ultimoCierre.monto_real?.toFixed(2)}</strong>
+                  </div>
+                  {ultimoCierre.cerrada_at && (
+                    <div style={{ color: "var(--color-text-secondary)" }}>
+                      Fecha: {new Date(ultimoCierre.cerrada_at).toLocaleString("es-EC")}
+                    </div>
+                  )}
+                  {ultimoCierre.usuario_cierre && (
+                    <div style={{ color: "var(--color-text-secondary)" }}>
+                      Cerró: {ultimoCierre.usuario_cierre}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    El monto inicial debería coincidir con este cierre. Si no, deberá justificar la diferencia.
+                  </div>
+                </div>
+              )}
+
               <label className="text-secondary" style={{ fontSize: 12 }}>Monto inicial en caja</label>
               <input
                 className="input input-lg mt-2"
@@ -274,6 +363,29 @@ export default function CajaPage() {
                 onChange={(e) => setMontoInicial(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAbrir(); }}
               />
+
+              {/* Alerta + motivo si difiere */}
+              {ultimoCierre?.monto_real != null && montoInicial &&
+                Math.abs((parseFloat(montoInicial) || 0) - ultimoCierre.monto_real) > 0.01 && (
+                <div style={{ marginTop: 10 }}>
+                  <div style={{
+                    padding: "8px 10px", borderRadius: 6,
+                    background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.4)",
+                    color: "var(--color-danger)", fontSize: 12, marginBottom: 6,
+                  }}>
+                    ⚠ Diferencia: <strong>${((parseFloat(montoInicial) || 0) - ultimoCierre.monto_real).toFixed(2)}</strong>
+                    {" "} (cierre: ${ultimoCierre.monto_real.toFixed(2)} → apertura: ${(parseFloat(montoInicial) || 0).toFixed(2)})
+                  </div>
+                  <label className="text-secondary" style={{ fontSize: 12 }}>Motivo de la diferencia *</label>
+                  <textarea
+                    className="input mt-2"
+                    placeholder="Ej: Faltaron $X tomados por el dueño / sobraron $X de propina / etc."
+                    value={motivoApertura}
+                    onChange={(e) => setMotivoApertura(e.target.value)}
+                    rows={2} />
+                </div>
+              )}
+
               <button className="btn btn-success btn-lg mt-4" style={{ width: "100%" }} onClick={handleAbrir}>
                 Abrir Caja
               </button>
@@ -311,7 +423,7 @@ export default function CajaPage() {
                 </div>
               </div>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12 }}>Monto real en caja</label>
+                <label className="text-secondary" style={{ fontSize: 12 }}>Monto real contado en caja</label>
                 <input
                   className="input input-lg mt-2"
                   type="number"
@@ -321,8 +433,39 @@ export default function CajaPage() {
                   onChange={(e) => setMontoReal(e.target.value)}
                 />
               </div>
+
+              {/* Alerta de descuadre + motivo obligatorio */}
+              {(() => {
+                const monto = parseFloat(montoReal) || 0;
+                const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
+                const esperado = (cajaAbierta.monto_inicial || 0) + (cajaAbierta.monto_ventas || 0) - totalRetiros;
+                const dif = monto - esperado;
+                if (!montoReal || Math.abs(dif) <= 0.01) return null;
+                const esFaltante = dif < 0;
+                return (
+                  <div className="mt-4">
+                    <div style={{
+                      padding: "8px 10px", borderRadius: 6,
+                      background: esFaltante ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)",
+                      border: `1px solid ${esFaltante ? "rgba(239,68,68,0.4)" : "rgba(245,158,11,0.4)"}`,
+                      color: esFaltante ? "var(--color-danger)" : "var(--color-warning)",
+                      fontSize: 12, marginBottom: 6,
+                    }}>
+                      ⚠ Descuadre: <strong>${dif.toFixed(2)}</strong> {esFaltante ? "(faltante)" : "(sobrante)"}
+                    </div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Motivo del descuadre *</label>
+                    <textarea
+                      className="input mt-2"
+                      placeholder="Ej: cliente pago de mas en efectivo / falta vuelto entregado / etc."
+                      value={motivoDescuadre}
+                      onChange={(e) => setMotivoDescuadre(e.target.value)}
+                      rows={2} />
+                  </div>
+                );
+              })()}
+
               <div className="mt-4">
-                <label className="text-secondary" style={{ fontSize: 12 }}>Observacion (opcional)</label>
+                <label className="text-secondary" style={{ fontSize: 12 }}>Observación adicional (opcional)</label>
                 <input
                   className="input mt-2"
                   value={observacion}
@@ -470,6 +613,149 @@ export default function CajaPage() {
         onConfirmar={handleCerrar}
         onCancelar={() => setConfirmarCierre(false)}
       />
+
+      {/* Modal: Historial de descuadres */}
+      {mostrarHistorial && (
+        <div className="modal-overlay" onClick={() => setMostrarHistorial(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, maxHeight: "90vh", overflowY: "auto" }}>
+            <div className="modal-header">
+              <h3>📊 Historial de descuadres de caja</h3>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: "flex", gap: 8, alignItems: "end", marginBottom: 14, flexWrap: "wrap" }}>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 11 }}>Desde</label>
+                  <input type="date" className="input" style={{ fontSize: 12 }}
+                    value={historialDesde}
+                    onChange={(e) => setHistorialDesde(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 11 }}>Hasta</label>
+                  <input type="date" className="input" style={{ fontSize: 12 }}
+                    value={historialHasta}
+                    onChange={(e) => setHistorialHasta(e.target.value)} />
+                </div>
+                <button className="btn btn-primary" style={{ fontSize: 12 }}
+                  onClick={async () => {
+                    try {
+                      const d = await historialDescuadresCaja(historialDesde, historialHasta);
+                      setHistorialData(d);
+                    } catch (err) { toastError("Error: " + err); }
+                  }}>
+                  Filtrar
+                </button>
+              </div>
+
+              {!historialData ? (
+                <div className="text-center text-secondary" style={{ padding: 30 }}>Cargando...</div>
+              ) : (
+                <>
+                  {/* KPIs */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+                    <div className="card" style={{ borderLeft: "4px solid var(--color-text-secondary)" }}>
+                      <div className="card-body" style={{ padding: 12 }}>
+                        <div className="text-secondary" style={{ fontSize: 11 }}>Cierres con descuadre</div>
+                        <div style={{ fontSize: 22, fontWeight: 700 }}>{historialData.total_descuadrados}</div>
+                      </div>
+                    </div>
+                    <div className="card" style={{ borderLeft: "4px solid var(--color-danger)" }}>
+                      <div className="card-body" style={{ padding: 12 }}>
+                        <div className="text-secondary" style={{ fontSize: 11 }}>Total faltantes</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "var(--color-danger)" }}>${historialData.total_faltantes.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="card" style={{ borderLeft: "4px solid var(--color-warning)" }}>
+                      <div className="card-body" style={{ padding: 12 }}>
+                        <div className="text-secondary" style={{ fontSize: 11 }}>Total sobrantes</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "var(--color-warning)" }}>${historialData.total_sobrantes.toFixed(2)}</div>
+                      </div>
+                    </div>
+                    <div className="card" style={{ borderLeft: `4px solid ${historialData.neto < 0 ? "var(--color-danger)" : "var(--color-success)"}` }}>
+                      <div className="card-body" style={{ padding: 12 }}>
+                        <div className="text-secondary" style={{ fontSize: 11 }}>Neto</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: historialData.neto < 0 ? "var(--color-danger)" : "var(--color-success)" }}>
+                          ${historialData.neto.toFixed(2)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Resumen por usuario */}
+                  {historialData.por_usuario.length > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Por cajero</div>
+                      <table className="table" style={{ width: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>Cajero</th>
+                            <th className="text-right">Cierres con descuadre</th>
+                            <th className="text-right">Faltantes</th>
+                            <th className="text-right">Sobrantes</th>
+                            <th className="text-right">Neto</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {historialData.por_usuario
+                            .sort((a: any, b: any) => b.total_faltantes - a.total_faltantes)
+                            .map((u: any) => (
+                            <tr key={u.usuario}>
+                              <td><strong>{u.usuario}</strong></td>
+                              <td className="text-right">{u.total_cierres_descuadrados}</td>
+                              <td className="text-right" style={{ color: "var(--color-danger)" }}>${u.total_faltantes.toFixed(2)}</td>
+                              <td className="text-right" style={{ color: "var(--color-warning)" }}>${u.total_sobrantes.toFixed(2)}</td>
+                              <td className="text-right" style={{ color: u.diferencia_neta < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 700 }}>
+                                ${u.diferencia_neta.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Lista de cierres */}
+                  <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Detalle de cierres</div>
+                  {historialData.cierres.length === 0 ? (
+                    <div className="text-center text-secondary" style={{ padding: 30 }}>Sin cierres con descuadre en este período 🎉</div>
+                  ) : (
+                    <table className="table" style={{ width: "100%" }}>
+                      <thead>
+                        <tr>
+                          <th>Fecha cierre</th>
+                          <th>Cajero</th>
+                          <th className="text-right">Inicial</th>
+                          <th className="text-right">Esperado</th>
+                          <th className="text-right">Contado</th>
+                          <th className="text-right">Diferencia</th>
+                          <th>Motivo</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historialData.cierres.map((c: any) => (
+                          <tr key={c.caja_id}>
+                            <td style={{ fontSize: 11 }}>{c.fecha_cierre?.slice(0, 16).replace("T", " ")}</td>
+                            <td>{c.usuario || "-"}</td>
+                            <td className="text-right">${c.monto_inicial.toFixed(2)}</td>
+                            <td className="text-right">${c.monto_esperado.toFixed(2)}</td>
+                            <td className="text-right font-bold">${(c.monto_real ?? 0).toFixed(2)}</td>
+                            <td className="text-right" style={{ color: c.diferencia < 0 ? "var(--color-danger)" : "var(--color-warning)", fontWeight: 700 }}>
+                              ${c.diferencia.toFixed(2)}
+                            </td>
+                            <td style={{ fontSize: 11, maxWidth: 220 }}>{c.motivo_descuadre || <span className="text-secondary">(sin motivo)</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setMostrarHistorial(false)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

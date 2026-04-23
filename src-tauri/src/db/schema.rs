@@ -837,6 +837,45 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE compras ADD COLUMN banco_id INTEGER", []);
     let _ = conn.execute("ALTER TABLE compras ADD COLUMN referencia_pago TEXT", []);
 
+    // === CAJA ANTI-FRAUDE FASE 1 (v2.3.1) ===
+    // Motivo de la diferencia entre apertura y cierre anterior (si aplica)
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN motivo_diferencia_apertura TEXT", []);
+    // Motivo del descuadre al cerrar (cuando monto_real != monto_esperado)
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN motivo_descuadre TEXT", []);
+    // Timestamp inmutable del cierre (separado de fecha_cierre por compatibilidad)
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN cerrada_at TEXT", []);
+    // Cierre anterior referenciado al abrir (para trazabilidad)
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN caja_anterior_id INTEGER", []);
+    // Desglose por denominacion (JSON) — opcional
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN desglose_apertura TEXT", []);
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN desglose_cierre TEXT", []);
+    // Usuario que cerro (puede diferir del que abrio)
+    let _ = conn.execute("ALTER TABLE caja ADD COLUMN usuario_cierre TEXT", []);
+
+    // Tabla de eventos de caja (audit log inmutable)
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS caja_eventos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caja_id INTEGER NOT NULL,
+            evento TEXT NOT NULL,           -- APERTURA | CIERRE | EDICION_INTENTADA | RETIRO | DEPOSITO
+            usuario TEXT,
+            usuario_id INTEGER,
+            valor_anterior TEXT,            -- JSON con snapshot anterior (puede ser null)
+            valor_nuevo TEXT,               -- JSON con snapshot nuevo
+            motivo TEXT,
+            metadatos TEXT,                 -- JSON adicional (ip, terminal, etc)
+            timestamp TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (caja_id) REFERENCES caja(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_caja_eventos_caja ON caja_eventos(caja_id);
+        CREATE INDEX IF NOT EXISTS idx_caja_eventos_timestamp ON caja_eventos(timestamp);
+    ");
+
+    // Config: umbral de descuadre que requiere aprobacion (porcentaje del monto esperado)
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caja_descuadre_umbral_pct', '2')", []);
+    // Config: si requiere PIN admin para cerrar con descuadre > umbral
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caja_requiere_pin_descuadre', '0')", []);
+
     // Control de stock negativo:
     //   PERMITIR (default): puede vender aunque deje stock < 0 (comportamiento historico)
     //   BLOQUEAR: no permite agregar al carrito ni vender si no alcanza stock
