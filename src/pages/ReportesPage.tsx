@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteIvaMensual,
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
   reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple,
-  exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf } from "../services/api";
+  exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf, reporteVentasPorCajero } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -31,7 +31,8 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros">("utilidad");
+  const [cajerosData, setCajerosData] = useState<any>(null);
   // Kardex multi-categoria
   const [kardexMultiData, setKardexMultiData] = useState<any | null>(null);
   const [categoriasMaestro, setCategoriasMaestro] = useState<Array<{ id: number; nombre: string }>>([]);
@@ -87,6 +88,10 @@ export default function ReportesPage() {
         const inv = await reporteInventarioValorizado();
         setInventario(inv);
         setKardexProducto(null);
+      }
+      else if (tab === "cajeros") {
+        const data = await reporteVentasPorCajero(desde, hasta);
+        setCajerosData(data);
       }
     } catch (err) {
       toastError("Error: " + err);
@@ -540,6 +545,7 @@ export default function ReportesPage() {
             ["cxp", "Cuentas por Pagar"],
             ["inventario", "Inventario"],
             ["kardex", "Kardex Multi"],
+            ["cajeros", "Cajeros"],
           ] as const).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
               style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
@@ -1362,6 +1368,125 @@ export default function ReportesPage() {
                   Selecciona filtros y presiona <strong>Generar Kardex</strong>
                 </div>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: Cajeros — ranking + tickets promedio */}
+        {tab === "cajeros" && cajerosData && (
+          <div>
+            {/* KPIs globales */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 16 }}>
+              <KpiCard label="Cajeros activos" valor={String(cajerosData.total_cajeros)} />
+              <KpiCard label="Total ventas" valor={fmt(cajerosData.total_global)} color="var(--color-primary)" />
+              <KpiCard label="N° transacciones" valor={String(cajerosData.num_ventas_global)} />
+              <KpiCard label="Ticket promedio" valor={fmt(cajerosData.ticket_promedio_global)} color="var(--color-success)" />
+              <KpiCard label="Descuadre neto" valor={fmt(cajerosData.descuadre_neto_global)}
+                color={cajerosData.descuadre_neto_global < 0 ? "var(--color-danger)" : "var(--color-success)"} />
+            </div>
+
+            {cajerosData.cajeros.length === 0 ? (
+              <div className="card" style={{ padding: 30, textAlign: "center", color: "var(--color-text-secondary)" }}>
+                Sin ventas registradas en este período
+              </div>
+            ) : (
+              <>
+                {/* Ranking visual top 5 */}
+                {cajerosData.cajeros.length > 1 && (
+                  <div className="card" style={{ marginBottom: 12, padding: 14 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>🏆 Ranking de cajeros (top 5)</div>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={cajerosData.cajeros.slice(0, 5).map((c: any) => ({ nombre: c.cajero, total: c.total }))} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.2)" />
+                        <XAxis dataKey="nombre" stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} />
+                        <YAxis stroke="var(--color-text-secondary)" tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+                        <Tooltip
+                          contentStyle={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
+                          formatter={(v: any) => [fmt(Number(v)), "Total ventas"]} />
+                        <Bar dataKey="total" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Tabla detallada */}
+                <div className="card">
+                  <table className="table" style={{ width: "100%" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: 40 }}>#</th>
+                        <th>Cajero</th>
+                        <th className="text-right">Ventas</th>
+                        <th className="text-right">Total</th>
+                        <th className="text-right">Promedio/ticket</th>
+                        <th className="text-right">Unidades</th>
+                        <th>Top producto</th>
+                        <th className="text-right">Efectivo</th>
+                        <th className="text-right">Transfer.</th>
+                        <th className="text-right">Crédito</th>
+                        <th className="text-right">Cierres</th>
+                        <th className="text-right">Descuadre</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cajerosData.cajeros.map((c: any, idx: number) => (
+                        <tr key={c.cajero}>
+                          <td>
+                            {idx === 0 ? <span title="1° lugar" style={{ fontSize: 14 }}>🥇</span> :
+                             idx === 1 ? <span title="2° lugar" style={{ fontSize: 14 }}>🥈</span> :
+                             idx === 2 ? <span title="3° lugar" style={{ fontSize: 14 }}>🥉</span> :
+                             <span style={{ color: "var(--color-text-secondary)", fontSize: 11 }}>{idx + 1}</span>}
+                          </td>
+                          <td>
+                            <strong>{c.cajero}</strong>
+                            {c.num_facturas > 0 && (
+                              <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                                Facturas: {c.num_facturas_autorizadas}/{c.num_facturas} autorizadas
+                              </div>
+                            )}
+                            {c.primera_venta && c.ultima_venta && (
+                              <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                                {c.primera_venta?.slice(0, 16).replace("T", " ")} → {c.ultima_venta?.slice(0, 16).replace("T", " ")}
+                              </div>
+                            )}
+                          </td>
+                          <td className="text-right">{c.num_ventas}</td>
+                          <td className="text-right font-bold" style={{ color: "var(--color-primary)" }}>{fmt(c.total)}</td>
+                          <td className="text-right" style={{ color: "var(--color-success)", fontWeight: 600 }}>{fmt(c.ticket_promedio)}</td>
+                          <td className="text-right">{c.unidades_vendidas?.toFixed(0) || 0}</td>
+                          <td style={{ fontSize: 11 }}>
+                            {c.top_producto ? (
+                              <>
+                                <div>{c.top_producto}</div>
+                                <div style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>
+                                  {c.top_producto_unidades?.toFixed(0)} unid.
+                                </div>
+                              </>
+                            ) : "-"}
+                          </td>
+                          <td className="text-right" style={{ fontSize: 12 }}>{fmt(c.total_efectivo)}</td>
+                          <td className="text-right" style={{ fontSize: 12 }}>{fmt(c.total_transfer)}</td>
+                          <td className="text-right" style={{ fontSize: 12, color: c.total_credito > 0 ? "var(--color-warning)" : undefined }}>
+                            {fmt(c.total_credito)}
+                          </td>
+                          <td className="text-right">{c.cajas_cerradas}</td>
+                          <td className="text-right" style={{
+                            color: c.descuadre_neto < 0 ? "var(--color-danger)" : c.descuadre_neto > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
+                            fontWeight: Math.abs(c.descuadre_neto) > 0.01 ? 700 : undefined,
+                          }}>
+                            {c.descuadre_neto != null ? fmt(c.descuadre_neto) : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Tip */}
+                <div style={{ marginTop: 10, padding: 10, fontSize: 11, color: "var(--color-text-secondary)", background: "var(--color-surface-alt)", borderRadius: 6 }}>
+                  💡 Click en "Cajeros" para refrescar. Las columnas Cierres/Descuadre solo cuentan cierres en el período (cajero que cerró). Para ver el detalle de un cierre con audit log, ve a Caja → Historial caja.
+                </div>
+              </>
             )}
           </div>
         )}

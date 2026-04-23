@@ -72,6 +72,16 @@ export default function CajaPage() {
   };
 
   useEffect(() => { cargar(); }, []);
+
+  // Soporte tecla Esc para cerrar drawer historial
+  useEffect(() => {
+    if (!mostrarHistorial) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMostrarHistorial(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [mostrarHistorial]);
   useEffect(() => {
     obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
   }, []);
@@ -655,14 +665,51 @@ export default function CajaPage() {
         onCancelar={() => setConfirmarCierre(false)}
       />
 
-      {/* Modal: Historial completo de caja (sesiones + descuadres) */}
+      {/* Drawer lateral derecho: Historial completo de caja (sesiones + descuadres) */}
       {mostrarHistorial && (
-        <div className="modal-overlay" onClick={() => setMostrarHistorial(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 1000, maxHeight: "90vh", overflowY: "auto" }}>
-            <div className="modal-header">
-              <h3>📊 Historial de caja</h3>
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => setMostrarHistorial(false)}
+            style={{
+              position: "fixed", inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              zIndex: 999,
+              animation: "fadeIn 0.15s ease-out",
+            }}
+          />
+          {/* Drawer */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "fixed", top: 0, right: 0, bottom: 0,
+              width: "min(96vw, 1280px)",
+              background: "var(--color-bg)",
+              boxShadow: "-4px 0 20px rgba(0,0,0,0.25)",
+              zIndex: 1000,
+              display: "flex", flexDirection: "column",
+              animation: "slideInRight 0.2s ease-out",
+            }}>
+            <div className="modal-header" style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "12px 20px", borderBottom: "1px solid var(--color-border)",
+              flexShrink: 0,
+            }}>
+              <h3 style={{ margin: 0 }}>📊 Historial de caja</h3>
+              <button
+                onClick={() => setMostrarHistorial(false)}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: 24, color: "var(--color-text-secondary)", padding: "0 8px",
+                  lineHeight: 1,
+                }}
+                title="Cerrar (Esc)">×</button>
             </div>
-            <div className="modal-body">
+            <style>{`
+              @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+              @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+            `}</style>
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
               {/* Tabs */}
               <div style={{ display: "flex", gap: 4, marginBottom: 12, borderBottom: "1px solid var(--color-border)" }}>
                 <button
@@ -952,11 +999,14 @@ export default function CajaPage() {
                 </>
               ))}
             </div>
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setMostrarHistorial(false)}>Cerrar</button>
+            <div style={{
+              padding: "10px 20px", borderTop: "1px solid var(--color-border)",
+              display: "flex", justifyContent: "flex-end", flexShrink: 0,
+            }}>
+              <button className="btn btn-outline" onClick={() => setMostrarHistorial(false)}>Cerrar (Esc)</button>
             </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Modal PIN supervisor (cuando rol no tiene permiso o descuadre alto) */}

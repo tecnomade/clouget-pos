@@ -1055,6 +1055,138 @@ pub fn reporte_inventario_valorizado(db: State<Database>) -> Result<serde_json::
     }))
 }
 
+/// Reporte de ventas por cajero. Devuelve, para cada cajero (campo `usuario` en ventas):
+///  - num_ventas, total, ticket promedio, descuento, IVA, productos vendidos
+///  - desglose por forma de pago (efectivo/transfer/credito/otros)
+///  - primera/última venta del periodo
+///  - top 1 producto vendido (más unidades)
+///  - cierres de caja en el período: cantidad, descuadres totales
+/// Tambien retorna KPIs globales y ranking ordenado por total descendente.
+#[tauri::command]
+pub fn reporte_ventas_por_cajero(
+    db: State<Database>,
+    fecha_desde: Option<String>,
+    fecha_hasta: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let desde = fecha_desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = fecha_hasta.unwrap_or_else(|| "2999-12-31".to_string());
+
+    // Agregado base de ventas por cajero
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(usuario, '(sin usuario)') as cajero,
+                COUNT(*) as num_ventas,
+                COALESCE(SUM(total), 0) as total,
+                COALESCE(SUM(iva), 0) as iva_total,
+                COALESCE(SUM(descuento), 0) as descuento_total,
+                COALESCE(SUM(CASE WHEN forma_pago = 'EFECTIVO' THEN total ELSE 0 END), 0) as total_efectivo,
+                COALESCE(SUM(CASE WHEN forma_pago IN ('TRANSFERENCIA','TRANSFER') THEN total ELSE 0 END), 0) as total_transfer,
+                COALESCE(SUM(CASE WHEN forma_pago IN ('CREDITO','FIADO') THEN total ELSE 0 END), 0) as total_credito,
+                COALESCE(SUM(CASE WHEN forma_pago NOT IN ('EFECTIVO','TRANSFERENCIA','TRANSFER','CREDITO','FIADO') THEN total ELSE 0 END), 0) as total_otros,
+                COALESCE(SUM(CASE WHEN tipo_documento = 'FACTURA' THEN 1 ELSE 0 END), 0) as num_facturas,
+                COALESCE(SUM(CASE WHEN tipo_documento = 'FACTURA' AND estado_sri = 'AUTORIZADA' THEN 1 ELSE 0 END), 0) as num_facturas_aut,
+                MIN(fecha) as primera_venta,
+                MAX(fecha) as ultima_venta
+         FROM ventas
+         WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+           AND COALESCE(anulada, 0) = 0
+         GROUP BY cajero
+         ORDER BY total DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let cajeros: Vec<serde_json::Value> = stmt.query_map(rusqlite::params![desde, hasta], |r| {
+        let num: i64 = r.get(1)?;
+        let total: f64 = r.get(2)?;
+        let promedio = if num > 0 { total / num as f64 } else { 0.0 };
+        Ok(serde_json::json!({
+            "cajero": r.get::<_, String>(0)?,
+            "num_ventas": num,
+            "total": total,
+            "ticket_promedio": promedio,
+            "iva_total": r.get::<_, f64>(3)?,
+            "descuento_total": r.get::<_, f64>(4)?,
+            "total_efectivo": r.get::<_, f64>(5)?,
+            "total_transfer": r.get::<_, f64>(6)?,
+            "total_credito": r.get::<_, f64>(7)?,
+            "total_otros": r.get::<_, f64>(8)?,
+            "num_facturas": r.get::<_, i64>(9)?,
+            "num_facturas_autorizadas": r.get::<_, i64>(10)?,
+            "primera_venta": r.get::<_, Option<String>>(11)?,
+            "ultima_venta": r.get::<_, Option<String>>(12)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    // Enriquecer cada cajero con: unidades vendidas, top producto, info de caja
+    let mut cajeros_enriquecidos: Vec<serde_json::Value> = Vec::new();
+    for c in cajeros {
+        let cajero = c["cajero"].as_str().unwrap_or("").to_string();
+
+        // Unidades vendidas
+        let unidades: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(vd.cantidad), 0)
+             FROM venta_detalles vd
+             JOIN ventas v ON vd.venta_id = v.id
+             WHERE date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+               AND COALESCE(v.anulada, 0) = 0
+               AND COALESCE(v.usuario, '(sin usuario)') = ?3",
+            rusqlite::params![desde, hasta, cajero], |r| r.get(0)
+        ).unwrap_or(0.0);
+
+        // Top producto vendido
+        let (top_nombre, top_unidades): (Option<String>, f64) = conn.query_row(
+            "SELECT p.nombre, SUM(vd.cantidad) as units
+             FROM venta_detalles vd
+             JOIN ventas v ON vd.venta_id = v.id
+             JOIN productos p ON vd.producto_id = p.id
+             WHERE date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+               AND COALESCE(v.anulada, 0) = 0
+               AND COALESCE(v.usuario, '(sin usuario)') = ?3
+             GROUP BY p.id
+             ORDER BY units DESC LIMIT 1",
+            rusqlite::params![desde, hasta, cajero],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, f64>(1)?)),
+        ).unwrap_or((None, 0.0));
+
+        // Cajas: cantidad de cierres + descuadre acumulado
+        let (cajas_cerradas, descuadre_neto): (i64, f64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(diferencia), 0)
+             FROM caja
+             WHERE estado = 'CERRADA'
+               AND date(COALESCE(cerrada_at, fecha_cierre)) >= date(?1)
+               AND date(COALESCE(cerrada_at, fecha_cierre)) <= date(?2)
+               AND (COALESCE(usuario_cierre, usuario, '') = ?3)",
+            rusqlite::params![desde, hasta, cajero],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap_or((0, 0.0));
+
+        let mut obj = c.as_object().cloned().unwrap_or_default();
+        obj.insert("unidades_vendidas".to_string(), serde_json::json!(unidades));
+        obj.insert("top_producto".to_string(), serde_json::json!(top_nombre));
+        obj.insert("top_producto_unidades".to_string(), serde_json::json!(top_unidades));
+        obj.insert("cajas_cerradas".to_string(), serde_json::json!(cajas_cerradas));
+        obj.insert("descuadre_neto".to_string(), serde_json::json!(descuadre_neto));
+        cajeros_enriquecidos.push(serde_json::Value::Object(obj));
+    }
+
+    // KPIs globales
+    let total_global: f64 = cajeros_enriquecidos.iter().filter_map(|c| c["total"].as_f64()).sum();
+    let num_global: i64 = cajeros_enriquecidos.iter().filter_map(|c| c["num_ventas"].as_i64()).sum();
+    let ticket_promedio_global = if num_global > 0 { total_global / num_global as f64 } else { 0.0 };
+    let total_descuadre_global: f64 = cajeros_enriquecidos.iter().filter_map(|c| c["descuadre_neto"].as_f64()).sum();
+
+    Ok(serde_json::json!({
+        "cajeros": cajeros_enriquecidos,
+        "total_global": total_global,
+        "num_ventas_global": num_global,
+        "ticket_promedio_global": ticket_promedio_global,
+        "total_cajeros": cajeros_enriquecidos.len(),
+        "descuadre_neto_global": total_descuadre_global,
+        "fecha_desde": desde,
+        "fecha_hasta": hasta,
+    }))
+}
+
 /// Kardex AGRUPADO por multiples categorias/productos.
 /// Permite filtrar movimientos por:
 /// - categorias: lista de IDs de categorias

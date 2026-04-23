@@ -447,6 +447,22 @@ export async function ultimasVentasDia(limite: number = 5): Promise<UltimaVenta[
   return smartInvoke("ultimas_ventas_dia", { limite });
 }
 
+export async function reporteVentasPorCajero(fechaDesde?: string, fechaHasta?: string): Promise<{
+  cajeros: any[];
+  total_global: number;
+  num_ventas_global: number;
+  ticket_promedio_global: number;
+  total_cajeros: number;
+  descuadre_neto_global: number;
+  fecha_desde: string;
+  fecha_hasta: string;
+}> {
+  return smartInvoke("reporte_ventas_por_cajero", {
+    fechaDesde: fechaDesde ?? null,
+    fechaHasta: fechaHasta ?? null,
+  });
+}
+
 // --- Caja ---
 
 export async function abrirCaja(montoInicial: number, motivoDiferencia?: string, desglose?: string): Promise<Caja> {
