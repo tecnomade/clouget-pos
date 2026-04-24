@@ -101,14 +101,85 @@ Router no encontraba match → no renderizaba nada → pantalla blanca.
 
 ---
 
-## Pendientes después de v2.3.10 (siguiente iteración)
+---
+
+## v2.3.11-beta (5 fixes + auditoría completa de permisos)
+
+### 7. 🔥 Cajero con permisos no podía abrir Productos / Reportes
+
+**Síntoma reportado:** "Cuando va a productos usuario cajero que tiene permiso de
+productos y ver precios costo le vuelve a pedir abrir caja" (= lo redirige al
+home porque cae en el catch-all de v2.3.10).
+
+**Causa:** En `main.tsx` las rutas `/productos`, `/clientes`, `/reportes`, etc.
+se filtraban con `sesion.rol === "ADMIN"` ignorando los permisos. Aunque el
+cajero tenía `gestionar_productos`, la ruta no se renderizaba → caía al
+catch-all → redirigido a `/`.
+
+**Fix:** Cada ruta admin-only se cambió a condicional por permiso:
+```jsx
+{(esAdmin || tienePermiso("gestionar_productos")) && <Route path="/productos" ... />}
+{(esAdmin || tienePermiso("ver_reportes")) && <Route path="/reportes" ... />}
+// etc.
+```
+
+### 8. 🐛 Lista de productos no mostraba precio de costo
+
+**Síntoma reportado:** "Aún no ve precio costo" (en la lista principal de
+Productos, además del form que se arregló en v2.3.9).
+
+**Fix:** Si `esAdmin` o tiene permiso `ver_costos`, ahora se agregan dos
+columnas a la tabla:
+- **COSTO**: precio de costo del producto
+- **MARGEN**: margen porcentual con color (rojo si < 0, ámbar si < 15%, verde
+  si ≥ 15%)
+
+### 9. 🐛 No había forma de reimprimir reporte de cierre
+
+**Síntoma reportado:** "Aún no permite reimprimir el reporte de sesiones de
+caja de forma individual".
+
+**Fix:** En el drawer "Historial de caja" → tab "Sesiones", al expandir una
+sesión cerrada aparecen 2 botones nuevos:
+- **🖨 Reimprimir ticket** — usa `imprimir_reporte_caja` (ESC/POS térmica)
+- **📄 Reporte PDF A4** — usa `imprimir_reporte_caja_pdf` (incluye
+  trazabilidad agregada en v2.3.3)
+
+### 10. ➕ Selector de lista de precios global en POS
+
+**Pedido:** "¿Dónde cambio la lista de precio?".
+
+**Fix:** Header del POS ahora tiene un selector "Lista: ..." visible si
+`esAdmin` o tiene el permiso `cambiar_lista_precio`. Permite forzar una
+lista distinta a la del cliente. Default "Auto" usa la lista del cliente o
+precio_venta default. Al cambiar la selección se recalcula el carrito
+automáticamente. Botón × para volver a Auto.
+
+### 11. ➕ Auditoría completa de permisos (2 nuevos)
+
+**Pedido:** "Revisar bien los permisos para los usuarios subordinados".
+
+**Permisos nuevos:**
+- `gestionar_gastos` — necesario para ver `/gastos` (antes era admin-only).
+- `ver_pagos_pendientes_admin` — para confirmar/rechazar transferencias en CXC.
+- `cambiar_lista_precio` — selector lista en POS (introducido en v2.3.9, UI ahora).
+
+**Sincronización:**
+- `Layout.tsx` y `main.tsx` ahora usan **la misma matriz** rol/permiso → ruta.
+  Antes había desincronización (Layout filtraba por permiso pero las rutas
+  solo por rol).
+- Soporte para **permiso alternativo** (`permisoAlt`): por ej.
+  `/servicio-tecnico` se ve si tiene `gestionar_servicio_tecnico` O
+  `ver_servicio_tecnico`.
+
+---
+
+## Pendientes después de v2.3.11 (siguiente iteración)
 
 | # | Tarea | Origen |
 |---|---|---|
-| 1 | UI selector "Lista de precios" en POS (con permiso `cambiar_lista_precio`) | v2.3.9 |
-| 2 | Reimprimir reporte de cierre (A4/ticket) en historial sesiones de caja | reportado |
-| 3 | Mejorar plantilla de import productos + tests internos | reportado |
-| 4 | Bug de cajero "no muestra productos" al asignar permisos (revisar tras v2.3.10) | reportado |
+| 1 | Mejorar plantilla de import productos + tests internos | reportado |
+| 2 | Re-validar bug "cajero no muestra productos" tras v2.3.10/v2.3.11 | reportado |
 
 ---
 
