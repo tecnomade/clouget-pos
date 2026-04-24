@@ -1290,65 +1290,31 @@ export default function PuntoVenta() {
       <div className="page-header">
         <div className="flex gap-2 items-center">
           <h2>Punto de Venta</h2>
-          {/* Selector lista de precios global (override) — visible si admin o permiso */}
-          {puedeCambiarListaPrecio && (
-            listasPreciosCat.length > 0 ? (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8, marginLeft: 14,
-                padding: "6px 12px",
-                background: listaPrecioOverride ? "rgba(168,85,247,0.25)" : "var(--color-surface-alt, rgba(255,255,255,0.08))",
-                borderRadius: 6,
-                border: `1px solid ${listaPrecioOverride ? "rgba(168,85,247,0.6)" : "rgba(148,163,184,0.3)"}`,
-              }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>💰 Lista:</span>
-                <select
-                  value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
-                  onChange={async (e) => {
-                    const val = e.target.value === "" ? null : parseInt(e.target.value);
-                    setListaPrecioOverride(val);
-                    if (carrito.length > 0) {
-                      const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
-                        try {
-                          let nuevoPrecio = item.precio_unitario;
-                          if (val == null) {
-                            nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
-                          } else {
-                            const precios = await obtenerPreciosProducto(item.producto_id);
-                            const found = precios.find((p: any) => p.lista_precio_id === val);
-                            if (found) nuevoPrecio = found.precio;
-                          }
-                          return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
-                        } catch { return item; }
-                      }));
-                      setCarrito(nuevoCarrito);
-                    }
-                  }}
-                  className="input"
-                  style={{ minWidth: 160, fontSize: 12, fontWeight: 600, padding: "2px 8px", height: 28 }}>
-                  <option value="">Auto (cliente/default)</option>
-                  {listasPreciosCat.map(l => (
-                    <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
-                  ))}
-                </select>
-                {listaPrecioOverride != null && (
-                  <button
-                    onClick={() => setListaPrecioOverride(null)}
-                    title="Volver a lista del cliente"
-                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1, color: "var(--color-text-secondary)" }}>
-                    ×
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div style={{
-                marginLeft: 14, padding: "6px 12px", borderRadius: 6,
-                background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)",
-                fontSize: 11, color: "var(--color-warning)",
+          {/* Indicador discreto cuando hay override de lista activo
+              (la edicion principal de lista se hace en el modal del item — click en nombre o precio) */}
+          {puedeCambiarListaPrecio && listaPrecioOverride != null && listasPreciosCat.length > 0 && (
+            <div
+              style={{
+                marginLeft: 12, padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.5)",
+                color: "var(--color-text)", display: "flex", alignItems: "center", gap: 6,
+                cursor: "pointer",
               }}
-              title="Crea listas de precios en Configuración → Listas de Precios para poder cambiar tarifas en el POS">
-                💰 Sin listas de precios — créalas en Configuración
-              </div>
-            )
+              title="Click para volver a tarifa Auto (cliente/default)"
+              onClick={async () => {
+                setListaPrecioOverride(null);
+                if (carrito.length > 0) {
+                  const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
+                    try {
+                      const nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
+                      return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
+                    } catch { return item; }
+                  }));
+                  setCarrito(nuevoCarrito);
+                }
+              }}>
+              💰 {listasPreciosCat.find(l => l.id === listaPrecioOverride)?.nombre ?? "Tarifa custom"} ×
+            </div>
           )}
         </div>
         <div className="flex gap-2 items-center">
@@ -2927,11 +2893,13 @@ export default function PuntoVenta() {
           setInfoAdicionalProductoId(null);
         };
         const itemActual = carrito[infoAdicionalProductoId as number];
+        const idxActual = infoAdicionalProductoId as number;
+        const preciosDisp = itemActual?.precios_disponibles || [];
         return (
           <div className="modal-overlay" onClick={() => setInfoAdicionalProductoId(null)}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500 }}>
               <div className="modal-header" style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-                <h3 style={{ margin: 0 }}>Informacion adicional</h3>
+                <h3 style={{ margin: 0 }}>Editar item del carrito</h3>
                 {itemActual && (
                   <div style={{ fontSize: 12, color: "var(--color-text-secondary)", fontWeight: 400 }}>
                     📦 <strong style={{ color: "var(--color-text)" }}>{itemActual.nombre}</strong>
@@ -2944,19 +2912,81 @@ export default function PuntoVenta() {
                       </span>
                     )}
                     <span style={{ marginLeft: 8, fontSize: 11 }}>
-                      Cant: {itemActual.cantidad} · ${itemActual.precio_unitario.toFixed(2)}
+                      Cant: {itemActual.cantidad} · <strong style={{ color: "var(--color-primary)" }}>${itemActual.precio_unitario.toFixed(2)}</strong>
                     </span>
                   </div>
                 )}
               </div>
               <div className="modal-body">
+                {/* === Cambiar lista de precios / precio manual === */}
+                {(puedeCambiarListaPrecio || tienePermiso("editar_precio") || esAdmin) && (
+                  <div style={{ padding: 10, background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6, marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--color-text)" }}>💰 Tarifa / Precio</div>
+                    {preciosDisp.length > 0 && puedeCambiarListaPrecio ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+                        {preciosDisp.map(p => {
+                          const esActual = Math.abs(p.precio - (itemActual?.precio_unitario ?? 0)) < 0.001;
+                          return (
+                            <button key={p.lista_precio_id} type="button"
+                              onClick={() => {
+                                editarPrecioItem(idxActual, p.precio);
+                              }}
+                              style={{
+                                display: "flex", justifyContent: "space-between", alignItems: "center",
+                                padding: "6px 10px", borderRadius: 4, cursor: "pointer",
+                                background: esActual ? "rgba(34,197,94,0.12)" : "var(--color-surface-alt)",
+                                border: `1px solid ${esActual ? "rgba(34,197,94,0.5)" : "var(--color-border)"}`,
+                                fontSize: 12,
+                              }}>
+                              <span style={{ fontWeight: 600 }}>{esActual && "✓ "}{p.lista_nombre}</span>
+                              <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${p.precio.toFixed(2)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : preciosDisp.length === 0 && puedeCambiarListaPrecio ? (
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                        Sin listas de precios definidas para este producto.
+                      </div>
+                    ) : null}
+                    {(tienePermiso("editar_precio") || esAdmin) && (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Manual:</label>
+                        <input
+                          className="input"
+                          type="number" step="0.01" min="0"
+                          defaultValue={itemActual?.precio_unitario.toFixed(2)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const v = parseFloat((e.target as HTMLInputElement).value);
+                              if (!isNaN(v) && v >= 0) {
+                                editarPrecioItem(idxActual, v);
+                                (e.target as HTMLInputElement).blur();
+                              }
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v) && v >= 0 && Math.abs(v - (itemActual?.precio_unitario ?? 0)) > 0.001) {
+                              editarPrecioItem(idxActual, v);
+                            }
+                          }}
+                          style={{ flex: 1, fontSize: 13, fontWeight: 600 }}
+                        />
+                        <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>(Enter o salir = aplicar)</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* === Información adicional === */}
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--color-text)" }}>📝 Información adicional</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <div>
                     <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Número de serie</label>
                     <input className="input" placeholder="Ej: SN-12345678"
                       value={infoSerie} onChange={(e) => setInfoSerie(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") guardarInfo(); }}
-                      autoFocus />
+                      onKeyDown={(e) => { if (e.key === "Enter") guardarInfo(); }} />
                   </div>
                   <div>
                     <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Lote</label>
@@ -2977,8 +3007,8 @@ export default function PuntoVenta() {
                   setInfoSerie(""); setInfoLote(""); setInfoObservacion("");
                   setCarrito(prev => prev.map((i, k) => k === infoAdicionalProductoId ? { ...i, info_adicional: undefined } : i));
                   setInfoAdicionalProductoId(null);
-                }}>Limpiar</button>
-                <button className="btn btn-primary" onClick={guardarInfo}>Guardar</button>
+                }}>Limpiar info</button>
+                <button className="btn btn-primary" onClick={guardarInfo}>Guardar y cerrar</button>
               </div>
             </div>
           </div>

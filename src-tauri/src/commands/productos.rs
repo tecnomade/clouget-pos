@@ -341,14 +341,14 @@ pub fn listar_productos(
 
     let sql = if solo_activos {
         "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
-                p.stock_actual, p.stock_minimo, c.nombre, pp.precio
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
          WHERE p.activo = 1 ORDER BY p.nombre"
     } else {
         "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
-                p.stock_actual, p.stock_minimo, c.nombre, pp.precio
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
@@ -362,9 +362,10 @@ pub fn listar_productos(
             Ok(ProductoBusqueda {
                 id: row.get(0)?,
                 codigo: row.get(1)?,
-                codigo_barras: None,
+                codigo_barras: row.get(11)?,
                 nombre: row.get(2)?,
-                precio_venta: row.get(3)?, precio_costo: 0.0,
+                precio_venta: row.get(3)?,
+                precio_costo: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,
