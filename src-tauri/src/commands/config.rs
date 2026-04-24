@@ -198,29 +198,84 @@ pub fn resetear_base_datos(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    conn.execute_batch("
-        DELETE FROM pagos_proveedor;
-        DELETE FROM cuentas_por_pagar;
-        DELETE FROM compra_detalles;
-        DELETE FROM compras;
-        DELETE FROM nota_credito_detalles;
-        DELETE FROM notas_credito;
-        DELETE FROM venta_detalles;
-        DELETE FROM ventas;
-        DELETE FROM retiros_caja;
-        DELETE FROM gastos;
-        DELETE FROM caja;
-        DELETE FROM choferes;
-        DELETE FROM proveedores;
-    ").map_err(|e| format!("Error reseteando datos: {}", e))?;
+    // Desactivar FK temporalmente para hacer un truncate en cascada limpio.
+    let _ = conn.execute("PRAGMA foreign_keys = OFF", []);
 
-    conn.execute("UPDATE productos SET stock_actual = 0", [])
-        .map_err(|e| format!("Error reseteando stock: {}", e))?;
+    // Borrar en orden dependiente (hijos primero, luego padres).
+    // Cada DELETE va con `let _ =` para que tablas opcionales (no en todas las DBs)
+    // no rompan el reset si no existen — el error se ignora y continua con la siguiente.
+    let tablas_a_borrar = [
+        // Combos en ventas (hijo de venta_detalles)
+        "venta_detalle_combo",
+        // Series asignadas a ventas
+        "serie_venta",
+        // Pagos de cuentas (CXC + CXP)
+        "pagos_cuenta",
+        "pagos_proveedor",
+        // Cuentas por cobrar y pagar (deben ir antes de ventas/compras)
+        "cuentas_por_cobrar",
+        "cuentas_por_pagar",
+        // Notas de credito (deben ir antes de ventas)
+        "nota_credito_detalles",
+        "notas_credito",
+        // Detalles de venta y venta
+        "venta_detalles",
+        "ventas",
+        // Lotes de caducidad (FK hacia compras)
+        "lotes_caducidad",
+        // Detalles de compra y compra
+        "compra_detalles",
+        "compras",
+        // Movimientos / kardex
+        "movimientos_inventario",
+        // Multi-almacen
+        "transferencias_detalles",
+        "transferencias",
+        "stock_establecimiento",
+        // Caja: eventos (FK hacia caja), retiros, gastos, caja
+        "caja_eventos",
+        "retiros_caja",
+        "gastos",
+        "caja",
+        // Servicio Tecnico
+        "orden_servicio_movimientos",
+        "orden_servicio_imagenes",
+        "orden_servicio_repuestos",
+        "ordenes_servicio",
+        // Otros catalogos transaccionales
+        "choferes",
+        "proveedores",
+        "series_producto",
+    ];
 
-    conn.execute_batch("
-        DELETE FROM secuenciales;
-        UPDATE config SET value = '0' WHERE key = 'secuencial_compra';
-    ").map_err(|e| format!("Error reseteando secuenciales: {}", e))?;
+    let mut errores: Vec<String> = Vec::new();
+    for tabla in &tablas_a_borrar {
+        // Verificar si la tabla existe primero
+        let existe: bool = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            rusqlite::params![tabla],
+            |r| r.get::<_, i64>(0).map(|c| c > 0),
+        ).unwrap_or(false);
+        if !existe { continue; }
+        if let Err(e) = conn.execute(&format!("DELETE FROM {}", tabla), []) {
+            errores.push(format!("{}: {}", tabla, e));
+        }
+    }
+
+    // Reactivar FK siempre
+    let _ = conn.execute("PRAGMA foreign_keys = ON", []);
+
+    if !errores.is_empty() {
+        return Err(format!("Errores al resetear: {}", errores.join("; ")));
+    }
+
+    // Stock = 0 (no eliminar productos, solo resetear inventario)
+    let _ = conn.execute("UPDATE productos SET stock_actual = 0", []);
+
+    // Reiniciar secuenciales
+    let _ = conn.execute("DELETE FROM secuenciales", []);
+    let _ = conn.execute("UPDATE config SET value = '1' WHERE key LIKE 'secuencial_%'", []);
+    let _ = conn.execute("UPDATE config SET value = '0' WHERE key = 'secuencial_compra'", []);
 
     Ok("Base de datos reseteada exitosamente".to_string())
 }

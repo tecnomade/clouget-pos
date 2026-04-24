@@ -3,6 +3,7 @@ import NumericInput from "../components/NumericInput";
 import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
+import { useSesion } from "../contexts/SesionContext";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 
 function FormProducto({
@@ -12,6 +13,7 @@ function FormProducto({
   categorias,
   listasPrecios,
   tiposUnidad,
+  puedeVerCostos = true,
 }: {
   onGuardar: () => void;
   onCancelar: () => void;
@@ -19,6 +21,7 @@ function FormProducto({
   categorias: Categoria[];
   listasPrecios: ListaPrecio[];
   tiposUnidad?: Array<{ id: number; nombre: string; abreviatura: string }>;
+  puedeVerCostos?: boolean;
 }) {
   const { toastError } = useToast();
   const [form, setForm] = useState<Producto>(
@@ -273,11 +276,18 @@ function FormProducto({
             ))}
           </select>
         </div>
-        <div>
-          <label className="text-secondary" style={{ fontSize: 12 }}>Precio costo</label>
-          <NumericInput value={form.precio_costo} step={0.01} min={0}
-            onChange={(v) => setForm({ ...form, precio_costo: v })} />
-        </div>
+        {puedeVerCostos ? (
+          <div>
+            <label className="text-secondary" style={{ fontSize: 12 }}>Precio costo</label>
+            <NumericInput value={form.precio_costo} step={0.01} min={0}
+              onChange={(v) => setForm({ ...form, precio_costo: v })} />
+          </div>
+        ) : (
+          <div>
+            <label className="text-secondary" style={{ fontSize: 12, color: "var(--color-text-secondary)" }} title="Sin permiso 'ver_costos'">Precio costo (oculto)</label>
+            <input className="input" value="••••" readOnly disabled style={{ fontFamily: "monospace" }} />
+          </div>
+        )}
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Precio venta *</label>
           <NumericInput value={form.precio_venta} step={0.01} min={0}
@@ -1073,6 +1083,8 @@ function FormProducto({
 
 export default function Productos() {
   const { toastExito, toastError } = useToast();
+  const { esAdmin: esAdminProd, tienePermiso: tienePermisoProd } = useSesion();
+  const puedeVerCostos = esAdminProd || tienePermisoProd("ver_costos");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importando, setImportando] = useState(false);
   const [productos, setProductos] = useState<ProductoBusqueda[]>([]);
@@ -1565,6 +1577,7 @@ export default function Productos() {
                 categorias={categorias}
                 listasPrecios={listasPrecios}
                 tiposUnidad={tiposUnidad}
+                puedeVerCostos={puedeVerCostos}
                 onGuardar={() => {
                   setMostrarForm(false);
                   cargarDatos();

@@ -497,7 +497,9 @@ export default function CajaPage() {
                 const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
                 const esperado = (cajaAbierta.monto_inicial || 0) + (cajaAbierta.monto_ventas || 0) - totalRetiros;
                 const dif = monto - esperado;
-                if (!montoReal || Math.abs(dif) <= 0.01) return null;
+                // Aparece si hay diferencia significativa (>0.01). Esto incluye el caso
+                // de dejar vacio con esperado>0 (descuadre = -esperado).
+                if (Math.abs(dif) <= 0.01) return null;
                 const esFaltante = dif < 0;
                 return (
                   <div className="mt-4">

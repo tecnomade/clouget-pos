@@ -441,7 +441,24 @@ export default function PuntoVenta() {
       } catch { /* producto sin caducidad, seguir */ }
     }
 
-    const precioEfectivo = unidadElegida?.precio ?? producto.precio_lista ?? producto.precio_venta;
+    // Calcular precio efectivo respetando la lista de precios del cliente.
+    // Prioridad: unidad elegida > precio_lista del producto (si vino con lista_precio_id) >
+    //   resolver via cliente.lista_precio_id si tiene > precio_venta default.
+    let precioEfectivo: number;
+    if (unidadElegida?.precio != null) {
+      precioEfectivo = unidadElegida.precio;
+    } else if (producto.precio_lista != null) {
+      precioEfectivo = producto.precio_lista;
+    } else if (clienteSeleccionado?.lista_precio_id) {
+      // Producto vino del grid sin precio_lista pero el cliente tiene lista asignada → resolver
+      try {
+        precioEfectivo = await resolverPrecioProducto(producto.id, clienteSeleccionado.id ?? undefined);
+      } catch {
+        precioEfectivo = producto.precio_venta;
+      }
+    } else {
+      precioEfectivo = producto.precio_venta;
+    }
 
     // Check if already in cart MISMA unidad + MISMO lote
     const unidadId = unidadElegida?.id ?? null;
