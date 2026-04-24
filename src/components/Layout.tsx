@@ -18,7 +18,7 @@ const navItems: NavItem[] = [
   { path: "/clientes", label: "Clientes", icon: Users, shortcut: "F3", todos: false, permiso: "gestionar_clientes" },
   { path: "/ventas", label: "Ventas", icon: Receipt, shortcut: "F4", todos: true },
   { path: "/guias", label: "Guías", icon: Truck, shortcut: "", todos: false, permiso: "ver_guias" },
-  { path: "/gastos", label: "Gastos", icon: Money, shortcut: "F7", todos: false },
+  { path: "/gastos", label: "Gastos", icon: Money, shortcut: "F7", todos: false, permiso: "gestionar_gastos" },
   { path: "/cuentas", label: "Cobrar", icon: Coins, shortcut: "F8", todos: true },
   { path: "/compras", label: "Compras", icon: ShoppingCart, shortcut: "", todos: false, permiso: "gestionar_compras" },
   { path: "/pagar", label: "Pagar", icon: Wallet, shortcut: "", todos: false, permiso: "gestionar_compras" },
@@ -26,7 +26,8 @@ const navItems: NavItem[] = [
   { path: "/inventario", label: "Inventario", icon: Warehouse, shortcut: "", todos: false, permiso: "gestionar_inventario" },
   { path: "/series", label: "Series", icon: Barcode, shortcut: "", todos: false, permiso: "gestionar_inventario" },
   { path: "/caducidad", label: "Caducidad", icon: Calendar, shortcut: "", todos: false, permiso: "gestionar_inventario" },
-  { path: "/servicio-tecnico", label: "Servicio", icon: Wrench, shortcut: "", todos: false, permiso: "gestionar_servicio_tecnico" },
+  // Servicio Tecnico: visible si admin, gestionar o solo ver. El filtro luego acepta cualquiera de los dos.
+  { path: "/servicio-tecnico", label: "Servicio", icon: Wrench, shortcut: "", todos: false, permiso: "gestionar_servicio_tecnico", permisoAlt: "ver_servicio_tecnico" } as any,
   { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes" },
 ];
 
@@ -70,7 +71,15 @@ export default function Layout() {
   const navFiltrados = useMemo(() => {
     let items = esAdmin
       ? navItems
-      : navItems.filter((item) => item.todos || (item.permiso && tienePermiso(item.permiso)));
+      : navItems.filter((item) => {
+          if (item.todos) return true;
+          // Acepta permiso principal o alterno (permisoAlt) — para casos como
+          // /servicio-tecnico que se ve con gestionar_servicio_tecnico O ver_servicio_tecnico
+          if (item.permiso && tienePermiso(item.permiso)) return true;
+          const permisoAlt = (item as any).permisoAlt;
+          if (permisoAlt && tienePermiso(permisoAlt)) return true;
+          return false;
+        });
     // Ocultar Series si módulo no está activo
     if (!moduloSeriesActivo) items = items.filter(i => i.path !== "/series");
     if (!moduloCaducidadActivo) items = items.filter(i => i.path !== "/caducidad");

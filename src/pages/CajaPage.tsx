@@ -836,6 +836,36 @@ export default function CajaPage() {
                             {expandida && (
                               <tr>
                                 <td colSpan={11} style={{ background: "var(--color-surface-alt)", padding: 12, fontSize: 11 }}>
+                                  {/* Botones de reimpresion del reporte de cierre */}
+                                  {s.estado === "CERRADA" && (
+                                    <div style={{ display: "flex", gap: 6, marginBottom: 10, justifyContent: "flex-end" }}>
+                                      <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 12px" }}
+                                        title="Reimprimir reporte de cierre en impresora térmica"
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          if (!s.id) return;
+                                          try {
+                                            await imprimirReporteCaja(s.id);
+                                            toastExito("Reporte enviado a la impresora");
+                                          } catch (err) { toastError("Error: " + err); }
+                                        }}>
+                                        🖨 Reimprimir ticket
+                                      </button>
+                                      <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 12px" }}
+                                        title="Generar PDF A4 del reporte"
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          if (!s.id) return;
+                                          try {
+                                            await imprimirReporteCajaPdf(s.id);
+                                            toastExito("PDF generado");
+                                          } catch (err) { toastError("Error: " + err); }
+                                        }}>
+                                        📄 Reporte PDF A4
+                                      </button>
+                                    </div>
+                                  )}
+
                                   {/* Datos resumen + motivos */}
                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 10 }}>
                                     {s.caja_anterior_id && (

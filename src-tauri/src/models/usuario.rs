@@ -20,6 +20,8 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str)] = &[
     ("cerrar_caja", "Cerrar caja (sin requerir supervisor)"),
     ("aprobar_descuadre", "Aprobar cierre con descuadre alto"),
     ("cambiar_lista_precio", "Cambiar la lista de precios en el POS"),
+    ("gestionar_gastos", "Gestionar gastos"),
+    ("ver_pagos_pendientes_admin", "Confirmar/rechazar pagos a cuentas (transferencias)"),
 ];
 
 /// Info de usuario para enviar al frontend (sin hash/salt)

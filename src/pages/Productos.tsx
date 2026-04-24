@@ -1700,13 +1700,20 @@ export default function Productos() {
                             </th>
                             <th>CODIGO</th>
                             <th>NOMBRE</th>
+                            {puedeVerCostos && <th className="text-right">COSTO</th>}
                             <th className="text-right">PRECIO</th>
+                            {puedeVerCostos && <th className="text-right">MARGEN</th>}
                             <th className="text-right">STOCK</th>
                             <th style={{ width: 80 }}></th>
                           </tr>
                         </thead>
                         <tbody>
-                          {prods.map(p => (
+                          {prods.map(p => {
+                            const costo = (p as any).precio_costo ?? 0;
+                            const margen = p.precio_venta > 0 && costo > 0
+                              ? ((p.precio_venta - costo) / p.precio_venta * 100)
+                              : null;
+                            return (
                             <tr key={p.id}>
                               <td>
                                 <input type="checkbox" checked={seleccionados.has(p.id)}
@@ -1718,7 +1725,20 @@ export default function Productos() {
                               </td>
                               <td style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{p.codigo || "-"}</td>
                               <td><strong>{p.nombre}</strong></td>
+                              {puedeVerCostos && (
+                                <td className="text-right" style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                                  {costo > 0 ? `$${costo.toFixed(2)}` : "-"}
+                                </td>
+                              )}
                               <td className="text-right">${p.precio_venta.toFixed(2)}</td>
+                              {puedeVerCostos && (
+                                <td className="text-right" style={{
+                                  fontSize: 11, fontWeight: 600,
+                                  color: margen == null ? "var(--color-text-secondary)" : margen < 0 ? "var(--color-danger)" : margen < 15 ? "var(--color-warning)" : "var(--color-success)",
+                                }}>
+                                  {margen == null ? "-" : `${margen.toFixed(1)}%`}
+                                </td>
+                              )}
                               <td className="text-right" style={{
                                 color: p.stock_actual <= 0 ? "var(--color-danger)" : p.stock_actual <= p.stock_minimo ? "var(--color-warning)" : undefined,
                                 fontWeight: p.stock_actual <= p.stock_minimo ? 600 : undefined
@@ -1741,7 +1761,8 @@ export default function Productos() {
                                 </div>
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     )}

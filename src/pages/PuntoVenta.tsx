@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
@@ -42,6 +42,10 @@ export default function PuntoVenta() {
 
   // Productos grid
   const [productosTactil, setProductosTactil] = useState<ProductoTactil[]>([]);
+  // Listas de precios y override manual (admin/permiso cambiar_lista_precio)
+  const [listasPreciosCat, setListasPreciosCat] = useState<Array<{ id: number; nombre: string; es_default?: boolean }>>([]);
+  const [listaPrecioOverride, setListaPrecioOverride] = useState<number | null>(null);
+  const puedeCambiarListaPrecio = esAdmin || tienePermiso("cambiar_lista_precio");
   const [categoriasTactil, setCategoriasTactil] = useState<Categoria[]>([]);
 
   // Cliente
@@ -236,6 +240,7 @@ export default function PuntoVenta() {
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
+      listarListasPrecios().then((ls: any[]) => setListasPreciosCat(ls.filter((l: any) => l.activo))).catch(() => {});
     }).catch(() => {});
     // Cargar estado SRI (incluyendo suscripcion y ambiente)
     consultarEstadoSri().then((estado) => {
@@ -441,16 +446,28 @@ export default function PuntoVenta() {
       } catch { /* producto sin caducidad, seguir */ }
     }
 
-    // Calcular precio efectivo respetando la lista de precios del cliente.
-    // Prioridad: unidad elegida > precio_lista del producto (si vino con lista_precio_id) >
-    //   resolver via cliente.lista_precio_id si tiene > precio_venta default.
+    // Calcular precio efectivo.
+    // Prioridad:
+    //   1) Unidad elegida (precio explicito de la presentacion)
+    //   2) Override manual del cajero (listaPrecioOverride) — solo si tiene permiso
+    //   3) precio_lista del producto (ya viene resuelto si la busqueda recibio lista_precio_id)
+    //   4) Resolver via cliente.lista_precio_id si tiene
+    //   5) precio_venta default
     let precioEfectivo: number;
     if (unidadElegida?.precio != null) {
       precioEfectivo = unidadElegida.precio;
+    } else if (listaPrecioOverride != null) {
+      // Override manual: buscar precio en preciosDisponibles del producto
+      try {
+        const precios = await obtenerPreciosProducto(producto.id);
+        const found = precios.find((p: any) => p.lista_precio_id === listaPrecioOverride);
+        precioEfectivo = found ? found.precio : (producto.precio_lista ?? producto.precio_venta);
+      } catch {
+        precioEfectivo = producto.precio_lista ?? producto.precio_venta;
+      }
     } else if (producto.precio_lista != null) {
       precioEfectivo = producto.precio_lista;
     } else if (clienteSeleccionado?.lista_precio_id) {
-      // Producto vino del grid sin precio_lista pero el cliente tiene lista asignada → resolver
       try {
         precioEfectivo = await resolverPrecioProducto(producto.id, clienteSeleccionado.id ?? undefined);
       } catch {
@@ -1264,6 +1281,50 @@ export default function PuntoVenta() {
       <div className="page-header">
         <div className="flex gap-2 items-center">
           <h2>Punto de Venta</h2>
+          {/* Selector lista de precios global (override) — solo admin/permiso */}
+          {puedeCambiarListaPrecio && listasPreciosCat.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 14, padding: "4px 10px", background: listaPrecioOverride ? "rgba(168,85,247,0.15)" : "rgba(255,255,255,0.05)", borderRadius: 6, border: `1px solid ${listaPrecioOverride ? "rgba(168,85,247,0.5)" : "rgba(255,255,255,0.1)"}` }}>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>Lista:</span>
+              <select
+                value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
+                onChange={async (e) => {
+                  const val = e.target.value === "" ? null : parseInt(e.target.value);
+                  setListaPrecioOverride(val);
+                  // Recalcular carrito al cambiar lista
+                  if (carrito.length > 0) {
+                    const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
+                      try {
+                        let nuevoPrecio = item.precio_unitario;
+                        if (val == null) {
+                          // Volver a precio del cliente o default
+                          nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
+                        } else {
+                          const precios = await obtenerPreciosProducto(item.producto_id);
+                          const found = precios.find((p: any) => p.lista_precio_id === val);
+                          if (found) nuevoPrecio = found.precio;
+                        }
+                        return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
+                      } catch { return item; }
+                    }));
+                    setCarrito(nuevoCarrito);
+                  }
+                }}
+                style={{ background: "transparent", border: "none", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", outline: "none" }}>
+                <option value="" style={{ color: "#000" }}>Auto (cliente/default)</option>
+                {listasPreciosCat.map(l => (
+                  <option key={l.id} value={l.id} style={{ color: "#000" }}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
+                ))}
+              </select>
+              {listaPrecioOverride != null && (
+                <button
+                  onClick={() => setListaPrecioOverride(null)}
+                  title="Volver a lista del cliente"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", fontSize: 14, padding: 0, lineHeight: 1 }}>
+                  ×
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex gap-2 items-center">
           {/* Selector de cliente */}

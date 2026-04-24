@@ -43,7 +43,7 @@ document.addEventListener("focusin", (e) => {
 function AppGate() {
   const [licencia, setLicencia] = useState<LicenciaInfo | null>(null);
   const [verificando, setVerificando] = useState(true);
-  const { sesion, setSesion } = useSesion();
+  const { sesion, setSesion, esAdmin, tienePermiso } = useSesion();
 
   useEffect(() => {
     // Inicializar modo red antes de cualquier otra llamada
@@ -130,23 +130,45 @@ function AppGate() {
             <Route path="/caja" element={<CajaPage />} />
             <Route path="/ventas" element={<VentasDia />} />
             <Route path="/cuentas" element={<CuentasPage />} />
-            {/* Rutas solo para ADMIN */}
-            {sesion.rol === "ADMIN" && (
+            {/* Rutas con permisos: cada una se renderiza si es admin O tiene el permiso correspondiente.
+                Si el usuario no califica, el catch-all del final lo redirige al dashboard. */}
+            {(esAdmin || tienePermiso("gestionar_productos")) && (
+              <Route path="/productos" element={<Productos />} />
+            )}
+            {(esAdmin || tienePermiso("gestionar_clientes")) && (
+              <Route path="/clientes" element={<Clientes />} />
+            )}
+            {(esAdmin || tienePermiso("ver_guias")) && (
+              <Route path="/guias" element={<GuiasRemisionPage />} />
+            )}
+            {(esAdmin || tienePermiso("gestionar_gastos")) && (
+              <Route path="/gastos" element={<GastosPage />} />
+            )}
+            {(esAdmin || tienePermiso("gestionar_compras")) && (
               <>
-                <Route path="/productos" element={<Productos />} />
-                <Route path="/clientes" element={<Clientes />} />
-                <Route path="/guias" element={<GuiasRemisionPage />} />
-                <Route path="/gastos" element={<GastosPage />} />
                 <Route path="/compras" element={<ComprasPage />} />
                 <Route path="/pagar" element={<PagarPage />} />
-                <Route path="/movimientos-bancarios" element={<MovimientosBancariosPage />} />
+              </>
+            )}
+            {(esAdmin || tienePermiso("ver_movimientos_bancarios")) && (
+              <Route path="/movimientos-bancarios" element={<MovimientosBancariosPage />} />
+            )}
+            {(esAdmin || tienePermiso("gestionar_inventario")) && (
+              <>
                 <Route path="/inventario" element={<InventarioPage />} />
                 <Route path="/series" element={<SeriesPage />} />
                 <Route path="/caducidad" element={<CaducidadPage />} />
-                <Route path="/servicio-tecnico" element={<ServicioTecnicoPage />} />
-                <Route path="/reportes" element={<ReportesPage />} />
-                <Route path="/config" element={<Configuracion />} />
               </>
+            )}
+            {(esAdmin || tienePermiso("gestionar_servicio_tecnico") || tienePermiso("ver_servicio_tecnico")) && (
+              <Route path="/servicio-tecnico" element={<ServicioTecnicoPage />} />
+            )}
+            {(esAdmin || tienePermiso("ver_reportes")) && (
+              <Route path="/reportes" element={<ReportesPage />} />
+            )}
+            {/* Configuración: solo admin */}
+            {esAdmin && (
+              <Route path="/config" element={<Configuracion />} />
             )}
             {/* Catch-all: cualquier ruta no encontrada (ej. cajero accede a /config admin)
                 redirige al dashboard. Evita pantallas en blanco por rutas no autorizadas. */}
