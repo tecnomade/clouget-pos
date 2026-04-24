@@ -1282,49 +1282,65 @@ export default function PuntoVenta() {
       <div className="page-header">
         <div className="flex gap-2 items-center">
           <h2>Punto de Venta</h2>
-          {/* Selector lista de precios global (override) — solo admin/permiso */}
-          {puedeCambiarListaPrecio && listasPreciosCat.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 14, padding: "4px 10px", background: listaPrecioOverride ? "rgba(168,85,247,0.15)" : "rgba(255,255,255,0.05)", borderRadius: 6, border: `1px solid ${listaPrecioOverride ? "rgba(168,85,247,0.5)" : "rgba(255,255,255,0.1)"}` }}>
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>Lista:</span>
-              <select
-                value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
-                onChange={async (e) => {
-                  const val = e.target.value === "" ? null : parseInt(e.target.value);
-                  setListaPrecioOverride(val);
-                  // Recalcular carrito al cambiar lista
-                  if (carrito.length > 0) {
-                    const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
-                      try {
-                        let nuevoPrecio = item.precio_unitario;
-                        if (val == null) {
-                          // Volver a precio del cliente o default
-                          nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
-                        } else {
-                          const precios = await obtenerPreciosProducto(item.producto_id);
-                          const found = precios.find((p: any) => p.lista_precio_id === val);
-                          if (found) nuevoPrecio = found.precio;
-                        }
-                        return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
-                      } catch { return item; }
-                    }));
-                    setCarrito(nuevoCarrito);
-                  }
-                }}
-                style={{ background: "transparent", border: "none", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", outline: "none" }}>
-                <option value="" style={{ color: "#000" }}>Auto (cliente/default)</option>
-                {listasPreciosCat.map(l => (
-                  <option key={l.id} value={l.id} style={{ color: "#000" }}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
-                ))}
-              </select>
-              {listaPrecioOverride != null && (
-                <button
-                  onClick={() => setListaPrecioOverride(null)}
-                  title="Volver a lista del cliente"
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.6)", fontSize: 14, padding: 0, lineHeight: 1 }}>
-                  ×
-                </button>
-              )}
-            </div>
+          {/* Selector lista de precios global (override) — visible si admin o permiso */}
+          {puedeCambiarListaPrecio && (
+            listasPreciosCat.length > 0 ? (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, marginLeft: 14,
+                padding: "6px 12px",
+                background: listaPrecioOverride ? "rgba(168,85,247,0.25)" : "var(--color-surface-alt, rgba(255,255,255,0.08))",
+                borderRadius: 6,
+                border: `1px solid ${listaPrecioOverride ? "rgba(168,85,247,0.6)" : "rgba(148,163,184,0.3)"}`,
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>💰 Lista:</span>
+                <select
+                  value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
+                  onChange={async (e) => {
+                    const val = e.target.value === "" ? null : parseInt(e.target.value);
+                    setListaPrecioOverride(val);
+                    if (carrito.length > 0) {
+                      const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
+                        try {
+                          let nuevoPrecio = item.precio_unitario;
+                          if (val == null) {
+                            nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
+                          } else {
+                            const precios = await obtenerPreciosProducto(item.producto_id);
+                            const found = precios.find((p: any) => p.lista_precio_id === val);
+                            if (found) nuevoPrecio = found.precio;
+                          }
+                          return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
+                        } catch { return item; }
+                      }));
+                      setCarrito(nuevoCarrito);
+                    }
+                  }}
+                  className="input"
+                  style={{ minWidth: 160, fontSize: 12, fontWeight: 600, padding: "2px 8px", height: 28 }}>
+                  <option value="">Auto (cliente/default)</option>
+                  {listasPreciosCat.map(l => (
+                    <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
+                  ))}
+                </select>
+                {listaPrecioOverride != null && (
+                  <button
+                    onClick={() => setListaPrecioOverride(null)}
+                    title="Volver a lista del cliente"
+                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1, color: "var(--color-text-secondary)" }}>
+                    ×
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{
+                marginLeft: 14, padding: "6px 12px", borderRadius: 6,
+                background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)",
+                fontSize: 11, color: "var(--color-warning)",
+              }}
+              title="Crea listas de precios en Configuración → Listas de Precios para poder cambiar tarifas en el POS">
+                💰 Sin listas de precios — créalas en Configuración
+              </div>
+            )
           )}
         </div>
         <div className="flex gap-2 items-center">
