@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { SesionProvider, useSesion } from "./contexts/SesionContext";
 import { DemoProvider } from "./contexts/DemoContext";
@@ -118,7 +118,10 @@ function AppGate() {
 
   return (
     <DemoProvider>
-      <BrowserRouter>
+      {/* key={sesion.usuario_id} fuerza remount al cambiar de usuario:
+          asi se resetea el historial de navegacion y todos los estados de pagina,
+          evitando que un cajero quede atorado en una ruta que solo ve admin (ej. /config). */}
+      <BrowserRouter key={sesion.usuario_id}>
         <Routes>
           <Route element={<Layout />}>
             {/* Rutas disponibles para todos los roles */}
@@ -145,6 +148,9 @@ function AppGate() {
                 <Route path="/config" element={<Configuracion />} />
               </>
             )}
+            {/* Catch-all: cualquier ruta no encontrada (ej. cajero accede a /config admin)
+                redirige al dashboard. Evita pantallas en blanco por rutas no autorizadas. */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
