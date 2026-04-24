@@ -46,6 +46,14 @@ export default function PuntoVenta() {
   const [listasPreciosCat, setListasPreciosCat] = useState<Array<{ id: number; nombre: string; es_default?: boolean }>>([]);
   const [listaPrecioOverride, setListaPrecioOverride] = useState<number | null>(null);
   const puedeCambiarListaPrecio = esAdmin || tienePermiso("cambiar_lista_precio");
+  // Modal de cambiar precio/lista por item del carrito
+  const [editarPrecioItemModal, setEditarPrecioItemModal] = useState<{
+    idx: number;
+    nombre: string;
+    precioActual: number;
+    preciosDisponibles: Array<{ lista_precio_id: number; lista_nombre: string; precio: number }>;
+  } | null>(null);
+  const [precioManualInput, setPrecioManualInput] = useState("");
   const [categoriasTactil, setCategoriasTactil] = useState<Categoria[]>([]);
 
   // Cliente
@@ -1653,14 +1661,27 @@ export default function PuntoVenta() {
                         </div>
                       )}
                     </div>
-                    <span style={{ color: "var(--color-primary)", cursor: tienePermiso("editar_precio") ? "pointer" : "default", fontSize: 11, flexShrink: 0 }}
-                      onClick={() => {
-                        if (!tienePermiso("editar_precio")) {
-                          solicitarPinAdmin().then(ok => { if (ok) { const p = prompt("Nuevo precio:", String(item.precio_unitario)); if (p) editarPrecioItem(idx, parseFloat(p)); }});
-                          return;
+                    <span style={{ color: "var(--color-primary)", cursor: (tienePermiso("editar_precio") || puedeCambiarListaPrecio) ? "pointer" : "default", fontSize: 11, flexShrink: 0, textDecoration: "underline dotted", textUnderlineOffset: 2 }}
+                      title="Click para cambiar precio o lista de precios"
+                      onClick={async () => {
+                        const abrirModal = async () => {
+                          let precios = item.precios_disponibles || [];
+                          if (precios.length === 0) {
+                            try { precios = await obtenerPreciosProducto(item.producto_id); } catch { /* */ }
+                          }
+                          setEditarPrecioItemModal({
+                            idx,
+                            nombre: item.nombre,
+                            precioActual: item.precio_unitario,
+                            preciosDisponibles: precios,
+                          });
+                          setPrecioManualInput(item.precio_unitario.toFixed(2));
+                        };
+                        if (tienePermiso("editar_precio") || puedeCambiarListaPrecio) {
+                          await abrirModal();
+                        } else {
+                          solicitarPinAdmin().then(async ok => { if (ok) await abrirModal(); });
                         }
-                        const p = prompt("Nuevo precio:", String(item.precio_unitario));
-                        if (p) editarPrecioItem(idx, parseFloat(p));
                       }}>
                       ${item.precio_unitario.toFixed(2)}
                     </span>
@@ -2407,6 +2428,92 @@ export default function PuntoVenta() {
                   }}>
                   Agregar al carrito
                 </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal: cambiar precio / lista del item del carrito */}
+      {editarPrecioItemModal && (() => {
+        const m = editarPrecioItemModal;
+        const cerrar = () => { setEditarPrecioItemModal(null); setPrecioManualInput(""); };
+        const aplicarPrecio = (precio: number) => {
+          if (isNaN(precio) || precio < 0) { toastError("Precio inválido"); return; }
+          editarPrecioItem(m.idx, precio);
+          cerrar();
+        };
+        return (
+          <div className="modal-overlay" onClick={cerrar}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+              <div className="modal-header">
+                <h3>💰 Cambiar precio · {m.nombre}</h3>
+              </div>
+              <div className="modal-body">
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                  Precio actual: <strong style={{ color: "var(--color-primary)" }}>${m.precioActual.toFixed(2)}</strong>
+                </div>
+
+                {/* Listas disponibles */}
+                {m.preciosDisponibles.length > 0 ? (
+                  <>
+                    <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>Aplicar lista de precios</label>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, marginBottom: 12 }}>
+                      {m.preciosDisponibles.map(p => {
+                        const esActual = Math.abs(p.precio - m.precioActual) < 0.001;
+                        return (
+                          <button key={p.lista_precio_id} type="button"
+                            onClick={() => aplicarPrecio(p.precio)}
+                            style={{
+                              display: "flex", justifyContent: "space-between", alignItems: "center",
+                              padding: "8px 12px", borderRadius: 6, cursor: "pointer",
+                              background: esActual ? "rgba(34,197,94,0.1)" : "var(--color-surface-alt)",
+                              border: `1px solid ${esActual ? "rgba(34,197,94,0.4)" : "var(--color-border)"}`,
+                              fontSize: 13,
+                            }}>
+                            <span style={{ fontWeight: 600 }}>
+                              {esActual && "✓ "}{p.lista_nombre}
+                            </span>
+                            <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${p.precio.toFixed(2)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 12, padding: 8, background: "rgba(245,158,11,0.08)", borderRadius: 4 }}>
+                    Sin listas de precios definidas para este producto. Usa el campo de abajo.
+                  </div>
+                )}
+
+                {/* Precio manual */}
+                {tienePermiso("editar_precio") || esAdmin ? (
+                  <>
+                    <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>O ingrese un precio manual</label>
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <input
+                        className="input"
+                        type="number" step="0.01" min="0"
+                        value={precioManualInput}
+                        autoFocus
+                        onChange={(e) => setPrecioManualInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") aplicarPrecio(parseFloat(precioManualInput)); }}
+                        style={{ flex: 1, fontSize: 14, fontWeight: 600 }}
+                      />
+                      <button className="btn btn-primary"
+                        onClick={() => aplicarPrecio(parseFloat(precioManualInput))}>
+                        Aplicar
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontStyle: "italic" }}>
+                    No tienes permiso para precio manual. Selecciona una lista arriba.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline" onClick={cerrar}>Cancelar</button>
               </div>
             </div>
           </div>
