@@ -263,6 +263,18 @@ function FormProducto({
             }}
           />
         </div>
+        {/* Descripción ocupa ambas columnas (información extra, también busqueda en POS) */}
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label className="text-secondary" style={{ fontSize: 12 }}>Descripción / información adicional</label>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Información extra del producto (también usada para búsquedas en el POS si no hay coincidencia por nombre)"
+            value={form.descripcion ?? ""}
+            onChange={(e) => setForm({ ...form, descripcion: e.target.value || undefined })}
+            style={{ resize: "vertical", minHeight: 50 }}
+          />
+        </div>
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>Categoría</label>
           <select

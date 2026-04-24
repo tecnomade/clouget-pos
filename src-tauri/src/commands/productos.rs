@@ -184,17 +184,26 @@ pub fn buscar_productos(
         return buscar_productos_multi_almacen(&conn, &busqueda, lista_precio_id);
     }
 
+    // Busqueda en: nombre, codigo, codigo_barras Y descripcion (info adicional).
+    // Ordena por relevancia: 1=nombre, 2=codigo/cb, 3=descripcion. Asi los matches
+    // del titulo aparecen primero y los de descripcion al final como fallback.
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.precio_costo, p.iva_porcentaje,
                     p.incluye_iva, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
-                    pp.precio as precio_lista
+                    pp.precio as precio_lista,
+                    CASE
+                        WHEN p.nombre LIKE ?1 THEN 1
+                        WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
+                        WHEN p.descripcion LIKE ?1 THEN 3
+                        ELSE 4
+                    END as match_score
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?2
              WHERE p.activo = 1
-             AND (p.nombre LIKE ?1 OR p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1)
-             ORDER BY p.nombre
+             AND (p.nombre LIKE ?1 OR p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 OR p.descripcion LIKE ?1)
+             ORDER BY match_score, p.nombre
              LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
@@ -242,14 +251,20 @@ fn buscar_productos_multi_almacen(
                     COALESCE(se.stock_actual, 0) as stock_local,
                     COALESCE(se.stock_minimo, p.stock_minimo) as stock_min,
                     c.nombre as cat_nombre,
-                    pp.precio as precio_lista
+                    pp.precio as precio_lista,
+                    CASE
+                        WHEN p.nombre LIKE ?1 THEN 1
+                        WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
+                        WHEN p.descripcion LIKE ?1 THEN 3
+                        ELSE 4
+                    END as match_score
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?2
              LEFT JOIN stock_establecimiento se ON se.producto_id = p.id AND se.establecimiento_id = ?3
              WHERE p.activo = 1
-             AND (p.nombre LIKE ?1 OR p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1)
-             ORDER BY p.nombre
+             AND (p.nombre LIKE ?1 OR p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 OR p.descripcion LIKE ?1)
+             ORDER BY match_score, p.nombre
              LIMIT 50",
         )
         .map_err(|e| e.to_string())?;

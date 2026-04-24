@@ -240,7 +240,8 @@ export default function PuntoVenta() {
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
-      listarListasPrecios().then((ls: any[]) => setListasPreciosCat(ls.filter((l: any) => l.activo))).catch(() => {});
+      // Backend ya filtra activo=1, no aplicar filtro adicional aqui
+      listarListasPrecios().then((ls: any[]) => setListasPreciosCat(ls)).catch(() => {});
     }).catch(() => {});
     // Cargar estado SRI (incluyendo suscripcion y ambiente)
     consultarEstadoSri().then((estado) => {
