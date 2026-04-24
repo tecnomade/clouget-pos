@@ -1797,13 +1797,20 @@ export default function Productos() {
                       <th>Código</th>
                       <th>Nombre</th>
                       <th>Categoría</th>
+                      {puedeVerCostos && <th className="text-right">Costo</th>}
                       <th className="text-right">Precio</th>
+                      {puedeVerCostos && <th className="text-right">Margen</th>}
                       <th className="text-right">Stock</th>
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {productosFiltrados.map((p) => (
+                    {productosFiltrados.map((p) => {
+                      const costo = (p as any).precio_costo ?? 0;
+                      const margen = p.precio_venta > 0 && costo > 0
+                        ? ((p.precio_venta - costo) / p.precio_venta * 100)
+                        : null;
+                      return (
                       <tr key={p.id}>
                         <td>
                           <input type="checkbox" checked={seleccionados.has(p.id)}
@@ -1816,7 +1823,20 @@ export default function Productos() {
                         <td>{p.codigo ?? "-"}</td>
                         <td><strong>{p.nombre}</strong></td>
                         <td className="text-secondary">{p.categoria_nombre ?? "-"}</td>
+                        {puedeVerCostos && (
+                          <td className="text-right" style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+                            {costo > 0 ? `$${costo.toFixed(2)}` : "-"}
+                          </td>
+                        )}
                         <td className="text-right">${p.precio_venta.toFixed(2)}</td>
+                        {puedeVerCostos && (
+                          <td className="text-right" style={{
+                            fontSize: 11, fontWeight: 600,
+                            color: margen == null ? "var(--color-text-secondary)" : margen < 0 ? "var(--color-danger)" : margen < 15 ? "var(--color-warning)" : "var(--color-success)",
+                          }}>
+                            {margen == null ? "-" : `${margen.toFixed(1)}%`}
+                          </td>
+                        )}
                         <td className="text-right">{p.stock_actual}</td>
                         <td>
                           <div className="flex gap-1">
@@ -1835,10 +1855,11 @@ export default function Productos() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {productosFiltrados.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="text-center text-secondary" style={{ padding: 40 }}>
+                        <td colSpan={puedeVerCostos ? 9 : 7} className="text-center text-secondary" style={{ padding: 40 }}>
                           No hay productos registrados
                         </td>
                       </tr>
