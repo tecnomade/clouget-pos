@@ -1292,30 +1292,50 @@ export default function PuntoVenta() {
       <div className="page-header">
         <div className="flex gap-2 items-center">
           <h2>Punto de Venta</h2>
-          {/* Indicador discreto cuando hay override de lista activo
-              (la edicion principal de lista se hace en el modal del item — click en nombre o precio) */}
-          {puedeCambiarListaPrecio && listaPrecioOverride != null && listasPreciosCat.length > 0 && (
-            <div
-              style={{
-                marginLeft: 12, padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 600,
-                background: "rgba(168,85,247,0.2)", border: "1px solid rgba(168,85,247,0.5)",
-                color: "var(--color-text)", display: "flex", alignItems: "center", gap: 6,
-                cursor: "pointer",
-              }}
-              title="Click para volver a tarifa Auto (cliente/default)"
-              onClick={async () => {
-                setListaPrecioOverride(null);
-                if (carrito.length > 0) {
-                  const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
-                    try {
-                      const nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
-                      return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
-                    } catch { return item; }
-                  }));
-                  setCarrito(nuevoCarrito);
-                }
-              }}>
-              💰 {listasPreciosCat.find(l => l.id === listaPrecioOverride)?.nombre ?? "Tarifa custom"} ×
+          {/* Selector compacto de tarifa (siempre visible si admin/permiso y hay listas).
+              Permite forzar una lista distinta a la del cliente. Aplica a todos los items
+              del carrito al cambiar (recalcula precios). */}
+          {puedeCambiarListaPrecio && listasPreciosCat.length > 0 && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 4, marginLeft: 12,
+              padding: "3px 8px", borderRadius: 6, fontSize: 11,
+              background: listaPrecioOverride != null ? "rgba(168,85,247,0.18)" : "transparent",
+              border: `1px solid ${listaPrecioOverride != null ? "rgba(168,85,247,0.5)" : "var(--color-border)"}`,
+            }}
+            title="Tarifa global de la venta (recalcula todos los items del carrito al cambiar)">
+              <span style={{ fontWeight: 600 }}>💰</span>
+              <select
+                value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
+                onChange={async (e) => {
+                  const val = e.target.value === "" ? null : parseInt(e.target.value);
+                  setListaPrecioOverride(val);
+                  if (carrito.length > 0) {
+                    const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
+                      try {
+                        let nuevoPrecio = item.precio_unitario;
+                        if (val == null) {
+                          nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
+                        } else {
+                          const precios = await obtenerPreciosProducto(item.producto_id);
+                          const found = precios.find((p: any) => p.lista_precio_id === val);
+                          if (found) nuevoPrecio = found.precio;
+                        }
+                        return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
+                      } catch { return item; }
+                    }));
+                    setCarrito(nuevoCarrito);
+                  }
+                }}
+                style={{
+                  background: "transparent", border: "none", cursor: "pointer", outline: "none",
+                  fontSize: 11, fontWeight: 600,
+                  color: listaPrecioOverride != null ? "var(--color-primary)" : "var(--color-text-secondary)",
+                }}>
+                <option value="">Tarifa: Auto</option>
+                {listasPreciosCat.map(l => (
+                  <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
+                ))}
+              </select>
             </div>
           )}
         </div>

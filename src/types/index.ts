@@ -39,6 +39,12 @@ export interface ProductoTactil {
   tipo_producto?: string;
   /** Stock dinamico para COMBO_FIJO (MIN componentes). null para SIMPLE/FLEXIBLE */
   stock_combo?: number | null;
+  /** Descripcion / info adicional (para busqueda en POS) */
+  descripcion?: string;
+  /** Codigo del producto (para busqueda en POS) */
+  codigo?: string;
+  /** Codigo de barras (para busqueda en POS) */
+  codigo_barras?: string;
 }
 
 export interface ProductoBusqueda {

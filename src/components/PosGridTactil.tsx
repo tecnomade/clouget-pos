@@ -41,7 +41,19 @@ export default function PosGridTactil({
     }
     if (busqueda.trim()) {
       const term = busqueda.toLowerCase();
-      lista = lista.filter((p) => p.nombre.toLowerCase().includes(term));
+      // Busqueda en nombre + codigo + codigo_barras + descripcion (ranking de relevancia)
+      const matchScore = (p: ProductoTactil): number => {
+        if (p.nombre.toLowerCase().includes(term)) return 1;
+        if ((p.codigo || "").toLowerCase().includes(term)) return 2;
+        if ((p.codigo_barras || "").toLowerCase().includes(term)) return 2;
+        if ((p.descripcion || "").toLowerCase().includes(term)) return 3;
+        return 99;
+      };
+      lista = lista
+        .map(p => ({ p, score: matchScore(p) }))
+        .filter(x => x.score < 99)
+        .sort((a, b) => a.score - b.score)
+        .map(x => x.p);
     }
     return lista;
   }, [productosTactil, categoriaActiva, busqueda]);

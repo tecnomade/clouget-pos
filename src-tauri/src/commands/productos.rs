@@ -483,7 +483,8 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
             "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva, p.stock_actual,
                     p.categoria_id, c.nombre, p.imagen,
                     COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
-                    COALESCE(p.tipo_producto, 'SIMPLE') as tipo_producto
+                    COALESCE(p.tipo_producto, 'SIMPLE') as tipo_producto,
+                    p.descripcion, p.codigo, p.codigo_barras
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              WHERE p.activo = 1
@@ -507,6 +508,9 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 no_controla_stock: row.get::<_, i32>(10)? != 0,
                 tipo_producto: row.get(11)?,
                 stock_combo: None,
+                descripcion: row.get(12)?,
+                codigo: row.get(13)?,
+                codigo_barras: row.get(14)?,
             })
         })
         .map_err(|e| e.to_string())?
