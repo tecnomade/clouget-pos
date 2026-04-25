@@ -54,6 +54,8 @@ export default function PuntoVenta() {
     preciosDisponibles: Array<{ lista_precio_id: number; lista_nombre: string; precio: number }>;
   } | null>(null);
   const [precioManualInput, setPrecioManualInput] = useState("");
+  // Modal de detalles transferencia (cuenta + referencia + comprobante)
+  const [mostrarDetallesTransfer, setMostrarDetallesTransfer] = useState(false);
   const [categoriasTactil, setCategoriasTactil] = useState<Categoria[]>([]);
 
   // Cliente
@@ -1876,54 +1878,35 @@ export default function PuntoVenta() {
               })()}
             </div>
 
-            {/* Transferencia: cuenta bancaria + referencia */}
-            {!modoPagoMixto && !esFiado && formaPago === "TRANSFER" && (
-              <div style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-                {cuentasBanco.length > 0 && (
-                  <div>
-                    <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Cuenta destino</label>
-                    <select
-                      className="input"
-                      style={{ fontSize: 12 }}
-                      value={bancoSeleccionado ?? ""}
-                      onChange={(e) => setBancoSeleccionado(e.target.value ? Number(e.target.value) : null)}
-                    >
-                      <option value="">Seleccionar cuenta...</option>
-                      {cuentasBanco.map((cb) => (
-                        <option key={cb.id} value={cb.id}>
-                          {cb.nombre}{cb.numero_cuenta ? ` - ${cb.numero_cuenta}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                <div>
-                  <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>
-                    Nro. referencia {requiereReferencia && <span style={{ color: "var(--color-danger)" }}>*</span>}
-                  </label>
-                  <input className="input" placeholder="Ej: 123456789" style={{ fontSize: 12 }}
-                    value={referenciaPago}
-                    onChange={(e) => setReferenciaPago(e.target.value)} />
+            {/* Transferencia: chip resumen + boton para abrir modal de detalles */}
+            {!modoPagoMixto && !esFiado && formaPago === "TRANSFER" && (() => {
+              const bancoNombre = cuentasBanco.find((cb: any) => cb.id === bancoSeleccionado)?.nombre;
+              const detallesCompletos = bancoSeleccionado && (!requiereReferencia || referenciaPago.trim()) && (!requiereComprobante || comprobanteImagen);
+              return (
+                <div style={{ marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarDetallesTransfer(true)}
+                    style={{
+                      width: "100%", padding: "8px 10px", borderRadius: 6, cursor: "pointer",
+                      background: detallesCompletos ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.12)",
+                      border: `1px solid ${detallesCompletos ? "rgba(34,197,94,0.5)" : "rgba(245,158,11,0.5)"}`,
+                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6,
+                      textAlign: "left",
+                    }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: detallesCompletos ? "var(--color-success)" : "var(--color-warning)" }}>
+                        {detallesCompletos ? "✓ Detalles transferencia" : "⚠ Faltan detalles transfer"}
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {bancoNombre || "Sin cuenta"}{referenciaPago && ` · ref: ${referenciaPago}`}{comprobanteImagen && " · 📎"}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 11, color: "var(--color-primary)", fontWeight: 600 }}>Editar →</span>
+                  </button>
                 </div>
-                <div>
-                  <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>
-                    Comprobante {requiereComprobante && <span style={{ color: "var(--color-danger)" }}>*</span>}
-                  </label>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input type="file" accept="image/*" style={{ fontSize: 11, flex: 1 }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
-                        const reader = new FileReader();
-                        reader.onload = () => setComprobanteImagen(reader.result as string);
-                        reader.readAsDataURL(file);
-                      }} />
-                    {comprobanteImagen && <span style={{ fontSize: 11, color: "var(--color-success)" }}>OK</span>}
-                  </div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Monto recibido - solo si no es fiado y es efectivo */}
             {!modoPagoMixto && !esFiado && formaPago === "EFECTIVO" && (
@@ -2002,19 +1985,26 @@ export default function PuntoVenta() {
               </div>
             )}
 
-            {/* Cobrar button */}
-            <button className="btn btn-success" data-action="cobrar"
-              style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0", marginTop: 8 }}
-              disabled={
-                carrito.length === 0
-                || (esFiado && !clienteSeleccionado)
-                || (modoPagoMixto && (pagosMixtos.length === 0 || Math.abs(pagosMixtos.reduce((s, p) => s + p.monto, 0) - total) > 0.02))
-              }
-              onClick={procesarVenta}>
-              {modoPagoMixto
-                ? `Cobrar mixto $${total.toFixed(2)}`
-                : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)} (F9)
-            </button>
+            {/* Cobrar button - sticky bottom para que SIEMPRE este visible incluso con muchos items */}
+            <div style={{
+              position: "sticky", bottom: -16, marginLeft: -16, marginRight: -16, marginTop: 8,
+              padding: "10px 16px", background: "var(--color-bg)",
+              borderTop: "1px solid var(--color-border)", zIndex: 5,
+              boxShadow: "0 -4px 12px rgba(0,0,0,0.15)",
+            }}>
+              <button className="btn btn-success" data-action="cobrar"
+                style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0" }}
+                disabled={
+                  carrito.length === 0
+                  || (esFiado && !clienteSeleccionado)
+                  || (modoPagoMixto && (pagosMixtos.length === 0 || Math.abs(pagosMixtos.reduce((s, p) => s + p.monto, 0) - total) > 0.02))
+                }
+                onClick={procesarVenta}>
+                {modoPagoMixto
+                  ? `Cobrar mixto $${total.toFixed(2)}`
+                  : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)} (F9)
+              </button>
+            </div>
 
             {/* Botones movidos al footer del área central */}
           </div>
@@ -2399,6 +2389,85 @@ export default function PuntoVenta() {
           </div>
         );
       })()}
+
+      {/* Modal: detalles de transferencia (cuenta + referencia + comprobante) */}
+      {mostrarDetallesTransfer && (
+        <div className="modal-overlay" onClick={() => setMostrarDetallesTransfer(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-header">
+              <h3>🏦 Detalles de transferencia</h3>
+            </div>
+            <div className="modal-body">
+              {cuentasBanco.length === 0 ? (
+                <div style={{ padding: 12, background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 6, fontSize: 12, color: "var(--color-warning)" }}>
+                  ⚠ No hay cuentas bancarias registradas. Vaya a Configuración → Cuentas Bancarias para crear una.
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12 }}>
+                    <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>Cuenta destino *</label>
+                    <select
+                      className="input mt-1"
+                      value={bancoSeleccionado ?? ""}
+                      onChange={(e) => setBancoSeleccionado(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Seleccionar cuenta...</option>
+                      {cuentasBanco.map((cb: any) => (
+                        <option key={cb.id} value={cb.id}>
+                          {cb.nombre}{cb.numero_cuenta ? ` - ${cb.numero_cuenta}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ marginBottom: 12 }}>
+                    <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+                      Nro. referencia {requiereReferencia && <span style={{ color: "var(--color-danger)" }}>*</span>}
+                    </label>
+                    <input className="input mt-1" placeholder="Ej: 123456789"
+                      value={referenciaPago}
+                      onChange={(e) => setReferenciaPago(e.target.value)} />
+                  </div>
+
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>
+                      Comprobante {requiereComprobante && <span style={{ color: "var(--color-danger)" }}>*</span>}
+                    </label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+                      <input type="file" accept="image/*" style={{ flex: 1 }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
+                          const reader = new FileReader();
+                          reader.onload = () => setComprobanteImagen(reader.result as string);
+                          reader.readAsDataURL(file);
+                        }} />
+                      {comprobanteImagen && (
+                        <>
+                          <span style={{ fontSize: 11, color: "var(--color-success)", fontWeight: 600 }}>✓ Cargado</span>
+                          <button type="button"
+                            onClick={() => setComprobanteImagen(null)}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16 }}>×</button>
+                        </>
+                      )}
+                    </div>
+                    {comprobanteImagen && (
+                      <img src={comprobanteImagen} alt="Comprobante" style={{ maxWidth: "100%", marginTop: 8, borderRadius: 4, border: "1px solid var(--color-border)" }} />
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" style={{ width: "100%" }}
+                onClick={() => setMostrarDetallesTransfer(false)}>
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: cambiar precio / lista del item del carrito */}
       {editarPrecioItemModal && (() => {
