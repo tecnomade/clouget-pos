@@ -42,10 +42,13 @@ export default function PuntoVenta() {
 
   // Productos grid
   const [productosTactil, setProductosTactil] = useState<ProductoTactil[]>([]);
-  // Listas de precios y override manual (admin/permiso cambiar_lista_precio)
-  const [listasPreciosCat, setListasPreciosCat] = useState<Array<{ id: number; nombre: string; es_default?: boolean }>>([]);
-  const [listaPrecioOverride, setListaPrecioOverride] = useState<number | null>(null);
+  // Permiso para cambiar lista de precios POR ITEM (modal al click en nombre/precio del carrito).
+  // El cajero NO ve un selector global — la tarifa se cambia por cada item.
   const puedeCambiarListaPrecio = esAdmin || tienePermiso("cambiar_lista_precio");
+  // Lista de TODAS las listas de precios activas (para los modales del item).
+  // Aunque el producto no tenga precio especifico en una lista, se muestra y al
+  // aplicar usa el precio_venta base del producto.
+  const [todasListasPrecios, setTodasListasPrecios] = useState<Array<{ id: number; nombre: string; es_default?: boolean }>>([]);
   // Modal de cambiar precio/lista por item del carrito
   const [editarPrecioItemModal, setEditarPrecioItemModal] = useState<{
     idx: number;
@@ -250,8 +253,7 @@ export default function PuntoVenta() {
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
-      // Backend ya filtra activo=1, no aplicar filtro adicional aqui
-      listarListasPrecios().then((ls: any[]) => setListasPreciosCat(ls)).catch(() => {});
+      listarListasPrecios().then((ls: any[]) => setTodasListasPrecios(ls.filter((l: any) => l.activo))).catch(() => {});
     }).catch(() => {});
     // Cargar estado SRI (incluyendo suscripcion y ambiente)
     consultarEstadoSri().then((estado) => {
@@ -460,22 +462,13 @@ export default function PuntoVenta() {
     // Calcular precio efectivo.
     // Prioridad:
     //   1) Unidad elegida (precio explicito de la presentacion)
-    //   2) Override manual del cajero (listaPrecioOverride) — solo si tiene permiso
-    //   3) precio_lista del producto (ya viene resuelto si la busqueda recibio lista_precio_id)
-    //   4) Resolver via cliente.lista_precio_id si tiene
-    //   5) precio_venta default
+    //   2) precio_lista del producto (ya viene resuelto si la busqueda recibio lista_precio_id)
+    //   3) Resolver via cliente.lista_precio_id si tiene
+    //   4) precio_venta default
+    // El cambio de tarifa POR ITEM se hace despues, en el modal del item del carrito.
     let precioEfectivo: number;
     if (unidadElegida?.precio != null) {
       precioEfectivo = unidadElegida.precio;
-    } else if (listaPrecioOverride != null) {
-      // Override manual: buscar precio en preciosDisponibles del producto
-      try {
-        const precios = await obtenerPreciosProducto(producto.id);
-        const found = precios.find((p: any) => p.lista_precio_id === listaPrecioOverride);
-        precioEfectivo = found ? found.precio : (producto.precio_lista ?? producto.precio_venta);
-      } catch {
-        precioEfectivo = producto.precio_lista ?? producto.precio_venta;
-      }
     } else if (producto.precio_lista != null) {
       precioEfectivo = producto.precio_lista;
     } else if (clienteSeleccionado?.lista_precio_id) {
@@ -1292,52 +1285,8 @@ export default function PuntoVenta() {
       <div className="page-header">
         <div className="flex gap-2 items-center">
           <h2>Punto de Venta</h2>
-          {/* Selector compacto de tarifa (siempre visible si admin/permiso y hay listas).
-              Permite forzar una lista distinta a la del cliente. Aplica a todos los items
-              del carrito al cambiar (recalcula precios). */}
-          {puedeCambiarListaPrecio && listasPreciosCat.length > 0 && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 4, marginLeft: 12,
-              padding: "3px 8px", borderRadius: 6, fontSize: 11,
-              background: listaPrecioOverride != null ? "rgba(168,85,247,0.18)" : "transparent",
-              border: `1px solid ${listaPrecioOverride != null ? "rgba(168,85,247,0.5)" : "var(--color-border)"}`,
-            }}
-            title="Tarifa global de la venta (recalcula todos los items del carrito al cambiar)">
-              <span style={{ fontWeight: 600 }}>💰</span>
-              <select
-                value={listaPrecioOverride === null ? "" : String(listaPrecioOverride)}
-                onChange={async (e) => {
-                  const val = e.target.value === "" ? null : parseInt(e.target.value);
-                  setListaPrecioOverride(val);
-                  if (carrito.length > 0) {
-                    const nuevoCarrito = await Promise.all(carrito.map(async (item) => {
-                      try {
-                        let nuevoPrecio = item.precio_unitario;
-                        if (val == null) {
-                          nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteSeleccionado?.id ?? undefined);
-                        } else {
-                          const precios = await obtenerPreciosProducto(item.producto_id);
-                          const found = precios.find((p: any) => p.lista_precio_id === val);
-                          if (found) nuevoPrecio = found.precio;
-                        }
-                        return { ...item, precio_unitario: nuevoPrecio, subtotal: item.cantidad * nuevoPrecio - item.descuento };
-                      } catch { return item; }
-                    }));
-                    setCarrito(nuevoCarrito);
-                  }
-                }}
-                style={{
-                  background: "transparent", border: "none", cursor: "pointer", outline: "none",
-                  fontSize: 11, fontWeight: 600,
-                  color: listaPrecioOverride != null ? "var(--color-primary)" : "var(--color-text-secondary)",
-                }}>
-                <option value="">Tarifa: Auto</option>
-                {listasPreciosCat.map(l => (
-                  <option key={l.id} value={l.id}>{l.nombre}{l.es_default ? " ⭐" : ""}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* La tarifa/lista de precios se cambia POR ITEM al hacer click en el
+              nombre o precio del item del carrito (modal). NO hay selector global aqui. */}
         </div>
         <div className="flex gap-2 items-center">
           {/* Selector de cliente */}
@@ -2509,16 +2458,21 @@ export default function PuntoVenta() {
                   Precio actual: <strong style={{ color: "var(--color-primary)" }}>${m.precioActual.toFixed(2)}</strong>
                 </div>
 
-                {/* Listas disponibles */}
-                {m.preciosDisponibles.length > 0 ? (
+                {/* Listas disponibles — solo si admin/permiso cambiar_lista_precio */}
+                {puedeCambiarListaPrecio && todasListasPrecios.length > 0 ? (
                   <>
                     <label className="text-secondary" style={{ fontSize: 12, fontWeight: 600 }}>Aplicar lista de precios</label>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, marginBottom: 12 }}>
-                      {m.preciosDisponibles.map(p => {
-                        const esActual = Math.abs(p.precio - m.precioActual) < 0.001;
+                      {todasListasPrecios.map(lp => {
+                        const especifico = m.preciosDisponibles.find(p => p.lista_precio_id === lp.id);
+                        // Precio base: usa precio_base del item si existe, sino el precio actual como fallback
+                        const itemEnCarrito = carrito[m.idx];
+                        const precioBase = (itemEnCarrito as any)?.precio_base ?? m.precioActual;
+                        const precioAplicable = especifico ? especifico.precio : precioBase;
+                        const esActual = Math.abs(precioAplicable - m.precioActual) < 0.001;
                         return (
-                          <button key={p.lista_precio_id} type="button"
-                            onClick={() => aplicarPrecio(p.precio)}
+                          <button key={lp.id} type="button"
+                            onClick={() => aplicarPrecio(precioAplicable)}
                             style={{
                               display: "flex", justifyContent: "space-between", alignItems: "center",
                               padding: "8px 12px", borderRadius: 6, cursor: "pointer",
@@ -2527,19 +2481,22 @@ export default function PuntoVenta() {
                               fontSize: 13,
                             }}>
                             <span style={{ fontWeight: 600 }}>
-                              {esActual && "✓ "}{p.lista_nombre}
+                              {esActual && "✓ "}{lp.nombre}{lp.es_default ? " ⭐" : ""}
+                              {!especifico && (
+                                <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 6, fontWeight: 400 }}>(precio base)</span>
+                              )}
                             </span>
-                            <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${p.precio.toFixed(2)}</span>
+                            <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${precioAplicable.toFixed(2)}</span>
                           </button>
                         );
                       })}
                     </div>
                   </>
-                ) : (
+                ) : puedeCambiarListaPrecio && todasListasPrecios.length === 0 ? (
                   <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 12, padding: 8, background: "rgba(245,158,11,0.08)", borderRadius: 4 }}>
-                    Sin listas de precios definidas para este producto. Usa el campo de abajo.
+                    No hay listas de precios definidas. Crea una en Configuración → Listas de Precios.
                   </div>
-                )}
+                ) : null}
 
                 {/* Precio manual */}
                 {tienePermiso("editar_precio") || esAdmin ? (
@@ -3011,14 +2968,17 @@ export default function PuntoVenta() {
                 {(puedeCambiarListaPrecio || tienePermiso("editar_precio") || esAdmin) && (
                   <div style={{ padding: 10, background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.25)", borderRadius: 6, marginBottom: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "var(--color-text)" }}>💰 Tarifa / Precio</div>
-                    {preciosDisp.length > 0 && puedeCambiarListaPrecio ? (
+                    {puedeCambiarListaPrecio && todasListasPrecios.length > 0 ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
-                        {preciosDisp.map(p => {
-                          const esActual = Math.abs(p.precio - (itemActual?.precio_unitario ?? 0)) < 0.001;
+                        {todasListasPrecios.map(lp => {
+                          const especifico = preciosDisp.find(p => p.lista_precio_id === lp.id);
+                          const precioBase = (itemActual as any)?.precio_base ?? itemActual?.precio_unitario ?? 0;
+                          const precioAplicable = especifico ? especifico.precio : precioBase;
+                          const esActual = Math.abs(precioAplicable - (itemActual?.precio_unitario ?? 0)) < 0.001;
                           return (
-                            <button key={p.lista_precio_id} type="button"
+                            <button key={lp.id} type="button"
                               onClick={() => {
-                                editarPrecioItem(idxActual, p.precio);
+                                editarPrecioItem(idxActual, precioAplicable);
                               }}
                               style={{
                                 display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -3027,15 +2987,20 @@ export default function PuntoVenta() {
                                 border: `1px solid ${esActual ? "rgba(34,197,94,0.5)" : "var(--color-border)"}`,
                                 fontSize: 12,
                               }}>
-                              <span style={{ fontWeight: 600 }}>{esActual && "✓ "}{p.lista_nombre}</span>
-                              <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${p.precio.toFixed(2)}</span>
+                              <span style={{ fontWeight: 600 }}>
+                                {esActual && "✓ "}{lp.nombre}{lp.es_default ? " ⭐" : ""}
+                                {!especifico && (
+                                  <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 6, fontWeight: 400 }}>(precio base)</span>
+                                )}
+                              </span>
+                              <span style={{ fontWeight: 700, color: "var(--color-primary)" }}>${precioAplicable.toFixed(2)}</span>
                             </button>
                           );
                         })}
                       </div>
-                    ) : preciosDisp.length === 0 && puedeCambiarListaPrecio ? (
+                    ) : puedeCambiarListaPrecio && todasListasPrecios.length === 0 ? (
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
-                        Sin listas de precios definidas para este producto.
+                        No hay listas de precios definidas. Crea una en Configuración → Listas de Precios.
                       </div>
                     ) : null}
                     {(tienePermiso("editar_precio") || esAdmin) && (
