@@ -1496,7 +1496,9 @@ export default function PuntoVenta() {
 
         {/* Cart panel */}
         <div className={`cart-panel ${carritoAbierto ? "open" : ""}`}>
-          <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column" }}>
+          {/* minHeight:0 + height:100% asegura que el flex column con items scrollables
+              funcione bien y nunca se desborde el botón Cobrar */}
+          <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
             {/* Cliente + Items count en una fila */}
             <div className="flex justify-between items-center mb-2">
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1516,8 +1518,9 @@ export default function PuntoVenta() {
               <span className="text-secondary" style={{ fontSize: 12 }}>Items: {carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
             </div>
 
-            {/* Cart items list - scrollable */}
-            <div style={{ flex: 1, overflowY: "auto", marginBottom: 12 }}>
+            {/* Cart items list - scrollable. flex:1 + min-height:0 permite que se reduzca
+                cuando hay muchos items y deje espacio para totales+pago+Cobrar. */}
+            <div style={{ flex: "1 1 auto", overflowY: "auto", marginBottom: 12, minHeight: 0 }}>
               {carrito.map((item, idx) => (
                 <div key={`${item.producto_id}-${item.unidad_id ?? 0}-${idx}`} style={{
                   padding: "6px 0", borderBottom: "1px solid var(--color-border)",
@@ -1666,8 +1669,9 @@ export default function PuntoVenta() {
               ))}
             </div>
 
-            {/* Totals */}
-            <div style={{ borderTop: "2px solid var(--color-border)", paddingTop: 8 }}>
+            {/* Totals + pago + Cobrar - SIEMPRE visibles (no scroll, flex-shrink:0).
+                Items list de arriba scrollea cuando hay muchos. */}
+            <div style={{ borderTop: "2px solid var(--color-border)", paddingTop: 8, flexShrink: 0 }}>
               <div className="flex justify-between" style={{ fontSize: 13 }}>
                 <span className="text-secondary">Subtotal:</span>
                 <span>${subtotal.toFixed(2)}</span>
@@ -1954,13 +1958,8 @@ export default function PuntoVenta() {
               </div>
             )}
 
-            {/* Cobrar button - sticky bottom para que SIEMPRE este visible incluso con muchos items */}
-            <div style={{
-              position: "sticky", bottom: -16, marginLeft: -16, marginRight: -16, marginTop: 8,
-              padding: "10px 16px", background: "var(--color-bg)",
-              borderTop: "1px solid var(--color-border)", zIndex: 5,
-              boxShadow: "0 -4px 12px rgba(0,0,0,0.15)",
-            }}>
+            {/* Cobrar button - flex-shrink:0 para que NUNCA se aplaste */}
+            <div style={{ flexShrink: 0, marginTop: 8 }}>
               <button className="btn btn-success" data-action="cobrar"
                 style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0" }}
                 disabled={

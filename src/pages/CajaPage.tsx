@@ -1015,6 +1015,7 @@ export default function CajaPage() {
                           <th className="text-right">Contado</th>
                           <th className="text-right">Diferencia</th>
                           <th>Motivo</th>
+                          <th style={{ width: 180 }}>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1029,6 +1030,28 @@ export default function CajaPage() {
                               ${c.diferencia.toFixed(2)}
                             </td>
                             <td style={{ fontSize: 11, maxWidth: 220 }}>{c.motivo_descuadre || <span className="text-secondary">(sin motivo)</span>}</td>
+                            <td>
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <button className="btn btn-outline" style={{ fontSize: 10, padding: "3px 8px" }}
+                                  title="Reimprimir reporte de cierre en impresora térmica"
+                                  onClick={async () => {
+                                    if (!c.caja_id) return;
+                                    try {
+                                      await imprimirReporteCaja(c.caja_id);
+                                      toastExito("Reporte enviado a la impresora");
+                                    } catch (err) { toastError("Error: " + err); }
+                                  }}>🖨</button>
+                                <button className="btn btn-outline" style={{ fontSize: 10, padding: "3px 8px" }}
+                                  title="Generar PDF A4 del reporte de cierre"
+                                  onClick={async () => {
+                                    if (!c.caja_id) return;
+                                    try {
+                                      await imprimirReporteCajaPdf(c.caja_id);
+                                      toastExito("PDF generado");
+                                    } catch (err) { toastError("Error: " + err); }
+                                  }}>📄 PDF</button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

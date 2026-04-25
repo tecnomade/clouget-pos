@@ -1095,9 +1095,22 @@ export default function Configuracion() {
             </div>
           )}
 
-          {/* Facturacion Electronica - solo si regimen no es RIMPE_POPULAR */}
-          {config.regimen && config.regimen !== "RIMPE_POPULAR" && estadoSri && (
+          {/* Facturacion Electronica - SIEMPRE visible si tenemos estado SRI cargado.
+              Antes se ocultaba si era RIMPE_POPULAR o si no habia regimen, lo que bloqueaba
+              a los clientes nuevos del freemium (30 facturas gratis) y de subir el certificado. */}
+          {estadoSri && (
             <div className="card" style={{ borderColor: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "var(--color-success)" : estadoSri.modulo_activo ? "var(--color-primary)" : undefined }}>
+              {/* Aviso amigable si no hay regimen o si es RIMPE_POPULAR */}
+              {!config.regimen && (
+                <div style={{ padding: "8px 12px", background: "rgba(245,158,11,0.1)", borderBottom: "1px solid rgba(245,158,11,0.3)", fontSize: 12, color: "var(--color-warning)" }}>
+                  💡 Configura tu <strong>régimen tributario</strong> en "Datos del Negocio" para usar facturación electrónica.
+                </div>
+              )}
+              {config.regimen === "RIMPE_POPULAR" && (
+                <div style={{ padding: "8px 12px", background: "rgba(59,130,246,0.08)", borderBottom: "1px solid rgba(59,130,246,0.25)", fontSize: 12, color: "var(--color-text-secondary)" }}>
+                  ℹ️ Como <strong>RIMPE Popular</strong> no estás obligado a emitir factura electrónica, pero puedes usarla voluntariamente. La nota de venta sigue siendo válida para tu régimen.
+                </div>
+              )}
               <div className="card-header" style={{
                 background: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "rgba(34, 197, 94, 0.1)" : "rgba(59, 130, 246, 0.1)",
                 color: estadoSri.suscripcion_autorizada || estadoSri.suscripcion_es_lifetime ? "var(--color-success)" : "var(--color-primary)",
