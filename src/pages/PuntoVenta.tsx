@@ -1634,9 +1634,15 @@ export default function PuntoVenta() {
                       <option value="0">0%</option>
                       <option value="15">15%</option>
                     </select>
-                    {/* Boton de descuento */}
+                    {/* Boton de descuento - requiere permiso aplicar_descuentos o admin */}
                     <button
-                      title={item.descuento > 0 ? `Descuento aplicado: $${item.descuento.toFixed(2)}` : "Aplicar descuento"}
+                      title={
+                        !(esAdmin || tienePermiso("aplicar_descuentos"))
+                          ? "Sin permiso para aplicar descuentos (requiere PIN admin)"
+                          : item.descuento > 0
+                            ? `Descuento aplicado: $${item.descuento.toFixed(2)}`
+                            : "Aplicar descuento"
+                      }
                       style={{
                         width: 26, height: 26,
                         border: `1px solid ${item.descuento > 0 ? "var(--color-warning)" : "var(--color-border)"}`,
@@ -1646,14 +1652,23 @@ export default function PuntoVenta() {
                         color: item.descuento > 0 ? "var(--color-warning)" : "var(--color-text-secondary)",
                         flexShrink: 0, fontSize: 12, fontWeight: 700,
                       }}
-                      onClick={() => {
-                        setDescuentoItemId(idx as any);
-                        if (item.descuento > 0) {
-                          setDescuentoTipo("monto");
-                          setDescuentoValor(item.descuento.toFixed(2));
+                      onClick={async () => {
+                        const abrirModal = () => {
+                          setDescuentoItemId(idx as any);
+                          if (item.descuento > 0) {
+                            setDescuentoTipo("monto");
+                            setDescuentoValor(item.descuento.toFixed(2));
+                          } else {
+                            setDescuentoTipo("porcentaje");
+                            setDescuentoValor("");
+                          }
+                        };
+                        if (esAdmin || tienePermiso("aplicar_descuentos")) {
+                          abrirModal();
                         } else {
-                          setDescuentoTipo("porcentaje");
-                          setDescuentoValor("");
+                          // Cajero sin permiso: pedir PIN admin
+                          const ok = await solicitarPinAdmin();
+                          if (ok) abrirModal();
                         }
                       }}>%</button>
                     <button style={{ width: 26, height: 26, border: "1px solid var(--color-border)", borderRadius: 4, background: "var(--color-surface)", cursor: "pointer", color: "var(--color-text)", flexShrink: 0, fontSize: 14 }}

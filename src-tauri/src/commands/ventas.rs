@@ -743,7 +743,10 @@ pub fn listar_ventas_sesion_caja(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Buscar la caja abierta de este usuario (o la más reciente cerrada hoy)
+    // Buscar la caja abierta de este usuario (o la más reciente cerrada hoy).
+    // Si no hay ninguna, fallback a "ventas del dia hoy del usuario" para que el
+    // cajero NUNCA vea pantalla en blanco — incluso si aun no abrio caja, debe
+    // poder revisar sus ventas anteriores del dia.
     let fecha_apertura: String = conn
         .query_row(
             "SELECT fecha_apertura FROM caja
@@ -752,7 +755,10 @@ pub fn listar_ventas_sesion_caja(
             rusqlite::params![usuario_id],
             |row| row.get(0),
         )
-        .map_err(|_| "No se encontró una sesión de caja para este usuario".to_string())?;
+        .unwrap_or_else(|_| {
+            // Fallback: inicio del dia de hoy para mostrar ventas del dia del cajero
+            chrono::Local::now().format("%Y-%m-%d 00:00:00").to_string()
+        });
 
     let mut stmt = conn
         .prepare(
@@ -830,7 +836,9 @@ pub fn resumen_sesion_caja(
             rusqlite::params![usuario_id],
             |row| row.get(0),
         )
-        .map_err(|_| "No se encontró una sesión de caja para este usuario".to_string())?;
+        .unwrap_or_else(|_| {
+            chrono::Local::now().format("%Y-%m-%d 00:00:00").to_string()
+        });
 
     let total_ventas: f64 = conn
         .query_row(
@@ -934,7 +942,10 @@ pub fn listar_notas_credito_sesion_caja(
             rusqlite::params![usuario_id],
             |row| row.get(0),
         )
-        .map_err(|_| "No se encontró una sesión de caja para este usuario".to_string())?;
+        .unwrap_or_else(|_| {
+            // Fallback: inicio del dia hoy si no hay caja
+            chrono::Local::now().format("%Y-%m-%d 00:00:00").to_string()
+        });
 
     let mut stmt = conn
         .prepare(

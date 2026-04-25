@@ -380,10 +380,13 @@ pub fn cerrar_caja(
     log_evento_caja(&conn, caja_id, "CIERRE", &usuario_cierre, usuario_cierre_id,
         Some(&snapshot_anterior), Some(&snapshot_nuevo), motivo_descuadre.as_deref());
 
-    // Auto-cerrar sesión al cerrar caja
+    // NOTA: Antes se cerraba la sesion automaticamente aqui, pero eso rompia el flujo
+    // del cajero al querer abrir nueva caja inmediatamente despues (error "Debe iniciar
+    // sesion para abrir la caja"). El cierre de sesion ahora es responsabilidad del
+    // FRONTEND cuando el cajero hace click en "Finalizar Turno" desde el resumen.
     drop(conn);
-    let mut sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
-    *sesion_guard = None;
+    // (no tocar sesion aqui)
+    let _ = sesion; // suprimir warning de variable no usada
 
     let caja = Caja {
         id: Some(caja_id),
