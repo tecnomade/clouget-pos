@@ -472,6 +472,16 @@ pub fn registrar_retiro(
         )
         .map_err(|_| "No hay caja abierta para registrar el retiro".to_string())?;
 
+    // VALIDACION: no permitir retiros que dejen la caja en negativo.
+    // Calcula el efectivo disponible actual = inicial + ventas_efectivo + cobros_efectivo - gastos - retiros
+    let disponible = calcular_monto_esperado_actual(&conn, caja_id);
+    if monto > disponible + 0.01 {
+        return Err(format!(
+            "Solo hay ${:.2} disponibles en caja, no se puede retirar ${:.2}. Si necesita registrar un faltante, hagalo al cerrar la caja con motivo del descuadre.",
+            disponible, monto
+        ));
+    }
+
     let estado = if banco_id.is_some() { "EN_TRANSITO" } else { "SIN_DEPOSITO" };
 
     conn.execute(
@@ -480,6 +490,14 @@ pub fn registrar_retiro(
         rusqlite::params![caja_id, monto, motivo, banco_id, referencia, usuario_nombre, usuario_id, estado],
     )
     .map_err(|e| e.to_string())?;
+
+    // Actualizar el monto_esperado stored para mantenerlo sincronizado.
+    // (Aunque obtener_caja_abierta ya recalcula, mantener stored al dia evita
+    // confusion y permite queries rapidas en reportes que lean el campo.)
+    let _ = conn.execute(
+        "UPDATE caja SET monto_esperado = monto_esperado - ?1 WHERE id = ?2",
+        rusqlite::params![monto, caja_id],
+    );
 
     let id = conn.last_insert_rowid();
     let fecha: String = conn
@@ -786,6 +804,59 @@ pub fn historial_descuadres_caja(
 }
 
 #[tauri::command]
+/// Recalcula el monto_esperado actual de una caja basado en lo registrado en DB.
+/// Esta es la formula UNICA fuente de verdad: monto_inicial + ventas_efectivo
+/// + cobros_efectivo - gastos - retiros. Ignora el monto_esperado stored
+/// (que puede estar desactualizado por demo seeds o bugs antiguos donde
+/// retiros/gastos no actualizaban el stored).
+pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64) -> f64 {
+    let monto_inicial: f64 = conn
+        .query_row(
+            "SELECT monto_inicial FROM caja WHERE id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let total_efectivo: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(total), 0) FROM ventas
+             WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND forma_pago = 'EFECTIVO' AND anulada = 0 AND estado = 'COMPLETADA'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let total_cobros_efectivo: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(p.monto), 0) FROM pagos_cuenta p
+             WHERE p.fecha >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND p.forma_pago = 'EFECTIVO' AND p.estado = 'CONFIRMADO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let total_gastos: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE caja_id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    let total_retiros: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros
+}
+
 pub fn obtener_caja_abierta(db: State<Database>) -> Result<Option<Caja>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
@@ -813,7 +884,15 @@ pub fn obtener_caja_abierta(db: State<Database>) -> Result<Option<Caja>, String>
     );
 
     match result {
-        Ok(caja) => Ok(Some(caja)),
+        Ok(mut caja) => {
+            // SIEMPRE recalcular monto_esperado en base a la data real (no confiar en stored,
+            // que puede estar desactualizado por demo seeds o por el bug viejo donde retiros
+            // no actualizaban el stored). Asi el frontend muestra siempre el valor correcto.
+            if let Some(caja_id) = caja.id {
+                caja.monto_esperado = calcular_monto_esperado_actual(&conn, caja_id);
+            }
+            Ok(Some(caja))
+        }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

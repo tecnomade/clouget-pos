@@ -126,9 +126,10 @@ export default function CajaPage() {
 
   const intentarCerrarCaja = async (pinOverride?: string) => {
     const monto = parseFloat(montoReal) || 0;
-    const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
-    // Usa monto_esperado del backend (solo efectivo) menos retiros, no monto_ventas (que incluye transfer/credito)
-    const esperado = (cajaAbierta?.monto_esperado ?? cajaAbierta?.monto_inicial ?? 0) - totalRetiros;
+    // monto_esperado del backend YA es el valor recalculado correcto
+    // (= monto_inicial + ventas_efectivo + cobros_efectivo - gastos - retiros).
+    // NO restar retiros aqui porque ya estan dentro de monto_esperado.
+    const esperado = cajaAbierta?.monto_esperado ?? 0;
     const dif = monto - esperado;
     if (Math.abs(dif) > 0.01 && motivoDescuadre.trim().length < 5) {
       toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
@@ -463,9 +464,9 @@ export default function CajaPage() {
                 padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
                 border: "1px solid rgba(34, 197, 94, 0.3)",
               }}>
-                {/* Usa monto_esperado del backend (ya solo cuenta EFECTIVO + cobros - gastos - retiros).
-                    monto_ventas es TOTAL ventas (incluye TRANSFER/CREDITO), pero a la caja fisica
-                    solo entra el efectivo. */}
+                {/* monto_esperado del backend YA es el valor real recalculado en el momento
+                    (= monto_inicial + ventas_efectivo + cobros_efectivo - gastos - retiros).
+                    Las filas de abajo son INFORMATIVAS — el numero final viene del backend. */}
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
                   <span className="text-secondary">Ventas totales (todas formas):</span>
                   <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
@@ -479,7 +480,7 @@ export default function CajaPage() {
                 <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
                   <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja (efectivo):</span>
                   <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
-                    ${((cajaAbierta.monto_esperado ?? cajaAbierta.monto_inicial) - retiros.reduce((s: number, r: any) => s + r.monto, 0)).toFixed(2)}
+                    ${(cajaAbierta.monto_esperado ?? 0).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -498,8 +499,8 @@ export default function CajaPage() {
               {/* Alerta de descuadre + motivo obligatorio */}
               {(() => {
                 const monto = parseFloat(montoReal) || 0;
-                const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
-                const esperado = (cajaAbierta.monto_inicial || 0) + (cajaAbierta.monto_ventas || 0) - totalRetiros;
+                // Usa el monto_esperado recalculado del backend (misma fuente que el cierre).
+                const esperado = cajaAbierta.monto_esperado ?? 0;
                 const dif = monto - esperado;
                 // Aparece si hay diferencia significativa (>0.01). Esto incluye el caso
                 // de dejar vacio con esperado>0 (descuadre = -esperado).
