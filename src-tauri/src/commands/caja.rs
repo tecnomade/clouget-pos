@@ -455,6 +455,7 @@ pub fn registrar_retiro(
         .ok_or("Debe iniciar sesión para registrar un retiro".to_string())?;
     let usuario_nombre = sesion_actual.nombre.clone();
     let usuario_id = sesion_actual.usuario_id;
+    let es_admin = sesion_actual.rol == "ADMIN";
     drop(sesion_guard);
 
     if monto <= 0.0 {
@@ -482,7 +483,15 @@ pub fn registrar_retiro(
         ));
     }
 
-    let estado = if banco_id.is_some() { "EN_TRANSITO" } else { "SIN_DEPOSITO" };
+    // Estado segun tipo de retiro y quien lo hace:
+    // - Sin banco_id: SIN_DEPOSITO (efectivo saliente, no hay nada que confirmar)
+    // - Con banco_id + ADMIN: DEPOSITADO directo (admin no se confirma a si mismo)
+    // - Con banco_id + cajero: EN_TRANSITO (espera que admin confirme con referencia bancaria)
+    let estado = if banco_id.is_some() {
+        if es_admin { "DEPOSITADO" } else { "EN_TRANSITO" }
+    } else {
+        "SIN_DEPOSITO"
+    };
 
     conn.execute(
         "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado)
