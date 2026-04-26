@@ -866,6 +866,7 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
     monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros
 }
 
+#[tauri::command]
 pub fn obtener_caja_abierta(db: State<Database>) -> Result<Option<Caja>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
