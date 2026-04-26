@@ -127,7 +127,8 @@ export default function CajaPage() {
   const intentarCerrarCaja = async (pinOverride?: string) => {
     const monto = parseFloat(montoReal) || 0;
     const totalRetiros = retiros.reduce((s: number, r: any) => s + (Number(r.monto) || 0), 0);
-    const esperado = (cajaAbierta?.monto_inicial || 0) + (cajaAbierta?.monto_ventas || 0) - totalRetiros;
+    // Usa monto_esperado del backend (solo efectivo) menos retiros, no monto_ventas (que incluye transfer/credito)
+    const esperado = (cajaAbierta?.monto_esperado ?? cajaAbierta?.monto_inicial ?? 0) - totalRetiros;
     const dif = monto - esperado;
     if (Math.abs(dif) > 0.01 && motivoDescuadre.trim().length < 5) {
       toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
@@ -462,8 +463,11 @@ export default function CajaPage() {
                 padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
                 border: "1px solid rgba(34, 197, 94, 0.3)",
               }}>
+                {/* Usa monto_esperado del backend (ya solo cuenta EFECTIVO + cobros - gastos - retiros).
+                    monto_ventas es TOTAL ventas (incluye TRANSFER/CREDITO), pero a la caja fisica
+                    solo entra el efectivo. */}
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                  <span className="text-secondary">Ventas en efectivo:</span>
+                  <span className="text-secondary">Ventas totales (todas formas):</span>
                   <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
                 </div>
                 {retiros.length > 0 && (
@@ -473,9 +477,9 @@ export default function CajaPage() {
                   </div>
                 )}
                 <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                  <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja:</span>
+                  <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja (efectivo):</span>
                   <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
-                    ${(cajaAbierta.monto_inicial + (cajaAbierta.monto_ventas ?? 0) - retiros.reduce((s: number, r: any) => s + r.monto, 0)).toFixed(2)}
+                    ${((cajaAbierta.monto_esperado ?? cajaAbierta.monto_inicial) - retiros.reduce((s: number, r: any) => s + r.monto, 0)).toFixed(2)}
                   </span>
                 </div>
               </div>

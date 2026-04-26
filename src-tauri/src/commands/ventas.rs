@@ -430,12 +430,23 @@ pub fn registrar_venta(
     )
     .map_err(|e| e.to_string())?;
 
-    // Actualizar monto de caja si hay una abierta
+    // Actualizar monto de caja si hay una abierta.
+    // - monto_ventas suma TODAS las ventas (para reportes/dashboard).
+    // - monto_esperado solo suma la porcion EFECTIVO (lo que entra a caja fisica).
+    //   TRANSFER, CREDITO, etc. NO afectan el efectivo en caja.
+    let efectivo_de_esta_venta: f64 = if let Some(ref pagos) = venta.pagos {
+        // Pagos mixtos: sumar solo los EFECTIVO
+        pagos.iter().filter(|p| p.forma_pago == "EFECTIVO").map(|p| p.monto).sum()
+    } else if venta.forma_pago == "EFECTIVO" && !venta.es_fiado {
+        total
+    } else {
+        0.0
+    };
     conn.execute(
         "UPDATE caja SET monto_ventas = monto_ventas + ?1,
-         monto_esperado = monto_inicial + monto_ventas + ?1
+         monto_esperado = monto_esperado + ?2
          WHERE estado = 'ABIERTA'",
-        rusqlite::params![total],
+        rusqlite::params![total, efectivo_de_esta_venta],
     )
     .ok();
 
