@@ -1,3 +1,4 @@
+use crate::commands::caja::calcular_monto_esperado_actual;
 use crate::db::Database;
 use crate::models::Gasto;
 use tauri::State;
@@ -14,6 +15,18 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
             |row| row.get(0),
         )
         .ok();
+
+    // VALIDACION: si hay caja abierta, no permitir gastos que la dejen
+    // en negativo (igual que la validacion en registrar_retiro).
+    if let Some(cid) = caja_id {
+        let disponible = calcular_monto_esperado_actual(&conn, cid);
+        if gasto.monto > disponible + 0.01 {
+            return Err(format!(
+                "No hay efectivo suficiente en caja. Disponible: ${:.2}. No puede registrar un gasto de ${:.2}.",
+                disponible, gasto.monto
+            ));
+        }
+    }
 
     conn.execute(
         "INSERT INTO gastos (descripcion, monto, categoria, caja_id, observacion, es_recurrente)

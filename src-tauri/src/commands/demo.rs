@@ -419,11 +419,17 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
     ).ok();
 
     // --- Retiros de caja demo ---
+    // Montos pequenos que NO dejan la caja en negativo. La caja inicia con $50
+    // y a lo largo de 7 dias acumula ventas en efectivo (~$100+) y algunos
+    // cobros, asi que retiros por $25+$15+$20 = $60 dejan saldo positivo.
+    // Si subimos estos montos hay que asegurar que ventas + cobros - gastos
+    // - retiros >= 0; si no, el cierre va a mostrar descuadre persistente
+    // y el validador de registrar_retiro va a bloquear nuevos retiros.
     conn.execute_batch(
         "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, estado, fecha) VALUES
-            (1, 200.00, 'Deposito banco al cierre del dia', 1, 'DEP-2024001', 'Admin', 'DEPOSITADO', datetime('now', 'localtime', '-3 days')),
-            (1, 50.00, 'Pago a proveedor de pan', NULL, NULL, 'Admin', 'SIN_DEPOSITO', datetime('now', 'localtime', '-2 days')),
-            (1, 150.00, 'Deposito en Pichincha', 1, NULL, 'Admin', 'EN_TRANSITO', datetime('now', 'localtime', '-1 days'));"
+            (1, 25.00, 'Deposito banco al cierre del dia', 1, 'DEP-2024001', 'Admin', 'DEPOSITADO', datetime('now', 'localtime', '-3 days')),
+            (1, 15.00, 'Pago a proveedor de pan', NULL, NULL, 'Admin', 'SIN_DEPOSITO', datetime('now', 'localtime', '-2 days')),
+            (1, 20.00, 'Deposito en Pichincha', 1, NULL, 'Admin', 'EN_TRANSITO', datetime('now', 'localtime', '-1 days'));"
     ).ok();
 
     // --- Notas de Credito demo ---
