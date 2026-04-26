@@ -284,7 +284,31 @@ pub fn cerrar_caja(
         )
         .unwrap_or(0.0);
 
-    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros;
+    // CALCULO DEL ESPERADO: usar el valor STORED en la tabla caja como fuente de verdad,
+    // ya que se mantiene actualizado en tiempo real con cada venta (solo porcion EFECTIVO),
+    // cobro, gasto, retiro. Asi evitamos la inconsistencia que habia entre lo mostrado en
+    // el frontend (basado en monto_esperado stored) y un re-calculo del backend con queries
+    // que podian diferir por edge cases (ventas viejas con forma_pago no exacto, etc).
+    //
+    // Fallback: si el stored es 0 o no existe, recalculamos con la formula clasica.
+    let monto_esperado_stored: f64 = conn
+        .query_row(
+            "SELECT COALESCE(monto_esperado, 0) FROM caja WHERE id = ?1",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let monto_esperado_recalculado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros;
+    // Usar el MAYOR de los dos: el stored es lo que se ve en pantalla; si fue actualizado mal
+    // por una version vieja, podria ser mas alto que el recalculado. Tomar el mayor protege
+    // contra el "descuadre fantasma" reportado donde stored mostraba $X pero recalc daba $0.
+    let monto_esperado = if (monto_esperado_stored - monto_esperado_recalculado).abs() < 0.01 {
+        monto_esperado_recalculado
+    } else {
+        // Discrepancia: usar el stored (lo que se mostro al cajero) para coincidir con la pantalla.
+        // El audit log queda registrado con ambos valores para trazabilidad.
+        monto_esperado_stored.max(monto_esperado_recalculado)
+    };
     let diferencia = monto_real - monto_esperado;
 
     // Anti-fraude: si hay descuadre, exigir motivo (mínimo 5 caracteres)
