@@ -4,6 +4,7 @@ import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimi
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
+import { ask } from "@tauri-apps/plugin-dialog";
 import type { Caja, ResumenCaja } from "../types";
 
 export default function CajaPage() {
@@ -531,8 +532,9 @@ export default function CajaPage() {
                     {esAdmin && esFaltante && Math.abs(dif) > 0.01 && (
                       <div style={{ marginTop: 10, padding: 8, background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.3)", borderRadius: 6, fontSize: 11 }}>
                         <div style={{ marginBottom: 6 }}>
-                          💡 <strong>Solo admin</strong>: si este descuadre es por arrastre histórico (no por error de hoy),
-                          puedes ajustar el monto esperado a $0 con un retiro de ajuste.
+                          💡 <strong>Solo admin</strong>: si no puedes encontrar el origen del descuadre,
+                          puedes ajustar el monto esperado a $0 registrando un retiro tipo [AJUSTE]
+                          con el motivo que describas arriba. Queda en el historial.
                         </div>
                         <button
                           type="button"
@@ -540,8 +542,16 @@ export default function CajaPage() {
                           style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-primary)", borderColor: "var(--color-primary)" }}
                           onClick={async () => {
                             const montoAjuste = Math.abs(dif);
-                            const motivoAjuste = motivoDescuadre.trim() || "Ajuste por descuadre arrastrado de versiones anteriores";
-                            if (!confirm(`Crear retiro de ajuste por $${montoAjuste.toFixed(2)} para llevar la caja a $0?\n\nMotivo: ${motivoAjuste}\n\nEsto registra un retiro tipo "ajuste" en el historial.`)) return;
+                            const motivoAjuste = motivoDescuadre.trim();
+                            if (!motivoAjuste) {
+                              toastError("Debes escribir un motivo del descuadre antes de ajustar.");
+                              return;
+                            }
+                            const ok = await ask(
+                              `Vas a crear un retiro de ajuste por $${montoAjuste.toFixed(2)} para llevar la caja a $0.\n\nMotivo: ${motivoAjuste}\n\nEsto queda registrado en el historial como retiro tipo [AJUSTE]. ¿Confirmar?`,
+                              { title: "Ajustar caja a $0", kind: "warning" }
+                            );
+                            if (!ok) return;
                             try {
                               await registrarRetiro(montoAjuste, `[AJUSTE] ${motivoAjuste}`, undefined, undefined);
                               toastExito("Retiro de ajuste creado. Recarga para ver el nuevo monto esperado.");
