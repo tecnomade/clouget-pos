@@ -278,15 +278,42 @@ pub async fn obtener_estado_licencia(
         };
         if demo == "1" {
             let mi_machine_id = obtener_machine_id().unwrap_or_default();
-            let nombre_negocio = {
+            // Modulos canonicos del demo — debe coincidir con activar_demo y la UI condicional.
+            let modulos_demo: Vec<String> = vec![
+                "multi_pos".to_string(),
+                "multi_almacen".to_string(),
+                "backup_cloud".to_string(),
+                "backup_premium".to_string(),
+                "servicio_tecnico".to_string(),
+                "sri_ilimitado".to_string(),
+            ];
+            let (nombre_negocio, modulos_persistidos) = {
                 let conn = db.conn.lock().map_err(|e| e.to_string())?;
-                conn.query_row(
+                let nombre = conn.query_row(
                     "SELECT value FROM config WHERE key = 'nombre_negocio'",
                     [],
                     |row| row.get::<_, String>(0),
                 )
-                .unwrap_or_else(|_| "Tienda Demo".to_string())
+                .unwrap_or_else(|_| "Tienda Demo".to_string());
+                let mods = conn.query_row(
+                    "SELECT value FROM config WHERE key = 'licencia_modulos'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_default();
+                (nombre, mods)
             };
+            // Si licencia_modulos no esta persistido (demo activado en version vieja), guardarlo
+            // ahora para que la UI active las secciones condicionales (Backup Cloud, etc).
+            let modulos_json = serde_json::to_string(&modulos_demo)
+                .unwrap_or_else(|_| "[]".to_string());
+            if modulos_persistidos != modulos_json {
+                let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES ('licencia_modulos', ?1)",
+                    rusqlite::params![&modulos_json],
+                ).ok();
+            }
             return Ok(Some(LicenciaInfo {
                 negocio: nombre_negocio,
                 email: "demo@clouget.com".to_string(),
@@ -294,7 +321,7 @@ pub async fn obtener_estado_licencia(
                 emitida: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 machine_id: mi_machine_id,
                 activa: true,
-                modulos: vec!["multi_pos".to_string(), "multi_almacen".to_string(), "backup_cloud".to_string(), "backup_premium".to_string()],
+                modulos: modulos_demo,
             }));
         }
         return Ok(None);
