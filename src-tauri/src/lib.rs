@@ -356,6 +356,7 @@ pub fn run() {
             commands::cuentas_pagar::registrar_pago_proveedor,
             commands::cuentas_pagar::historial_pagos_proveedor,
             commands::cuentas_pagar::listar_movimientos_bancarios,
+            commands::cuentas_pagar::obtener_detalle_movimiento_bancario,
             // Verificacion de transferencias (admin)
             commands::verificacion::listar_transferencias_verificacion,
             commands::verificacion::verificar_transferencia,
