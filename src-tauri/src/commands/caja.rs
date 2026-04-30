@@ -293,7 +293,18 @@ pub fn cerrar_caja(
 
     let total_retiros: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND COALESCE(tipo, 'RETIRO') = 'RETIRO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    // v2.3.46: ingresos manuales a caja (ej: ajuste por gasto erroneo de caja anterior)
+    let total_ingresos_manuales: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND tipo = 'INGRESO'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -306,7 +317,7 @@ pub fn cerrar_caja(
     // fuente de verdad confiable porque hace SUM en tiempo real de cada tabla.
     // Bonus: el frontend muestra exactamente este mismo valor (via obtener_caja_abierta
     // que tambien recalcula), asi NO hay sorpresas: lo que ves es lo que cuenta.
-    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros;
+    let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo + total_ingresos_manuales - total_gastos - total_retiros;
     let diferencia = monto_real - monto_esperado;
 
     // Anti-fraude: si hay descuadre, exigir motivo (mínimo 5 caracteres)
@@ -525,6 +536,74 @@ pub fn registrar_retiro(
     }))
 }
 
+/// Registra un INGRESO manual a caja (v2.3.46+).
+/// Casos de uso:
+///   - Compensar un gasto erroneo de una caja anterior ya cerrada
+///   - Aporte del dueño para fondear caja
+///   - Devolver dinero del cajero a la caja
+/// Solo admin puede usarlo (los cajeros no pueden inventar ingresos).
+/// Reusa la tabla retiros_caja con tipo='INGRESO' para no duplicar logica.
+#[tauri::command]
+pub fn registrar_ingreso_caja(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    monto: f64,
+    motivo: String,
+) -> Result<serde_json::Value, String> {
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard
+        .as_ref()
+        .ok_or("Debe iniciar sesión".to_string())?;
+    let usuario_nombre = sesion_actual.nombre.clone();
+    let usuario_id = sesion_actual.usuario_id;
+    let es_admin = sesion_actual.rol == "ADMIN";
+    drop(sesion_guard);
+
+    if !es_admin {
+        return Err("Solo administradores pueden registrar ingresos manuales a caja".to_string());
+    }
+    if monto <= 0.0 {
+        return Err("El monto del ingreso debe ser mayor a 0".to_string());
+    }
+    if motivo.trim().len() < 5 {
+        return Err("Debe explicar el motivo del ingreso (minimo 5 caracteres)".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let caja_id: i64 = conn
+        .query_row("SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1", [], |row| row.get(0))
+        .map_err(|_| "No hay caja abierta para registrar el ingreso".to_string())?;
+
+    conn.execute(
+        "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado, tipo)
+         VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, 'CONFIRMADO', 'INGRESO')",
+        rusqlite::params![caja_id, monto, motivo.trim(), usuario_nombre, usuario_id],
+    ).map_err(|e| e.to_string())?;
+
+    let id = conn.last_insert_rowid();
+
+    // Sumar al monto_esperado stored para consistencia inmediata
+    let _ = conn.execute(
+        "UPDATE caja SET monto_esperado = monto_esperado + ?1 WHERE id = ?2",
+        rusqlite::params![monto, caja_id],
+    );
+
+    let fecha: String = conn.query_row(
+        "SELECT fecha FROM retiros_caja WHERE id = ?1",
+        rusqlite::params![id], |row| row.get(0),
+    ).unwrap_or_default();
+
+    Ok(serde_json::json!({
+        "id": id,
+        "monto": monto,
+        "motivo": motivo.trim(),
+        "fecha": fecha,
+        "usuario": usuario_nombre,
+        "tipo": "INGRESO",
+    }))
+}
+
 #[tauri::command]
 pub fn listar_retiros_caja(
     db: State<Database>,
@@ -536,7 +615,7 @@ pub fn listar_retiros_caja(
         .prepare(
             "SELECT r.id, r.caja_id, r.monto, r.motivo, r.banco_id, r.referencia,
                     r.usuario, r.usuario_id, r.fecha, cb.nombre as banco_nombre,
-                    r.estado, r.comprobante_imagen
+                    r.estado, r.comprobante_imagen, COALESCE(r.tipo, 'RETIRO')
              FROM retiros_caja r
              LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
              WHERE r.caja_id = ?1
@@ -559,6 +638,7 @@ pub fn listar_retiros_caja(
                 "banco_nombre": row.get::<_, Option<String>>(9)?,
                 "estado": row.get::<_, Option<String>>(10)?.unwrap_or_else(|| "SIN_DEPOSITO".to_string()),
                 "comprobante_imagen": row.get::<_, Option<String>>(11)?,
+                "tipo": row.get::<_, String>(12)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -868,15 +948,25 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
         )
         .unwrap_or(0.0);
 
+    // Retiros e ingresos manuales (v2.3.46: ingresos suman, retiros restan)
     let total_retiros: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND COALESCE(tipo, 'RETIRO') = 'RETIRO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_ingresos_manuales: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND tipo = 'INGRESO'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
         .unwrap_or(0.0);
 
-    monto_inicial + total_efectivo + total_cobros_efectivo - total_gastos - total_retiros
+    monto_inicial + total_efectivo + total_cobros_efectivo + total_ingresos_manuales - total_gastos - total_retiros
 }
 
 #[tauri::command]

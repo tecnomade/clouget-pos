@@ -789,6 +789,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE retiros_caja ADD COLUMN estado TEXT NOT NULL DEFAULT 'SIN_DEPOSITO'", []);
     let _ = conn.execute("ALTER TABLE retiros_caja ADD COLUMN comprobante_imagen TEXT", []);
 
+    // v2.3.46: tipo de movimiento — 'RETIRO' (saca dinero, default) o 'INGRESO' (mete dinero).
+    // Permite registrar ingresos manuales (ej: ajustes, devoluciones de gastos erroneos
+    // de cajas cerradas, aporte de socio, etc.) sin afectar la integridad del flujo
+    // de retiros existentes. La columna existing tabla retiros_caja se reusa para no
+    // duplicar logica — solo cambia el signo en el calculo de monto_esperado.
+    let _ = conn.execute("ALTER TABLE retiros_caja ADD COLUMN tipo TEXT DEFAULT 'RETIRO'", []);
+
     // --- Migración: banco_id en pagos_proveedor ---
     let _ = conn.execute("ALTER TABLE pagos_proveedor ADD COLUMN banco_id INTEGER", []);
 

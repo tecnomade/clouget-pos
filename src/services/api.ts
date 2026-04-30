@@ -552,6 +552,11 @@ export async function historialDescuadresCaja(fechaDesde?: string, fechaHasta?: 
 export const registrarRetiro = (monto: number, motivo: string, bancoId?: number, referencia?: string) =>
   smartInvoke<any>("registrar_retiro", { monto, motivo, bancoId: bancoId ?? null, referencia: referencia ?? null });
 
+// v2.3.46+: ingreso manual a caja (solo admin)
+// Casos: compensar gasto erroneo de caja anterior, aporte del dueno, etc.
+export const registrarIngresoCaja = (monto: number, motivo: string) =>
+  smartInvoke<any>("registrar_ingreso_caja", { monto, motivo });
+
 export async function listarRetirosCaja(cajaId: number): Promise<any[]> {
   return smartInvoke("listar_retiros_caja", { cajaId });
 }

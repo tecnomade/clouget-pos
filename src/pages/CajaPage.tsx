@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -26,6 +26,10 @@ export default function CajaPage() {
   const [retiroBancoId, setRetiroBancoId] = useState<number | null>(null);
   const [retiroReferencia, setRetiroReferencia] = useState("");
   const [retiros, setRetiros] = useState<any[]>([]);
+  // v2.3.46: ingreso manual a caja (solo admin)
+  const [mostrarIngreso, setMostrarIngreso] = useState(false);
+  const [ingresoMonto, setIngresoMonto] = useState("");
+  const [ingresoMotivo, setIngresoMotivo] = useState("");
   const [cuentasBanco, setCuentasBanco] = useState<any[]>([]);
   const [confirmandoRetiroId, setConfirmandoRetiroId] = useState<number | null>(null);
   const [confirmRef, setConfirmRef] = useState("");
@@ -230,6 +234,25 @@ export default function CajaPage() {
       setRetiroMonto(""); setRetiroMotivo(""); setRetiroBancoId(null); setRetiroReferencia("");
       // Refrescar caja Y retiros para que monto_esperado se actualice inmediatamente
       // sin que el usuario tenga que navegar afuera y volver.
+      const c = await obtenerCajaAbierta();
+      setCajaAbierta(c);
+      if (c?.id) {
+        listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+        obtenerResumenCaja(c.id).then(setBreakdownCaja).catch(() => {});
+      }
+    } catch (err) { toastError("Error: " + err); }
+  };
+
+  // v2.3.46: registrar ingreso manual (solo admin)
+  const handleIngreso = async () => {
+    const monto = parseFloat(ingresoMonto);
+    if (!monto || monto <= 0) { toastError("Monto inválido"); return; }
+    if (ingresoMotivo.trim().length < 5) { toastError("Motivo: mínimo 5 caracteres"); return; }
+    try {
+      await registrarIngresoCaja(monto, ingresoMotivo.trim());
+      toastExito(`Ingreso de $${monto.toFixed(2)} registrado`);
+      setMostrarIngreso(false);
+      setIngresoMonto(""); setIngresoMotivo("");
       const c = await obtenerCajaAbierta();
       setCajaAbierta(c);
       if (c?.id) {
@@ -818,26 +841,70 @@ export default function CajaPage() {
                   onChange={(e) => setObservacion(e.target.value)}
                 />
               </div>
-              <div className="flex gap-2 mt-4">
+              <div className="flex gap-2 mt-4" style={{ flexWrap: "wrap" }}>
                 <button
                   className="btn btn-success"
-                  style={{ flex: 1, fontWeight: 600 }}
+                  style={{ flex: 1, fontWeight: 600, minWidth: 130 }}
                   onClick={() => navigate("/pos")}
                 >
                   + Nueva Venta
                 </button>
                 <button
                   className="btn btn-outline"
-                  style={{ flex: 1, borderColor: "var(--color-warning)", color: "var(--color-warning)" }}
+                  style={{ flex: 1, borderColor: "var(--color-warning)", color: "var(--color-warning)", minWidth: 130 }}
                   onClick={() => setMostrarRetiro(!mostrarRetiro)}
                 >
                   Retiro de Caja
                 </button>
-                <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => setConfirmarCierre(true)}>
+                {esAdmin && (
+                  <button
+                    className="btn btn-outline"
+                    style={{ flex: 1, borderColor: "var(--color-success)", color: "var(--color-success)", minWidth: 130 }}
+                    title="Registrar ingreso manual a caja (ej: compensar gasto erroneo de caja anterior, aporte del dueño)"
+                    onClick={() => setMostrarIngreso(!mostrarIngreso)}
+                  >
+                    + Ingreso a Caja
+                  </button>
+                )}
+                <button className="btn btn-danger" style={{ flex: 1, minWidth: 130 }} onClick={() => setConfirmarCierre(true)}>
                   Cerrar Caja
                 </button>
               </div>
             </div>
+
+            {mostrarIngreso && (
+              <div className="card" style={{ marginTop: 12, borderColor: "rgba(34,197,94,0.4)" }}>
+                <div className="card-header" style={{ color: "var(--color-success)" }}>+ Ingreso Manual a Caja (solo admin)</div>
+                <div className="card-body">
+                  <div style={{
+                    fontSize: 11, padding: 8, marginBottom: 10, borderRadius: 6,
+                    background: "rgba(34,197,94,0.08)", color: "var(--color-success)",
+                  }}>
+                    💡 Usa esta opción para casos especiales:
+                    compensar gastos erróneos de cajas cerradas, aportes del dueño, devolver dinero a caja, etc.
+                    Quedará registrado en el historial con tu nombre y motivo.
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Monto *</label>
+                      <input className="input" type="number" step="0.01" min="0" placeholder="0.00"
+                        value={ingresoMonto} onChange={e => setIngresoMonto(e.target.value)} autoFocus />
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>Motivo (mín. 5 caracteres) *</label>
+                      <input className="input" placeholder="Ej: Compensación gasto erróneo caja #42"
+                        value={ingresoMotivo} onChange={e => setIngresoMotivo(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button className="btn btn-outline" onClick={() => {
+                      setMostrarIngreso(false); setIngresoMonto(""); setIngresoMotivo("");
+                    }}>Cancelar</button>
+                    <button className="btn btn-success" onClick={handleIngreso}>Registrar Ingreso</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {mostrarRetiro && (
               <div className="card" style={{ marginTop: 12 }}>
@@ -874,23 +941,49 @@ export default function CajaPage() {
               </div>
             )}
 
-            {retiros.length > 0 && (
+            {retiros.length > 0 && (() => {
+              // Separar retiros de ingresos para totales independientes
+              const totalRetiros = retiros.filter((r: any) => (r.tipo || "RETIRO") === "RETIRO").reduce((s: number, r: any) => s + r.monto, 0);
+              const totalIngresos = retiros.filter((r: any) => r.tipo === "INGRESO").reduce((s: number, r: any) => s + r.monto, 0);
+              return (
               <div className="card" style={{ marginTop: 12 }}>
-                <div className="card-header">
-                  Retiros del día ({retiros.length})
-                  <span style={{ float: "right", fontWeight: 700, color: "var(--color-danger)" }}>
-                    -${retiros.reduce((s: number, r: any) => s + r.monto, 0).toFixed(2)}
+                <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Movimientos de caja ({retiros.length})</span>
+                  <span style={{ display: "flex", gap: 12, fontSize: 13 }}>
+                    {totalIngresos > 0 && (
+                      <span style={{ fontWeight: 700, color: "var(--color-success)" }}>
+                        Ingresos: +${totalIngresos.toFixed(2)}
+                      </span>
+                    )}
+                    {totalRetiros > 0 && (
+                      <span style={{ fontWeight: 700, color: "var(--color-danger)" }}>
+                        Retiros: -${totalRetiros.toFixed(2)}
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="card-body" style={{ padding: 0 }}>
                   <table className="table">
-                    <thead><tr><th>Hora</th><th>Monto</th><th>Motivo</th><th>Cuenta</th><th>Estado</th><th>Usuario</th></tr></thead>
+                    <thead><tr><th>Hora</th><th>Tipo</th><th>Monto</th><th>Motivo</th><th>Cuenta</th><th>Estado</th><th>Usuario</th></tr></thead>
                     <tbody>
-                      {retiros.map((r: any) => (
+                      {retiros.map((r: any) => {
+                        const esIngreso = r.tipo === "INGRESO";
+                        return (
                         <Fragment key={r.id}>
                           <tr>
                             <td style={{ fontSize: 12 }}>{r.fecha?.slice(11, 16)}</td>
-                            <td style={{ color: "var(--color-danger)", fontWeight: 600 }}>-${r.monto.toFixed(2)}</td>
+                            <td style={{ fontSize: 11 }}>
+                              <span style={{
+                                padding: "2px 6px", borderRadius: 4, fontWeight: 600,
+                                background: esIngreso ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.10)",
+                                color: esIngreso ? "var(--color-success)" : "var(--color-danger)",
+                              }}>
+                                {esIngreso ? "+ Ingreso" : "− Retiro"}
+                              </span>
+                            </td>
+                            <td style={{ color: esIngreso ? "var(--color-success)" : "var(--color-danger)", fontWeight: 600 }}>
+                              {esIngreso ? "+" : "-"}${r.monto.toFixed(2)}
+                            </td>
                             <td style={{ fontSize: 12 }}>{r.motivo || "-"}</td>
                             <td style={{ fontSize: 12 }}>{r.banco_nombre || "-"}</td>
                             <td style={{ fontSize: 12 }}>
@@ -940,12 +1033,14 @@ export default function CajaPage() {
                             </tr>
                           )}
                         </Fragment>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         )}
       </div>
