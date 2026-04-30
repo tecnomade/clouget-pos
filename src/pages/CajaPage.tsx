@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -44,6 +44,10 @@ export default function CajaPage() {
   const [depositoReferencia, setDepositoReferencia] = useState("");
   // Lista de depositos / retiros del cierre actual (para mostrar en la card de resumen)
   const [resumenRetiros, setResumenRetiros] = useState<any[]>([]);
+  // Desglose detallado de la caja abierta (gastos, retiros, ventas por forma de pago)
+  // para mostrar al cajero el por que del monto esperado.
+  const [breakdownCaja, setBreakdownCaja] = useState<any>(null);
+  const [breakdownExpandido, setBreakdownExpandido] = useState(false);
   // Modal historial descuadres
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
   const [historialTab, setHistorialTab] = useState<"sesiones" | "descuadres">("sesiones");
@@ -90,7 +94,10 @@ export default function CajaPage() {
       obtenerCajaAbierta()
         .then((c) => {
           setCajaAbierta(c);
-          if (c?.id) listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+          if (c?.id) {
+            listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+            obtenerResumenCaja(c.id).then(setBreakdownCaja).catch(() => {});
+          }
         })
         .catch(() => {});
     };
@@ -121,6 +128,10 @@ export default function CajaPage() {
     if (cajaAbierta && cajaAbierta.id) {
       listarRetirosCaja(cajaAbierta.id).then(setRetiros).catch(() => {});
       listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+      // Cargar desglose detallado para mostrar en el cierre
+      obtenerResumenCaja(cajaAbierta.id).then(setBreakdownCaja).catch(() => setBreakdownCaja(null));
+    } else {
+      setBreakdownCaja(null);
     }
   }, [cajaAbierta]);
 
@@ -223,6 +234,7 @@ export default function CajaPage() {
       setCajaAbierta(c);
       if (c?.id) {
         listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+        obtenerResumenCaja(c.id).then(setBreakdownCaja).catch(() => {});
       }
     } catch (err) { toastError("Error: " + err); }
   };
@@ -560,25 +572,129 @@ export default function CajaPage() {
                 padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
                 border: "1px solid rgba(34, 197, 94, 0.3)",
               }}>
-                {/* monto_esperado del backend YA es el valor real recalculado en el momento
-                    (= monto_inicial + ventas_efectivo + cobros_efectivo - gastos - retiros).
-                    Las filas de abajo son INFORMATIVAS — el numero final viene del backend. */}
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                  <span className="text-secondary">Ventas totales (todas formas):</span>
-                  <span className="font-bold">${(cajaAbierta.monto_ventas ?? 0).toFixed(2)}</span>
-                </div>
-                {retiros.length > 0 && (
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "var(--color-danger)" }}>
-                    <span>(-) Retiros:</span>
-                    <span>-${retiros.reduce((s: number, r: any) => s + r.monto, 0).toFixed(2)}</span>
-                  </div>
-                )}
-                <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
-                  <span style={{ fontWeight: 600, color: "var(--color-success)" }}>Monto esperado en caja (efectivo):</span>
-                  <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
-                    ${(cajaAbierta.monto_esperado ?? 0).toFixed(2)}
-                  </span>
-                </div>
+                {/* Desglose detallado del monto esperado:
+                      esperado = inicial + EFECTIVO_ventas + EFECTIVO_cobros - gastos - retiros
+                    Las TRANSFER y CREDITO se muestran solo informativamente porque NO
+                    afectan el efectivo en caja (van al banco / cuentas por cobrar). */}
+                {(() => {
+                  const b = breakdownCaja;
+                  const totalEfectivoVentas = b?.total_efectivo ?? 0;
+                  const totalTransferencia = b?.total_transferencia ?? 0;
+                  const totalCredito = b?.total_credito ?? 0;
+                  const totalCobrosEfectivo = b?.total_cobros_efectivo ?? 0;
+                  const totalCobrosBanco = b?.total_cobros_banco ?? 0;
+                  const totalGastos = b?.total_gastos ?? 0;
+                  const totalRetiros = b?.total_retiros ?? 0;
+                  const numVentas = b?.num_ventas ?? 0;
+                  const numTransfer = b?.num_ventas_transfer ?? 0;
+                  const numCredito = b?.num_ventas_credito ?? 0;
+                  const gastosLista = b?.gastos_lista ?? [];
+                  const retirosLista = b?.retiros ?? [];
+
+                  return (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                        <span className="text-secondary">Monto inicial:</span>
+                        <span className="font-bold" style={{ color: "var(--color-success)" }}>
+                          +${(cajaAbierta.monto_inicial ?? 0).toFixed(2)}
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                        <span className="text-secondary">Ventas EFECTIVO ({numVentas} totales):</span>
+                        <span className="font-bold" style={{ color: "var(--color-success)" }}>
+                          +${totalEfectivoVentas.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {totalCobrosEfectivo > 0 && (
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                          <span className="text-secondary">Cobros CXC en efectivo:</span>
+                          <span className="font-bold" style={{ color: "var(--color-success)" }}>
+                            +${totalCobrosEfectivo.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+
+                      {totalGastos > 0 && (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "var(--color-danger)" }}>
+                            <span>(−) Gastos ({gastosLista.length}):</span>
+                            <span style={{ fontWeight: 600 }}>−${totalGastos.toFixed(2)}</span>
+                          </div>
+                          {breakdownExpandido && gastosLista.map((g: any, i: number) => (
+                            <div key={`g${i}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2px 12px", color: "var(--color-text-secondary)" }}>
+                              <span>· {g.fecha?.slice(11, 16)} {g.categoria}{g.descripcion ? ` — ${g.descripcion}` : ""}</span>
+                              <span>−${g.monto.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+
+                      {totalRetiros > 0 && (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "var(--color-danger)" }}>
+                            <span>(−) Retiros ({retirosLista.length}):</span>
+                            <span style={{ fontWeight: 600 }}>−${totalRetiros.toFixed(2)}</span>
+                          </div>
+                          {breakdownExpandido && retirosLista.map((r: any, i: number) => (
+                            <div key={`r${i}`} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2px 12px", color: "var(--color-text-secondary)" }}>
+                              <span>· {r.fecha?.slice(11, 16)} {r.usuario}{r.banco_nombre ? ` → ${r.banco_nombre}` : ""}{r.motivo ? ` — ${r.motivo}` : ""}</span>
+                              <span>−${r.monto.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </>
+                      )}
+
+                      <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                        <span style={{ fontWeight: 600, color: "var(--color-success)" }}>= Monto esperado (efectivo):</span>
+                        <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
+                          ${(cajaAbierta.monto_esperado ?? 0).toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Info adicional: ventas que NO afectan efectivo */}
+                      {(totalTransferencia > 0 || totalCredito > 0 || totalCobrosBanco > 0) && (
+                        <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px dashed rgba(148,163,184,0.4)" }}>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginBottom: 4 }}>
+                            ℹ Otras formas de pago (no afectan efectivo en caja):
+                          </div>
+                          {totalTransferencia > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)" }}>
+                              <span>· Transferencia ({numTransfer} ventas):</span>
+                              <span>${totalTransferencia.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {totalCredito > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)" }}>
+                              <span>· Crédito ({numCredito} ventas):</span>
+                              <span>${totalCredito.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {totalCobrosBanco > 0 && (
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-secondary)" }}>
+                              <span>· Cobros CXC al banco:</span>
+                              <span>${totalCobrosBanco.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Toggle expandir/contraer detalle */}
+                      {(gastosLista.length > 0 || retirosLista.length > 0) && (
+                        <button type="button"
+                          onClick={() => setBreakdownExpandido(!breakdownExpandido)}
+                          style={{
+                            background: "none", border: "none", color: "var(--color-primary)",
+                            fontSize: 11, cursor: "pointer", padding: "6px 0 0", textDecoration: "underline",
+                            width: "100%", textAlign: "left",
+                          }}>
+                          {breakdownExpandido ? "▲ Ocultar detalle de gastos/retiros" : "▼ Ver detalle de gastos/retiros"}
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12 }}>Monto real contado en caja</label>

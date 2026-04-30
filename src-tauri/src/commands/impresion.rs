@@ -280,6 +280,16 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
 // ============================================
 
 /// Obtiene datos completos de una caja cerrada para el reporte
+/// Comando publico para que el frontend pueda mostrar el desglose de la caja
+/// (abierta o cerrada). Es el mismo objeto que se usa para imprimir el reporte,
+/// pero accesible desde React para mejorar la UX del cierre con info detallada
+/// (gastos individuales, ventas por forma de pago, retiros con motivo, etc.).
+#[tauri::command]
+pub fn obtener_resumen_caja(db: State<Database>, caja_id: i64) -> Result<crate::models::ResumenCajaReporte, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    obtener_datos_reporte_caja(&conn, caja_id)
+}
+
 fn obtener_datos_reporte_caja(
     conn: &rusqlite::Connection,
     caja_id: i64,

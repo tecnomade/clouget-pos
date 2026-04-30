@@ -209,6 +209,7 @@ pub fn run() {
             commands::impresion::imprimir_ticket_pdf,
             commands::impresion::imprimir_reporte_caja,
             commands::impresion::imprimir_reporte_caja_pdf,
+            commands::impresion::obtener_resumen_caja,
             commands::impresion::listar_impresoras,
             commands::impresion::listar_impresoras_cached,
             commands::impresion::refrescar_impresoras,
@@ -355,6 +356,10 @@ pub fn run() {
             commands::cuentas_pagar::registrar_pago_proveedor,
             commands::cuentas_pagar::historial_pagos_proveedor,
             commands::cuentas_pagar::listar_movimientos_bancarios,
+            // Verificacion de transferencias (admin)
+            commands::verificacion::listar_transferencias_verificacion,
+            commands::verificacion::verificar_transferencia,
+            commands::verificacion::contar_transferencias_pendientes,
             // Servicio Técnico
             commands::servicio_tecnico::crear_orden_servicio,
             commands::servicio_tecnico::actualizar_orden_servicio,

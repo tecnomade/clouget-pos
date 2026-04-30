@@ -15,6 +15,7 @@ pub fn registrar_venta(
         .ok_or("Debe iniciar sesión para registrar ventas".to_string())?;
     let usuario_nombre = sesion_actual.nombre.clone();
     let usuario_id = sesion_actual.usuario_id;
+    let es_admin = sesion_actual.rol == "ADMIN";
     drop(sesion_guard);
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -153,13 +154,32 @@ pub fn registrar_venta(
         _ => "NO_APLICA",
     };
 
+    // === Verificacion de transferencia (v2.3.33+) ===
+    // Si la venta es TRANSFER (puro o como parte de un MIXTO), determinar el pago_estado:
+    //  - Si el usuario es ADMIN: 'VERIFICADO' automaticamente (admin se valida a si mismo)
+    //  - Si es cajero:           'REGISTRADO' (queda pendiente para que admin revise despues)
+    // Si NO es transferencia: 'NO_APLICA' (no requiere verificacion)
+    let es_transfer_venta = matches!(venta.forma_pago.to_uppercase().as_str(), "TRANSFER" | "TRANSFERENCIA");
+    let es_transfer_mixto = venta.pagos.as_ref()
+        .map(|pgs| pgs.iter().any(|p| matches!(p.forma_pago.to_uppercase().as_str(), "TRANSFER" | "TRANSFERENCIA")))
+        .unwrap_or(false);
+    let requiere_verificacion = es_transfer_venta || es_transfer_mixto;
+    let pago_estado_inicial: &str = if !requiere_verificacion { "NO_APLICA" }
+        else if es_admin { "VERIFICADO" }
+        else { "REGISTRADO" };
+    let verificado_por_inicial: Option<i64> = if pago_estado_inicial == "VERIFICADO" { Some(usuario_id) } else { None };
+    let fecha_verificacion_inicial: Option<String> = if pago_estado_inicial == "VERIFICADO" {
+        Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
+    } else { None };
+
     // Insertar cabecera de venta
     conn.execute(
         "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva,
          descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
          tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision,
-         banco_id, referencia_pago, comprobante_imagen)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+         banco_id, referencia_pago, comprobante_imagen,
+         pago_estado, verificado_por, fecha_verificacion)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         rusqlite::params![
             numero,
             venta.cliente_id.unwrap_or(1),
@@ -182,6 +202,9 @@ pub fn registrar_venta(
             venta.banco_id,
             venta.referencia_pago,
             venta.comprobante_imagen,
+            pago_estado_inicial,
+            verificado_por_inicial,
+            fecha_verificacion_inicial,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -471,12 +494,24 @@ pub fn registrar_venta(
                 return Err(format!("La suma de pagos (${:.2}) no coincide con el total (${:.2})", suma, total));
             }
 
-            // Insertar cada pago en pagos_venta
+            // Insertar cada pago en pagos_venta. Para componentes TRANSFER, marcar el
+            // estado de verificacion segun rol del usuario (igual que la venta misma).
             for p in pagos {
+                let pf = p.forma_pago.to_uppercase();
+                let es_pago_transfer = matches!(pf.as_str(), "TRANSFER" | "TRANSFERENCIA");
+                let p_estado: &str = if !es_pago_transfer { "NO_APLICA" }
+                    else if es_admin { "VERIFICADO" }
+                    else { "REGISTRADO" };
+                let p_verif_por: Option<i64> = if p_estado == "VERIFICADO" { Some(usuario_id) } else { None };
+                let p_verif_fecha: Option<String> = if p_estado == "VERIFICADO" {
+                    Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
+                } else { None };
                 conn.execute(
-                    "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia, comprobante_imagen)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    rusqlite::params![venta_id, p.forma_pago, p.monto, p.banco_id, p.referencia, p.comprobante_imagen],
+                    "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia, comprobante_imagen,
+                                              pago_estado, verificado_por, fecha_verificacion)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    rusqlite::params![venta_id, p.forma_pago, p.monto, p.banco_id, p.referencia, p.comprobante_imagen,
+                                      p_estado, p_verif_por, p_verif_fecha],
                 ).map_err(|e| format!("Error guardando pago: {}", e))?;
             }
 

@@ -266,14 +266,22 @@ pub fn listar_movimientos_bancarios(
 ) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Build UNION ALL query for all bank movement sources
+    // Build UNION ALL query for all bank movement sources.
+    // origen_id = ID de la fila en la tabla origen (venta.id, retiro.id, etc.)
+    //   permite al frontend abrir el detalle del documento al expandir la fila.
+    // pago_estado = solo aplica a VENTA/PAGO_VENTA: REGISTRADO/VERIFICADO/RECHAZADO/NO_APLICA
+    // tiene_comprobante = bool, indica si hay imagen adjunta para mostrar boton "Ver comprobante"
     let mut sql = String::from(
-        "SELECT tipo, referencia, monto, fecha, banco_nombre, detalle, banco_id FROM (
+        "SELECT tipo, referencia, monto, fecha, banco_nombre, detalle, banco_id,
+                origen_id, pago_estado, tiene_comprobante FROM (
             -- Ventas con un solo pago tipo TRANSFER (forma_pago en ventas)
             SELECT 'VENTA' as tipo, v.numero as referencia, v.total as monto, v.fecha,
                    cb.nombre as banco_nombre,
                    COALESCE(cl.nombre, 'Consumidor Final') as detalle,
-                   v.banco_id
+                   v.banco_id,
+                   v.id as origen_id,
+                   COALESCE(v.pago_estado, 'NO_APLICA') as pago_estado,
+                   CASE WHEN v.comprobante_imagen IS NOT NULL AND v.comprobante_imagen != '' THEN 1 ELSE 0 END as tiene_comprobante
             FROM ventas v
             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
             LEFT JOIN clientes cl ON v.cliente_id = cl.id
@@ -285,10 +293,13 @@ pub fn listar_movimientos_bancarios(
             UNION ALL
 
             -- Ventas MIXTAS: porcion bancaria desde pagos_venta
-            SELECT 'VENTA' as tipo, v.numero as referencia, pv.monto as monto, v.fecha,
+            SELECT 'PAGO_VENTA' as tipo, v.numero as referencia, pv.monto as monto, v.fecha,
                    cb.nombre as banco_nombre,
-                   COALESCE(cl.nombre, 'Consumidor Final') as detalle,
-                   pv.banco_id
+                   COALESCE(cl.nombre, 'Consumidor Final') || ' (mixto)' as detalle,
+                   pv.banco_id,
+                   pv.id as origen_id,
+                   COALESCE(pv.pago_estado, 'NO_APLICA') as pago_estado,
+                   CASE WHEN pv.comprobante_imagen IS NOT NULL AND pv.comprobante_imagen != '' THEN 1 ELSE 0 END as tiene_comprobante
             FROM pagos_venta pv
             INNER JOIN ventas v ON v.id = pv.venta_id
             LEFT JOIN cuentas_banco cb ON pv.banco_id = cb.id
@@ -304,7 +315,10 @@ pub fn listar_movimientos_bancarios(
                    r.monto, r.fecha,
                    cb.nombre as banco_nombre,
                    r.motivo as detalle,
-                   r.banco_id
+                   r.banco_id,
+                   r.id as origen_id,
+                   'NO_APLICA' as pago_estado,
+                   CASE WHEN r.comprobante_imagen IS NOT NULL AND r.comprobante_imagen != '' THEN 1 ELSE 0 END as tiene_comprobante
             FROM retiros_caja r
             LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
             WHERE r.banco_id IS NOT NULL
@@ -316,7 +330,10 @@ pub fn listar_movimientos_bancarios(
                    pp.monto, pp.fecha,
                    cb.nombre as banco_nombre,
                    p.nombre as detalle,
-                   pp.banco_id
+                   pp.banco_id,
+                   pp.id as origen_id,
+                   'NO_APLICA' as pago_estado,
+                   0 as tiene_comprobante
             FROM pagos_proveedor pp
             LEFT JOIN cuentas_banco cb ON pp.banco_id = cb.id
             LEFT JOIN cuentas_por_pagar cp ON pp.cuenta_id = cp.id
@@ -330,7 +347,10 @@ pub fn listar_movimientos_bancarios(
                    pc.monto, pc.fecha,
                    cb.nombre as banco_nombre,
                    cl.nombre as detalle,
-                   pc.banco_id
+                   pc.banco_id,
+                   pc.id as origen_id,
+                   'NO_APLICA' as pago_estado,
+                   CASE WHEN pc.comprobante_imagen IS NOT NULL AND pc.comprobante_imagen != '' THEN 1 ELSE 0 END as tiene_comprobante
             FROM pagos_cuenta pc
             LEFT JOIN cuentas_banco cb ON pc.banco_id = cb.id
             LEFT JOIN cuentas_por_cobrar cc ON pc.cuenta_id = cc.id
@@ -348,46 +368,248 @@ pub fn listar_movimientos_bancarios(
 
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
 
-    let resultado = if let Some(bid) = banco_id {
-        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta, bid], |row| {
-            let tipo: String = row.get(0)?;
-            let monto_raw: f64 = row.get(2)?;
-            // Egresos son negativos (retiros y pagos proveedor)
-            // INGRESOS al banco (positivos): VENTA por transfer, COBRO de credito, RETIRO de caja depositado al banco
-            // EGRESOS del banco (negativos): PAGO a proveedor por transferencia
-            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" || tipo == "RETIRO_CAJA" { monto_raw } else { -monto_raw };
-            Ok(serde_json::json!({
-                "tipo": tipo,
-                "referencia": row.get::<_, String>(1)?,
-                "monto": monto,
-                "fecha": row.get::<_, String>(3)?,
-                "banco_nombre": row.get::<_, Option<String>>(4)?,
-                "detalle": row.get::<_, Option<String>>(5)?,
-            }))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
+    let mapper = |row: &rusqlite::Row| -> rusqlite::Result<serde_json::Value> {
+        let tipo: String = row.get(0)?;
+        let monto_raw: f64 = row.get(2)?;
+        // INGRESOS al banco (positivos): VENTA / PAGO_VENTA por transfer, COBRO de credito,
+        // RETIRO de caja depositado al banco
+        // EGRESOS del banco (negativos): PAGO a proveedor por transferencia
+        let es_ingreso = matches!(tipo.as_str(), "VENTA" | "PAGO_VENTA" | "COBRO_CREDITO" | "RETIRO_CAJA");
+        let monto = if es_ingreso { monto_raw } else { -monto_raw };
+        Ok(serde_json::json!({
+            "tipo": tipo,
+            "referencia": row.get::<_, String>(1)?,
+            "monto": monto,
+            "fecha": row.get::<_, String>(3)?,
+            "banco_nombre": row.get::<_, Option<String>>(4)?,
+            "detalle": row.get::<_, Option<String>>(5)?,
+            "origen_id": row.get::<_, i64>(7)?,
+            "pago_estado": row.get::<_, String>(8)?,
+            "tiene_comprobante": row.get::<_, i64>(9)? != 0,
+        }))
+    };
+    let resultado: Vec<serde_json::Value> = if let Some(bid) = banco_id {
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta, bid], mapper)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     } else {
-        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], |row| {
-            let tipo: String = row.get(0)?;
-            let monto_raw: f64 = row.get(2)?;
-            // INGRESOS al banco (positivos): VENTA por transfer, COBRO de credito, RETIRO de caja depositado al banco
-            // EGRESOS del banco (negativos): PAGO a proveedor por transferencia
-            let monto = if tipo == "VENTA" || tipo == "COBRO_CREDITO" || tipo == "RETIRO_CAJA" { monto_raw } else { -monto_raw };
-            Ok(serde_json::json!({
-                "tipo": tipo,
-                "referencia": row.get::<_, String>(1)?,
-                "monto": monto,
-                "fecha": row.get::<_, String>(3)?,
-                "banco_nombre": row.get::<_, Option<String>>(4)?,
-                "detalle": row.get::<_, Option<String>>(5)?,
-            }))
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
+        stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], mapper)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
     };
 
     Ok(resultado)
+}
+
+/// Devuelve el detalle completo de un movimiento bancario para mostrarlo al expandir
+/// la fila. Cada `tipo` tiene su propia estructura. El frontend renderiza segun el tipo.
+#[tauri::command]
+pub fn obtener_detalle_movimiento_bancario(
+    db: State<Database>,
+    tipo: String,
+    origen_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    match tipo.as_str() {
+        "VENTA" => {
+            let v: serde_json::Value = conn.query_row(
+                "SELECT v.id, v.numero, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva, v.iva,
+                        v.descuento, v.total, v.forma_pago, v.tipo_documento, v.estado_sri,
+                        v.observacion, v.usuario, v.banco_id, cb.nombre as banco_nombre,
+                        v.referencia_pago, v.comprobante_imagen,
+                        COALESCE(v.pago_estado, 'NO_APLICA'), v.verificado_por,
+                        u.nombre as verificador, v.fecha_verificacion, v.motivo_verificacion,
+                        cl.nombre as cliente_nombre, cl.cedula_ruc, cl.telefono, cl.email
+                 FROM ventas v
+                 LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+                 LEFT JOIN clientes cl ON v.cliente_id = cl.id
+                 LEFT JOIN usuarios u ON v.verificado_por = u.id
+                 WHERE v.id = ?1",
+                rusqlite::params![origen_id],
+                |r| Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "numero": r.get::<_, String>(1)?,
+                    "fecha": r.get::<_, String>(2)?,
+                    "subtotal_sin_iva": r.get::<_, f64>(3)?,
+                    "subtotal_con_iva": r.get::<_, f64>(4)?,
+                    "iva": r.get::<_, f64>(5)?,
+                    "descuento": r.get::<_, f64>(6)?,
+                    "total": r.get::<_, f64>(7)?,
+                    "forma_pago": r.get::<_, String>(8)?,
+                    "tipo_documento": r.get::<_, String>(9)?,
+                    "estado_sri": r.get::<_, Option<String>>(10)?,
+                    "observacion": r.get::<_, Option<String>>(11)?,
+                    "usuario": r.get::<_, Option<String>>(12)?,
+                    "banco_id": r.get::<_, Option<i64>>(13)?,
+                    "banco_nombre": r.get::<_, Option<String>>(14)?,
+                    "referencia_pago": r.get::<_, Option<String>>(15)?,
+                    "comprobante_imagen": r.get::<_, Option<String>>(16)?,
+                    "pago_estado": r.get::<_, String>(17)?,
+                    "verificado_por": r.get::<_, Option<i64>>(18)?,
+                    "verificador_nombre": r.get::<_, Option<String>>(19)?,
+                    "fecha_verificacion": r.get::<_, Option<String>>(20)?,
+                    "motivo_verificacion": r.get::<_, Option<String>>(21)?,
+                    "cliente_nombre": r.get::<_, Option<String>>(22)?,
+                    "cliente_cedula": r.get::<_, Option<String>>(23)?,
+                    "cliente_telefono": r.get::<_, Option<String>>(24)?,
+                    "cliente_email": r.get::<_, Option<String>>(25)?,
+                })),
+            ).map_err(|e| format!("Venta no encontrada: {}", e))?;
+            // Items de la venta
+            let mut stmt = conn.prepare(
+                "SELECT p.nombre, vd.cantidad, vd.precio_unitario, vd.subtotal
+                 FROM venta_detalles vd JOIN productos p ON p.id = vd.producto_id
+                 WHERE vd.venta_id = ?1"
+            ).map_err(|e| e.to_string())?;
+            let items: Vec<serde_json::Value> = stmt.query_map(
+                rusqlite::params![origen_id], |r| Ok(serde_json::json!({
+                    "nombre": r.get::<_, String>(0)?,
+                    "cantidad": r.get::<_, f64>(1)?,
+                    "precio_unitario": r.get::<_, f64>(2)?,
+                    "subtotal": r.get::<_, f64>(3)?,
+                }))
+            ).map_err(|e| e.to_string())?
+              .collect::<Result<Vec<_>, _>>()
+              .unwrap_or_default();
+            let mut out = v;
+            out["items"] = serde_json::Value::Array(items);
+            Ok(out)
+        }
+        "PAGO_VENTA" => {
+            // Componente TRANSFER de venta MIXTO
+            let p: serde_json::Value = conn.query_row(
+                "SELECT pv.id, pv.venta_id, v.numero as venta_numero, v.fecha as venta_fecha,
+                        v.total as venta_total, pv.monto, pv.forma_pago,
+                        pv.banco_id, cb.nombre as banco_nombre, pv.referencia, pv.comprobante_imagen,
+                        COALESCE(pv.pago_estado, 'NO_APLICA'), pv.verificado_por,
+                        u.nombre as verificador, pv.fecha_verificacion, pv.motivo_verificacion,
+                        cl.nombre as cliente_nombre, v.usuario as cajero
+                 FROM pagos_venta pv
+                 JOIN ventas v ON v.id = pv.venta_id
+                 LEFT JOIN cuentas_banco cb ON pv.banco_id = cb.id
+                 LEFT JOIN clientes cl ON v.cliente_id = cl.id
+                 LEFT JOIN usuarios u ON pv.verificado_por = u.id
+                 WHERE pv.id = ?1",
+                rusqlite::params![origen_id],
+                |r| Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "venta_id": r.get::<_, i64>(1)?,
+                    "venta_numero": r.get::<_, String>(2)?,
+                    "venta_fecha": r.get::<_, String>(3)?,
+                    "venta_total": r.get::<_, f64>(4)?,
+                    "monto": r.get::<_, f64>(5)?,
+                    "forma_pago": r.get::<_, String>(6)?,
+                    "banco_id": r.get::<_, Option<i64>>(7)?,
+                    "banco_nombre": r.get::<_, Option<String>>(8)?,
+                    "referencia": r.get::<_, Option<String>>(9)?,
+                    "comprobante_imagen": r.get::<_, Option<String>>(10)?,
+                    "pago_estado": r.get::<_, String>(11)?,
+                    "verificado_por": r.get::<_, Option<i64>>(12)?,
+                    "verificador_nombre": r.get::<_, Option<String>>(13)?,
+                    "fecha_verificacion": r.get::<_, Option<String>>(14)?,
+                    "motivo_verificacion": r.get::<_, Option<String>>(15)?,
+                    "cliente_nombre": r.get::<_, Option<String>>(16)?,
+                    "cajero": r.get::<_, Option<String>>(17)?,
+                })),
+            ).map_err(|e| format!("Pago no encontrado: {}", e))?;
+            Ok(p)
+        }
+        "RETIRO_CAJA" => {
+            let r: serde_json::Value = conn.query_row(
+                "SELECT r.id, r.caja_id, r.fecha, r.monto, r.motivo, r.usuario,
+                        r.banco_id, cb.nombre as banco_nombre, r.referencia, r.comprobante_imagen,
+                        COALESCE(r.estado, 'SIN_DEPOSITO')
+                 FROM retiros_caja r
+                 LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
+                 WHERE r.id = ?1",
+                rusqlite::params![origen_id],
+                |r| Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "caja_id": r.get::<_, i64>(1)?,
+                    "fecha": r.get::<_, String>(2)?,
+                    "monto": r.get::<_, f64>(3)?,
+                    "motivo": r.get::<_, Option<String>>(4)?,
+                    "usuario": r.get::<_, Option<String>>(5)?,
+                    "banco_id": r.get::<_, Option<i64>>(6)?,
+                    "banco_nombre": r.get::<_, Option<String>>(7)?,
+                    "referencia": r.get::<_, Option<String>>(8)?,
+                    "comprobante_imagen": r.get::<_, Option<String>>(9)?,
+                    "estado": r.get::<_, String>(10)?,
+                })),
+            ).map_err(|e| format!("Retiro no encontrado: {}", e))?;
+            Ok(r)
+        }
+        "PAGO_PROVEEDOR" => {
+            let p: serde_json::Value = conn.query_row(
+                "SELECT pp.id, pp.cuenta_id, pp.fecha, pp.monto, pp.forma_pago,
+                        pp.numero_comprobante, pp.banco_id, cb.nombre as banco_nombre,
+                        pr.nombre as proveedor_nombre, pr.ruc as proveedor_ruc,
+                        pr.telefono as proveedor_tel,
+                        cp.factura_numero, cp.fecha_factura, cp.monto_total
+                 FROM pagos_proveedor pp
+                 LEFT JOIN cuentas_banco cb ON pp.banco_id = cb.id
+                 LEFT JOIN cuentas_por_pagar cp ON pp.cuenta_id = cp.id
+                 LEFT JOIN proveedores pr ON cp.proveedor_id = pr.id
+                 WHERE pp.id = ?1",
+                rusqlite::params![origen_id],
+                |r| Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "cuenta_id": r.get::<_, Option<i64>>(1)?,
+                    "fecha": r.get::<_, String>(2)?,
+                    "monto": r.get::<_, f64>(3)?,
+                    "forma_pago": r.get::<_, String>(4)?,
+                    "numero_comprobante": r.get::<_, Option<String>>(5)?,
+                    "banco_id": r.get::<_, Option<i64>>(6)?,
+                    "banco_nombre": r.get::<_, Option<String>>(7)?,
+                    "proveedor_nombre": r.get::<_, Option<String>>(8)?,
+                    "proveedor_ruc": r.get::<_, Option<String>>(9)?,
+                    "proveedor_telefono": r.get::<_, Option<String>>(10)?,
+                    "factura_numero": r.get::<_, Option<String>>(11)?,
+                    "fecha_factura": r.get::<_, Option<String>>(12)?,
+                    "factura_total": r.get::<_, Option<f64>>(13)?,
+                })),
+            ).map_err(|e| format!("Pago a proveedor no encontrado: {}", e))?;
+            Ok(p)
+        }
+        "COBRO_CREDITO" => {
+            let p: serde_json::Value = conn.query_row(
+                "SELECT pc.id, pc.cuenta_id, pc.fecha, pc.monto, pc.forma_pago,
+                        pc.numero_comprobante, pc.banco_id, cb.nombre as banco_nombre,
+                        pc.comprobante_imagen, pc.observacion,
+                        cl.nombre as cliente_nombre, cl.cedula_ruc as cliente_cedula,
+                        cl.telefono as cliente_telefono,
+                        cc.venta_id, vv.numero as venta_numero, cc.monto_total, cc.saldo
+                 FROM pagos_cuenta pc
+                 LEFT JOIN cuentas_banco cb ON pc.banco_id = cb.id
+                 LEFT JOIN cuentas_por_cobrar cc ON pc.cuenta_id = cc.id
+                 LEFT JOIN clientes cl ON cc.cliente_id = cl.id
+                 LEFT JOIN ventas vv ON cc.venta_id = vv.id
+                 WHERE pc.id = ?1",
+                rusqlite::params![origen_id],
+                |r| Ok(serde_json::json!({
+                    "id": r.get::<_, i64>(0)?,
+                    "cuenta_id": r.get::<_, Option<i64>>(1)?,
+                    "fecha": r.get::<_, String>(2)?,
+                    "monto": r.get::<_, f64>(3)?,
+                    "forma_pago": r.get::<_, String>(4)?,
+                    "numero_comprobante": r.get::<_, Option<String>>(5)?,
+                    "banco_id": r.get::<_, Option<i64>>(6)?,
+                    "banco_nombre": r.get::<_, Option<String>>(7)?,
+                    "comprobante_imagen": r.get::<_, Option<String>>(8)?,
+                    "observacion": r.get::<_, Option<String>>(9)?,
+                    "cliente_nombre": r.get::<_, Option<String>>(10)?,
+                    "cliente_cedula": r.get::<_, Option<String>>(11)?,
+                    "cliente_telefono": r.get::<_, Option<String>>(12)?,
+                    "venta_id": r.get::<_, Option<i64>>(13)?,
+                    "venta_numero": r.get::<_, Option<String>>(14)?,
+                    "credito_total": r.get::<_, Option<f64>>(15)?,
+                    "credito_saldo": r.get::<_, Option<f64>>(16)?,
+                })),
+            ).map_err(|e| format!("Cobro no encontrado: {}", e))?;
+            Ok(p)
+        }
+        _ => Err(format!("Tipo de movimiento no soportado: {}", tipo)),
+    }
 }

@@ -1306,3 +1306,28 @@ export const cobrarOrdenServicio = (ordenId: number, formaPago: string, montoRec
   smartInvoke<number>("cobrar_orden_servicio", { ordenId, formaPago, montoRecibido, itemsRepuestos });
 export const imprimirOrdenServicioPdf = (ordenId: number) =>
   smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId });
+
+// === Resumen detallado de caja (abierta o cerrada) ===
+// Retorna ResumenCajaReporte con desglose por forma de pago, lista de gastos,
+// retiros con motivo, ventas detalladas. Usado en CajaPage para que el cajero
+// entienda de donde sale el monto esperado (gastos, retiros restan; ventas
+// efectivo suman).
+export const obtenerResumenCaja = (cajaId: number) =>
+  smartInvoke<any>("obtener_resumen_caja", { cajaId });
+
+// === Verificacion de transferencias (admin) ===
+export const listarTransferenciasVerificacion = (soloPendientes?: boolean, fechaDesde?: string, fechaHasta?: string) =>
+  smartInvoke<any[]>("listar_transferencias_verificacion", {
+    soloPendientes: soloPendientes ?? null,
+    fechaDesde: fechaDesde ?? null,
+    fechaHasta: fechaHasta ?? null,
+  });
+export const verificarTransferencia = (origen: string, origenId: number, aprobar: boolean, motivo?: string) =>
+  smartInvoke<void>("verificar_transferencia", { origen, origenId, aprobar, motivo: motivo ?? null });
+export const contarTransferenciasPendientes = () =>
+  smartInvoke<number>("contar_transferencias_pendientes");
+
+// === Detalle expandido de un movimiento bancario ===
+export const obtenerDetalleMovimientoBancario = (tipo: string, origenId: number) =>
+  smartInvoke<any>("obtener_detalle_movimiento_bancario", { tipo, origenId });
+

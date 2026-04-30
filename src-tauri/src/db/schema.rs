@@ -576,6 +576,39 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN referencia_pago TEXT", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN comprobante_imagen TEXT", []);
 
+    // Verificacion de transferencias (v2.3.33+):
+    // pago_estado:
+    //   - 'NO_APLICA'   → no es transferencia (efectivo/credito puro)
+    //   - 'REGISTRADO'  → cajero la ingreso, pendiente de revision admin
+    //   - 'VERIFICADO'  → admin confirmo (visto el comprobante en banco)
+    //   - 'RECHAZADO'   → admin marco como invalida (con motivo en obs)
+    // verificado_por: usuario_id del admin que verifico
+    // fecha_verificacion: timestamp de la verificacion
+    // motivo_verificacion: nota libre (especialmente cuando se rechaza)
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN verificado_por INTEGER", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN fecha_verificacion TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN motivo_verificacion TEXT", []);
+    // Marcar todas las TRANSFER existentes (anteriores a esta migracion) como VERIFICADO
+    // para no contaminar el panel admin con historico que no fue revisado.
+    let _ = conn.execute(
+        "UPDATE ventas SET pago_estado = 'VERIFICADO'
+         WHERE pago_estado IS NULL OR pago_estado = ''
+         OR (UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND pago_estado = 'NO_APLICA')",
+        [],
+    );
+
+    // Mismas columnas para pagos_venta (caso de venta MIXTO con porcion TRANSFER)
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN verificado_por INTEGER", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN fecha_verificacion TEXT", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN motivo_verificacion TEXT", []);
+    let _ = conn.execute(
+        "UPDATE pagos_venta SET pago_estado = 'VERIFICADO'
+         WHERE UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND (pago_estado IS NULL OR pago_estado = 'NO_APLICA')",
+        [],
+    );
+
     // Config: reglas de comprobante para cajero
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_referencia', '0')", []);
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_comprobante', '0')", []);
