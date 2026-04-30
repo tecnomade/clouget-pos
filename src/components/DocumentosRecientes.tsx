@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { listarDocumentosRecientes, eliminarBorrador, obtenerVenta, imprimirTicket, imprimirTicketPdf, imprimirRide, imprimirGuiaRemisionPdf, generarCotizacionPdf, generarNotaVentaPdf } from "../services/api";
+import { listarDocumentosRecientes, eliminarBorrador, obtenerVenta, imprimirTicket, imprimirTicketPdf, imprimirRide, imprimirGuiaRemisionPdf, generarCotizacionPdf, generarNotaVentaPdf, convertirGuiaAVenta, listarCuentasBanco } from "../services/api";
 import { useToast } from "./Toast";
-import type { DocumentoReciente, VentaCompleta } from "../types";
+import type { DocumentoReciente, VentaCompleta, CuentaBanco } from "../types";
 
 interface Props {
   abierto: boolean;
@@ -16,6 +16,16 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
   const [filtro, setFiltro] = useState<string>("TODOS");
   const [cargando, setCargando] = useState(false);
 
+  // Estados del modal de conversion guia -> venta (igual que en GuiasRemisionPage)
+  const [convertir, setConvertir] = useState<VentaCompleta | null>(null);
+  const [convFormaPago, setConvFormaPago] = useState<string>("EFECTIVO");
+  const [convMonto, setConvMonto] = useState<string>("");
+  const [convBancoId, setConvBancoId] = useState<number | null>(null);
+  const [convReferencia, setConvReferencia] = useState<string>("");
+  const [convEsFiado, setConvEsFiado] = useState<boolean>(false);
+  const [convirtiendo, setConvirtiendo] = useState<boolean>(false);
+  const [cuentasBanco, setCuentasBanco] = useState<CuentaBanco[]>([]);
+
   const cargar = useCallback(async () => {
     try {
       const docs = await listarDocumentosRecientes(20);
@@ -24,7 +34,10 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
   }, []);
 
   useEffect(() => {
-    if (abierto) cargar();
+    if (abierto) {
+      cargar();
+      listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+    }
   }, [abierto, cargar]);
 
   if (!abierto) return null;
@@ -44,6 +57,55 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
       toastError("Error al cargar: " + err);
     } finally {
       setCargando(false);
+    }
+  };
+
+  // Abrir el modal de conversion de guia (igual que en GuiasRemisionPage).
+  // Trae los detalles completos para mostrar items y total al cajero.
+  const abrirConvertir = async (doc: DocumentoReciente) => {
+    setCargando(true);
+    try {
+      const vc = await obtenerVenta(doc.id);
+      setConvertir(vc);
+      setConvFormaPago("EFECTIVO");
+      setConvMonto("");
+      setConvBancoId(null);
+      setConvReferencia("");
+      setConvEsFiado(false);
+    } catch (err) {
+      toastError("Error al cargar guia: " + err);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // Ejecutar la conversion. Usa convertir_guia_a_venta del backend que NO
+  // descuenta stock de nuevo (ya descontado al crear la guia).
+  const ejecutarConversion = async () => {
+    if (!convertir || !convertir.venta.id) return;
+    if (convFormaPago === "TRANSFERENCIA" && !convBancoId) {
+      toastError("Seleccione cuenta bancaria"); return;
+    }
+    setConvirtiendo(true);
+    try {
+      const monto = convFormaPago === "EFECTIVO" && !convEsFiado
+        ? (parseFloat(convMonto) || convertir.venta.total)
+        : convertir.venta.total;
+      const res = await convertirGuiaAVenta({
+        guiaId: convertir.venta.id,
+        formaPago: convFormaPago === "TRANSFERENCIA" ? "TRANSFER" : convFormaPago,
+        montoRecibido: monto,
+        esFiado: convEsFiado,
+        bancoId: convBancoId ?? undefined,
+        referenciaPago: convReferencia.trim() || undefined,
+      });
+      toastExito(`Guía convertida a venta ${res.venta.numero}`);
+      setConvertir(null);
+      cargar();
+    } catch (err) {
+      toastError("Error al convertir: " + err);
+    } finally {
+      setConvirtiendo(false);
     }
   };
 
@@ -181,20 +243,29 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
 
                   {/* Fila 3: Acciones */}
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {(doc.tipo_estado === "BORRADOR" || doc.tipo_estado === "COTIZACION" || doc.tipo_estado === "GUIA_REMISION") && (
+                    {(doc.tipo_estado === "BORRADOR" || doc.tipo_estado === "COTIZACION") && (
                       <>
                         <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
                           disabled={cargando}
                           onClick={() => handleAbrir(doc)}>
                           {doc.tipo_estado === "BORRADOR" ? "Abrir" : "Convertir"}
                         </button>
-                        {doc.tipo_estado !== "GUIA_REMISION" && (
-                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)" }}
-                            onClick={() => handleEliminar(doc)}>
-                            Eliminar
-                          </button>
-                        )}
+                        <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)" }}
+                          onClick={() => handleEliminar(doc)}>
+                          Eliminar
+                        </button>
                       </>
+                    )}
+                    {doc.tipo_estado === "GUIA_REMISION" && (
+                      <button className="btn" style={{
+                        fontSize: 10, padding: "2px 8px", fontWeight: 600,
+                        background: "var(--color-primary)", color: "white", border: "none",
+                      }}
+                        disabled={cargando}
+                        title="Convertir a venta cobrada (no descuenta stock de nuevo, ya se descontó al crear la guía)"
+                        onClick={() => abrirConvertir(doc)}>
+                        💰 Facturar
+                      </button>
                     )}
                     {doc.tipo_estado === "COMPLETADA" && (
                       <>
@@ -263,6 +334,161 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
           to { transform: translateX(0); }
         }
       `}</style>
+
+      {/* Modal de conversion guia -> venta (mismo flujo que GuiasRemisionPage).
+          Usa convertir_guia_a_venta del backend que crea la venta SIN tocar
+          inventario (ya descontado al crear la guia). Asi no hay doble descuento. */}
+      {convertir && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setConvertir(null); }}
+        >
+          <div className="card" style={{ width: 550, maxHeight: "85vh", overflow: "auto" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div className="card-header flex justify-between items-center">
+              <span>Facturar Guía {convertir.venta.numero}</span>
+              <button className="btn btn-outline" style={{ padding: "2px 8px" }}
+                onClick={() => setConvertir(null)}>x</button>
+            </div>
+            <div className="card-body">
+              <div style={{
+                fontSize: 11, padding: 8, marginBottom: 12,
+                background: "rgba(96, 165, 250, 0.08)", border: "1px solid rgba(96, 165, 250, 0.25)",
+                borderRadius: 6, color: "var(--color-primary)",
+              }}>
+                ℹ El stock NO se descuenta de nuevo (ya se descontó al crear la guía).
+                Esto solo registra el cobro y marca la guía como FACTURADA.
+              </div>
+
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>
+                Cliente: {convertir.cliente_nombre || "Consumidor Final"}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos</div>
+              <table className="table" style={{ fontSize: 12, marginBottom: 16 }}>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th className="text-right">Cant.</th>
+                    <th className="text-right">P.Unit</th>
+                    <th className="text-right">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {convertir.detalles.map((d, i) => (
+                    <tr key={i}>
+                      <td>{d.nombre_producto || `Producto #${d.producto_id}`}</td>
+                      <td className="text-right">{d.cantidad}</td>
+                      <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
+                      <td className="text-right">${d.subtotal.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ borderTop: "2px solid var(--color-border)", paddingTop: 8, marginBottom: 16 }}>
+                <div className="flex justify-between" style={{ fontWeight: 700, fontSize: 16 }}>
+                  <span>TOTAL:</span>
+                  <span className="text-success">${convertir.venta.total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Forma de pago */}
+              <div style={{ background: "var(--color-surface-alt)", borderRadius: 8, padding: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--color-text-secondary)" }}>
+                  Forma de Pago
+                </div>
+
+                <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                  <button className="btn" style={{
+                    flex: 1, padding: "8px 0", fontWeight: 600, fontSize: 13,
+                    background: convFormaPago === "EFECTIVO" && !convEsFiado ? "rgba(74, 222, 128, 0.2)" : "transparent",
+                    color: convFormaPago === "EFECTIVO" && !convEsFiado ? "var(--color-success)" : "var(--color-text-secondary)",
+                    border: convFormaPago === "EFECTIVO" && !convEsFiado ? "1px solid rgba(74, 222, 128, 0.4)" : "1px solid var(--color-border)",
+                  }} onClick={() => { setConvFormaPago("EFECTIVO"); setConvEsFiado(false); }}>
+                    Efectivo
+                  </button>
+                  <button className="btn" style={{
+                    flex: 1, padding: "8px 0", fontWeight: 600, fontSize: 13,
+                    background: convFormaPago === "TRANSFERENCIA" ? "rgba(96, 165, 250, 0.2)" : "transparent",
+                    color: convFormaPago === "TRANSFERENCIA" ? "var(--color-primary)" : "var(--color-text-secondary)",
+                    border: convFormaPago === "TRANSFERENCIA" ? "1px solid rgba(96, 165, 250, 0.4)" : "1px solid var(--color-border)",
+                  }} onClick={() => { setConvFormaPago("TRANSFERENCIA"); setConvEsFiado(false); }}>
+                    Transfer.
+                  </button>
+                  <button className="btn" style={{
+                    flex: 1, padding: "8px 0", fontWeight: 600, fontSize: 13,
+                    background: convEsFiado ? "rgba(251, 191, 36, 0.2)" : "transparent",
+                    color: convEsFiado ? "var(--color-warning)" : "var(--color-text-secondary)",
+                    border: convEsFiado ? "1px solid rgba(251, 191, 36, 0.4)" : "1px solid var(--color-border)",
+                  }} onClick={() => { setConvFormaPago("EFECTIVO"); setConvEsFiado(true); }}>
+                    Crédito
+                  </button>
+                </div>
+
+                {convFormaPago === "EFECTIVO" && !convEsFiado && (
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                      Monto recibido (vacío = exacto)
+                    </label>
+                    <input type="number" className="input" style={{ width: "100%", fontSize: 14 }}
+                      placeholder={`$${convertir.venta.total.toFixed(2)}`}
+                      value={convMonto} onChange={(e) => setConvMonto(e.target.value)} />
+                  </div>
+                )}
+
+                {convFormaPago === "TRANSFERENCIA" && (
+                  <>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                        Cuenta bancaria *
+                      </label>
+                      <select className="input" style={{ width: "100%", fontSize: 13 }}
+                        value={convBancoId ?? ""}
+                        onChange={(e) => setConvBancoId(e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">Seleccionar...</option>
+                        {cuentasBanco.filter(c => c.activa).map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.nombre} {c.numero_cuenta ? `- ${c.numero_cuenta}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ fontSize: 12, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                        Referencia
+                      </label>
+                      <input type="text" className="input" style={{ width: "100%", fontSize: 13 }}
+                        placeholder="Nro. comprobante"
+                        value={convReferencia} onChange={(e) => setConvReferencia(e.target.value)} />
+                    </div>
+                  </>
+                )}
+
+                {convEsFiado && (
+                  <div style={{
+                    padding: 8, background: "rgba(251, 191, 36, 0.1)", borderRadius: 6,
+                    fontSize: 11, color: "var(--color-warning)", marginBottom: 8,
+                  }}>
+                    Se creará cuenta por cobrar al cliente por este monto.
+                  </div>
+                )}
+
+                <button className="btn" style={{
+                  width: "100%", padding: "10px 0", fontWeight: 700, fontSize: 14, marginTop: 8,
+                  background: "var(--color-success)", color: "white", border: "none",
+                }}
+                  disabled={convirtiendo}
+                  onClick={ejecutarConversion}>
+                  {convirtiendo ? "Convirtiendo..." : "💰 Confirmar y Facturar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
