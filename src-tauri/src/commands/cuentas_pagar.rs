@@ -421,7 +421,7 @@ pub fn obtener_detalle_movimiento_bancario(
                         v.referencia_pago, v.comprobante_imagen,
                         COALESCE(v.pago_estado, 'NO_APLICA'), v.verificado_por,
                         u.nombre as verificador, v.fecha_verificacion, v.motivo_verificacion,
-                        cl.nombre as cliente_nombre, cl.cedula_ruc, cl.telefono, cl.email
+                        cl.nombre as cliente_nombre, cl.identificacion as cliente_cedula, cl.telefono, cl.email
                  FROM ventas v
                  LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
                  LEFT JOIN clientes cl ON v.cliente_id = cl.id
@@ -542,16 +542,19 @@ pub fn obtener_detalle_movimiento_bancario(
             Ok(r)
         }
         "PAGO_PROVEEDOR" => {
+            // v2.3.51 FIX: cuentas_por_pagar NO tiene factura_numero ni fecha_factura.
+            // Esos datos viven en `compras` (compra_id es la FK). LEFT JOIN compras.
             let p: serde_json::Value = conn.query_row(
                 "SELECT pp.id, pp.cuenta_id, pp.fecha, pp.monto, pp.forma_pago,
                         pp.numero_comprobante, pp.banco_id, cb.nombre as banco_nombre,
                         pr.nombre as proveedor_nombre, pr.ruc as proveedor_ruc,
                         pr.telefono as proveedor_tel,
-                        cp.factura_numero, cp.fecha_factura, cp.monto_total
+                        co.numero_factura, co.fecha as fecha_factura, cp.monto_total
                  FROM pagos_proveedor pp
                  LEFT JOIN cuentas_banco cb ON pp.banco_id = cb.id
                  LEFT JOIN cuentas_por_pagar cp ON pp.cuenta_id = cp.id
                  LEFT JOIN proveedores pr ON cp.proveedor_id = pr.id
+                 LEFT JOIN compras co ON cp.compra_id = co.id
                  WHERE pp.id = ?1",
                 rusqlite::params![origen_id],
                 |r| Ok(serde_json::json!({
@@ -578,7 +581,7 @@ pub fn obtener_detalle_movimiento_bancario(
                 "SELECT pc.id, pc.cuenta_id, pc.fecha, pc.monto, pc.forma_pago,
                         pc.numero_comprobante, pc.banco_id, cb.nombre as banco_nombre,
                         pc.comprobante_imagen, pc.observacion,
-                        cl.nombre as cliente_nombre, cl.cedula_ruc as cliente_cedula,
+                        cl.nombre as cliente_nombre, cl.identificacion as cliente_cedula,
                         cl.telefono as cliente_telefono,
                         cc.venta_id, vv.numero as venta_numero, cc.monto_total, cc.saldo
                  FROM pagos_cuenta pc
