@@ -2431,6 +2431,105 @@ pub fn guardar_chofer(db: State<Database>, nombre: String, placa: Option<String>
     Ok(())
 }
 
+// === Vehiculos guardados (autocomplete de placas en guias) ===
+#[tauri::command]
+pub fn listar_vehiculos(db: State<Database>) -> Result<Vec<(i64, String, Option<String>)>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT id, placa, descripcion FROM vehiculos_transporte ORDER BY placa")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn guardar_vehiculo(db: State<Database>, placa: String, descripcion: Option<String>) -> Result<(), String> {
+    let placa = placa.trim().to_uppercase();
+    if placa.is_empty() { return Err("Placa vacia".to_string()); }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // INSERT OR REPLACE no funciona limpio por el UNIQUE — usamos INSERT OR IGNORE + UPDATE descripcion
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO vehiculos_transporte (placa, descripcion) VALUES (?1, ?2)",
+        rusqlite::params![placa, descripcion.as_deref().map(|d| d.trim())],
+    );
+    if let Some(desc) = descripcion {
+        if !desc.trim().is_empty() {
+            let _ = conn.execute(
+                "UPDATE vehiculos_transporte SET descripcion = ?1 WHERE placa = ?2",
+                rusqlite::params![desc.trim(), placa],
+            );
+        }
+    }
+    Ok(())
+}
+
+// === Direcciones de entrega del cliente (autocomplete en guias) ===
+#[tauri::command]
+pub fn listar_direcciones_cliente(db: State<Database>, cliente_id: i64) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, direccion, etiqueta, contacto_nombre, contacto_telefono, referencia
+         FROM direcciones_cliente WHERE cliente_id = ?1
+         ORDER BY id DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![cliente_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, i64>(0)?,
+            "direccion": row.get::<_, String>(1)?,
+            "etiqueta": row.get::<_, Option<String>>(2)?,
+            "contacto_nombre": row.get::<_, Option<String>>(3)?,
+            "contacto_telefono": row.get::<_, Option<String>>(4)?,
+            "referencia": row.get::<_, Option<String>>(5)?,
+        }))
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+#[tauri::command]
+pub fn guardar_direccion_cliente(
+    db: State<Database>,
+    cliente_id: i64,
+    direccion: String,
+    etiqueta: Option<String>,
+) -> Result<i64, String> {
+    let dir = direccion.trim();
+    if dir.is_empty() { return Err("Direccion vacia".to_string()); }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // Evitar duplicados exactos para el mismo cliente
+    let existe: Option<i64> = conn.query_row(
+        "SELECT id FROM direcciones_cliente WHERE cliente_id = ?1 AND direccion = ?2 LIMIT 1",
+        rusqlite::params![cliente_id, dir], |r| r.get(0),
+    ).ok();
+    if let Some(id) = existe {
+        // Actualizar etiqueta si vino una nueva
+        if let Some(et) = etiqueta {
+            if !et.trim().is_empty() {
+                let _ = conn.execute(
+                    "UPDATE direcciones_cliente SET etiqueta = ?1 WHERE id = ?2",
+                    rusqlite::params![et.trim(), id],
+                );
+            }
+        }
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO direcciones_cliente (cliente_id, direccion, etiqueta) VALUES (?1, ?2, ?3)",
+        rusqlite::params![cliente_id, dir, etiqueta.as_deref().map(|e| e.trim())],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[tauri::command]
+pub fn eliminar_direccion_cliente(db: State<Database>, id: i64) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM direcciones_cliente WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn cambiar_estado_guia(
     db: State<Database>,

@@ -181,6 +181,11 @@ pub fn run() {
             commands::ventas::convertir_guia_a_venta,
             commands::ventas::listar_choferes,
             commands::ventas::guardar_chofer,
+            commands::ventas::listar_vehiculos,
+            commands::ventas::guardar_vehiculo,
+            commands::ventas::listar_direcciones_cliente,
+            commands::ventas::guardar_direccion_cliente,
+            commands::ventas::eliminar_direccion_cliente,
             commands::ventas::cambiar_estado_guia,
             // Caja
             commands::caja::abrir_caja,

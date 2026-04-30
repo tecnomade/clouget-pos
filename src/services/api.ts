@@ -345,6 +345,33 @@ export async function listarChoferes(): Promise<[number, string, string | null][
   return smartInvoke("listar_choferes", {});
 }
 
+// === Vehiculos guardados (placas para guias) ===
+export async function listarVehiculos(): Promise<[number, string, string | null][]> {
+  return smartInvoke("listar_vehiculos", {});
+}
+export async function guardarVehiculo(placa: string, descripcion?: string): Promise<void> {
+  return smartInvoke("guardar_vehiculo", { placa, descripcion: descripcion || null });
+}
+
+// === Direcciones de entrega del cliente ===
+export interface DireccionCliente {
+  id: number;
+  direccion: string;
+  etiqueta?: string | null;
+  contacto_nombre?: string | null;
+  contacto_telefono?: string | null;
+  referencia?: string | null;
+}
+export async function listarDireccionesCliente(clienteId: number): Promise<DireccionCliente[]> {
+  return smartInvoke("listar_direcciones_cliente", { clienteId });
+}
+export async function guardarDireccionCliente(clienteId: number, direccion: string, etiqueta?: string): Promise<number> {
+  return smartInvoke("guardar_direccion_cliente", { clienteId, direccion, etiqueta: etiqueta || null });
+}
+export async function eliminarDireccionCliente(id: number): Promise<void> {
+  return smartInvoke("eliminar_direccion_cliente", { id });
+}
+
 export async function guardarChofer(nombre: string, placa?: string): Promise<void> {
   return smartInvoke("guardar_chofer", { nombre, placa: placa || null });
 }

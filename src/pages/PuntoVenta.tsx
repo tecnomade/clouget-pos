@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
+import type { DireccionCliente } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
@@ -99,6 +100,9 @@ export default function PuntoVenta() {
   const [guiaDireccion, setGuiaDireccion] = useState("");
   const [guardandoGuia, setGuardandoGuia] = useState(false);
   const [choferesGuardados, setChoferesGuardados] = useState<[number, string, string | null][]>([]);
+  // v2.3.43: vehiculos guardados (placas) + direcciones del cliente
+  const [vehiculosGuardados, setVehiculosGuardados] = useState<[number, string, string | null][]>([]);
+  const [direccionesCliente, setDireccionesCliente] = useState<DireccionCliente[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
@@ -942,8 +946,15 @@ export default function PuntoVenta() {
     if (carrito.length === 0) return;
     // Prellenar dirección del cliente
     setGuiaDireccion(clienteSeleccionado?.direccion || "");
-    // Cargar choferes guardados
+    // Cargar choferes y vehiculos guardados (autocomplete)
     listarChoferes().then(setChoferesGuardados).catch(() => {});
+    listarVehiculos().then(setVehiculosGuardados).catch(() => {});
+    // Cargar direcciones de entrega guardadas para este cliente
+    if (clienteSeleccionado?.id && clienteSeleccionado.id !== 1) {
+      listarDireccionesCliente(clienteSeleccionado.id).then(setDireccionesCliente).catch(() => {});
+    } else {
+      setDireccionesCliente([]);
+    }
     setMostrarModalGuia(true);
   }, [carrito, clienteSeleccionado]);
 
@@ -989,6 +1000,18 @@ export default function PuntoVenta() {
       // Guardar chofer para autocompletar futuro
       if (guiaChofer.trim()) {
         guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});
+      }
+      // Guardar placa como vehiculo (independiente del chofer) si es nueva
+      if (guiaPlaca.trim()) {
+        guardarVehiculo(guiaPlaca.trim()).catch(() => {});
+      }
+      // Guardar direccion del cliente si es nueva (solo clientes identificados)
+      if (clienteSeleccionado?.id && clienteSeleccionado.id !== 1 && guiaDireccion.trim()) {
+        const dirNueva = guiaDireccion.trim();
+        const yaExiste = direccionesCliente.some(d => d.direccion === dirNueva);
+        if (!yaExiste) {
+          guardarDireccionCliente(clienteSeleccionado.id, dirNueva).catch(() => {});
+        }
       }
       setCarrito([]);
       setMontoRecibido("");
@@ -2111,30 +2134,73 @@ export default function PuntoVenta() {
                 Se descontara stock al crear la guia. Todos los campos son opcionales.
               </p>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Placa del vehiculo</label>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  Placa del vehiculo
+                  {vehiculosGuardados.length > 0 && (
+                    <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 6, fontWeight: 400 }}>
+                      ({vehiculosGuardados.length} guardadas, escribe nueva o elige existente)
+                    </span>
+                  )}
+                </label>
                 <input className="input" placeholder="Ej: ABC-1234" value={guiaPlaca}
+                  list="vehiculos-list"
                   onChange={(e) => setGuiaPlaca(e.target.value.toUpperCase())} autoFocus />
+                <datalist id="vehiculos-list">
+                  {vehiculosGuardados.map(v => (
+                    <option key={v[0]} value={v[1]}>{v[2] || ""}</option>
+                  ))}
+                </datalist>
               </div>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Chofer / Transportista</label>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  Chofer / Transportista
+                  {choferesGuardados.length > 0 && (
+                    <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 6, fontWeight: 400 }}>
+                      ({choferesGuardados.length} guardados)
+                    </span>
+                  )}
+                </label>
                 <input className="input" placeholder="Nombre del chofer" value={guiaChofer}
                   list="choferes-list"
                   onChange={(e) => {
                     setGuiaChofer(e.target.value);
-                    // Si selecciona un chofer guardado, prellenar placa
+                    // Si selecciona un chofer guardado, prellenar placa (si esta vacia)
                     const match = choferesGuardados.find(c => c[1] === e.target.value);
                     if (match && match[2] && !guiaPlaca) setGuiaPlaca(match[2]);
                   }} />
                 <datalist id="choferes-list">
                   {choferesGuardados.map(c => (
-                    <option key={c[0]} value={c[1]}>{c[2] ? `Placa: ${c[2]}` : ""}</option>
+                    <option key={c[0]} value={c[1]}>{c[2] ? `Placa habitual: ${c[2]}` : ""}</option>
                   ))}
                 </datalist>
               </div>
               <div>
-                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Direccion de destino</label>
-                <input className="input" placeholder="Direccion de entrega" value={guiaDireccion}
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  Direccion de destino
+                </label>
+                {direccionesCliente.length > 0 && (
+                  <select className="input mb-1" style={{ marginBottom: 4 }}
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) setGuiaDireccion(e.target.value);
+                    }}>
+                    <option value="">— Direcciones guardadas del cliente —</option>
+                    {direccionesCliente.map(d => (
+                      <option key={d.id} value={d.direccion}>
+                        {d.etiqueta ? `[${d.etiqueta}] ` : ""}{d.direccion}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input className="input" placeholder="Direccion de entrega (puedes escribir nueva)"
+                  value={guiaDireccion}
                   onChange={(e) => setGuiaDireccion(e.target.value)} />
+                {clienteSeleccionado?.id && clienteSeleccionado.id !== 1 && guiaDireccion.trim() &&
+                 !direccionesCliente.some(d => d.direccion === guiaDireccion.trim()) && (
+                  <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 3 }}>
+                    💾 Esta dirección se guardará en el cliente para usarla después
+                  </div>
+                )}
               </div>
               <div style={{ fontSize: 12, padding: 8, borderRadius: "var(--radius)", background: "rgba(251, 146, 60, 0.1)", color: "var(--color-warning)" }}>
                 {carrito.length} producto(s) — Total: ${total.toFixed(2)}
