@@ -115,30 +115,40 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
 pub fn eliminar_gasto(db: State<Database>, id: i64) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Leer monto y caja del gasto antes de borrarlo (para revertir monto_esperado)
+    // Leer monto y caja del gasto antes de borrarlo
     let (monto, caja_id_opt): (f64, Option<i64>) = conn.query_row(
         "SELECT monto, caja_id FROM gastos WHERE id = ?1",
         rusqlite::params![id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).map_err(|_| "Gasto no encontrado".to_string())?;
 
+    // v2.3.45 ANTI-FRAUDE: no permitir eliminar gastos cuya caja ya fue cerrada.
+    // Esto preserva la integridad del historial — una caja cerrada es un cierre
+    // firmado, no debe modificarse despues. Si el gasto fue un error, la unica
+    // opcion es registrar otro movimiento de compensacion en la caja actual.
+    if let Some(cid) = caja_id_opt {
+        let estado: String = conn.query_row(
+            "SELECT estado FROM caja WHERE id = ?1",
+            rusqlite::params![cid],
+            |r| r.get(0),
+        ).unwrap_or_else(|_| "DESCONOCIDA".to_string());
+        if estado != "ABIERTA" {
+            return Err(format!(
+                "No se puede eliminar este gasto: pertenece a la caja #{} que ya fue cerrada. Para corregir un gasto incorrecto en una caja cerrada, registra un nuevo gasto/ingreso de compensacion en la caja actual.",
+                cid
+            ));
+        }
+    }
+
     conn.execute("DELETE FROM gastos WHERE id = ?1", rusqlite::params![id])
         .map_err(|e| e.to_string())?;
 
-    // v2.3.44 FIX: devolver el monto al monto_esperado stored al eliminar gasto
-    // (si la caja sigue abierta — si ya cerro, no tocar; el descuadre era historico)
+    // Devolver el monto al monto_esperado stored (caja abierta confirmada arriba)
     if let Some(cid) = caja_id_opt {
-        let abierta: bool = conn.query_row(
-            "SELECT estado FROM caja WHERE id = ?1",
-            rusqlite::params![cid],
-            |r| r.get::<_, String>(0),
-        ).map(|s| s == "ABIERTA").unwrap_or(false);
-        if abierta {
-            let _ = conn.execute(
-                "UPDATE caja SET monto_esperado = monto_esperado + ?1 WHERE id = ?2",
-                rusqlite::params![monto, cid],
-            );
-        }
+        let _ = conn.execute(
+            "UPDATE caja SET monto_esperado = monto_esperado + ?1 WHERE id = ?2",
+            rusqlite::params![monto, cid],
+        );
     }
 
     Ok(())
