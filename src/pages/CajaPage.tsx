@@ -42,6 +42,8 @@ export default function CajaPage() {
   const [depositoMonto, setDepositoMonto] = useState("");
   const [depositoBancoId, setDepositoBancoId] = useState<number | null>(null);
   const [depositoReferencia, setDepositoReferencia] = useState("");
+  // Lista de depositos / retiros del cierre actual (para mostrar en la card de resumen)
+  const [resumenRetiros, setResumenRetiros] = useState<any[]>([]);
   // Modal historial descuadres
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
   const [historialTab, setHistorialTab] = useState<"sesiones" | "descuadres">("sesiones");
@@ -136,6 +138,10 @@ export default function CajaPage() {
       setMontoInicial("");
       setMotivoApertura("");
       setUltimoCierre(null);
+      // Limpiar retiros y resumen de cierre anterior para evitar mezclas visuales
+      setRetiros([]);
+      setResumenRetiros([]);
+      setResumen(null);
       toastExito("Caja abierta correctamente");
     } catch (err) {
       const msg = String(err);
@@ -166,6 +172,11 @@ export default function CajaPage() {
       setMontoReal("");
       setObservacion("");
       setMotivoDescuadre("");
+      // Cargar lista de depositos/retiros para mostrar en la card del resumen
+      // (incluye los que se hicieron antes del cierre + los nuevos post-cierre)
+      if (res.caja?.id) {
+        listarRetirosCaja(res.caja.id).then(setResumenRetiros).catch(() => setResumenRetiros([]));
+      }
       toastExito("Caja cerrada correctamente");
       return true;
     } catch (err) {
@@ -192,6 +203,8 @@ export default function CajaPage() {
 
   const handleFinalizarTurno = async () => {
     setResumen(null);
+    setResumenRetiros([]);
+    setRetiros([]);
     // El backend ya cerro la sesion, solo actualizamos el frontend
     await cerrarSesion();
   };
@@ -334,6 +347,59 @@ export default function CajaPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Lista de depositos / retiros del cierre — auto-refresca al registrar
+                  un deposito post-cierre, asi el usuario ve inmediatamente el saldo restante. */}
+              {resumenRetiros.length > 0 && (() => {
+                const totalDep = resumenRetiros.reduce((s: number, r: any) => s + r.monto, 0);
+                const efectivoRestante = (resumen.caja.monto_real ?? 0) - totalDep;
+                return (
+                  <div style={{
+                    borderTop: "1px solid var(--color-border)", marginTop: 12, paddingTop: 12,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <strong style={{ fontSize: 13 }}>Depósitos / retiros registrados ({resumenRetiros.length})</strong>
+                      <span style={{ fontWeight: 700, color: "var(--color-danger)" }}>
+                        -${totalDep.toFixed(2)}
+                      </span>
+                    </div>
+                    <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid var(--color-border)", borderRadius: 6 }}>
+                      {resumenRetiros.map((r: any) => (
+                        <div key={r.id} style={{
+                          display: "grid",
+                          gridTemplateColumns: "60px 80px 1fr 80px",
+                          gap: 8, padding: "6px 10px", fontSize: 12,
+                          borderBottom: "1px solid var(--color-border)",
+                        }}>
+                          <span>{r.fecha?.slice(11, 16)}</span>
+                          <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>-${r.monto.toFixed(2)}</span>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.banco_nombre || r.motivo || "—"}
+                          </span>
+                          <span style={{
+                            fontSize: 10, padding: "2px 6px", borderRadius: 4, textAlign: "center",
+                            background: r.estado === "DEPOSITADO" ? "rgba(34,197,94,0.15)"
+                              : r.estado === "EN_TRANSITO" ? "rgba(245,158,11,0.15)"
+                              : "rgba(148,148,148,0.15)",
+                            color: r.estado === "DEPOSITADO" ? "var(--color-success)"
+                              : r.estado === "EN_TRANSITO" ? "var(--color-warning)"
+                              : "var(--color-text-secondary)",
+                          }}>
+                            {r.estado === "DEPOSITADO" ? "OK" : r.estado === "EN_TRANSITO" ? "Pdte" : "Sin dep"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 13 }}>
+                      <span className="text-secondary">Efectivo restante en caja:</span>
+                      <strong style={{ color: efectivoRestante >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                        ${efectivoRestante.toFixed(2)}
+                      </strong>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Botones de impresion */}
               <div className="flex gap-2 mt-4">
                 <button
@@ -1254,6 +1320,9 @@ export default function CajaPage() {
                     toastExito("Depósito registrado");
                     setMostrarDeposito(false);
                     setDepositoMonto(""); setDepositoBancoId(null); setDepositoReferencia("");
+                    // Refrescar la lista de depositos en la card del resumen para que se vea
+                    // inmediatamente sin tener que finalizar turno y volver a mirar.
+                    listarRetirosCaja(resumen.caja.id).then(setResumenRetiros).catch(() => {});
                   } catch (err) { toastError("Error: " + err); }
                 }}>
                 Registrar depósito
