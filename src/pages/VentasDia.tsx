@@ -46,8 +46,10 @@ export default function VentasDia() {
   const [sriPagoVenta, setSriPagoVenta] = useState<{ id: number; numero: string } | null>(null);
   const [sriFormaPagoCredito, setSriFormaPagoCredito] = useState<string>("20");
   // Modal: anular venta
-  const [anularVentaModal, setAnularVentaModal] = useState<{ id: number; numero: string } | null>(null);
+  // v2.3.50: incluye forma_pago + total para mostrar pregunta condicional sobre efectivo devuelto
+  const [anularVentaModal, setAnularVentaModal] = useState<{ id: number; numero: string; forma_pago?: string; total?: number } | null>(null);
   const [anularMotivo, setAnularMotivo] = useState<string>("");
+  const [anularEfectivoDevuelto, setAnularEfectivoDevuelto] = useState<boolean>(true);
   const [reintentandoEmail, setReintentandoEmail] = useState<number | null>(null);
   const [emailVenta, setEmailVenta] = useState<Venta | null>(null);
   const [enviandoEmail, setEnviandoEmail] = useState(false);
@@ -784,7 +786,7 @@ export default function VentasDia() {
                               background: "rgba(239, 68, 68, 0.08)",
                             }}
                               title="Anular la venta completa y reintegrar stock"
-                              onClick={() => v.id && setAnularVentaModal({ id: v.id, numero: v.numero })}>
+                              onClick={() => v.id && setAnularVentaModal({ id: v.id, numero: v.numero, forma_pago: v.forma_pago, total: v.total })}>
                               🗑 Anular
                             </button>
                           )}
@@ -1041,15 +1043,42 @@ export default function VentasDia() {
                 placeholder="Ej: Venta duplicada, error del cajero, cliente cancelo..."
                 value={anularMotivo}
                 onChange={(e) => setAnularMotivo(e.target.value)} />
+
+              {/* v2.3.50: si la venta era EFECTIVO o MIXTO, preguntar si el efectivo
+                  se devolvio al cliente. Determina si debe restar del monto_esperado. */}
+              {anularVentaModal.forma_pago && ["EFECTIVO", "MIXTO"].includes(anularVentaModal.forma_pago.toUpperCase()) && (
+                <div style={{
+                  marginTop: 12, padding: 10,
+                  background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
+                  borderRadius: 6, fontSize: 12,
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--color-warning)" }}>
+                    💵 Esta venta fue {anularVentaModal.forma_pago === "MIXTO" ? "MIXTA con efectivo" : "en EFECTIVO"} (${anularVentaModal.total?.toFixed(2)})
+                  </div>
+                  <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
+                    <input type="checkbox" checked={anularEfectivoDevuelto}
+                      onChange={(e) => setAnularEfectivoDevuelto(e.target.checked)}
+                      style={{ marginTop: 3 }} />
+                    <span>
+                      <strong>Ya devolví el efectivo al cliente</strong>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        ✅ Marcado: la caja se ajusta restando el efectivo (cliente recibió el dinero).<br/>
+                        ⬜ Desmarcado: el efectivo queda en caja como sobrante (anulación contable, cliente nunca lo recibió).
+                      </div>
+                    </span>
+                  </label>
+                </div>
+              )}
+
               <div className="flex gap-2" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-                <button className="btn btn-outline" onClick={() => { setAnularVentaModal(null); setAnularMotivo(""); }}>Cancelar</button>
+                <button className="btn btn-outline" onClick={() => { setAnularVentaModal(null); setAnularMotivo(""); setAnularEfectivoDevuelto(true); }}>Cancelar</button>
                 <button className="btn btn-danger"
                   disabled={!anularMotivo.trim()}
                   onClick={async () => {
                     try {
-                      await anularVenta(anularVentaModal.id, anularMotivo.trim());
+                      await anularVenta(anularVentaModal.id, anularMotivo.trim(), anularEfectivoDevuelto);
                       toastExito(`Venta ${anularVentaModal.numero} anulada`);
-                      setAnularVentaModal(null); setAnularMotivo("");
+                      setAnularVentaModal(null); setAnularMotivo(""); setAnularEfectivoDevuelto(true);
                       await cargar();
                     } catch (err) { toastError("Error: " + err); }
                   }}>

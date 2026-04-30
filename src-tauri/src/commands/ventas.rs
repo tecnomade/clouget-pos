@@ -147,6 +147,26 @@ pub fn registrar_venta(
         0.0
     };
 
+    // v2.3.50 VALIDACION: anti-fraude — si la venta NO es fiada y NO usa pagos mixtos,
+    // el monto_recibido debe cubrir el total. Antes el backend permitia ventas con
+    // monto_recibido < total sin fiado, dejando "deudas fantasma" sin registro de CXC.
+    let usa_mixto = venta.pagos.as_ref().map(|p| !p.is_empty()).unwrap_or(false);
+    if !venta.es_fiado && !usa_mixto {
+        // Para EFECTIVO y TARJETA exigimos cubrir el total. TRANSFER/CREDITO en single-method
+        // pueden pasar (transfer = banco, no efectivo; credito = se asume fiado).
+        let forma_up = venta.forma_pago.to_uppercase();
+        if matches!(forma_up.as_str(), "EFECTIVO" | "TARJETA") {
+            if venta.monto_recibido + 0.01 < total {
+                return Err(format!(
+                    "Monto recibido (${:.2}) es menor al total (${:.2}). Diferencia: ${:.2}. \
+                     Si el cliente queda debiendo, marca la venta como CREDITO. \
+                     Si paga con varios metodos, usa Pago Mixto.",
+                    venta.monto_recibido, total, total - venta.monto_recibido
+                ));
+            }
+        }
+    }
+
     // Determinar estado_sri segun tipo de documento
     let estado_sri = match venta.tipo_documento.as_str() {
         "FACTURA" => "PENDIENTE",
@@ -2710,6 +2730,11 @@ pub fn anular_venta(
     sesion: State<SesionState>,
     venta_id: i64,
     motivo: String,
+    // v2.3.50: si la venta fue EFECTIVO/MIXTO con efectivo, este flag indica si el cajero
+    // YA devolvio el dinero al cliente (caso normal: cliente reclamó). Si es false, el
+    // cajero conservó el efectivo (caso: anulación por error contable, cliente nunca llegó).
+    // Default true para mantener compatibilidad con el flujo anterior.
+    efectivo_devuelto: Option<bool>,
 ) -> Result<(), String> {
     // Verificar sesion y permisos (solo admin o con permiso crear_nota_credito)
     let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
@@ -2844,7 +2869,7 @@ pub fn anular_venta(
         "SELECT forma_pago, COALESCE(estado, '') = 'PENDIENTE' AS es_fiado FROM ventas WHERE id = ?1",
         rusqlite::params![venta_id], |r| Ok((r.get(0)?, r.get::<_, bool>(1)? as i32)),
     ).unwrap_or(("EFECTIVO".to_string(), 0));
-    let efectivo_a_restar: f64 = if forma_pago_v == "MIXTO" {
+    let efectivo_de_venta: f64 = if forma_pago_v == "MIXTO" {
         conn.query_row(
             "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
              WHERE venta_id = ?1 AND UPPER(forma_pago) = 'EFECTIVO'",
@@ -2852,6 +2877,15 @@ pub fn anular_venta(
         ).unwrap_or(0.0)
     } else if forma_pago_v == "EFECTIVO" && es_fiado_v == 0 {
         total
+    } else {
+        0.0
+    };
+    // Si el cajero devolvio el efectivo al cliente (default true) → restar de
+    // monto_esperado (caja sale el dinero). Si NO lo devolvio (anulación por
+    // error contable, cliente nunca llegó) → no restar; el efectivo queda en
+    // caja como sobrante explicable al cierre.
+    let efectivo_a_restar: f64 = if efectivo_devuelto.unwrap_or(true) {
+        efectivo_de_venta
     } else {
         0.0
     };

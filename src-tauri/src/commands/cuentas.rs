@@ -258,9 +258,12 @@ pub fn registrar_pago_cuenta(
         .map_err(|e| e.to_string())?;
 
         if forma_pago == "EFECTIVO" {
-            // Sumar al monto esperado de caja abierta (solo efectivo)
+            // v2.3.50 FIX: solo sumar al monto_esperado, NO a monto_ventas.
+            // Antes inflaba monto_ventas (campo "ventas totales" en cierre) con
+            // cobros de CXC, dando reportes con numeros mas altos de los reales.
+            // Los cobros son entradas a caja pero no son VENTAS nuevas.
             let _ = conn.execute(
-                "UPDATE caja SET monto_ventas = monto_ventas + ?1, monto_esperado = monto_esperado + ?1
+                "UPDATE caja SET monto_esperado = monto_esperado + ?1
                  WHERE estado = 'ABIERTA'",
                 rusqlite::params![pago.monto],
             );
