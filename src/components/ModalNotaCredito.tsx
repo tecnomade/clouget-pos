@@ -12,6 +12,10 @@ interface ItemNC {
   precio_unitario: number;
   descuento: number;
   iva_porcentaje: number;
+  /// v2.3.48: si true → devuelve dinero Y stock al inventario.
+  /// Si false → solo descuento de valor (cliente conserva el producto).
+  /// Util cuando el producto se daño y das compensacion sin que devuelva el item.
+  devolver_stock: boolean;
 }
 
 interface ModalNotaCreditoProps {
@@ -88,6 +92,7 @@ export default function ModalNotaCredito({
             precio_unitario: d.precio_unitario,
             descuento: d.descuento,
             iva_porcentaje: d.iva_porcentaje,
+            devolver_stock: true, // default: cliente trae el producto fisicamente
           }))
         );
         setCargando(false);
@@ -159,6 +164,7 @@ export default function ModalNotaCredito({
           precio_unitario: it.precio_unitario,
           descuento: it.descuento,
           iva_porcentaje: it.iva_porcentaje,
+          devolver_stock: it.devolver_stock,
         }));
 
         const nc = await crearDevolucionInterna(ventaId, motivo.trim(), itemsData);
@@ -320,6 +326,15 @@ export default function ModalNotaCredito({
             <label style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, display: "block" }}>
               Items a {esDevolucionInterna ? "devolver" : "incluir en la NC"}
             </label>
+            {esDevolucionInterna && (
+              <div style={{
+                fontSize: 11, padding: 6, marginBottom: 6, borderRadius: 4,
+                background: "rgba(96, 165, 250, 0.08)", color: "var(--color-primary)",
+              }}>
+                💡 Marca <strong>"Stock"</strong> si el cliente trae el producto fisicamente.
+                Desmarca si solo le devuelves dinero (ej: producto dañado, descuento, compensacion).
+              </div>
+            )}
             <div style={{ maxHeight: 250, overflow: "auto", border: "1px solid var(--color-border)", borderRadius: 6 }}>
               <table className="table" style={{ fontSize: 12 }}>
                 <thead>
@@ -328,6 +343,11 @@ export default function ModalNotaCredito({
                     <th>Producto</th>
                     <th style={{ width: 80 }}>Cantidad</th>
                     <th className="text-right" style={{ width: 70 }}>P. Unit</th>
+                    {esDevolucionInterna && (
+                      <th style={{ width: 60, textAlign: "center" }} title="Marcar si el cliente devuelve el producto fisicamente al inventario">
+                        Stock
+                      </th>
+                    )}
                     <th className="text-right" style={{ width: 80 }}>Subtotal</th>
                   </tr>
                 </thead>
@@ -358,6 +378,26 @@ export default function ModalNotaCredito({
                         <span className="text-secondary" style={{ fontSize: 10 }}>/{it.cantidad_original}</span>
                       </td>
                       <td className="text-right">${it.precio_unitario.toFixed(2)}</td>
+                      {esDevolucionInterna && (
+                        <td style={{ textAlign: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={it.devolver_stock}
+                            disabled={!it.incluido || procesando}
+                            onChange={() => setItems(prev => prev.map((p, i) =>
+                              i === idx ? { ...p, devolver_stock: !p.devolver_stock } : p
+                            ))}
+                            title={it.devolver_stock
+                              ? "Cliente devuelve el producto fisicamente (subira al stock)"
+                              : "Solo devolver dinero — cliente conserva el producto"}
+                          />
+                          {!it.devolver_stock && it.incluido && (
+                            <div style={{ fontSize: 9, color: "var(--color-warning)", marginTop: 2 }}>
+                              solo $$
+                            </div>
+                          )}
+                        </td>
+                      )}
                       <td className="text-right font-bold">
                         {it.incluido ? `$${calcularSubtotal(it).toFixed(2)}` : "-"}
                       </td>

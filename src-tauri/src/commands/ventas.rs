@@ -1346,7 +1346,7 @@ pub fn crear_devolucion_interna(
 
     let nc_id = conn.last_insert_rowid();
 
-    // Insertar detalles y devolver stock
+    // Insertar detalles y devolver stock (si aplica)
     for item in &items {
         let producto_id = item.get("producto_id").and_then(|v| v.as_i64()).unwrap_or(0);
         let cantidad = item.get("cantidad").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -1354,6 +1354,10 @@ pub fn crear_devolucion_interna(
         let descuento = item.get("descuento").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let iva_porcentaje = item.get("iva_porcentaje").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let subtotal = cantidad * precio_unitario - descuento;
+        // v2.3.48: flag opcional "devolver_stock" — si false, solo se descuenta valor
+        // (cliente conserva el producto, solo se le devuelve dinero por defecto/dano).
+        // Default true para mantener compatibilidad con flujo anterior.
+        let devolver_stock_item = item.get("devolver_stock").and_then(|v| v.as_bool()).unwrap_or(true);
 
         conn.execute(
             "INSERT INTO nota_credito_detalles (nota_credito_id, producto_id, cantidad,
@@ -1366,26 +1370,69 @@ pub fn crear_devolucion_interna(
         )
         .map_err(|e| e.to_string())?;
 
-        // Devolver stock (si no es servicio)
-        conn.execute(
-            "UPDATE productos SET stock_actual = stock_actual + ?1,
-             updated_at = datetime('now','localtime')
-             WHERE id = ?2 AND es_servicio = 0",
-            rusqlite::params![cantidad, producto_id],
-        )
-        .ok();
+        // Solo tocamos stock si el cajero pidio "devolver al inventario".
+        // Si devolver_stock_item=false → solo se devuelve dinero (NC), el cliente
+        // conserva el producto. Util para descuento/compensacion sin retornar fisicamente.
+        if devolver_stock_item {
+            // Leer stock anterior para el kardex
+            let stock_antes: f64 = conn.query_row(
+                "SELECT COALESCE(stock_actual, 0) FROM productos WHERE id = ?1",
+                rusqlite::params![producto_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let es_servicio: bool = conn.query_row(
+                "SELECT COALESCE(es_servicio, 0) FROM productos WHERE id = ?1",
+                rusqlite::params![producto_id], |r| r.get::<_, i32>(0),
+            ).map(|v| v != 0).unwrap_or(false);
 
-        // Multi-almacén: devolver stock a stock_establecimiento
-        let est_id: Option<i64> = conn
-            .query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![establecimiento], |row| row.get(0))
-            .ok();
-        if let Some(eid) = est_id {
+            // Devolver stock (si no es servicio)
             conn.execute(
-                "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
-                 WHERE producto_id = ?2 AND establecimiento_id = ?3",
-                rusqlite::params![cantidad, producto_id, eid],
-            ).ok();
+                "UPDATE productos SET stock_actual = stock_actual + ?1,
+                 updated_at = datetime('now','localtime')
+                 WHERE id = ?2 AND es_servicio = 0",
+                rusqlite::params![cantidad, producto_id],
+            )
+            .ok();
+
+            // Multi-almacén: devolver stock a stock_establecimiento
+            let est_id: Option<i64> = conn
+                .query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![establecimiento], |row| row.get(0))
+                .ok();
+            if let Some(eid) = est_id {
+                conn.execute(
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                    rusqlite::params![cantidad, producto_id, eid],
+                ).ok();
+            }
+
+            // v2.3.48 FIX: registrar movimiento en kardex (tipo DEVOLUCION) para trazabilidad.
+            // Sin esto el stock subia en productos.stock_actual pero el usuario no veia
+            // el movimiento en la pantalla de Inventario / Kardex.
+            if !es_servicio {
+                let costo_snap: f64 = conn.query_row(
+                    "SELECT COALESCE(precio_costo, 0) FROM productos WHERE id = ?1",
+                    rusqlite::params![producto_id], |r| r.get(0),
+                ).unwrap_or(0.0);
+                let motivo_kardex = format!("Devolucion NC {} (motivo: {})", numero, motivo.trim());
+                let _ = conn.execute(
+                    "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                     VALUES (?1, 'DEVOLUCION', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    rusqlite::params![
+                        producto_id,
+                        cantidad,                  // positivo (entra al stock)
+                        stock_antes,
+                        stock_antes + cantidad,
+                        costo_snap,
+                        nc_id,                     // referencia a la NC
+                        usuario_nombre,
+                        est_id,
+                        motivo_kardex,
+                    ],
+                );
+            }
         }
+        // Si devolver_stock_item == false: NO se toca productos.stock_actual,
+        // NO se registra kardex. Solo queda la NC con el monto a devolver.
     }
 
     // Incrementar secuencial
