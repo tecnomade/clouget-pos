@@ -65,6 +65,7 @@ export default function GuiasRemisionPage() {
         : filtroEstado === "PENDIENTES" ? "PENDIENTE"
         : filtroEstado === "ENTREGADAS" ? "ENTREGADA"
         : filtroEstado === "RECHAZADAS" ? "RECHAZADA"
+        : filtroEstado === "FACTURADAS" ? "FACTURADA"
         : "COMPLETADA";
       const [g, r] = await Promise.all([
         listarGuiasRemision({ fechaDesde, fechaHasta, estado }),
@@ -154,7 +155,7 @@ export default function GuiasRemisionPage() {
       <div className="page-body">
         {/* Status filter */}
         <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-          {["TODAS", "PENDIENTES", "ENTREGADAS", "RECHAZADAS", "CERRADAS"].map(f => (
+          {["TODAS", "PENDIENTES", "ENTREGADAS", "FACTURADAS", "RECHAZADAS", "CERRADAS"].map(f => (
             <button key={f} className="btn"
               style={{
                 fontSize: 12, padding: "5px 14px", fontWeight: 600,
@@ -163,7 +164,7 @@ export default function GuiasRemisionPage() {
                 border: filtroEstado === f ? "none" : "1px solid var(--color-border)",
               }}
               onClick={() => setFiltroEstado(f)}>
-              {f === "TODAS" ? "Todas" : f === "PENDIENTES" ? "Pendientes" : f === "ENTREGADAS" ? "Entregadas" : f === "RECHAZADAS" ? "Rechazadas" : "Cerradas"}
+              {f === "TODAS" ? "Todas" : f === "PENDIENTES" ? "Pendientes" : f === "ENTREGADAS" ? "Entregadas" : f === "FACTURADAS" ? "Facturadas" : f === "RECHAZADAS" ? "Rechazadas" : "Cerradas"}
             </button>
           ))}
         </div>
@@ -222,30 +223,39 @@ export default function GuiasRemisionPage() {
                         fontSize: 10, padding: "2px 8px", borderRadius: 3, fontWeight: 600,
                         background: g.estado === "PENDIENTE" ? "rgba(251, 146, 60, 0.15)"
                           : g.estado === "ENTREGADA" ? "rgba(74, 222, 128, 0.15)"
+                          : g.estado === "FACTURADA" ? "rgba(59, 130, 246, 0.15)"
                           : g.estado === "RECHAZADA" ? "rgba(239, 68, 68, 0.15)"
                           : "rgba(96, 165, 250, 0.15)",
                         color: g.estado === "PENDIENTE" ? "var(--color-warning)"
                           : g.estado === "ENTREGADA" ? "var(--color-success)"
+                          : g.estado === "FACTURADA" ? "var(--color-primary)"
                           : g.estado === "RECHAZADA" ? "var(--color-danger)"
                           : "var(--color-primary)",
                       }}>
                         {g.estado === "PENDIENTE" ? "PENDIENTE"
                           : g.estado === "ENTREGADA" ? "ENTREGADA"
+                          : g.estado === "FACTURADA" ? "FACTURADA"
                           : g.estado === "RECHAZADA" ? "RECHAZADA"
                           : "CERRADA"}
                       </span>
                     </td>
                     <td>
                       <div className="flex gap-1">
+                        {/* Convertir: disponible para PENDIENTE y ENTREGADA (ya entregada al cliente).
+                            NO disponible para FACTURADA (ya se convirtio) o RECHAZADA. */}
+                        {(g.estado === "PENDIENTE" || g.estado === "ENTREGADA") && (
+                          <button className="btn btn-outline" style={{
+                            fontSize: 10, padding: "2px 8px",
+                            color: "var(--color-primary)", borderColor: "var(--color-primary)",
+                            fontWeight: 600,
+                          }}
+                            title="Convertir esta guia en una venta cobrada (no descuenta stock de nuevo, ya se descontó al crear la guia)"
+                            onClick={() => abrirConvertir(g.id)}>
+                            💰 Facturar
+                          </button>
+                        )}
                         {g.estado === "PENDIENTE" && (
                           <>
-                            <button className="btn btn-outline" style={{
-                              fontSize: 10, padding: "2px 8px",
-                              color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",
-                            }}
-                              onClick={() => abrirConvertir(g.id)}>
-                              Convertir
-                            </button>
                             <button className="btn btn-outline" style={{
                               fontSize: 10, padding: "2px 8px",
                               color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",

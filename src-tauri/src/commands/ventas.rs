@@ -2054,12 +2054,15 @@ pub fn convertir_guia_a_venta(
         return Err("Debe abrir la caja antes de convertir una guía en venta".to_string());
     }
 
-    // Verificar que la guía existe y está pendiente
-    let (guia_numero, total, cliente_id_val): (String, f64, i64) = conn.query_row(
-        "SELECT numero, total, cliente_id FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION' AND estado = 'PENDIENTE'",
+    // Verificar que la guía existe y está PENDIENTE o ENTREGADA (no FACTURADA ni RECHAZADA)
+    // v2.3.36: aceptar ENTREGADA permite convertir despues de marcar entregada al cliente.
+    let (guia_numero, total_guia, cliente_id_val, subtotal_sin_iva_g, subtotal_con_iva_g, iva_g, descuento_g, tipo_doc_g, observacion_g): (String, f64, i64, f64, f64, f64, f64, String, Option<String>) = conn.query_row(
+        "SELECT numero, total, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva, descuento, tipo_documento, observacion
+         FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'
+         AND estado IN ('PENDIENTE', 'ENTREGADA')",
         rusqlite::params![guia_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).map_err(|_| "Guía de remisión no encontrada o ya fue convertida".to_string())?;
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
+    ).map_err(|_| "Guía no encontrada, ya fue facturada, o fue rechazada".to_string())?;
 
     // Leer establecimiento y punto de emisión del terminal
     let terminal_est: String = conn
@@ -2069,70 +2072,127 @@ pub fn convertir_guia_a_venta(
         .query_row("SELECT value FROM config WHERE key = 'terminal_punto_emision'", [], |row| row.get(0))
         .unwrap_or_else(|_| "001".to_string());
 
+    // Caja actual para vincular la nueva venta
+    let caja_id_actual: Option<i64> = conn
+        .query_row("SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1", [], |r| r.get(0))
+        .ok();
+
     // Generar nuevo secuencial NV
     conn.execute(
         "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, 'NOTA_VENTA', 1)",
         rusqlite::params![terminal_est, terminal_pe],
     ).map_err(|e| e.to_string())?;
 
-    let secuencial: i64 = conn.query_row(
+    let mut secuencial: i64 = conn.query_row(
         "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_VENTA'",
         rusqlite::params![terminal_est, terminal_pe],
         |row| row.get(0),
     ).map_err(|e| e.to_string())?;
+    let max_existente: i64 = conn
+        .query_row("SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) FROM ventas WHERE numero LIKE 'NV-%'", [], |row| row.get(0))
+        .unwrap_or(0);
+    if max_existente >= secuencial { secuencial = max_existente + 1; }
 
     let nuevo_numero = format!("NV-{:09}", secuencial);
-    let cambio = if monto_recibido > total { monto_recibido - total } else { 0.0 };
+    let cambio = if monto_recibido > total_guia { monto_recibido - total_guia } else { 0.0 };
 
-    // Actualizar la guía para convertirla en venta completada
-    let nueva_observacion = format!("Origen: {}", guia_numero);
+    // Determinar pago_estado para verificacion (igual que crear_venta normal)
+    let es_admin = {
+        let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        s.as_ref().map(|sa| sa.rol == "ADMIN").unwrap_or(false)
+    };
+    let es_transfer = matches!(forma_pago.to_uppercase().as_str(), "TRANSFER" | "TRANSFERENCIA");
+    let pago_estado_inicial: &str = if !es_transfer { "NO_APLICA" }
+        else if es_admin { "VERIFICADO" } else { "REGISTRADO" };
+    let verif_por: Option<i64> = if pago_estado_inicial == "VERIFICADO" { Some(usuario_id) } else { None };
+    let verif_fecha: Option<String> = if pago_estado_inicial == "VERIFICADO" {
+        Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
+    } else { None };
+
+    // Insertar NUEVA venta como COMPLETADA, vinculada a la guia origen.
+    // NO se vuelve a descontar stock (ya se descontó al crear la guía).
+    let estado_sri_nuevo = match tipo_doc_g.as_str() { "FACTURA" => "PENDIENTE", _ => "NO_APLICA" };
+    let nueva_observacion = match observacion_g {
+        Some(ref o) if !o.is_empty() => format!("{} | Origen: {}", o, guia_numero),
+        _ => format!("Origen: {}", guia_numero),
+    };
+
     conn.execute(
-        "UPDATE ventas SET
-            tipo_estado = 'COMPLETADA',
-            estado = 'COMPLETADA',
-            numero = ?1,
-            forma_pago = ?2,
-            monto_recibido = ?3,
-            cambio = ?4,
-            banco_id = ?5,
-            referencia_pago = ?6,
-            observacion = CASE WHEN observacion IS NOT NULL AND observacion != '' THEN observacion || ' | ' || ?7 ELSE ?7 END,
-            fecha = datetime('now','localtime'),
-            usuario = ?8,
-            usuario_id = ?9,
-            guia_origen_id = ?10
-         WHERE id = ?11",
+        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva,
+         descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
+         tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision,
+         banco_id, referencia_pago, comprobante_imagen,
+         pago_estado, verificado_por, fecha_verificacion, caja_id,
+         tipo_estado, guia_origen_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'COMPLETADA', ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, NULL,
+                 ?20, ?21, ?22, ?23, 'COMPLETADA', ?24)",
         rusqlite::params![
-            nuevo_numero, forma_pago, monto_recibido, cambio,
-            banco_id, referencia_pago, nueva_observacion,
-            usuario_nombre, usuario_id, guia_id, guia_id,
+            nuevo_numero, cliente_id_val,
+            subtotal_sin_iva_g, subtotal_con_iva_g, descuento_g, iva_g, total_guia,
+            forma_pago, monto_recibido, cambio,
+            tipo_doc_g, estado_sri_nuevo, nueva_observacion,
+            usuario_nombre, usuario_id, terminal_est, terminal_pe,
+            banco_id, referencia_pago,
+            pago_estado_inicial, verif_por, verif_fecha, caja_id_actual,
+            guia_id,
         ],
+    ).map_err(|e| e.to_string())?;
+    let nueva_venta_id = conn.last_insert_rowid();
+
+    // Copiar detalles de la guia a la nueva venta — SIN tocar stock (ya descontado)
+    let mut stmt_d = conn.prepare(
+        "SELECT producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional
+         FROM venta_detalles WHERE venta_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    let items_guia: Vec<(i64, f64, f64, f64, f64, f64, Option<String>)> = stmt_d.query_map(
+        rusqlite::params![guia_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+    ).map_err(|e| e.to_string())?
+     .collect::<Result<Vec<_>, _>>()
+     .map_err(|e| e.to_string())?;
+    drop(stmt_d);
+
+    for (pid, cant, pu, desc, iva_p, sub, info) in &items_guia {
+        conn.execute(
+            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![nueva_venta_id, pid, cant, pu, desc, iva_p, sub, info],
+        ).map_err(|e| e.to_string())?;
+    }
+
+    // Marcar la guia origen como FACTURADA (queda visible en pestaña Facturadas)
+    conn.execute(
+        "UPDATE ventas SET estado = 'FACTURADA' WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'",
+        rusqlite::params![guia_id],
     ).map_err(|e| e.to_string())?;
 
     // Incrementar secuencial NV
     conn.execute(
-        "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = 'NOTA_VENTA'",
-        rusqlite::params![terminal_est, terminal_pe],
+        "UPDATE secuenciales SET secuencial = ?1 + 1 WHERE establecimiento_codigo = ?2 AND punto_emision_codigo = ?3 AND tipo_documento = 'NOTA_VENTA'",
+        rusqlite::params![secuencial, terminal_est, terminal_pe],
     ).map_err(|e| e.to_string())?;
 
-    // Actualizar monto de caja
+    // === Actualizar caja: solo PORCION EFECTIVO de la nueva venta afecta el efectivo ===
+    let efectivo_de_esta_venta: f64 = if forma_pago.to_uppercase() == "EFECTIVO" && !es_fiado.unwrap_or(false) {
+        total_guia
+    } else {
+        0.0
+    };
     conn.execute(
-        "UPDATE caja SET monto_ventas = monto_ventas + ?1,
-         monto_esperado = monto_inicial + monto_ventas + ?1
-         WHERE estado = 'ABIERTA'",
-        rusqlite::params![total],
+        "UPDATE caja SET monto_ventas = monto_ventas + ?1, monto_esperado = monto_esperado + ?2 WHERE estado = 'ABIERTA'",
+        rusqlite::params![total_guia, efectivo_de_esta_venta],
     ).ok();
 
-    // Si es fiado, crear cuenta por cobrar
+    // Si es fiado, crear cuenta por cobrar (vinculada a la NUEVA venta, no a la guia)
     if es_fiado.unwrap_or(false) {
         conn.execute(
             "INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, monto_total, saldo, estado)
              VALUES (?1, ?2, ?3, ?3, 'PENDIENTE')",
-            rusqlite::params![cliente_id_val, guia_id, total],
+            rusqlite::params![cliente_id_val, nueva_venta_id, total_guia],
         ).map_err(|e| e.to_string())?;
     }
 
-    // Obtener la venta actualizada
+    // Obtener la nueva venta para retornar
     let venta_result = conn.query_row(
         "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
          v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
@@ -2142,7 +2202,7 @@ pub fn convertir_guia_a_venta(
          FROM ventas v
          LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
          WHERE v.id = ?1",
-        rusqlite::params![guia_id],
+        rusqlite::params![nueva_venta_id],
         |row| {
             Ok(Venta {
                 id: Some(row.get(0)?),
@@ -2170,7 +2230,7 @@ pub fn convertir_guia_a_venta(
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
-                caja_id: None,
+                caja_id: caja_id_actual,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -2187,7 +2247,7 @@ pub fn convertir_guia_a_venta(
          WHERE vd.venta_id = ?1"
     ).map_err(|e| e.to_string())?;
 
-    let detalles = stmt.query_map(rusqlite::params![guia_id], |row| {
+    let detalles = stmt.query_map(rusqlite::params![nueva_venta_id], |row| {
         Ok(VentaDetalle {
             id: row.get(0)?,
             venta_id: row.get(1)?,
