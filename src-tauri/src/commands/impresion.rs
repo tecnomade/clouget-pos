@@ -41,6 +41,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     banco_id: None,
                     referencia_pago: None,
                     banco_nombre: None,
+                    comprobante_imagen: None,
                     tipo_estado: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -168,6 +169,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     banco_id: None,
                     referencia_pago: None,
                     banco_nombre: None,
+                    comprobante_imagen: None,
                     tipo_estado: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -327,32 +329,68 @@ fn obtener_datos_reporte_caja(
         )
         .unwrap_or(0);
 
-    let total_efectivo: f64 = conn
-        .query_row(
+    // === Totales por forma de pago — incluye porciones de ventas MIXTO desde pagos_venta ===
+    // Convencion: el frontend guarda 'EFECTIVO', 'TRANSFER', 'CREDITO', 'TARJETA'.
+    // Usamos UPPER() para tolerar variantes historicas ('TRANSFERENCIA', 'FIADO', etc).
+    let sum_directo = |formas: &[&str]| -> f64 {
+        let placeholders: Vec<String> = formas.iter().map(|f| format!("'{}'", f)).collect();
+        let sql = format!(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND forma_pago = 'EFECTIVO' AND anulada = 0",
-            rusqlite::params![fecha_apertura],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
+             WHERE created_at >= ?1 AND anulada = 0
+             AND UPPER(forma_pago) IN ({})",
+            placeholders.join(",")
+        );
+        conn.query_row(&sql, rusqlite::params![fecha_apertura], |row| row.get(0)).unwrap_or(0.0)
+    };
+    let sum_mixto = |formas: &[&str]| -> f64 {
+        let placeholders: Vec<String> = formas.iter().map(|f| format!("'{}'", f)).collect();
+        let sql = format!(
+            "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
+             JOIN ventas v ON v.id = pv.venta_id
+             WHERE v.created_at >= ?1 AND v.anulada = 0 AND v.forma_pago = 'MIXTO'
+             AND UPPER(pv.forma_pago) IN ({})",
+            placeholders.join(",")
+        );
+        conn.query_row(&sql, rusqlite::params![fecha_apertura], |row| row.get(0)).unwrap_or(0.0)
+    };
 
-    let total_transferencia: f64 = conn
-        .query_row(
+    let total_efectivo: f64 = sum_directo(&["EFECTIVO"]) + sum_mixto(&["EFECTIVO"]);
+    let total_transferencia: f64 = sum_directo(&["TRANSFER", "TRANSFERENCIA"]) + sum_mixto(&["TRANSFER", "TRANSFERENCIA"]);
+    let total_credito: f64 = sum_directo(&["CREDITO", "FIADO"]) + sum_mixto(&["CREDITO", "FIADO"]);
+    let total_tarjeta: f64 = sum_directo(&["TARJETA"]) + sum_mixto(&["TARJETA"]);
+    // total_otros: cualquier forma_pago no estandar
+    let total_otros: f64 = {
+        let directo: f64 = conn.query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND forma_pago = 'TRANSFERENCIA' AND anulada = 0",
-            rusqlite::params![fecha_apertura],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
+             WHERE created_at >= ?1 AND anulada = 0
+             AND UPPER(forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','MIXTO')",
+            rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
+        let mixto: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
+             JOIN ventas v ON v.id = pv.venta_id
+             WHERE v.created_at >= ?1 AND v.anulada = 0 AND v.forma_pago = 'MIXTO'
+             AND UPPER(pv.forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA')",
+            rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
+        directo + mixto
+    };
+    // Compatibilidad: total_fiado = total_credito (campo legacy)
+    let total_fiado = total_credito;
 
-    let total_fiado: f64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND forma_pago = 'FIADO' AND anulada = 0",
-            rusqlite::params![fecha_apertura],
-            |row| row.get(0),
-        )
-        .unwrap_or(0.0);
+    let num_ventas_credito: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT v.id) FROM ventas v
+         LEFT JOIN pagos_venta pv ON pv.venta_id = v.id
+         WHERE v.created_at >= ?1 AND v.anulada = 0
+         AND (UPPER(v.forma_pago) IN ('CREDITO','FIADO')
+              OR (v.forma_pago = 'MIXTO' AND UPPER(pv.forma_pago) IN ('CREDITO','FIADO')))",
+        rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0);
+
+    let num_ventas_transfer: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT v.id) FROM ventas v
+         LEFT JOIN pagos_venta pv ON pv.venta_id = v.id
+         WHERE v.created_at >= ?1 AND v.anulada = 0
+         AND (UPPER(v.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+              OR (v.forma_pago = 'MIXTO' AND UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')))",
+        rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0);
 
     let total_gastos: f64 = conn
         .query_row(
@@ -508,6 +546,116 @@ fn obtener_datos_reporte_caja(
         collected
     };
 
+    // === Lista detallada de TODOS los retiros (no solo depositos) ===
+    let retiros_lista: Vec<crate::models::RetiroReporte> = {
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.monto, r.motivo, r.usuario, r.fecha, cb.nombre as banco_nombre,
+                    r.referencia, COALESCE(r.estado, 'SIN_DEPOSITO') as estado
+             FROM retiros_caja r
+             LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
+             WHERE r.caja_id = ?1
+             ORDER BY r.fecha ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![caja_id], |r| Ok(crate::models::RetiroReporte {
+            id: r.get(0)?,
+            monto: r.get(1)?,
+            motivo: r.get(2)?,
+            usuario: r.get(3)?,
+            fecha: r.get(4)?,
+            banco_nombre: r.get(5)?,
+            referencia: r.get(6)?,
+            estado: r.get(7)?,
+        })).map_err(|e| e.to_string())?;
+        let collected: Vec<crate::models::RetiroReporte> = rows.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+        collected
+    };
+
+    // === Lista detallada de ventas (incluye MIXTO con desglose) ===
+    let ventas_lista: Vec<crate::models::VentaResumen> = {
+        let mut stmt = conn.prepare(
+            "SELECT v.id, v.numero, v.fecha, c.nombre as cliente_nombre,
+                    v.forma_pago, v.total, v.tipo_documento, COALESCE(v.anulada, 0),
+                    v.usuario_id
+             FROM ventas v
+             LEFT JOIN clientes c ON v.cliente_id = c.id
+             WHERE v.created_at >= ?1
+             ORDER BY v.fecha ASC"
+        ).map_err(|e| e.to_string())?;
+        let raw: Vec<(i64, String, String, Option<String>, String, f64, String, i64, Option<i64>)> = stmt.query_map(
+            rusqlite::params![fecha_apertura],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?))
+        ).map_err(|e| e.to_string())?
+         .collect::<Result<Vec<_>, _>>()
+         .unwrap_or_default();
+        let mut out: Vec<crate::models::VentaResumen> = Vec::new();
+        for (id, numero, fecha, cliente_nombre, forma_pago, total, tipo_doc, anulada, usuario_id) in raw {
+            // Si la venta es MIXTO, generar desglose de pagos
+            let desglose_pagos: Option<String> = if forma_pago == "MIXTO" {
+                let mut stmt2 = conn.prepare(
+                    "SELECT forma_pago, monto FROM pagos_venta WHERE venta_id = ?1 ORDER BY id ASC"
+                ).map_err(|e| e.to_string())?;
+                let pagos: Vec<(String, f64)> = stmt2.query_map(
+                    rusqlite::params![id], |r| Ok((r.get(0)?, r.get(1)?))
+                ).ok()
+                 .and_then(|m| m.collect::<Result<Vec<_>, _>>().ok())
+                 .unwrap_or_default();
+                if pagos.is_empty() { None } else {
+                    Some(pagos.iter().map(|(f, m)| format!("{}:${:.2}", f, m)).collect::<Vec<_>>().join(" + "))
+                }
+            } else { None };
+            // Resolver nombre de usuario
+            let usuario: Option<String> = usuario_id.and_then(|uid| {
+                conn.query_row("SELECT nombre FROM usuarios WHERE id = ?1", rusqlite::params![uid], |r| r.get(0)).ok()
+            });
+            out.push(crate::models::VentaResumen {
+                numero, fecha, cliente_nombre, forma_pago, total,
+                desglose_pagos, tipo_documento: tipo_doc, anulada, usuario,
+            });
+        }
+        out
+    };
+
+    // === Lista detallada de gastos (la tabla gastos no tiene usuario_id, asi que None) ===
+    let gastos_lista: Vec<crate::models::GastoResumen> = {
+        let mut stmt = conn.prepare(
+            "SELECT g.fecha, COALESCE(g.categoria, 'Otros'), COALESCE(g.descripcion, ''), g.monto
+             FROM gastos g
+             WHERE g.caja_id = ?1
+             ORDER BY g.fecha ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![caja_id], |r| Ok(crate::models::GastoResumen {
+            fecha: r.get(0)?,
+            categoria: r.get(1)?,
+            descripcion: r.get(2)?,
+            monto: r.get(3)?,
+            usuario: None,
+        })).map_err(|e| e.to_string())?;
+        let collected: Vec<crate::models::GastoResumen> = rows.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+        collected
+    };
+
+    // === Lista detallada de cobros de cuentas por cobrar ===
+    let cobros_lista: Vec<crate::models::CobroResumen> = {
+        let mut stmt = conn.prepare(
+            "SELECT pc.fecha, COALESCE(c.nombre, 'Cliente'), pc.forma_pago, pc.monto, cb.nombre
+             FROM pagos_cuenta pc
+             JOIN cuentas_por_cobrar cxc ON pc.cuenta_id = cxc.id
+             LEFT JOIN clientes c ON cxc.cliente_id = c.id
+             LEFT JOIN cuentas_banco cb ON pc.banco_id = cb.id
+             WHERE pc.fecha >= ?1 AND pc.estado = 'CONFIRMADO'
+             ORDER BY pc.fecha ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![fecha_apertura], |r| Ok(crate::models::CobroResumen {
+            fecha: r.get(0)?,
+            cliente_nombre: r.get(1)?,
+            forma_pago: r.get(2)?,
+            monto: r.get(3)?,
+            banco_nombre: r.get(4)?,
+        })).map_err(|e| e.to_string())?;
+        let collected: Vec<crate::models::CobroResumen> = rows.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+        collected
+    };
+
     Ok(crate::models::ResumenCajaReporte {
         caja,
         total_ventas,
@@ -532,6 +680,15 @@ fn obtener_datos_reporte_caja(
         monto_cierre_anterior,
         eventos,
         depositos,
+        total_credito,
+        total_tarjeta,
+        total_otros,
+        num_ventas_credito,
+        num_ventas_transfer,
+        retiros: retiros_lista,
+        ventas_lista,
+        gastos_lista,
+        cobros_lista,
     })
 }
 
@@ -664,40 +821,95 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
     t.extend_from_slice(b"FORMAS DE PAGO\n");
     t.extend_from_slice(esc_bold_off);
     t.extend_from_slice(linea_monto_r("Efectivo:", &format!("${:.2}", r.total_efectivo), ancho).as_bytes());
-    t.extend_from_slice(linea_monto_r("Transferencia:", &format!("${:.2}", r.total_transferencia), ancho).as_bytes());
-    if r.total_fiado > 0.0 {
-        t.extend_from_slice(linea_monto_r("Fiado:", &format!("${:.2}", r.total_fiado), ancho).as_bytes());
+    if r.total_transferencia > 0.0 || r.num_ventas_transfer > 0 {
+        t.extend_from_slice(linea_monto_r(
+            &format!("Transfer ({} vtas):", r.num_ventas_transfer),
+            &format!("${:.2}", r.total_transferencia), ancho
+        ).as_bytes());
+    }
+    if r.total_credito > 0.0 || r.num_ventas_credito > 0 {
+        t.extend_from_slice(linea_monto_r(
+            &format!("Credito ({} vtas):", r.num_ventas_credito),
+            &format!("${:.2}", r.total_credito), ancho
+        ).as_bytes());
+    }
+    if r.total_tarjeta > 0.0 {
+        t.extend_from_slice(linea_monto_r("Tarjeta:", &format!("${:.2}", r.total_tarjeta), ancho).as_bytes());
+    }
+    if r.total_otros > 0.0 {
+        t.extend_from_slice(linea_monto_r("Otros:", &format!("${:.2}", r.total_otros), ancho).as_bytes());
+    }
+    // Sanity check: la suma debe coincidir con total_ventas
+    let suma_formas = r.total_efectivo + r.total_transferencia + r.total_credito + r.total_tarjeta + r.total_otros;
+    if (suma_formas - r.total_ventas).abs() > 0.02 {
+        t.extend_from_slice(format!("(! suma formas ${:.2} != ventas ${:.2})\n",
+            suma_formas, r.total_ventas).as_bytes());
     }
     t.push(b'\n');
 
-    // Gastos
+    // Gastos (con detalle si hay)
     if r.total_gastos > 0.0 {
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"GASTOS\n");
         t.extend_from_slice(esc_bold_off);
+        for g in &r.gastos_lista {
+            let hora = g.fecha.get(11..16).unwrap_or(&g.fecha);
+            let desc = if g.descripcion.is_empty() { g.categoria.clone() } else { format!("{} - {}", g.categoria, g.descripcion) };
+            let label = format!("{} {}", hora, desc);
+            // Truncar a ancho-12 para dejar espacio al monto
+            let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
+            t.extend_from_slice(linea_monto_r(&label_corto, &format!("-${:.2}", g.monto), ancho).as_bytes());
+        }
         t.extend_from_slice(linea_monto_r("Total Gastos:", &format!("-${:.2}", r.total_gastos), ancho).as_bytes());
         t.push(b'\n');
     }
 
-    // Retiros
-    if r.total_retiros > 0.0 {
+    // Retiros (con detalle: motivo, usuario, hora)
+    if r.total_retiros > 0.0 || !r.retiros.is_empty() {
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"RETIROS\n");
         t.extend_from_slice(esc_bold_off);
+        for ret in &r.retiros {
+            let hora = ret.fecha.get(11..16).unwrap_or(&ret.fecha);
+            let estado_str = match ret.estado.as_str() {
+                "DEPOSITADO" => " [Dep]",
+                "EN_TRANSITO" => " [Pdte]",
+                _ => "",
+            };
+            let banco_str = ret.banco_nombre.as_deref().map(|b| format!(" -> {}", b)).unwrap_or_default();
+            let header = format!("{} {} {}{}", hora, ret.usuario, banco_str, estado_str);
+            let header_corto: String = header.chars().take((ancho.saturating_sub(12)) as usize).collect();
+            t.extend_from_slice(linea_monto_r(&header_corto, &format!("-${:.2}", ret.monto), ancho).as_bytes());
+            // Motivo en linea siguiente, indentado
+            for chunk in wrap_text(&ret.motivo, ancho.saturating_sub(2) as usize).iter() {
+                t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
+            }
+        }
         t.extend_from_slice(linea_monto_r("Total Retiros:", &format!("-${:.2}", r.total_retiros), ancho).as_bytes());
         t.push(b'\n');
     }
 
-    // Cobros de cuentas por cobrar
-    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
+    // Cobros de cuentas por cobrar (con detalle: cliente, hora, forma)
+    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 || !r.cobros_lista.is_empty() {
         t.extend_from_slice(esc_bold_on);
-        t.extend_from_slice(b"COBROS CUENTAS POR COBRAR\n");
+        t.extend_from_slice(b"COBROS CXC\n");
         t.extend_from_slice(esc_bold_off);
+        for c in &r.cobros_lista {
+            let hora = c.fecha.get(11..16).unwrap_or(&c.fecha);
+            let forma_corto = match c.forma_pago.to_uppercase().as_str() {
+                "EFECTIVO" => "EFE",
+                "TRANSFER" | "TRANSFERENCIA" => "TR",
+                _ => &c.forma_pago,
+            };
+            let label = format!("{} {} {}", hora, forma_corto, c.cliente_nombre);
+            let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
+            t.extend_from_slice(linea_monto_r(&label_corto, &format!("+${:.2}", c.monto), ancho).as_bytes());
+        }
         if r.total_cobros_efectivo > 0.0 {
-            t.extend_from_slice(linea_monto_r("En efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
+            t.extend_from_slice(linea_monto_r("Sub. efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
         }
         if r.total_cobros_banco > 0.0 {
-            t.extend_from_slice(linea_monto_r("En banco:", &format!("${:.2}", r.total_cobros_banco), ancho).as_bytes());
+            t.extend_from_slice(linea_monto_r("Sub. banco:", &format!("${:.2}", r.total_cobros_banco), ancho).as_bytes());
         }
         t.push(b'\n');
     }
@@ -818,6 +1030,37 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
             if let Some(ref refer) = d.referencia {
                 if !refer.is_empty() {
                     t.extend_from_slice(format!("  Ref: {}\n", refer).as_bytes());
+                }
+            }
+        }
+    }
+
+    // Lista detallada de ventas (trazabilidad item por item)
+    if !r.ventas_lista.is_empty() {
+        t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
+        t.extend_from_slice(esc_bold_on);
+        t.extend_from_slice(b"DETALLE VENTAS\n");
+        t.extend_from_slice(esc_bold_off);
+        for v in &r.ventas_lista {
+            let hora = v.fecha.get(11..16).unwrap_or(&v.fecha);
+            let forma_corto = match v.forma_pago.to_uppercase().as_str() {
+                "EFECTIVO" => "EFE",
+                "TRANSFER" | "TRANSFERENCIA" => "TR",
+                "CREDITO" | "FIADO" => "CR",
+                "TARJETA" => "TJ",
+                "MIXTO" => "MX",
+                _ => &v.forma_pago,
+            };
+            let cliente = v.cliente_nombre.as_deref().unwrap_or("Cons. Final");
+            let anulada_marca = if v.anulada == 1 { " ANUL" } else { "" };
+            let label = format!("{} {} {} {}{}", hora, v.numero, forma_corto, cliente, anulada_marca);
+            let label_corto: String = label.chars().take((ancho.saturating_sub(11)) as usize).collect();
+            let monto_str = if v.anulada == 1 { format!("(${:.2})", v.total) } else { format!("${:.2}", v.total) };
+            t.extend_from_slice(linea_monto_r(&label_corto, &monto_str, ancho).as_bytes());
+            // Si es MIXTO, mostrar el desglose
+            if let Some(ref desglose) = v.desglose_pagos {
+                for chunk in wrap_text(desglose, ancho.saturating_sub(2) as usize).iter() {
+                    t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
                 }
             }
         }
@@ -1012,95 +1255,148 @@ fn generar_reporte_caja_pdf(
         )
         .push()
         .map_err(|e| format!("Error: {}", e))?;
-    pago_table
-        .row()
-        .element(Paragraph::new("Transferencia:").styled(s_normal))
-        .element(
-            Paragraph::new(format!("${:.2}", r.total_transferencia))
-                .aligned(Alignment::Right)
-                .styled(s_normal),
-        )
-        .push()
-        .map_err(|e| format!("Error: {}", e))?;
-    if r.total_fiado > 0.0 {
+    if r.total_transferencia > 0.0 || r.num_ventas_transfer > 0 {
         pago_table
             .row()
-            .element(Paragraph::new("Fiado:").styled(s_normal))
+            .element(Paragraph::new(format!("Transferencia ({} ventas):", r.num_ventas_transfer)).styled(s_normal))
             .element(
-                Paragraph::new(format!("${:.2}", r.total_fiado))
+                Paragraph::new(format!("${:.2}", r.total_transferencia))
                     .aligned(Alignment::Right)
                     .styled(s_normal),
             )
             .push()
             .map_err(|e| format!("Error: {}", e))?;
     }
+    if r.total_credito > 0.0 || r.num_ventas_credito > 0 {
+        pago_table
+            .row()
+            .element(Paragraph::new(format!("Credito ({} ventas):", r.num_ventas_credito)).styled(s_normal))
+            .element(
+                Paragraph::new(format!("${:.2}", r.total_credito))
+                    .aligned(Alignment::Right)
+                    .styled(s_normal),
+            )
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
+    if r.total_tarjeta > 0.0 {
+        pago_table
+            .row()
+            .element(Paragraph::new("Tarjeta:").styled(s_normal))
+            .element(Paragraph::new(format!("${:.2}", r.total_tarjeta)).aligned(Alignment::Right).styled(s_normal))
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
+    if r.total_otros > 0.0 {
+        pago_table
+            .row()
+            .element(Paragraph::new("Otros:").styled(s_normal))
+            .element(Paragraph::new(format!("${:.2}", r.total_otros)).aligned(Alignment::Right).styled(s_normal))
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
     doc.push(pago_table);
     doc.push(Break::new(0.5));
 
-    // Gastos
+    // Gastos detallados
     if r.total_gastos > 0.0 {
         doc.push(Paragraph::new("GASTOS").styled(s_subtitle));
         doc.push(Break::new(0.3));
-        let mut gastos_table = TableLayout::new(vec![3, 2]);
+        let mut gastos_table = TableLayout::new(vec![1, 3, 1]);
+        for g in &r.gastos_lista {
+            let hora = g.fecha.get(11..16).unwrap_or(&g.fecha).to_string();
+            let desc = if g.descripcion.is_empty() { g.categoria.clone() } else { format!("{} — {}", g.categoria, g.descripcion) };
+            gastos_table
+                .row()
+                .element(Paragraph::new(hora).styled(s_normal))
+                .element(Paragraph::new(desc).styled(s_normal))
+                .element(Paragraph::new(format!("-${:.2}", g.monto)).aligned(Alignment::Right).styled(s_normal))
+                .push()
+                .map_err(|e| format!("Error: {}", e))?;
+        }
         gastos_table
             .row()
-            .element(Paragraph::new("Total Gastos:").styled(s_normal))
-            .element(
-                Paragraph::new(format!("-${:.2}", r.total_gastos))
-                    .aligned(Alignment::Right)
-                    .styled(s_bold),
-            )
+            .element(Paragraph::new("").styled(s_normal))
+            .element(Paragraph::new("Total Gastos:").styled(s_bold))
+            .element(Paragraph::new(format!("-${:.2}", r.total_gastos)).aligned(Alignment::Right).styled(s_bold))
             .push()
             .map_err(|e| format!("Error: {}", e))?;
         doc.push(gastos_table);
         doc.push(Break::new(0.5));
     }
 
-    // Retiros
-    if r.total_retiros > 0.0 {
+    // Retiros detallados
+    if r.total_retiros > 0.0 || !r.retiros.is_empty() {
         doc.push(Paragraph::new("RETIROS").styled(s_subtitle));
         doc.push(Break::new(0.3));
-        let mut retiros_table = TableLayout::new(vec![3, 2]);
+        let mut retiros_table = TableLayout::new(vec![1, 2, 2, 1]);
         retiros_table
             .row()
-            .element(Paragraph::new("Total Retiros:").styled(s_normal))
-            .element(
-                Paragraph::new(format!("-${:.2}", r.total_retiros))
-                    .aligned(Alignment::Right)
-                    .styled(s_bold),
-            )
+            .element(Paragraph::new("Hora").styled(s_bold))
+            .element(Paragraph::new("Usuario / Banco").styled(s_bold))
+            .element(Paragraph::new("Motivo").styled(s_bold))
+            .element(Paragraph::new("Monto").aligned(Alignment::Right).styled(s_bold))
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+        for ret in &r.retiros {
+            let hora = ret.fecha.get(11..16).unwrap_or(&ret.fecha).to_string();
+            let usuario_banco = if let Some(ref b) = ret.banco_nombre {
+                format!("{} → {}", ret.usuario, b)
+            } else { ret.usuario.clone() };
+            retiros_table
+                .row()
+                .element(Paragraph::new(hora).styled(s_normal))
+                .element(Paragraph::new(usuario_banco).styled(s_normal))
+                .element(Paragraph::new(ret.motivo.clone()).styled(s_normal))
+                .element(Paragraph::new(format!("-${:.2}", ret.monto)).aligned(Alignment::Right).styled(s_normal))
+                .push()
+                .map_err(|e| format!("Error: {}", e))?;
+        }
+        retiros_table
+            .row()
+            .element(Paragraph::new("").styled(s_normal))
+            .element(Paragraph::new("").styled(s_normal))
+            .element(Paragraph::new("Total Retiros:").styled(s_bold))
+            .element(Paragraph::new(format!("-${:.2}", r.total_retiros)).aligned(Alignment::Right).styled(s_bold))
             .push()
             .map_err(|e| format!("Error: {}", e))?;
         doc.push(retiros_table);
         doc.push(Break::new(0.5));
     }
 
-    // Cobros de cuentas por cobrar
-    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 {
+    // Cobros de cuentas por cobrar (con detalle)
+    if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 || !r.cobros_lista.is_empty() {
         doc.push(Paragraph::new("COBROS CUENTAS POR COBRAR").styled(s_subtitle));
         doc.push(Break::new(0.3));
-        let mut cobros_table = TableLayout::new(vec![3, 2]);
+        let mut cobros_table = TableLayout::new(vec![1, 3, 1, 1]);
+        for c in &r.cobros_lista {
+            let hora = c.fecha.get(11..16).unwrap_or(&c.fecha).to_string();
+            cobros_table
+                .row()
+                .element(Paragraph::new(hora).styled(s_normal))
+                .element(Paragraph::new(c.cliente_nombre.clone()).styled(s_normal))
+                .element(Paragraph::new(c.forma_pago.clone()).styled(s_normal))
+                .element(Paragraph::new(format!("+${:.2}", c.monto)).aligned(Alignment::Right).styled(s_normal))
+                .push()
+                .map_err(|e| format!("Error: {}", e))?;
+        }
         if r.total_cobros_efectivo > 0.0 {
             cobros_table
                 .row()
-                .element(Paragraph::new("En efectivo:").styled(s_normal))
-                .element(
-                    Paragraph::new(format!("${:.2}", r.total_cobros_efectivo))
-                        .aligned(Alignment::Right)
-                        .styled(s_normal),
-                )
+                .element(Paragraph::new("").styled(s_normal))
+                .element(Paragraph::new("Subtotal Efectivo:").styled(s_bold))
+                .element(Paragraph::new("").styled(s_normal))
+                .element(Paragraph::new(format!("${:.2}", r.total_cobros_efectivo)).aligned(Alignment::Right).styled(s_bold))
                 .push()
                 .map_err(|e| format!("Error: {}", e))?;
         }
         if r.total_cobros_banco > 0.0 {
             cobros_table
                 .row()
-                .element(Paragraph::new("En banco/transferencia:").styled(s_normal))
-                .element(
-                    Paragraph::new(format!("${:.2}", r.total_cobros_banco))
-                        .aligned(Alignment::Right)
-                        .styled(s_normal),
-                )
+                .element(Paragraph::new("").styled(s_normal))
+                .element(Paragraph::new("Subtotal Banco:").styled(s_bold))
+                .element(Paragraph::new("").styled(s_normal))
+                .element(Paragraph::new(format!("${:.2}", r.total_cobros_banco)).aligned(Alignment::Right).styled(s_bold))
                 .push()
                 .map_err(|e| format!("Error: {}", e))?;
         }
@@ -1333,6 +1629,43 @@ fn generar_reporte_caja_pdf(
         doc.push(dep_table);
     }
 
+    // === DETALLE DE VENTAS ===
+    if !r.ventas_lista.is_empty() {
+        doc.push(Break::new(0.7));
+        doc.push(Paragraph::new("DETALLE DE VENTAS").styled(s_subtitle));
+        doc.push(Break::new(0.3));
+        let mut v_table = TableLayout::new(vec![1, 2, 3, 1, 1]);
+        v_table.row()
+            .element(Paragraph::new("Hora").styled(s_bold))
+            .element(Paragraph::new("Numero").styled(s_bold))
+            .element(Paragraph::new("Cliente").styled(s_bold))
+            .element(Paragraph::new("Pago").styled(s_bold))
+            .element(Paragraph::new("Total").aligned(Alignment::Right).styled(s_bold))
+            .push().map_err(|e| format!("Error: {}", e))?;
+        for v in &r.ventas_lista {
+            let hora = v.fecha.get(11..16).unwrap_or(&v.fecha).to_string();
+            let cliente = v.cliente_nombre.clone().unwrap_or_else(|| "Consumidor Final".to_string());
+            let pago_str = if let Some(ref desglose) = v.desglose_pagos {
+                format!("MIXTO: {}", desglose)
+            } else {
+                v.forma_pago.clone()
+            };
+            let total_str = if v.anulada == 1 {
+                format!("(${:.2}) ANUL", v.total)
+            } else {
+                format!("${:.2}", v.total)
+            };
+            v_table.row()
+                .element(Paragraph::new(hora).styled(s_small))
+                .element(Paragraph::new(v.numero.clone()).styled(s_small))
+                .element(Paragraph::new(cliente).styled(s_small))
+                .element(Paragraph::new(pago_str).styled(s_small))
+                .element(Paragraph::new(total_str).aligned(Alignment::Right).styled(s_small))
+                .push().map_err(|err| format!("Error: {}", err))?;
+        }
+        doc.push(v_table);
+    }
+
     // === AUDIT LOG ===
     if !r.eventos.is_empty() {
         doc.push(Break::new(0.7));
@@ -1498,6 +1831,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                     banco_id: None,
                     referencia_pago: None,
                     banco_nombre: None,
+                    comprobante_imagen: None,
                     tipo_estado: row.get(21).ok(),
                     guia_placa: row.get(22).ok(),
                     guia_chofer: row.get(23).ok(),

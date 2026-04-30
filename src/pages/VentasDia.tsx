@@ -61,6 +61,7 @@ export default function VentasDia() {
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
+  const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
   const [ventaExpandida, setVentaExpandida] = useState<number | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
   const [ncLista, setNcLista] = useState<any[]>([]);
@@ -1135,6 +1136,40 @@ export default function VentasDia() {
                     <div><span className="text-secondary">Referencia: </span><strong>{ventaDetalle.venta.referencia_pago}</strong></div>
                   )}
                 </div>
+                {ventaDetalle.venta.comprobante_imagen && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6, fontWeight: 600 }}>
+                      📎 Comprobante de transferencia
+                    </div>
+                    <img
+                      src={ventaDetalle.venta.comprobante_imagen}
+                      alt="Comprobante"
+                      onClick={() => setComprobanteFullscreen(ventaDetalle.venta.comprobante_imagen || null)}
+                      style={{
+                        maxWidth: "100%",
+                        maxHeight: 200,
+                        objectFit: "contain",
+                        borderRadius: 4,
+                        border: "1px solid var(--color-border)",
+                        cursor: "zoom-in",
+                        display: "block",
+                      }} />
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        style={{ fontSize: 11, padding: "4px 10px" }}
+                        onClick={() => setComprobanteFullscreen(ventaDetalle.venta.comprobante_imagen || null)}
+                      >🔍 Ver completo</button>
+                      <a
+                        href={ventaDetalle.venta.comprobante_imagen}
+                        download={`comprobante-${ventaDetalle.venta.numero || "venta"}.png`}
+                        className="btn btn-outline"
+                        style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                      >⬇ Descargar</a>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Items */}
@@ -1217,6 +1252,32 @@ export default function VentasDia() {
         onOmitir={() => setEmailVenta(null)}
         enviando={enviandoEmail}
       />
+
+      {/* Visor fullscreen del comprobante de transferencia */}
+      {comprobanteFullscreen && (
+        <div
+          onClick={() => setComprobanteFullscreen(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)",
+            zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "zoom-out", padding: 20,
+          }}
+        >
+          <img
+            src={comprobanteFullscreen}
+            alt="Comprobante"
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); setComprobanteFullscreen(null); }}
+            style={{
+              position: "fixed", top: 16, right: 16,
+              background: "rgba(0,0,0,0.6)", color: "white", border: "1px solid rgba(255,255,255,0.3)",
+              borderRadius: 8, padding: "6px 14px", fontSize: 16, cursor: "pointer",
+            }}
+          >× Cerrar</button>
+        </div>
+      )}
     </>
   );
 }

@@ -131,6 +131,7 @@ export interface Venta {
   banco_id?: number;
   referencia_pago?: string;
   banco_nombre?: string;
+  comprobante_imagen?: string | null;
   tipo_estado?: string;
   anulada?: number;
   guia_placa?: string;

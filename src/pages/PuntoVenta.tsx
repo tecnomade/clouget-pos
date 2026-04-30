@@ -82,6 +82,7 @@ export default function PuntoVenta() {
   const [requiereReferencia, setRequiereReferencia] = useState(false);
   const [requiereComprobante, setRequiereComprobante] = useState(false);
   const [comprobanteImagen, setComprobanteImagen] = useState<string | null>(null);
+  const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
   const [autoImprimirTicket, setAutoImprimirTicket] = useState(false);
   const [autoImprimirSri, setAutoImprimirSri] = useState(false);
   // Control de stock negativo (config 'stock_negativo_modo'):
@@ -2436,7 +2437,25 @@ export default function PuntoVenta() {
                       )}
                     </div>
                     {comprobanteImagen && (
-                      <img src={comprobanteImagen} alt="Comprobante" style={{ maxWidth: "100%", marginTop: 8, borderRadius: 4, border: "1px solid var(--color-border)" }} />
+                      <div style={{ marginTop: 8, position: "relative" }}>
+                        <img
+                          src={comprobanteImagen}
+                          alt="Comprobante"
+                          onClick={() => setComprobanteFullscreen(comprobanteImagen)}
+                          style={{
+                            maxWidth: "100%",
+                            maxHeight: 200,
+                            objectFit: "contain",
+                            borderRadius: 4,
+                            border: "1px solid var(--color-border)",
+                            cursor: "zoom-in",
+                            display: "block",
+                            margin: "0 auto",
+                          }} />
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textAlign: "center", marginTop: 4 }}>
+                          Click para ampliar
+                        </div>
+                      </div>
                     )}
                   </div>
                 </>
@@ -2449,6 +2468,32 @@ export default function PuntoVenta() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Visor fullscreen del comprobante (click en preview lo abre) */}
+      {comprobanteFullscreen && (
+        <div
+          onClick={() => setComprobanteFullscreen(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)",
+            zIndex: 250, display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "zoom-out", padding: 20,
+          }}
+        >
+          <img
+            src={comprobanteFullscreen}
+            alt="Comprobante"
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); setComprobanteFullscreen(null); }}
+            style={{
+              position: "fixed", top: 16, right: 16,
+              background: "rgba(0,0,0,0.6)", color: "white", border: "1px solid rgba(255,255,255,0.3)",
+              borderRadius: 8, padding: "6px 14px", fontSize: 16, cursor: "pointer",
+            }}
+          >× Cerrar</button>
         </div>
       )}
 

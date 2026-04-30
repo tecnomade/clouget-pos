@@ -512,12 +512,16 @@ button, input, select, textarea {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   width: 400px;
   max-width: 90%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   animation: modal-scale-in 0.15s ease-out;
 }
 
 .modal-header {
   padding: 16px 20px;
   border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -527,6 +531,9 @@ button, input, select, textarea {
 
 .modal-body {
   padding: 20px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .modal-body p {
@@ -541,6 +548,7 @@ button, input, select, textarea {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 @keyframes modal-fade-in {

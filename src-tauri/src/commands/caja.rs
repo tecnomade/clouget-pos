@@ -228,7 +228,10 @@ pub fn cerrar_caja(
         )
         .unwrap_or(0);
 
-    let total_efectivo: f64 = conn
+    // EFECTIVO real entrado a caja:
+    //   (a) ventas 100% efectivo
+    //   (b) porcion EFECTIVO de ventas MIXTO (desde pagos_venta)
+    let total_efectivo_directo: f64 = conn
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
@@ -237,6 +240,18 @@ pub fn cerrar_caja(
             |row| row.get(0),
         )
         .unwrap_or(0.0);
+    let total_efectivo_mixto: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
+             JOIN ventas v ON v.id = pv.venta_id
+             WHERE v.created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND v.forma_pago = 'MIXTO' AND v.anulada = 0 AND v.estado = 'COMPLETADA'
+             AND UPPER(pv.forma_pago) = 'EFECTIVO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_efectivo = total_efectivo_directo + total_efectivo_mixto;
 
     let total_gastos: f64 = conn
         .query_row(
@@ -827,7 +842,10 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
         )
         .unwrap_or(0.0);
 
-    let total_efectivo: f64 = conn
+    // EFECTIVO de ventas:
+    //   (a) ventas 100% efectivo: ventas.forma_pago='EFECTIVO' (excluyendo fiadas)
+    //   (b) porcion EFECTIVO de ventas MIXTO: pagos_venta.forma_pago='EFECTIVO'
+    let total_efectivo_directo: f64 = conn
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
@@ -836,6 +854,18 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
             |row| row.get(0),
         )
         .unwrap_or(0.0);
+    let total_efectivo_mixto: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
+             JOIN ventas v ON v.id = pv.venta_id
+             WHERE v.created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
+             AND v.forma_pago = 'MIXTO' AND v.anulada = 0 AND v.estado = 'COMPLETADA'
+             AND UPPER(pv.forma_pago) = 'EFECTIVO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    let total_efectivo = total_efectivo_directo + total_efectivo_mixto;
 
     let total_cobros_efectivo: f64 = conn
         .query_row(

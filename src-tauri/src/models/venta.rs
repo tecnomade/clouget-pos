@@ -30,6 +30,8 @@ pub struct Venta {
     #[serde(default)]
     pub banco_nombre: Option<String>,
     #[serde(default)]
+    pub comprobante_imagen: Option<String>,
+    #[serde(default)]
     pub tipo_estado: Option<String>,
     #[serde(default)]
     pub guia_placa: Option<String>,

@@ -62,6 +62,31 @@ pub struct ResumenCajaReporte {
     pub eventos: Vec<EventoCajaReporte>,
     #[serde(default)]
     pub depositos: Vec<DepositoReporte>,
+    // === Trazabilidad detallada (v2.3.30+) ===
+    #[serde(default)]
+    pub total_credito: f64,
+    #[serde(default)]
+    pub total_tarjeta: f64,
+    #[serde(default)]
+    pub total_otros: f64,
+    /// Numero de ventas a credito (incluyendo MIXTO con porcion credito)
+    #[serde(default)]
+    pub num_ventas_credito: i64,
+    /// Numero de ventas con transferencia (puras o mixtas)
+    #[serde(default)]
+    pub num_ventas_transfer: i64,
+    /// Lista detallada de TODOS los retiros (no solo depositos a banco)
+    #[serde(default)]
+    pub retiros: Vec<RetiroReporte>,
+    /// Lista detallada de ventas para trazabilidad item por item
+    #[serde(default)]
+    pub ventas_lista: Vec<VentaResumen>,
+    /// Lista de gastos detallados
+    #[serde(default)]
+    pub gastos_lista: Vec<GastoResumen>,
+    /// Lista de cobros de cuentas por cobrar
+    #[serde(default)]
+    pub cobros_lista: Vec<CobroResumen>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -79,4 +104,48 @@ pub struct DepositoReporte {
     pub referencia: Option<String>,
     pub estado: String,
     pub fecha: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct RetiroReporte {
+    pub id: i64,
+    pub monto: f64,
+    pub motivo: String,
+    pub usuario: String,
+    pub fecha: String,
+    pub banco_nombre: Option<String>,
+    pub referencia: Option<String>,
+    pub estado: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct VentaResumen {
+    pub numero: String,
+    pub fecha: String,
+    pub cliente_nombre: Option<String>,
+    pub forma_pago: String,
+    pub total: f64,
+    /// Para MIXTO: desglose "EFECTIVO:50.00 + TRANSFER:30.00 + CREDITO:20.00"
+    pub desglose_pagos: Option<String>,
+    pub tipo_documento: String,
+    pub anulada: i64,
+    pub usuario: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct GastoResumen {
+    pub fecha: String,
+    pub categoria: String,
+    pub descripcion: String,
+    pub monto: f64,
+    pub usuario: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct CobroResumen {
+    pub fecha: String,
+    pub cliente_nombre: String,
+    pub forma_pago: String,
+    pub monto: f64,
+    pub banco_nombre: Option<String>,
 }
