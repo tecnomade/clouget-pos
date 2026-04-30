@@ -161,6 +161,7 @@ export default function PuntoVenta() {
   const [addPagoMonto, setAddPagoMonto] = useState("");
   const [addPagoBancoId, setAddPagoBancoId] = useState<number | null>(null);
   const [addPagoReferencia, setAddPagoReferencia] = useState("");
+  const [addPagoComprobante, setAddPagoComprobante] = useState<string | null>(null);
 
   // Cart slide-in panel
   const [carritoAbierto, setCarritoAbierto] = useState(false);
@@ -2860,14 +2861,17 @@ export default function PuntoVenta() {
         const aplicar = () => {
           if (monto <= 0) { toastError("Monto debe ser mayor a 0"); return; }
           if (addPagoForma === "TRANSFER" && !addPagoBancoId) { toastError("Seleccione cuenta bancaria"); return; }
+          if (addPagoForma === "TRANSFER" && requiereReferencia && !addPagoReferencia.trim()) { toastError("La referencia de transferencia es obligatoria"); return; }
+          if (addPagoForma === "TRANSFER" && requiereComprobante && !addPagoComprobante) { toastError("El comprobante de transferencia es obligatorio"); return; }
           setPagosMixtos(prev => [...prev, {
             forma_pago: addPagoForma,
             monto,
             banco_id: addPagoForma === "TRANSFER" ? addPagoBancoId : null,
             referencia: addPagoForma === "TRANSFER" ? (addPagoReferencia.trim() || null) : null,
-          }]);
+            comprobante_imagen: addPagoForma === "TRANSFER" ? (addPagoComprobante || null) : null,
+          } as any]);
           setMostrarAddPago(false);
-          setAddPagoMonto(""); setAddPagoReferencia(""); setAddPagoBancoId(null);
+          setAddPagoMonto(""); setAddPagoReferencia(""); setAddPagoBancoId(null); setAddPagoComprobante(null);
         };
         const sumaActual = pagosMixtos.reduce((s, p) => s + p.monto, 0);
         const faltaActual = total - sumaActual;
@@ -2894,10 +2898,50 @@ export default function PuntoVenta() {
                         <option key={b.id} value={b.id ?? ""}>{b.nombre}{b.tipo_cuenta ? ` (${b.tipo_cuenta})` : ""}</option>
                       ))}
                     </select>
-                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginTop: 10, marginBottom: 4 }}>Referencia (opcional)</label>
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginTop: 10, marginBottom: 4 }}>
+                      Referencia {requiereReferencia && <span style={{ color: "var(--color-danger)" }}>*</span>}
+                    </label>
                     <input className="input" placeholder="Nro. comprobante / referencia"
                       value={addPagoReferencia}
                       onChange={(e) => setAddPagoReferencia(e.target.value)} />
+                    <label className="text-secondary" style={{ fontSize: 12, display: "block", marginTop: 10, marginBottom: 4 }}>
+                      Comprobante {requiereComprobante && <span style={{ color: "var(--color-danger)" }}>*</span>}
+                    </label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input type="file" accept="image/*" style={{ flex: 1, fontSize: 11 }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
+                          const reader = new FileReader();
+                          reader.onload = () => setAddPagoComprobante(reader.result as string);
+                          reader.readAsDataURL(file);
+                        }} />
+                      {addPagoComprobante && (
+                        <>
+                          <span style={{ fontSize: 11, color: "var(--color-success)", fontWeight: 600 }}>✓</span>
+                          <button type="button"
+                            onClick={() => setAddPagoComprobante(null)}
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16 }}>×</button>
+                        </>
+                      )}
+                    </div>
+                    {addPagoComprobante && (
+                      <div style={{ marginTop: 6 }}>
+                        <img
+                          src={addPagoComprobante}
+                          alt="Comprobante"
+                          onClick={() => setComprobanteFullscreen(addPagoComprobante)}
+                          style={{
+                            maxWidth: "100%", maxHeight: 150, objectFit: "contain",
+                            borderRadius: 4, border: "1px solid var(--color-border)",
+                            cursor: "zoom-in", display: "block", margin: "0 auto",
+                          }} />
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", textAlign: "center", marginTop: 2 }}>
+                          Click para ampliar
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
                 {addPagoForma === "CREDITO" && (
@@ -2912,7 +2956,10 @@ export default function PuntoVenta() {
                 )}
               </div>
               <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button className="btn btn-outline" onClick={() => setMostrarAddPago(false)}>Cancelar</button>
+                <button className="btn btn-outline" onClick={() => {
+                  setMostrarAddPago(false);
+                  setAddPagoMonto(""); setAddPagoReferencia(""); setAddPagoBancoId(null); setAddPagoComprobante(null);
+                }}>Cancelar</button>
                 <button className="btn btn-primary" onClick={aplicar}>Agregar pago</button>
               </div>
             </div>

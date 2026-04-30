@@ -80,6 +80,29 @@ export default function CajaPage() {
 
   useEffect(() => { cargar(); }, []);
 
+  // Auto-refresh: recargar caja cuando la ventana recupera el foco o vuelve a ser visible.
+  // Evita que el usuario tenga que navegar afuera y volver para ver el monto_esperado
+  // actualizado despues de hacer cambios en otra ventana (ej: una venta en POS).
+  useEffect(() => {
+    const refrescar = () => {
+      obtenerCajaAbierta()
+        .then((c) => {
+          setCajaAbierta(c);
+          if (c?.id) listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+        })
+        .catch(() => {});
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refrescar();
+    };
+    window.addEventListener("focus", refrescar);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", refrescar);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   // Soporte tecla Esc para cerrar drawer historial
   useEffect(() => {
     if (!mostrarHistorial) return;
@@ -181,7 +204,13 @@ export default function CajaPage() {
       toastExito(`Retiro de $${monto.toFixed(2)} registrado`);
       setMostrarRetiro(false);
       setRetiroMonto(""); setRetiroMotivo(""); setRetiroBancoId(null); setRetiroReferencia("");
-      if (cajaAbierta?.id) listarRetirosCaja(cajaAbierta.id).then(setRetiros).catch(() => {});
+      // Refrescar caja Y retiros para que monto_esperado se actualice inmediatamente
+      // sin que el usuario tenga que navegar afuera y volver.
+      const c = await obtenerCajaAbierta();
+      setCajaAbierta(c);
+      if (c?.id) {
+        listarRetirosCaja(c.id).then(setRetiros).catch(() => {});
+      }
     } catch (err) { toastError("Error: " + err); }
   };
 

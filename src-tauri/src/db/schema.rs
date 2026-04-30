@@ -1019,6 +1019,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_pagos_venta_venta ON pagos_venta(venta_id);
     ");
 
+    // Migracion: agregar comprobante_imagen a pagos_venta si no existe (tablas viejas)
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN comprobante_imagen TEXT", []);
+
     // --- Migracion: Presentaciones / unidades multiples por producto ---
     // Un producto puede venderse en varias unidades (UND, SIXPACK=6, JABA=12, CAJA=24)
     // Cada presentacion tiene su factor de conversion a la unidad base y su precio propio.
