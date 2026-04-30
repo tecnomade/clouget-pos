@@ -35,6 +35,10 @@ pub struct Venta {
     /// Permite mostrar "Venta de la Sesion #42" y filtrar por sesion.
     #[serde(default)]
     pub caja_id: Option<i64>,
+    /// Nombre del cliente (joined desde clientes.nombre). v2.3.39+.
+    /// Util en listados de Guias y Ventas para mostrar sin hacer fetch adicional.
+    #[serde(default)]
+    pub cliente_nombre: Option<String>,
     #[serde(default)]
     pub tipo_estado: Option<String>,
     #[serde(default)]

@@ -667,6 +667,36 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );"
     ).ok();
 
+    // Tabla de vehiculos guardados (autocompletar placas, v2.3.39+).
+    // Separada de choferes porque a veces se conoce solo la placa, no el chofer,
+    // y un mismo vehiculo puede ser conducido por distintos choferes.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vehiculos_transporte (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            placa TEXT NOT NULL UNIQUE,
+            descripcion TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_vehiculos_placa ON vehiculos_transporte(placa);"
+    ).ok();
+
+    // Direcciones de entrega por cliente (autocompletar para guias, v2.3.39+).
+    // Un cliente puede tener varias direcciones (casa, oficina, sucursal, etc.).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS direcciones_cliente (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            direccion TEXT NOT NULL,
+            etiqueta TEXT,
+            contacto_nombre TEXT,
+            contacto_telefono TEXT,
+            referencia TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (cliente_id) REFERENCES clientes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_dir_cli ON direcciones_cliente(cliente_id);"
+    ).ok();
+
     // --- Migración: Proveedores, Compras y Cuentas por Pagar ---
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS proveedores (

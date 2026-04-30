@@ -583,6 +583,7 @@ pub fn registrar_venta(
             banco_nombre: None,
             comprobante_imagen: None,
             caja_id: None,
+            cliente_nombre: None,
             tipo_estado: None,
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -673,6 +674,7 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 tipo_estado: row.get(24).ok(),
                 anulada: row.get::<_, i64>(25).ok(),
                 caja_id: row.get(26).ok(),
+                cliente_nombre: None,
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
             })
         })
@@ -727,6 +729,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     banco_nombre: row.get(23).ok(),
                     comprobante_imagen: row.get(24).ok(),
                     caja_id: row.get(25).ok(),
+                    cliente_nombre: None,
                     tipo_estado: None,
                     anulada: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
@@ -858,6 +861,7 @@ pub fn listar_ventas_sesion_caja(
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
                 caja_id: None,
+                cliente_nombre: None,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -1692,6 +1696,7 @@ fn guardar_documento_pendiente(
             banco_id: None, referencia_pago: None, banco_nombre: None,
             comprobante_imagen: None,
             caja_id: None,
+            cliente_nombre: None,
             tipo_estado: Some(tipo_estado.to_string()),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -1891,6 +1896,7 @@ pub fn guardar_guia_remision(
             banco_id: None, referencia_pago: None, banco_nombre: None,
             comprobante_imagen: None,
             caja_id: None,
+            cliente_nombre: None,
             tipo_estado: Some("GUIA_REMISION".to_string()),
             guia_placa: venta.guia_placa, guia_chofer: venta.guia_chofer,
             guia_direccion_destino: venta.guia_direccion_destino,
@@ -1915,9 +1921,11 @@ pub fn listar_guias_remision(
          v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
          v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
          v.numero_factura, v.establecimiento, v.punto_emision,
-         v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.tipo_estado
+         v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.tipo_estado,
+         cl.nombre as cliente_nombre
          FROM ventas v
          LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
+         LEFT JOIN clientes cl ON v.cliente_id = cl.id
          WHERE v.tipo_estado = 'GUIA_REMISION'"
     );
 
@@ -1978,6 +1986,7 @@ pub fn listar_guias_remision(
             banco_nombre: row.get(23).ok(),
             comprobante_imagen: None,
             caja_id: None,
+            cliente_nombre: row.get(25).ok(),
             tipo_estado: row.get(24).ok(),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -2231,6 +2240,7 @@ pub fn convertir_guia_a_venta(
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
                 caja_id: caja_id_actual,
+                cliente_nombre: None,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,

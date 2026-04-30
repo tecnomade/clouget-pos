@@ -416,6 +416,7 @@ pub fn listar_ventas_periodo(
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
                 caja_id: None,
+                cliente_nombre: None,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
