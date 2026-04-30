@@ -589,6 +589,21 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN verificado_por INTEGER", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN fecha_verificacion TEXT", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN motivo_verificacion TEXT", []);
+
+    // Vincular cada venta con la sesion de caja en la que se hizo (v2.3.34+).
+    // Permite mostrar al usuario "esta venta fue de la sesion #42" y filtrar por sesion.
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN caja_id INTEGER", []);
+    // Backfill: para ventas viejas sin caja_id, deducir desde fechas (apertura <= fecha < cierre)
+    let _ = conn.execute(
+        "UPDATE ventas SET caja_id = (
+            SELECT c.id FROM caja c
+            WHERE c.fecha_apertura <= ventas.fecha
+              AND (c.fecha_cierre IS NULL OR ventas.fecha < c.fecha_cierre)
+            ORDER BY c.id DESC LIMIT 1
+         )
+         WHERE caja_id IS NULL",
+        [],
+    );
     // Marcar todas las TRANSFER existentes (anteriores a esta migracion) como VERIFICADO
     // para no contaminar el panel admin con historico que no fue revisado.
     let _ = conn.execute(

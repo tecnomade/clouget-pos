@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -66,6 +66,9 @@ export default function VentasDia() {
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
   const [ncLista, setNcLista] = useState<any[]>([]);
   const [ncFiltroEstado, setNcFiltroEstado] = useState<string>("");
+  // Filtrar solo ventas de la sesion de caja actualmente abierta (si hay una)
+  const [soloSesionActual, setSoloSesionActual] = useState(false);
+  const [cajaActualId, setCajaActualId] = useState<number | null>(null);
 
   const abrirDetalle = async (ventaId: number) => {
     try {
@@ -150,6 +153,20 @@ export default function VentasDia() {
   };
 
   useEffect(() => { cargar(); }, [fechaDesde, fechaHasta]);
+
+  // Cargar ID de la caja actualmente abierta para habilitar filtro "solo esta sesion"
+  useEffect(() => {
+    obtenerCajaAbierta()
+      .then((c) => setCajaActualId(c?.id ?? null))
+      .catch(() => setCajaActualId(null));
+  }, []);
+
+  // Lista filtrada por tipo + opcionalmente por sesion de caja actual
+  const ventasFiltradas = ventas.filter(v => {
+    const tipoOk = filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo;
+    const sesionOk = !soloSesionActual || (v.caja_id != null && v.caja_id === cajaActualId);
+    return tipoOk && sesionOk;
+  });
   useEffect(() => {
     obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
   }, []);
@@ -208,6 +225,20 @@ export default function VentasDia() {
         )}
       </div>
       <div className="page-body">
+        {/* Nota aclaratoria: esta pagina muestra TODAS las ventas del dia,
+            independiente de las sesiones de caja. Los totales pueden no
+            coincidir con el cierre de caja, ya que la caja solo cuenta
+            desde su apertura hasta su cierre. */}
+        {!esRango && (
+          <div style={{
+            padding: "8px 12px", marginBottom: 12, borderRadius: 6,
+            background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.2)",
+            fontSize: 11, color: "var(--color-text-secondary)",
+          }}>
+            ℹ Esta pantalla muestra <strong>todas las ventas del día</strong> sin importar las sesiones de caja.
+            El cierre de caja solo cuenta desde su apertura, así que pueden no coincidir si se abrió/cerró caja varias veces.
+          </div>
+        )}
         {/* Tarjetas de resumen */}
         {r && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
@@ -344,8 +375,8 @@ export default function VentasDia() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 16 }}>
           {/* Tabla de ventas */}
           <div className="card">
-            <div className="card-header flex justify-between items-center">
-              <div className="flex gap-2 items-center">
+            <div className="card-header flex justify-between items-center" style={{ flexWrap: "wrap", gap: 8 }}>
+              <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
                 {[
                   { key: "COMPLETADA", label: "Ventas" },
                   { key: "BORRADOR", label: "Borradores" },
@@ -361,11 +392,22 @@ export default function VentasDia() {
                     {f.label}
                   </button>
                 ))}
+                {/* Toggle "Solo esta sesion": filtra ventas de la caja abierta actualmente.
+                    Util cuando el cajero quiere ver SOLO sus ventas de este turno. */}
+                {cajaActualId && filtroTipo !== "nc" && (
+                  <button
+                    className={`btn ${soloSesionActual ? "btn-primary" : "btn-outline"}`}
+                    style={{ fontSize: 10, padding: "3px 10px", marginLeft: 8, borderColor: soloSesionActual ? undefined : "var(--color-warning)", color: soloSesionActual ? undefined : "var(--color-warning)" }}
+                    onClick={() => setSoloSesionActual(!soloSesionActual)}
+                    title="Mostrar solo las ventas hechas desde que abrieron la caja actual">
+                    {soloSesionActual ? "✓ " : ""}Solo sesión #{cajaActualId}
+                  </button>
+                )}
               </div>
               <span className="text-secondary" style={{ fontSize: 12 }}>
                 {filtroTipo === "nc"
                   ? `${ncLista.length} registro${ncLista.length !== 1 ? "s" : ""}`
-                  : `${ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length} registro${ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).length !== 1 ? "s" : ""}`
+                  : `${ventasFiltradas.length} registro${ventasFiltradas.length !== 1 ? "s" : ""}`
                 }
               </span>
             </div>
@@ -553,7 +595,7 @@ export default function VentasDia() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ventas.filter(v => filtroTipo === "TODOS" || (v.tipo_estado || "COMPLETADA") === filtroTipo).map((v) => (
+                  {ventasFiltradas.map((v) => (
                     <React.Fragment key={v.id}>
                     <tr onClick={() => v.id && abrirDetalle(v.id)}
                       style={{ cursor: "pointer" }} title="Click para ver detalle completo">
@@ -1110,6 +1152,12 @@ export default function VentasDia() {
                   <div style={{ gridColumn: "1 / -1" }}>
                     <span className="text-secondary">Nro. Factura: </span>
                     <strong style={{ color: "var(--color-success)" }}>{ventaDetalle.venta.numero_factura}</strong>
+                  </div>
+                )}
+                {ventaDetalle.venta.caja_id && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <span className="text-secondary">Sesión de caja: </span>
+                    <strong>#{ventaDetalle.venta.caja_id}</strong>
                   </div>
                 )}
                 {ventaDetalle.venta.observacion && (

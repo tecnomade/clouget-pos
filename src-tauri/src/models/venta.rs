@@ -31,6 +31,10 @@ pub struct Venta {
     pub banco_nombre: Option<String>,
     #[serde(default)]
     pub comprobante_imagen: Option<String>,
+    /// ID de la sesion de caja en la que se hizo esta venta (v2.3.34+).
+    /// Permite mostrar "Venta de la Sesion #42" y filtrar por sesion.
+    #[serde(default)]
+    pub caja_id: Option<i64>,
     #[serde(default)]
     pub tipo_estado: Option<String>,
     #[serde(default)]

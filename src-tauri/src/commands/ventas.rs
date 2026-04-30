@@ -20,17 +20,16 @@ pub fn registrar_venta(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Verificar que haya caja abierta
-    let caja_abierta: bool = conn
+    // Verificar que haya caja abierta y obtener su ID para vincular la venta a la sesion
+    let caja_id_actual: Option<i64> = conn
         .query_row(
-            "SELECT COUNT(*) FROM caja WHERE estado = 'ABIERTA'",
+            "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|count| count > 0)
-        .unwrap_or(false);
+        .ok();
 
-    if !caja_abierta {
+    if caja_id_actual.is_none() {
         return Err("Debe abrir la caja antes de realizar ventas".to_string());
     }
 
@@ -178,8 +177,8 @@ pub fn registrar_venta(
          descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
          tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision,
          banco_id, referencia_pago, comprobante_imagen,
-         pago_estado, verificado_por, fecha_verificacion)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+         pago_estado, verificado_por, fecha_verificacion, caja_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         rusqlite::params![
             numero,
             venta.cliente_id.unwrap_or(1),
@@ -205,6 +204,7 @@ pub fn registrar_venta(
             pago_estado_inicial,
             verificado_por_inicial,
             fecha_verificacion_inicial,
+            caja_id_actual,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -582,6 +582,7 @@ pub fn registrar_venta(
             referencia_pago: None,
             banco_nombre: None,
             comprobante_imagen: None,
+            caja_id: None,
             tipo_estado: None,
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -632,7 +633,8 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
              v.numero_factura, v.establecimiento, v.punto_emision,
              v.banco_id, v.referencia_pago, cb.nombre as banco_nombre,
              COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado,
-             COALESCE(v.anulada, 0) as anulada
+             COALESCE(v.anulada, 0) as anulada,
+             v.caja_id
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
              WHERE date(v.fecha) = date(?1)
@@ -670,6 +672,7 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 comprobante_imagen: None,
                 tipo_estado: row.get(24).ok(),
                 anulada: row.get::<_, i64>(25).ok(),
+                caja_id: row.get(26).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
             })
         })
@@ -690,7 +693,8 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
              v.descuento, v.iva, v.total, v.forma_pago, v.monto_recibido, v.cambio, v.estado,
              v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
              v.numero_factura, v.establecimiento, v.punto_emision,
-             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.comprobante_imagen
+             v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.comprobante_imagen,
+             v.caja_id
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
              WHERE v.id = ?1",
@@ -722,6 +726,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     referencia_pago: row.get(22).ok(),
                     banco_nombre: row.get(23).ok(),
                     comprobante_imagen: row.get(24).ok(),
+                    caja_id: row.get(25).ok(),
                     tipo_estado: None,
                     anulada: None,
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
@@ -852,6 +857,7 @@ pub fn listar_ventas_sesion_caja(
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
+                caja_id: None,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -1603,6 +1609,7 @@ fn guardar_documento_pendiente(
             numero_factura: None, establecimiento: None, punto_emision: None,
             banco_id: None, referencia_pago: None, banco_nombre: None,
             comprobante_imagen: None,
+            caja_id: None,
             tipo_estado: Some(tipo_estado.to_string()),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -1801,6 +1808,7 @@ pub fn guardar_guia_remision(
             numero_factura: None, establecimiento: Some(terminal_est), punto_emision: Some(terminal_pe),
             banco_id: None, referencia_pago: None, banco_nombre: None,
             comprobante_imagen: None,
+            caja_id: None,
             tipo_estado: Some("GUIA_REMISION".to_string()),
             guia_placa: venta.guia_placa, guia_chofer: venta.guia_chofer,
             guia_direccion_destino: venta.guia_direccion_destino,
@@ -1887,6 +1895,7 @@ pub fn listar_guias_remision(
             referencia_pago: row.get(22).ok(),
             banco_nombre: row.get(23).ok(),
             comprobante_imagen: None,
+            caja_id: None,
             tipo_estado: row.get(24).ok(),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
@@ -2079,6 +2088,7 @@ pub fn convertir_guia_a_venta(
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
+                caja_id: None,
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,

@@ -564,6 +564,22 @@ export default function CajaPage() {
           <div className="card" style={{ maxWidth: 500, margin: "40px auto" }}>
             <div className="card-header">Cerrar Caja</div>
             <div className="card-body">
+              {/* Banner de apertura: ayuda al cajero a entender que el desglose
+                  cubre solo desde esta hora, no todo el dia. Ventas anteriores
+                  pertenecen a sesiones cerradas y se ven en VentasDia. */}
+              {cajaAbierta.fecha_apertura && (
+                <div style={{
+                  padding: "8px 12px", marginBottom: 10, borderRadius: 6,
+                  background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.25)",
+                  fontSize: 12, color: "var(--color-primary)",
+                }}>
+                  ⏰ Caja abierta el <strong>{cajaAbierta.fecha_apertura}</strong>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    El desglose cuenta solo ventas/gastos/retiros desde esa hora.
+                    Para ver TODAS las ventas del día (incluyendo sesiones cerradas), ir a "Ventas".
+                  </div>
+                </div>
+              )}
               <div className="mb-4">
                 <span className="text-secondary">Monto inicial:</span>
                 <span className="font-bold" style={{ marginLeft: 8 }}>${cajaAbierta.monto_inicial.toFixed(2)}</span>
@@ -601,7 +617,12 @@ export default function CajaPage() {
                       </div>
 
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                        <span className="text-secondary">Ventas EFECTIVO ({numVentas} totales):</span>
+                        <span className="text-secondary">
+                          Ventas EFECTIVO
+                          <span style={{ color: "var(--color-text-secondary)", fontSize: 10, marginLeft: 4 }}>
+                            ({numVentas} venta{numVentas === 1 ? "" : "s"} en esta sesión)
+                          </span>:
+                        </span>
                         <span className="font-bold" style={{ color: "var(--color-success)" }}>
                           +${totalEfectivoVentas.toFixed(2)}
                         </span>

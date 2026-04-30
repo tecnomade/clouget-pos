@@ -132,6 +132,7 @@ export interface Venta {
   referencia_pago?: string;
   banco_nombre?: string;
   comprobante_imagen?: string | null;
+  caja_id?: number | null;
   tipo_estado?: string;
   anulada?: number;
   guia_placa?: string;
