@@ -1171,6 +1171,16 @@ pub fn registrar_nota_credito(
         )
         .map_err(|e| e.to_string())?;
 
+        // Stock anterior + flag servicio para kardex
+        let stock_antes: f64 = conn.query_row(
+            "SELECT COALESCE(stock_actual, 0) FROM productos WHERE id = ?1",
+            rusqlite::params![item.producto_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        let es_serv: bool = conn.query_row(
+            "SELECT COALESCE(es_servicio, 0) FROM productos WHERE id = ?1",
+            rusqlite::params![item.producto_id], |r| r.get::<_, i32>(0),
+        ).map(|v| v != 0).unwrap_or(false);
+
         // Devolver stock (si no es servicio)
         conn.execute(
             "UPDATE productos SET stock_actual = stock_actual + ?1,
@@ -1190,6 +1200,24 @@ pub fn registrar_nota_credito(
                  WHERE producto_id = ?2 AND establecimiento_id = ?3",
                 rusqlite::params![item.cantidad, item.producto_id, eid],
             ).ok();
+        }
+
+        // v2.3.49 FIX: registrar movimiento kardex tipo 'NOTA_CREDITO' para trazabilidad
+        if !es_serv {
+            let costo_snap: f64 = conn.query_row(
+                "SELECT COALESCE(precio_costo, 0) FROM productos WHERE id = ?1",
+                rusqlite::params![item.producto_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let motivo_kardex = format!("NC {} (motivo: {})", numero, nota.motivo.trim());
+            let _ = conn.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                 VALUES (?1, 'NOTA_CREDITO', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    item.producto_id, item.cantidad,
+                    stock_antes, stock_antes + item.cantidad,
+                    costo_snap, nc_id, usuario_nombre, nc_est_id, motivo_kardex,
+                ],
+            );
         }
     }
 
@@ -2723,6 +2751,23 @@ pub fn anular_venta(
         return Err("No se puede anular una factura AUTORIZADA por el SRI. Debe crear una Nota de Credito.".to_string());
     }
 
+    // v2.3.49 FIX CRITICO: si la venta ya tiene una nota de credito (devolucion),
+    // NO permitir anular. Anular ademas reintegraria stock que ya devolvio la NC,
+    // causando duplicacion. Si el usuario quiere "anular", debe primero revertir
+    // la NC o aceptar que la NC ya hizo el efecto contable.
+    let nc_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM notas_credito WHERE venta_id = ?1",
+        rusqlite::params![venta_id], |r| r.get(0),
+    ).unwrap_or(0);
+    if nc_count > 0 {
+        return Err(format!(
+            "No se puede anular esta venta — ya tiene {} nota(s) de credito (devolucion). \
+             La devolucion ya revirtio el stock y el dinero. Si necesitas hacer mas ajustes, \
+             registra otra devolucion (NC) en lugar de anular.",
+            nc_count
+        ));
+    }
+
     // Multi-almacen: obtener est_id para revertir stock por establecimiento
     let multi_almacen: bool = conn
         .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
@@ -2793,6 +2838,24 @@ pub fn anular_venta(
         ).ok();
     }
 
+    // v2.3.49: calcular EFECTIVO real de la venta ANTES de borrar pagos_venta.
+    // Necesario para revertir monto_esperado abajo segun la porcion efectivo real.
+    let (forma_pago_v, es_fiado_v): (String, i32) = conn.query_row(
+        "SELECT forma_pago, COALESCE(estado, '') = 'PENDIENTE' AS es_fiado FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id], |r| Ok((r.get(0)?, r.get::<_, bool>(1)? as i32)),
+    ).unwrap_or(("EFECTIVO".to_string(), 0));
+    let efectivo_a_restar: f64 = if forma_pago_v == "MIXTO" {
+        conn.query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+             WHERE venta_id = ?1 AND UPPER(forma_pago) = 'EFECTIVO'",
+            rusqlite::params![venta_id], |r| r.get(0),
+        ).unwrap_or(0.0)
+    } else if forma_pago_v == "EFECTIVO" && es_fiado_v == 0 {
+        total
+    } else {
+        0.0
+    };
+
     // Eliminar CXC y sus pagos
     conn.execute("DELETE FROM pagos_cuenta WHERE cuenta_id IN (SELECT id FROM cuentas_por_cobrar WHERE venta_id = ?1)",
         rusqlite::params![venta_id]).ok();
@@ -2812,11 +2875,14 @@ pub fn anular_venta(
         rusqlite::params![obs_anulacion, venta_id]
     ).map_err(|e| e.to_string())?;
 
-    // Restar del monto_ventas de la caja abierta
+    // v2.3.49 FIX: revertir monto_ventas (todas las formas) y monto_esperado
+    // (solo porcion EFECTIVO, calculada antes de borrar pagos_venta arriba).
+    // Antes solo se restaba monto_ventas, dejando monto_esperado inflado por
+    // efectivo fantasma de ventas anuladas → cierre con descuadre falso.
     conn.execute(
-        "UPDATE caja SET monto_ventas = monto_ventas - ?1
+        "UPDATE caja SET monto_ventas = monto_ventas - ?1, monto_esperado = monto_esperado - ?2
          WHERE estado = 'ABIERTA'",
-        rusqlite::params![total]
+        rusqlite::params![total, efectivo_a_restar]
     ).ok();
 
     Ok(())
