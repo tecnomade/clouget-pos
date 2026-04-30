@@ -332,6 +332,7 @@ export async function resumenGuiasRemision(fechaDesde: string, fechaHasta: strin
 export async function convertirGuiaAVenta(params: {
   guiaId: number; formaPago: string; montoRecibido: number;
   esFiado?: boolean; bancoId?: number; referenciaPago?: string;
+  itemsOverride?: { producto_id: number; precio_unitario: number; descuento: number; cantidad?: number }[];
 }): Promise<VentaCompleta> {
   return smartInvoke("convertir_guia_a_venta", params);
 }

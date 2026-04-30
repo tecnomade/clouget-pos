@@ -25,6 +25,13 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
   const [convEsFiado, setConvEsFiado] = useState<boolean>(false);
   const [convirtiendo, setConvirtiendo] = useState<boolean>(false);
   const [cuentasBanco, setCuentasBanco] = useState<CuentaBanco[]>([]);
+  // Items editables — array de { producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, nombre }
+  const [convItems, setConvItems] = useState<{
+    producto_id: number; cantidad: number; precio_unitario: number;
+    descuento: number; iva_porcentaje: number; nombre: string;
+  }[]>([]);
+  // Estado de la guia: si PENDIENTE, permite editar cantidad. Si ENTREGADA, no.
+  const [convGuiaEstado, setConvGuiaEstado] = useState<string>("PENDIENTE");
 
   const cargar = useCallback(async () => {
     try {
@@ -75,6 +82,16 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
     try {
       const vc = await obtenerVenta(doc.id);
       setConvertir(vc);
+      setConvGuiaEstado(vc.venta.estado || "PENDIENTE");
+      // Inicializar items editables con datos de la guia
+      setConvItems(vc.detalles.map(d => ({
+        producto_id: d.producto_id,
+        cantidad: d.cantidad,
+        precio_unitario: d.precio_unitario,
+        descuento: d.descuento,
+        iva_porcentaje: d.iva_porcentaje,
+        nombre: d.nombre_producto || `#${d.producto_id}`,
+      })));
       setConvFormaPago("EFECTIVO");
       setConvMonto("");
       setConvBancoId(null);
@@ -87,8 +104,19 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
     }
   };
 
+  // Calcular total en vivo desde items editados
+  const calcularTotalConv = () => {
+    let sub = 0, iva = 0;
+    for (const it of convItems) {
+      const subItem = it.cantidad * it.precio_unitario - it.descuento;
+      sub += subItem;
+      if (it.iva_porcentaje > 0) iva += subItem * (it.iva_porcentaje / 100);
+    }
+    return Math.round((sub + iva) * 100) / 100;
+  };
+
   // Ejecutar la conversion. Usa convertir_guia_a_venta del backend que NO
-  // descuenta stock de nuevo (ya descontado al crear la guia).
+  // descuenta stock de nuevo (cantidad fija si guia ENTREGADA).
   const ejecutarConversion = async () => {
     if (!convertir || !convertir.venta.id) return;
     if (convFormaPago === "TRANSFERENCIA" && !convBancoId) {
@@ -96,9 +124,26 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
     }
     setConvirtiendo(true);
     try {
+      const totalCalc = calcularTotalConv();
       const monto = convFormaPago === "EFECTIVO" && !convEsFiado
-        ? (parseFloat(convMonto) || convertir.venta.total)
-        : convertir.venta.total;
+        ? (parseFloat(convMonto) || totalCalc)
+        : totalCalc;
+      // Detectar si hay cambios respecto a los items originales
+      const huboCambios = convertir.detalles.some((d, i) => {
+        const it = convItems[i];
+        return !it
+          || Math.abs(it.precio_unitario - d.precio_unitario) > 0.001
+          || Math.abs(it.descuento - d.descuento) > 0.001
+          || (convGuiaEstado === "PENDIENTE" && Math.abs(it.cantidad - d.cantidad) > 0.0001);
+      });
+      const itemsOverride = huboCambios
+        ? convItems.map(it => ({
+            producto_id: it.producto_id,
+            precio_unitario: it.precio_unitario,
+            descuento: it.descuento,
+            cantidad: convGuiaEstado === "PENDIENTE" ? it.cantidad : undefined,
+          }))
+        : undefined;
       const res = await convertirGuiaAVenta({
         guiaId: convertir.venta.id,
         formaPago: convFormaPago === "TRANSFERENCIA" ? "TRANSFER" : convFormaPago,
@@ -106,6 +151,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
         esFiado: convEsFiado,
         bancoId: convBancoId ?? undefined,
         referenciaPago: convReferencia.trim() || undefined,
+        itemsOverride,
       });
       toastExito(`Guía convertida a venta ${res.venta.numero}`);
       setConvertir(null);
@@ -374,32 +420,84 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>
                 Cliente: {convertir.cliente_nombre || "Consumidor Final"}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos</div>
+              <div style={{
+                fontSize: 11, padding: 6, marginBottom: 8, borderRadius: 4,
+                background: convGuiaEstado === "PENDIENTE" ? "rgba(245,158,11,0.08)" : "rgba(74,222,128,0.08)",
+                color: convGuiaEstado === "PENDIENTE" ? "var(--color-warning)" : "var(--color-success)",
+              }}>
+                {convGuiaEstado === "PENDIENTE"
+                  ? "🟡 Guía PENDIENTE — puedes editar cantidad, precio y descuento. El stock se ajustará."
+                  : "🟢 Guía ya ENTREGADA — solo puedes editar precio y descuento (cantidad fija porque ya fue entregada al cliente)."
+                }
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos (click en valores para editar)</div>
               <table className="table" style={{ fontSize: 12, marginBottom: 16 }}>
                 <thead>
                   <tr>
                     <th>Producto</th>
-                    <th className="text-right">Cant.</th>
-                    <th className="text-right">P.Unit</th>
-                    <th className="text-right">Subtotal</th>
+                    <th style={{ width: 70 }} className="text-right">Cant.</th>
+                    <th style={{ width: 90 }} className="text-right">P.Unit</th>
+                    <th style={{ width: 80 }} className="text-right">Desc.</th>
+                    <th style={{ width: 90 }} className="text-right">Subtotal</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {convertir.detalles.map((d, i) => (
-                    <tr key={i}>
-                      <td>{d.nombre_producto || `Producto #${d.producto_id}`}</td>
-                      <td className="text-right">{d.cantidad}</td>
-                      <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
-                      <td className="text-right">${d.subtotal.toFixed(2)}</td>
-                    </tr>
-                  ))}
+                  {convItems.map((it, i) => {
+                    const subtotal = it.cantidad * it.precio_unitario - it.descuento;
+                    return (
+                      <tr key={i}>
+                        <td>{it.nombre}</td>
+                        <td className="text-right">
+                          <input type="number" step="0.01" min="0.01"
+                            disabled={convGuiaEstado !== "PENDIENTE"}
+                            style={{
+                              width: "100%", textAlign: "right", padding: "2px 4px", fontSize: 12,
+                              border: convGuiaEstado === "PENDIENTE" ? "1px solid var(--color-border)" : "none",
+                              borderRadius: 3, background: convGuiaEstado === "PENDIENTE" ? "var(--color-surface)" : "transparent",
+                            }}
+                            value={it.cantidad}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value) || 0;
+                              setConvItems(prev => prev.map((p, j) => j === i ? { ...p, cantidad: v } : p));
+                            }} />
+                        </td>
+                        <td className="text-right">
+                          <input type="number" step="0.01" min="0"
+                            style={{
+                              width: "100%", textAlign: "right", padding: "2px 4px", fontSize: 12,
+                              border: "1px solid var(--color-border)", borderRadius: 3,
+                              background: "var(--color-surface)",
+                            }}
+                            value={it.precio_unitario}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value) || 0;
+                              setConvItems(prev => prev.map((p, j) => j === i ? { ...p, precio_unitario: v } : p));
+                            }} />
+                        </td>
+                        <td className="text-right">
+                          <input type="number" step="0.01" min="0"
+                            style={{
+                              width: "100%", textAlign: "right", padding: "2px 4px", fontSize: 12,
+                              border: "1px solid var(--color-border)", borderRadius: 3,
+                              background: "var(--color-surface)",
+                            }}
+                            value={it.descuento}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value) || 0;
+                              setConvItems(prev => prev.map((p, j) => j === i ? { ...p, descuento: v } : p));
+                            }} />
+                        </td>
+                        <td className="text-right" style={{ fontWeight: 600 }}>${subtotal.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
               <div style={{ borderTop: "2px solid var(--color-border)", paddingTop: 8, marginBottom: 16 }}>
                 <div className="flex justify-between" style={{ fontWeight: 700, fontSize: 16 }}>
                   <span>TOTAL:</span>
-                  <span className="text-success">${convertir.venta.total.toFixed(2)}</span>
+                  <span className="text-success">${calcularTotalConv().toFixed(2)}</span>
                 </div>
               </div>
 

@@ -2030,6 +2030,21 @@ pub fn resumen_guias_remision(
     Ok(resumen)
 }
 
+/// Item editado en el modal Facturar.
+/// - precio_unitario y descuento: siempre editables.
+/// - cantidad: SOLO se aplica si la guia esta en estado PENDIENTE
+///   (todavia no entregada al cliente). Si esta ENTREGADA, cambiar cantidad
+///   no se permite — debe ser devolucion parcial despues.
+/// El backend ajusta stock si cantidad cambia (decrementa mas o devuelve).
+#[derive(Debug, serde::Deserialize)]
+pub struct ItemOverride {
+    pub producto_id: i64,
+    pub precio_unitario: f64,
+    pub descuento: f64,
+    #[serde(default)]
+    pub cantidad: Option<f64>,
+}
+
 #[tauri::command]
 pub fn convertir_guia_a_venta(
     db: State<Database>,
@@ -2040,6 +2055,9 @@ pub fn convertir_guia_a_venta(
     es_fiado: Option<bool>,
     banco_id: Option<i64>,
     referencia_pago: Option<String>,
+    // Si presente, sobrescribe precios/descuentos por item al facturar.
+    // El cajero puede corregir precios mal cotizados antes de facturar.
+    items_override: Option<Vec<ItemOverride>>,
 ) -> Result<VentaCompleta, String> {
     let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
     let sesion_actual = sesion_guard.as_ref().ok_or("Debe iniciar sesion".to_string())?;
@@ -2065,13 +2083,14 @@ pub fn convertir_guia_a_venta(
 
     // Verificar que la guía existe y está PENDIENTE o ENTREGADA (no FACTURADA ni RECHAZADA)
     // v2.3.36: aceptar ENTREGADA permite convertir despues de marcar entregada al cliente.
-    let (guia_numero, total_guia, cliente_id_val, subtotal_sin_iva_g, subtotal_con_iva_g, iva_g, descuento_g, tipo_doc_g, observacion_g): (String, f64, i64, f64, f64, f64, f64, String, Option<String>) = conn.query_row(
-        "SELECT numero, total, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva, descuento, tipo_documento, observacion
+    let (guia_numero, _total_guia, cliente_id_val, _subtotal_sin_iva_g, _subtotal_con_iva_g, _iva_g, descuento_g, tipo_doc_g, observacion_g, guia_estado_actual): (String, f64, i64, f64, f64, f64, f64, String, Option<String>, String) = conn.query_row(
+        "SELECT numero, total, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva, descuento, tipo_documento, observacion, estado
          FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'
          AND estado IN ('PENDIENTE', 'ENTREGADA')",
         rusqlite::params![guia_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
     ).map_err(|_| "Guía no encontrada, ya fue facturada, o fue rechazada".to_string())?;
+    let guia_es_pendiente = guia_estado_actual == "PENDIENTE";
 
     // Leer establecimiento y punto de emisión del terminal
     let terminal_est: String = conn
@@ -2103,7 +2122,112 @@ pub fn convertir_guia_a_venta(
     if max_existente >= secuencial { secuencial = max_existente + 1; }
 
     let nuevo_numero = format!("NV-{:09}", secuencial);
-    let cambio = if monto_recibido > total_guia { monto_recibido - total_guia } else { 0.0 };
+
+    // === Leer items de la guia y aplicar overrides de precio si se enviaron ===
+    let mut stmt_d = conn.prepare(
+        "SELECT producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, info_adicional
+         FROM venta_detalles WHERE venta_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    let items_originales: Vec<(i64, f64, f64, f64, f64, Option<String>)> = stmt_d.query_map(
+        rusqlite::params![guia_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+    ).map_err(|e| e.to_string())?
+     .collect::<Result<Vec<_>, _>>()
+     .map_err(|e| e.to_string())?;
+    drop(stmt_d);
+
+    // Aplicar overrides (precio/descuento por producto_id, y cantidad solo si guia PENDIENTE).
+    // Tuple: (precio_unitario, descuento, cantidad_override)
+    let overrides_map: std::collections::HashMap<i64, (f64, f64, Option<f64>)> = items_override
+        .as_ref()
+        .map(|ovs| ovs.iter().map(|o| (o.producto_id, (o.precio_unitario, o.descuento, o.cantidad))).collect())
+        .unwrap_or_default();
+
+    let r2 = |n: f64| (n * 100.0).round() / 100.0;
+    let mut items_finales: Vec<(i64, f64, f64, f64, f64, f64, Option<String>)> = Vec::new();
+    let mut sum_sin_iva = 0.0_f64;
+    let mut sum_con_iva = 0.0_f64;
+    let mut sum_iva = 0.0_f64;
+    // Track stock adjustments (+ = devolver al inventario, - = decrementar mas).
+    // Solo aplica si guia PENDIENTE — si ENTREGADA cantidad nunca cambia.
+    let mut ajustes_stock: Vec<(i64, f64)> = Vec::new();
+    for (pid, cant_orig, pu_orig, desc_orig, iva_p, info) in &items_originales {
+        let ov = overrides_map.get(pid).copied();
+        let (pu, desc, cant_override) = ov.unwrap_or((*pu_orig, *desc_orig, None));
+        let cant = if guia_es_pendiente {
+            cant_override.unwrap_or(*cant_orig)
+        } else {
+            *cant_orig // ENTREGADA: cantidad fija
+        };
+        if guia_es_pendiente && (cant - cant_orig).abs() > 0.0001 {
+            // Diferencia: si cant nueva > cant_orig, decrementar mas stock (negativo)
+            //             si cant nueva < cant_orig, devolver stock (positivo)
+            ajustes_stock.push((*pid, *cant_orig - cant)); // ajuste = orig - nueva (positivo = devolver)
+        }
+        let subtotal_item = r2(cant * pu - desc);
+        if *iva_p > 0.0 {
+            sum_con_iva += subtotal_item;
+            sum_iva += r2(subtotal_item * (iva_p / 100.0));
+        } else {
+            sum_sin_iva += subtotal_item;
+        }
+        items_finales.push((*pid, cant, pu, desc, *iva_p, subtotal_item, info.clone()));
+    }
+    sum_sin_iva = r2(sum_sin_iva);
+    sum_con_iva = r2(sum_con_iva);
+    sum_iva = r2(sum_iva);
+    let total_recalculado = r2(sum_sin_iva + sum_con_iva + sum_iva - descuento_g);
+
+    // Aplicar ajustes de stock si los hubo (solo PENDIENTE).
+    // ajuste positivo = devolver stock; ajuste negativo = decrementar (mas).
+    if !ajustes_stock.is_empty() {
+        // Multi-almacen: ID del establecimiento
+        let multi_almacen: bool = conn.query_row(
+            "SELECT value FROM config WHERE key = 'multi_almacen_activo'", [],
+            |r| r.get::<_, String>(0)
+        ).map(|v| v == "1").unwrap_or(false);
+        let est_id_ajuste: Option<i64> = if multi_almacen {
+            conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1",
+                rusqlite::params![terminal_est], |r| r.get(0)).ok()
+        } else { None };
+
+        for (pid, ajuste) in &ajustes_stock {
+            // ajuste positivo = devolver, negativo = decrementar
+            conn.execute(
+                "UPDATE productos SET stock_actual = stock_actual + ?1, updated_at = datetime('now','localtime')
+                 WHERE id = ?2 AND es_servicio = 0",
+                rusqlite::params![ajuste, pid],
+            ).ok();
+            if let Some(eid) = est_id_ajuste {
+                conn.execute(
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                    rusqlite::params![ajuste, pid, eid],
+                ).ok();
+            }
+            // Kardex: registrar el ajuste
+            let stock_ant: f64 = conn.query_row(
+                "SELECT stock_actual FROM productos WHERE id = ?1",
+                rusqlite::params![pid], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let _ = conn.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                 VALUES (?1, 'AJUSTE_GUIA', ?2, ?3, ?4, 0, ?5, ?6, ?7)",
+                rusqlite::params![pid, ajuste, stock_ant - ajuste, stock_ant, guia_id, usuario_nombre, est_id_ajuste],
+            );
+        }
+
+        // Actualizar venta_detalles de la guia con las nuevas cantidades para mantener consistencia
+        // (el listado de la guia muestra los items actualizados)
+        for (pid, cant, _pu, _desc, _iva, _sub, _info) in &items_finales {
+            conn.execute(
+                "UPDATE venta_detalles SET cantidad = ?1 WHERE venta_id = ?2 AND producto_id = ?3",
+                rusqlite::params![cant, guia_id, pid],
+            ).ok();
+        }
+    }
+
+    let cambio = if monto_recibido > total_recalculado { monto_recibido - total_recalculado } else { 0.0 };
 
     // Determinar pago_estado para verificacion (igual que crear_venta normal)
     let es_admin = {
@@ -2120,10 +2244,14 @@ pub fn convertir_guia_a_venta(
 
     // Insertar NUEVA venta como COMPLETADA, vinculada a la guia origen.
     // NO se vuelve a descontar stock (ya se descontó al crear la guía).
+    // Si hubo overrides de precio, los totales son los recalculados (no los originales de la guia).
     let estado_sri_nuevo = match tipo_doc_g.as_str() { "FACTURA" => "PENDIENTE", _ => "NO_APLICA" };
+    let observacion_extra = if items_override.is_some() {
+        format!(" | Precios editados al facturar")
+    } else { String::new() };
     let nueva_observacion = match observacion_g {
-        Some(ref o) if !o.is_empty() => format!("{} | Origen: {}", o, guia_numero),
-        _ => format!("Origen: {}", guia_numero),
+        Some(ref o) if !o.is_empty() => format!("{} | Origen: {}{}", o, guia_numero, observacion_extra),
+        _ => format!("Origen: {}{}", guia_numero, observacion_extra),
     };
 
     conn.execute(
@@ -2137,7 +2265,7 @@ pub fn convertir_guia_a_venta(
                  ?20, ?21, ?22, ?23, 'COMPLETADA', ?24)",
         rusqlite::params![
             nuevo_numero, cliente_id_val,
-            subtotal_sin_iva_g, subtotal_con_iva_g, descuento_g, iva_g, total_guia,
+            sum_sin_iva, sum_con_iva, descuento_g, sum_iva, total_recalculado,
             forma_pago, monto_recibido, cambio,
             tipo_doc_g, estado_sri_nuevo, nueva_observacion,
             usuario_nombre, usuario_id, terminal_est, terminal_pe,
@@ -2148,20 +2276,10 @@ pub fn convertir_guia_a_venta(
     ).map_err(|e| e.to_string())?;
     let nueva_venta_id = conn.last_insert_rowid();
 
-    // Copiar detalles de la guia a la nueva venta — SIN tocar stock (ya descontado)
-    let mut stmt_d = conn.prepare(
-        "SELECT producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional
-         FROM venta_detalles WHERE venta_id = ?1"
-    ).map_err(|e| e.to_string())?;
-    let items_guia: Vec<(i64, f64, f64, f64, f64, f64, Option<String>)> = stmt_d.query_map(
-        rusqlite::params![guia_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
-    ).map_err(|e| e.to_string())?
-     .collect::<Result<Vec<_>, _>>()
-     .map_err(|e| e.to_string())?;
-    drop(stmt_d);
-
-    for (pid, cant, pu, desc, iva_p, sub, info) in &items_guia {
+    // Insertar detalles en la nueva venta usando items_finales (con overrides aplicados).
+    // SIN tocar stock — ya descontado al crear la guia (cantidad nunca cambia,
+    // si necesitan cambiar cantidad → devolucion parcial despues).
+    for (pid, cant, pu, desc, iva_p, sub, info) in &items_finales {
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -2182,14 +2300,15 @@ pub fn convertir_guia_a_venta(
     ).map_err(|e| e.to_string())?;
 
     // === Actualizar caja: solo PORCION EFECTIVO de la nueva venta afecta el efectivo ===
+    // Usar total_recalculado (con overrides aplicados) en vez del total original de la guia.
     let efectivo_de_esta_venta: f64 = if forma_pago.to_uppercase() == "EFECTIVO" && !es_fiado.unwrap_or(false) {
-        total_guia
+        total_recalculado
     } else {
         0.0
     };
     conn.execute(
         "UPDATE caja SET monto_ventas = monto_ventas + ?1, monto_esperado = monto_esperado + ?2 WHERE estado = 'ABIERTA'",
-        rusqlite::params![total_guia, efectivo_de_esta_venta],
+        rusqlite::params![total_recalculado, efectivo_de_esta_venta],
     ).ok();
 
     // Si es fiado, crear cuenta por cobrar (vinculada a la NUEVA venta, no a la guia)
@@ -2197,7 +2316,7 @@ pub fn convertir_guia_a_venta(
         conn.execute(
             "INSERT INTO cuentas_por_cobrar (cliente_id, venta_id, monto_total, saldo, estado)
              VALUES (?1, ?2, ?3, ?3, 'PENDIENTE')",
-            rusqlite::params![cliente_id_val, nueva_venta_id, total_guia],
+            rusqlite::params![cliente_id_val, nueva_venta_id, total_recalculado],
         ).map_err(|e| e.to_string())?;
     }
 
