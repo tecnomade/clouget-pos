@@ -47,6 +47,14 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
     : documentos.filter(d => d.tipo_estado === filtro);
 
   const handleAbrir = async (doc: DocumentoReciente) => {
+    // Hard-block: NUNCA permitir cargar una GUIA_REMISION al carrito.
+    // Si se carga, el usuario al cobrar dispara crear_venta que descuenta
+    // stock de nuevo (el stock ya se descontó al crear la guía).
+    // Para facturar guías hay que usar el botón "💰 Facturar".
+    if (doc.tipo_estado === "GUIA_REMISION") {
+      toastError("⚠ Las guías de remisión deben facturarse con el botón 💰 Facturar (no cargar al carrito — duplicaría el descuento de stock).");
+      return;
+    }
     setCargando(true);
     try {
       const venta = await obtenerVenta(doc.id);
