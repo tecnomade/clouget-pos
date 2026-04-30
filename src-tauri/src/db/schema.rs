@@ -889,6 +889,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // --- Migración: gastos recurrentes ---
     let _ = conn.execute("ALTER TABLE gastos ADD COLUMN es_recurrente INTEGER NOT NULL DEFAULT 0", []);
+    // v2.3.47: trazabilidad — quien registro el gasto y nombre cacheado
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN usuario_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN usuario_nombre TEXT", []);
 
     let _ = conn.execute_batch("
         CREATE TABLE IF NOT EXISTS lotes_caducidad (

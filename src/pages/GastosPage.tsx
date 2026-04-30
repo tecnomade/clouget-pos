@@ -258,6 +258,8 @@ export default function GastosPage() {
                 <th>Hora</th>
                 <th>Descripcion</th>
                 <th>Categoria</th>
+                <th>Sesión</th>
+                <th>Usuario</th>
                 <th>Observacion</th>
                 <th>Recurrente</th>
                 <th className="text-right">Monto</th>
@@ -267,18 +269,34 @@ export default function GastosPage() {
             <tbody>
               {gastosFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center text-secondary" style={{ padding: 40 }}>
+                  <td colSpan={9} className="text-center text-secondary" style={{ padding: 40 }}>
                     No hay gastos registrados para esta fecha
                   </td>
                 </tr>
               ) : (
-                gastosFiltrados.map((g) => (
+                gastosFiltrados.map((g) => {
+                  const cajaCerrada = g.caja_estado === "CERRADA";
+                  return (
                   <tr key={g.id}>
                     <td className="text-secondary" style={{ fontSize: 12 }}>
                       {g.fecha ? new Date(g.fecha).toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" }) : "-"}
                     </td>
                     <td><strong>{g.descripcion}</strong></td>
                     <td className="text-secondary">{g.categoria ?? "-"}</td>
+                    <td style={{ fontSize: 11 }}>
+                      {g.caja_id ? (
+                        <span style={{
+                          padding: "2px 6px", borderRadius: 3, fontWeight: 600,
+                          background: cajaCerrada ? "rgba(148,163,184,0.15)" : "rgba(34,197,94,0.15)",
+                          color: cajaCerrada ? "var(--color-text-secondary)" : "var(--color-success)",
+                        }} title={cajaCerrada ? "Caja cerrada — gasto bloqueado" : "Caja abierta"}>
+                          #{g.caja_id} {cajaCerrada ? "🔒" : "🟢"}
+                        </span>
+                      ) : (
+                        <span className="text-secondary" style={{ fontSize: 11 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ fontSize: 12 }}>{g.usuario_nombre ?? <span className="text-secondary">—</span>}</td>
                     <td className="text-secondary" style={{ fontSize: 12 }}>{g.observacion ?? "-"}</td>
                     <td>
                       {g.es_recurrente ? (
@@ -298,14 +316,17 @@ export default function GastosPage() {
                     <td>
                       <button
                         className="btn btn-danger"
-                        style={{ padding: "2px 8px", fontSize: 11 }}
-                        onClick={() => setConfirmarEliminar(g.id!)}
+                        style={{ padding: "2px 8px", fontSize: 11, opacity: cajaCerrada ? 0.4 : 1, cursor: cajaCerrada ? "not-allowed" : "pointer" }}
+                        disabled={cajaCerrada}
+                        title={cajaCerrada ? "No se puede eliminar — pertenece a caja cerrada. Usa + Ingreso a Caja para compensar." : "Eliminar gasto"}
+                        onClick={() => !cajaCerrada && setConfirmarEliminar(g.id!)}
                       >
                         x
                       </button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

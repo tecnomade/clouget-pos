@@ -1,10 +1,18 @@
 use crate::commands::caja::calcular_monto_esperado_actual;
-use crate::db::Database;
+use crate::db::{Database, SesionState};
 use crate::models::Gasto;
 use tauri::State;
 
 #[tauri::command]
-pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
+pub fn crear_gasto(db: State<Database>, sesion: State<SesionState>, gasto: Gasto) -> Result<Gasto, String> {
+    // v2.3.47: capturar usuario de sesion para trazabilidad
+    let (usuario_id, usuario_nombre): (Option<i64>, Option<String>) = {
+        let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        match sesion_guard.as_ref() {
+            Some(s) => (Some(s.usuario_id), Some(s.nombre.clone())),
+            None => (None, None),
+        }
+    };
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Obtener caja abierta si existe
@@ -29,8 +37,8 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
     }
 
     conn.execute(
-        "INSERT INTO gastos (descripcion, monto, categoria, caja_id, observacion, es_recurrente)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO gastos (descripcion, monto, categoria, caja_id, observacion, es_recurrente, usuario_id, usuario_nombre)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             gasto.descripcion,
             gasto.monto,
@@ -38,6 +46,8 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
             caja_id,
             gasto.observacion,
             gasto.es_recurrente as i32,
+            usuario_id,
+            usuario_nombre,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -54,11 +64,17 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
         );
     }
 
-    // Obtener el gasto insertado con su fecha
+    // Obtener el gasto insertado con su fecha + JOINs para retornar info completa
     let resultado = conn
         .query_row(
-            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion, COALESCE(es_recurrente, 0)
-             FROM gastos WHERE id = ?1",
+            "SELECT g.id, g.descripcion, g.monto, g.categoria, g.fecha, g.caja_id, g.observacion,
+                    COALESCE(g.es_recurrente, 0), g.usuario_id,
+                    COALESCE(g.usuario_nombre, u.nombre) as usuario_nombre,
+                    c.estado as caja_estado
+             FROM gastos g
+             LEFT JOIN usuarios u ON g.usuario_id = u.id
+             LEFT JOIN caja c ON g.caja_id = c.id
+             WHERE g.id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok(Gasto {
@@ -70,6 +86,9 @@ pub fn crear_gasto(db: State<Database>, gasto: Gasto) -> Result<Gasto, String> {
                     caja_id: row.get(5)?,
                     observacion: row.get(6)?,
                     es_recurrente: row.get::<_, i32>(7)? != 0,
+                    usuario_id: row.get(8).ok(),
+                    usuario_nombre: row.get(9).ok(),
+                    caja_estado: row.get(10).ok(),
                 })
             },
         )
@@ -84,10 +103,15 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, descripcion, monto, categoria, fecha, caja_id, observacion, COALESCE(es_recurrente, 0)
-             FROM gastos
-             WHERE date(fecha) = date(?1)
-             ORDER BY fecha DESC",
+            "SELECT g.id, g.descripcion, g.monto, g.categoria, g.fecha, g.caja_id, g.observacion,
+                    COALESCE(g.es_recurrente, 0), g.usuario_id,
+                    COALESCE(g.usuario_nombre, u.nombre) as usuario_nombre,
+                    c.estado as caja_estado
+             FROM gastos g
+             LEFT JOIN usuarios u ON g.usuario_id = u.id
+             LEFT JOIN caja c ON g.caja_id = c.id
+             WHERE date(g.fecha) = date(?1)
+             ORDER BY g.fecha DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -102,6 +126,9 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
                 caja_id: row.get(5)?,
                 observacion: row.get(6)?,
                 es_recurrente: row.get::<_, i32>(7)? != 0,
+                usuario_id: row.get(8).ok(),
+                usuario_nombre: row.get(9).ok(),
+                caja_estado: row.get(10).ok(),
             })
         })
         .map_err(|e| e.to_string())?

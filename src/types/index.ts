@@ -262,6 +262,10 @@ export interface Gasto {
   caja_id?: number;
   observacion?: string;
   es_recurrente?: boolean;
+  // v2.3.47: trazabilidad
+  usuario_id?: number | null;
+  usuario_nombre?: string | null;
+  caja_estado?: string | null;  // ABIERTA | CERRADA
 }
 
 // Cuentas por Cobrar
