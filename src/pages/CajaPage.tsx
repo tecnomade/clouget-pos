@@ -729,14 +729,16 @@ export default function CajaPage() {
                 />
               </div>
 
-              {/* Alerta de descuadre + motivo obligatorio */}
+              {/* Alerta de descuadre + motivo obligatorio.
+                  Solo se muestra cuando el cajero ya escribio un monto (no aparece
+                  por defecto al abrir la pantalla, asi no asusta al usuario nuevo
+                  haciendo creer que la caja esta descuadrada antes de contar). */}
               {(() => {
+                // Si el campo esta vacio (default), no mostrar nada todavia
+                if (montoReal.trim() === "") return null;
                 const monto = parseFloat(montoReal) || 0;
-                // Usa el monto_esperado recalculado del backend (misma fuente que el cierre).
                 const esperado = cajaAbierta.monto_esperado ?? 0;
                 const dif = monto - esperado;
-                // Aparece si hay diferencia significativa (>0.01). Esto incluye el caso
-                // de dejar vacio con esperado>0 (descuadre = -esperado).
                 if (Math.abs(dif) <= 0.01) return null;
                 const esFaltante = dif < 0;
                 return (
