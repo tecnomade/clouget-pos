@@ -162,7 +162,35 @@ export default function ModalNotaCredito({
         }));
 
         const nc = await crearDevolucionInterna(ventaId, motivo.trim(), itemsData);
-        toastExito(`Devolucion ${nc.numero} creada`);
+
+        // Mensaje claro al usuario segun como se devolvio el dinero.
+        // Backend retorna monto_efectivo_devuelto / monto_transfer_devuelto / monto_credito_devuelto
+        // y retiro_caja_creado_id si auto-genero el retiro de efectivo.
+        const efectivo = (nc as any).monto_efectivo_devuelto ?? 0;
+        const transfer = (nc as any).monto_transfer_devuelto ?? 0;
+        const credito = (nc as any).monto_credito_devuelto ?? 0;
+        const retiroId = (nc as any).retiro_caja_creado_id;
+
+        let mensajePartes: string[] = [`✓ Devolución ${nc.numero} creada por $${(nc as any).total?.toFixed(2)}`];
+        if (efectivo > 0.01) {
+          mensajePartes.push(retiroId
+            ? `💵 Se descontó $${efectivo.toFixed(2)} de la caja automáticamente (entregaste el efectivo al cliente).`
+            : `⚠ $${efectivo.toFixed(2)} en efectivo a devolver — pero no hay caja abierta para descontarlo.`
+          );
+        }
+        if (transfer > 0.01) {
+          mensajePartes.push(`🏦 $${transfer.toFixed(2)} fue por transferencia — debes hacer la devolución al cliente desde la app del banco. La caja no se modifica.`);
+        }
+        if (credito > 0.01) {
+          mensajePartes.push(`📋 $${credito.toFixed(2)} era a crédito — el saldo del cliente se reduce solo, no se devuelve dinero.`);
+        }
+
+        // Mostrar como confirm para que el cajero lea el mensaje completo
+        if (mensajePartes.length > 1) {
+          alert(mensajePartes.join("\n\n"));
+        } else {
+          toastExito(mensajePartes[0]);
+        }
         onCreada();
         onClose();
       } else {

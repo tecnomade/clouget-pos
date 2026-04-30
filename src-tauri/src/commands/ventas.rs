@@ -1253,12 +1253,12 @@ pub fn crear_devolucion_interna(
     // Validar que la venta existe y NO esta autorizada por SRI
     // Politica: NOTA_VENTA y FACTURA_NO_AUTORIZADA se tratan igual (devolucion interna).
     // Solo FACTURA AUTORIZADA requiere NC electronica SRI.
-    let (venta_numero, cliente_id, tipo_doc, estado_sri): (String, i64, String, String) = conn
+    let (venta_numero, cliente_id, tipo_doc, estado_sri, venta_forma_pago): (String, i64, String, String, String) = conn
         .query_row(
-            "SELECT numero, COALESCE(cliente_id, 1), tipo_documento, COALESCE(estado_sri, 'NO_APLICA')
+            "SELECT numero, COALESCE(cliente_id, 1), tipo_documento, COALESCE(estado_sri, 'NO_APLICA'), COALESCE(forma_pago, 'EFECTIVO')
              FROM ventas WHERE id = ?1 AND anulada = 0",
             rusqlite::params![venta_id],
-            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|_| "Venta no encontrada o anulada".to_string())?;
 
@@ -1391,6 +1391,82 @@ pub fn crear_devolucion_interna(
     )
     .map_err(|e| e.to_string())?;
 
+    // === Devolución del dinero al cliente — efecto sobre caja según forma_pago ===
+    // Para que el cierre de caja CUADRE despues de una devolucion, calculamos cuanto
+    // efectivo realmente sale de la caja (porcion EFECTIVO de la venta) y registramos
+    // un retiro automatico con motivo claro. Para TRANSFER no tocamos caja (admin
+    // hace la devolucion por su app del banco).
+    //
+    // Casos:
+    //   forma_pago='EFECTIVO' o sin pagos_venta: devolucion EFECTIVO completa
+    //   forma_pago='MIXTO': leer pagos_venta, devolver proporcional al EFECTIVO
+    //   forma_pago='TRANSFER' / 'CREDITO': no afecta caja (mensaje informativo)
+    //
+    // Calcular proporcion EFECTIVO si MIXTO. Si no, asumir 100% del forma_pago.
+    let (monto_efectivo_devolver, monto_transfer_devolver, monto_credito_devolver) = {
+        let venta_total: f64 = conn.query_row(
+            "SELECT total FROM ventas WHERE id = ?1",
+            rusqlite::params![venta_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        let proporcion_devuelta = if venta_total > 0.01 { total / venta_total } else { 1.0 };
+
+        if venta_forma_pago == "MIXTO" {
+            // Sumar por forma desde pagos_venta y aplicar proporcion
+            let efe: f64 = conn.query_row(
+                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+                 WHERE venta_id = ?1 AND UPPER(forma_pago) = 'EFECTIVO'",
+                rusqlite::params![venta_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let tra: f64 = conn.query_row(
+                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+                 WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')",
+                rusqlite::params![venta_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let cre: f64 = conn.query_row(
+                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+                 WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('CREDITO','FIADO')",
+                rusqlite::params![venta_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            (efe * proporcion_devuelta, tra * proporcion_devuelta, cre * proporcion_devuelta)
+        } else {
+            match venta_forma_pago.to_uppercase().as_str() {
+                "EFECTIVO" => (total, 0.0, 0.0),
+                "TRANSFER" | "TRANSFERENCIA" => (0.0, total, 0.0),
+                "CREDITO" | "FIADO" => (0.0, 0.0, total),
+                _ => (total, 0.0, 0.0), // fallback: tratar como efectivo
+            }
+        }
+    };
+
+    // Si hay efectivo devuelto, registrar retiro automatico para que la caja cuadre
+    let mut retiro_creado: Option<i64> = None;
+    if monto_efectivo_devolver > 0.01 {
+        // Buscar caja abierta — si no hay, no creamos retiro pero igual seguimos
+        // (la devolucion se registro bien, el efectivo simplemente no se compensa
+        // automaticamente, y al abrir nueva caja se podria ajustar).
+        if let Ok(caja_id) = conn.query_row(
+            "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1",
+            [], |r| r.get::<_, i64>(0),
+        ) {
+            let motivo_retiro = format!("Devolución NC {} — efectivo a cliente", numero);
+            // Insertamos directo sin pasar por la validacion de "no permitir negativo",
+            // porque la devolucion es un evento real que ya paso. Si la caja queda
+            // negativa, es responsabilidad del admin hacer ajuste manual despues.
+            if conn.execute(
+                "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado)
+                 VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, 'SIN_DEPOSITO')",
+                rusqlite::params![caja_id, monto_efectivo_devolver, motivo_retiro, usuario_nombre, usuario_id],
+            ).is_ok() {
+                retiro_creado = Some(conn.last_insert_rowid());
+                // Actualizar monto_esperado stored para consistencia inmediata
+                let _ = conn.execute(
+                    "UPDATE caja SET monto_esperado = monto_esperado - ?1 WHERE id = ?2",
+                    rusqlite::params![monto_efectivo_devolver, caja_id],
+                );
+            }
+        }
+    }
+
     Ok(serde_json::json!({
         "id": nc_id,
         "numero": numero,
@@ -1399,6 +1475,12 @@ pub fn crear_devolucion_interna(
         "motivo": motivo.trim(),
         "total": total,
         "estado_sri": "NO_APLICA",
+        // Info para el frontend: que pasar al usuario segun forma_pago
+        "monto_efectivo_devuelto": monto_efectivo_devolver,
+        "monto_transfer_devuelto": monto_transfer_devolver,
+        "monto_credito_devuelto": monto_credito_devolver,
+        "retiro_caja_creado_id": retiro_creado,
+        "venta_forma_pago": venta_forma_pago,
     }))
 }
 
