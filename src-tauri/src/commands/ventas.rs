@@ -141,29 +141,42 @@ pub fn registrar_venta(
     iva_total = r2(iva_total);
 
     let total = r2(subtotal_sin_iva + subtotal_con_iva + iva_total - venta.descuento);
-    let cambio = if venta.monto_recibido > total {
-        venta.monto_recibido - total
+
+    // v2.3.52: si monto_recibido es 0 o menor en EFECTIVO/TARJETA y no es fiado/mixto,
+    // asumir "monto exacto" (caso super comun cuando el cajero presiona Cobrar sin
+    // tipear nada — espera que el sistema asuma que recibio el total exacto).
+    // Antes la validacion v2.3.50 bloqueaba esto con error "monto < total" innecesariamente.
+    let usa_mixto = venta.pagos.as_ref().map(|p| !p.is_empty()).unwrap_or(false);
+    let forma_up = venta.forma_pago.to_uppercase();
+    let monto_recibido_efectivo = if !venta.es_fiado && !usa_mixto
+        && matches!(forma_up.as_str(), "EFECTIVO" | "TARJETA")
+        && venta.monto_recibido < 0.01
+    {
+        total // asumir monto exacto
+    } else {
+        venta.monto_recibido
+    };
+
+    let cambio = if monto_recibido_efectivo > total {
+        monto_recibido_efectivo - total
     } else {
         0.0
     };
 
-    // v2.3.50 VALIDACION: anti-fraude — si la venta NO es fiada y NO usa pagos mixtos,
-    // el monto_recibido debe cubrir el total. Antes el backend permitia ventas con
-    // monto_recibido < total sin fiado, dejando "deudas fantasma" sin registro de CXC.
-    let usa_mixto = venta.pagos.as_ref().map(|p| !p.is_empty()).unwrap_or(false);
+    // v2.3.50 VALIDACION (ajustada en v2.3.52): solo fallar si el cajero EXPLICITAMENTE
+    // ingreso un monto > 0 pero menor al total. Si dejo en 0 → ya lo tratamos como exacto arriba.
     if !venta.es_fiado && !usa_mixto {
-        // Para EFECTIVO y TARJETA exigimos cubrir el total. TRANSFER/CREDITO en single-method
-        // pueden pasar (transfer = banco, no efectivo; credito = se asume fiado).
-        let forma_up = venta.forma_pago.to_uppercase();
-        if matches!(forma_up.as_str(), "EFECTIVO" | "TARJETA") {
-            if venta.monto_recibido + 0.01 < total {
-                return Err(format!(
-                    "Monto recibido (${:.2}) es menor al total (${:.2}). Diferencia: ${:.2}. \
-                     Si el cliente queda debiendo, marca la venta como CREDITO. \
-                     Si paga con varios metodos, usa Pago Mixto.",
-                    venta.monto_recibido, total, total - venta.monto_recibido
-                ));
-            }
+        if matches!(forma_up.as_str(), "EFECTIVO" | "TARJETA")
+            && monto_recibido_efectivo > 0.01  // intentonalmente puso un valor
+            && monto_recibido_efectivo + 0.01 < total
+        {
+            return Err(format!(
+                "Monto recibido (${:.2}) es menor al total (${:.2}). Diferencia: ${:.2}. \
+                 Si el cliente queda debiendo, marca la venta como CREDITO. \
+                 Si paga con varios metodos, usa Pago Mixto. \
+                 Si recibiste el monto exacto, deja el campo en 0 o vacio.",
+                monto_recibido_efectivo, total, total - monto_recibido_efectivo
+            ));
         }
     }
 
@@ -208,7 +221,7 @@ pub fn registrar_venta(
             iva_total,
             total,
             venta.forma_pago,
-            venta.monto_recibido,
+            monto_recibido_efectivo,
             cambio,
             "COMPLETADA",
             venta.tipo_documento,
