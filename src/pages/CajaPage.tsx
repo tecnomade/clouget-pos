@@ -216,6 +216,27 @@ export default function CajaPage() {
     await intentarCerrarCaja();
   };
 
+  // v2.3.53: helper para imprimir ticket de cierre preguntando al cajero
+  // si quiere version resumida (solo totales — ahorra papel) o detallada
+  // (incluye lista de cada venta, gasto, retiro, cobro).
+  const imprimirTicketCierreCaja = async (cajaId: number) => {
+    const detallado = await ask(
+      "¿Querés imprimir el reporte DETALLADO (incluye lista de cada venta, gasto y retiro)?\n\n" +
+      "• Sí: detallado completo (más papel, mejor para auditoría)\n" +
+      "• No: resumido — solo totales (ahorra papel, suficiente para el día a día)",
+      { title: "Tipo de reporte de cierre", kind: "info" }
+    );
+    setImprimiendo(true);
+    try {
+      await imprimirReporteCaja(cajaId, detallado);
+      toastExito(detallado ? "Reporte detallado impreso" : "Reporte resumido impreso");
+    } catch (err) {
+      toastError("Error imprimiendo: " + err);
+    } finally {
+      setImprimiendo(false);
+    }
+  };
+
   const handleFinalizarTurno = async () => {
     setResumen(null);
     setResumenRetiros([]);
@@ -443,19 +464,19 @@ export default function CajaPage() {
                   disabled={imprimiendo || !resumen.caja.id}
                   onClick={async () => {
                     if (!resumen.caja.id) return;
-                    setImprimiendo(true);
-                    try {
-                      if (ticketUsarPdf) {
+                    if (ticketUsarPdf) {
+                      setImprimiendo(true);
+                      try {
                         await imprimirReporteCajaPdf(resumen.caja.id);
                         toastExito("Reporte PDF generado");
-                      } else {
-                        await imprimirReporteCaja(resumen.caja.id);
-                        toastExito("Reporte impreso");
+                      } catch (err) {
+                        toastError("Error imprimiendo: " + err);
+                      } finally {
+                        setImprimiendo(false);
                       }
-                    } catch (err) {
-                      toastError("Error imprimiendo: " + err);
-                    } finally {
-                      setImprimiendo(false);
+                    } else {
+                      // Ticket termico: preguntar resumido o detallado
+                      await imprimirTicketCierreCaja(resumen.caja.id);
                     }
                   }}
                 >
@@ -1222,14 +1243,11 @@ export default function CajaPage() {
                                   {s.estado === "CERRADA" && (
                                     <div style={{ display: "flex", gap: 6, marginBottom: 10, justifyContent: "flex-end" }}>
                                       <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 12px" }}
-                                        title="Reimprimir reporte de cierre en impresora térmica"
+                                        title="Reimprimir reporte de cierre en impresora térmica (te preguntará si quieres resumido o detallado)"
                                         onClick={async (e) => {
                                           e.stopPropagation();
                                           if (!s.id) return;
-                                          try {
-                                            await imprimirReporteCaja(s.id);
-                                            toastExito("Reporte enviado a la impresora");
-                                          } catch (err) { toastError("Error: " + err); }
+                                          await imprimirTicketCierreCaja(s.id);
                                         }}>
                                         🖨 Reimprimir ticket
                                       </button>
@@ -1415,13 +1433,10 @@ export default function CajaPage() {
                             <td>
                               <div style={{ display: "flex", gap: 4 }}>
                                 <button className="btn btn-outline" style={{ fontSize: 10, padding: "3px 8px" }}
-                                  title="Reimprimir reporte de cierre en impresora térmica"
+                                  title="Reimprimir reporte de cierre en impresora térmica (te preguntará si quieres resumido o detallado)"
                                   onClick={async () => {
                                     if (!c.caja_id) return;
-                                    try {
-                                      await imprimirReporteCaja(c.caja_id);
-                                      toastExito("Reporte enviado a la impresora");
-                                    } catch (err) { toastError("Error: " + err); }
+                                    await imprimirTicketCierreCaja(c.caja_id);
                                   }}>🖨</button>
                                 <button className="btn btn-outline" style={{ fontSize: 10, padding: "3px 8px" }}
                                   title="Generar PDF A4 del reporte de cierre"

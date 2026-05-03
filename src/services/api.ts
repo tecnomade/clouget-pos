@@ -574,8 +574,10 @@ export async function imprimirTicketPdf(ventaId: number): Promise<string> {
   return invoke("imprimir_ticket_pdf", { ventaId });
 }
 
-export async function imprimirReporteCaja(cajaId: number): Promise<string> {
-  return invoke("imprimir_reporte_caja", { cajaId });
+// v2.3.53: detallado=false (default) imprime solo totales — ahorra papel.
+// detallado=true incluye lista item por item de ventas, gastos, retiros, cobros.
+export async function imprimirReporteCaja(cajaId: number, detallado?: boolean): Promise<string> {
+  return invoke("imprimir_reporte_caja", { cajaId, detallado: detallado ?? false });
 }
 
 export async function imprimirReporteCajaPdf(cajaId: number): Promise<string> {

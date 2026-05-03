@@ -708,7 +708,13 @@ fn obtener_datos_reporte_caja(
 
 /// Genera reporte de cierre de caja como ESC/POS y lo imprime en la térmica
 #[tauri::command]
-pub fn imprimir_reporte_caja(db: State<Database>, caja_id: i64) -> Result<String, String> {
+pub fn imprimir_reporte_caja(
+    db: State<Database>,
+    caja_id: i64,
+    // v2.3.53: si true, incluye lista detallada de cada venta + cobros + retiros
+    // (igual que antes). Si false (default), solo totales — ahorra papel.
+    detallado: Option<bool>,
+) -> Result<String, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let r = obtener_datos_reporte_caja(&conn, caja_id)?;
 
@@ -726,7 +732,7 @@ pub fn imprimir_reporte_caja(db: State<Database>, caja_id: i64) -> Result<String
 
     drop(conn);
 
-    let ticket_data = generar_ticket_reporte_caja(&r);
+    let ticket_data = generar_ticket_reporte_caja(&r, detallado.unwrap_or(false));
     printing::imprimir_raw_windows(&impresora, &ticket_data)?;
 
     Ok("Reporte de caja impreso correctamente".to_string())
@@ -767,7 +773,7 @@ pub fn imprimir_reporte_caja_pdf(db: State<Database>, caja_id: i64) -> Result<St
 }
 
 /// Genera bytes ESC/POS para el reporte de cierre de caja (impresora térmica 80mm)
-fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8> {
+fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte, detallado: bool) -> Vec<u8> {
     let ancho = 48;
     let mut t: Vec<u8> = Vec::new();
 
@@ -861,63 +867,74 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
     }
     t.push(b'\n');
 
-    // Gastos (con detalle si hay)
+    // Gastos: si detallado, listar uno por uno; si no, solo total
     if r.total_gastos > 0.0 {
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"GASTOS\n");
         t.extend_from_slice(esc_bold_off);
-        for g in &r.gastos_lista {
-            let hora = g.fecha.get(11..16).unwrap_or(&g.fecha);
-            let desc = if g.descripcion.is_empty() { g.categoria.clone() } else { format!("{} - {}", g.categoria, g.descripcion) };
-            let label = format!("{} {}", hora, desc);
-            // Truncar a ancho-12 para dejar espacio al monto
-            let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
-            t.extend_from_slice(linea_monto_r(&label_corto, &format!("-${:.2}", g.monto), ancho).as_bytes());
+        if detallado {
+            for g in &r.gastos_lista {
+                let hora = g.fecha.get(11..16).unwrap_or(&g.fecha);
+                let desc = if g.descripcion.is_empty() { g.categoria.clone() } else { format!("{} - {}", g.categoria, g.descripcion) };
+                let label = format!("{} {}", hora, desc);
+                let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
+                t.extend_from_slice(linea_monto_r(&label_corto, &format!("-${:.2}", g.monto), ancho).as_bytes());
+            }
         }
-        t.extend_from_slice(linea_monto_r("Total Gastos:", &format!("-${:.2}", r.total_gastos), ancho).as_bytes());
+        t.extend_from_slice(linea_monto_r(
+            &format!("Total Gastos ({}):", r.gastos_lista.len()),
+            &format!("-${:.2}", r.total_gastos), ancho
+        ).as_bytes());
         t.push(b'\n');
     }
 
-    // Retiros (con detalle: motivo, usuario, hora)
+    // Retiros: si detallado, listar con motivo + usuario; si no, solo total
     if r.total_retiros > 0.0 || !r.retiros.is_empty() {
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"RETIROS\n");
         t.extend_from_slice(esc_bold_off);
-        for ret in &r.retiros {
-            let hora = ret.fecha.get(11..16).unwrap_or(&ret.fecha);
-            let estado_str = match ret.estado.as_str() {
-                "DEPOSITADO" => " [Dep]",
-                "EN_TRANSITO" => " [Pdte]",
-                _ => "",
-            };
-            let banco_str = ret.banco_nombre.as_deref().map(|b| format!(" -> {}", b)).unwrap_or_default();
-            let header = format!("{} {} {}{}", hora, ret.usuario, banco_str, estado_str);
-            let header_corto: String = header.chars().take((ancho.saturating_sub(12)) as usize).collect();
-            t.extend_from_slice(linea_monto_r(&header_corto, &format!("-${:.2}", ret.monto), ancho).as_bytes());
-            // Motivo en linea siguiente, indentado
-            for chunk in wrap_text(&ret.motivo, ancho.saturating_sub(2) as usize).iter() {
-                t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
+        if detallado {
+            for ret in &r.retiros {
+                let hora = ret.fecha.get(11..16).unwrap_or(&ret.fecha);
+                let estado_str = match ret.estado.as_str() {
+                    "DEPOSITADO" => " [Dep]",
+                    "EN_TRANSITO" => " [Pdte]",
+                    _ => "",
+                };
+                let banco_str = ret.banco_nombre.as_deref().map(|b| format!(" -> {}", b)).unwrap_or_default();
+                let header = format!("{} {} {}{}", hora, ret.usuario, banco_str, estado_str);
+                let header_corto: String = header.chars().take((ancho.saturating_sub(12)) as usize).collect();
+                t.extend_from_slice(linea_monto_r(&header_corto, &format!("-${:.2}", ret.monto), ancho).as_bytes());
+                // Motivo en linea siguiente, indentado
+                for chunk in wrap_text(&ret.motivo, ancho.saturating_sub(2) as usize).iter() {
+                    t.extend_from_slice(format!("  {}\n", chunk).as_bytes());
+                }
             }
         }
-        t.extend_from_slice(linea_monto_r("Total Retiros:", &format!("-${:.2}", r.total_retiros), ancho).as_bytes());
+        t.extend_from_slice(linea_monto_r(
+            &format!("Total Retiros ({}):", r.retiros.len()),
+            &format!("-${:.2}", r.total_retiros), ancho
+        ).as_bytes());
         t.push(b'\n');
     }
 
-    // Cobros de cuentas por cobrar (con detalle: cliente, hora, forma)
+    // Cobros de cuentas por cobrar: si detallado, listar; si no, solo subtotales
     if r.total_cobros_efectivo > 0.0 || r.total_cobros_banco > 0.0 || !r.cobros_lista.is_empty() {
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"COBROS CXC\n");
         t.extend_from_slice(esc_bold_off);
-        for c in &r.cobros_lista {
-            let hora = c.fecha.get(11..16).unwrap_or(&c.fecha);
-            let forma_corto = match c.forma_pago.to_uppercase().as_str() {
-                "EFECTIVO" => "EFE",
-                "TRANSFER" | "TRANSFERENCIA" => "TR",
-                _ => &c.forma_pago,
-            };
-            let label = format!("{} {} {}", hora, forma_corto, c.cliente_nombre);
-            let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
-            t.extend_from_slice(linea_monto_r(&label_corto, &format!("+${:.2}", c.monto), ancho).as_bytes());
+        if detallado {
+            for c in &r.cobros_lista {
+                let hora = c.fecha.get(11..16).unwrap_or(&c.fecha);
+                let forma_corto = match c.forma_pago.to_uppercase().as_str() {
+                    "EFECTIVO" => "EFE",
+                    "TRANSFER" | "TRANSFERENCIA" => "TR",
+                    _ => &c.forma_pago,
+                };
+                let label = format!("{} {} {}", hora, forma_corto, c.cliente_nombre);
+                let label_corto: String = label.chars().take((ancho.saturating_sub(12)) as usize).collect();
+                t.extend_from_slice(linea_monto_r(&label_corto, &format!("+${:.2}", c.monto), ancho).as_bytes());
+            }
         }
         if r.total_cobros_efectivo > 0.0 {
             t.extend_from_slice(linea_monto_r("Sub. efectivo:", &format!("${:.2}", r.total_cobros_efectivo), ancho).as_bytes());
@@ -1049,8 +1066,8 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte) -> Vec<u8>
         }
     }
 
-    // Lista detallada de ventas (trazabilidad item por item)
-    if !r.ventas_lista.is_empty() {
+    // Lista detallada de ventas (trazabilidad item por item) — solo si detallado
+    if detallado && !r.ventas_lista.is_empty() {
         t.extend_from_slice(linea_sep(ancho, '-').as_bytes());
         t.extend_from_slice(esc_bold_on);
         t.extend_from_slice(b"DETALLE VENTAS\n");
