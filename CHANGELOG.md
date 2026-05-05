@@ -6,6 +6,47 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.58-beta — 2026-05-05 🐛📅
+**Hotfix crítico: fechas de caducidad importadas como serial Excel.**
+
+Bug histórico detectado en cliente real: al importar productos desde Excel donde la columna "fecha_caducidad" tenía formato **Fecha** en Excel (no Texto), la librería `calamine` devolvía el valor como `Data::DateTime/Float` con el número serial Excel (días desde 1899-12-30). El código hacía `.to_string()` y guardaba **"46265"** en lugar de **"2026-06-28"** en `lotes_caducidad.fecha_caducidad`. Resultado: lotes con "días restantes: -2,414,893" y estado "Vencido" para productos buenos.
+
+### Fix triple
+
+**1. Importer Excel ahora detecta y convierte fechas correctamente** (futuro):
+- Nuevo helper `get_fecha()` en `importar_productos_excel` que distingue celdas Fecha de Texto.
+- Si la celda viene como `Data::DateTime/DateTimeIso/Float/Int` con valor en rango Excel serial (30000-100000) → convierte a `YYYY-MM-DD` con `excel_serial_to_iso()`.
+- Si viene como `Data::String` que es número puro en rango → también convierte.
+- Si ya es string `YYYY-MM-DD` válido → usa tal cual.
+
+**2. Comando nuevo `reparar_fechas_caducidad`** (presente):
+- Recorre todos los lotes en `lotes_caducidad`.
+- Detecta `fecha_caducidad` o `fecha_elaboracion` que sean números puros entre 30000-100000.
+- Convierte y hace `UPDATE` atómico.
+- **Idempotente**: re-ejecutarlo no causa problema (los ya arreglados ya no matchean el patrón).
+- Retorna `{ revisados, reparados, ejemplos }` para auditoría.
+
+**3. Validación al guardar lote** (defensa en profundidad):
+- `registrar_lote_caducidad` ahora valida que `fecha_caducidad` y `fecha_elaboracion` parseen como `YYYY-MM-DD` válido con `chrono::NaiveDate`.
+- Si no, error claro: *"Fecha de caducidad invalida: '46265'. Formato esperado: YYYY-MM-DD"*.
+- Previene que el bug vuelva por cualquier otra ruta de entrada.
+
+### UX
+
+- Botón **"🔧 Reparar fechas"** en página Caducidad (esquina superior derecha junto a "Exportar CSV").
+- Si detectamos automáticamente lotes con `dias_restantes < -100000` (claramente bug): el botón aparece **destacado en amarillo con ⚠** invitando a clickearlo.
+- Al click: confirmación + ejecución + toast con resultado: *"Reparados X de Y lotes ✓"*.
+
+### Cambios técnicos
+- `src-tauri/src/utils.rs`: nuevos helpers `excel_serial_to_iso(f64) -> Option<String>` (compatible con bug del 1900) y `parse_posible_serial_excel(&str) -> Option<f64>`.
+- `src-tauri/src/commands/productos.rs`:
+  - `importar_productos_excel`: closure `get_fecha()` para columnas de fecha
+  - `registrar_lote_caducidad`: validación `chrono::NaiveDate::parse_from_str` antes de INSERT
+  - Nuevo `reparar_fechas_caducidad` Tauri command
+- `src-tauri/src/lib.rs`: registrado nuevo comando
+- `src/services/api.ts`: wrapper `repararFechasCaducidad()`
+- `src/pages/CaducidadPage.tsx`: handler + botón + detector `tieneFechasBug`
+
 ## v2.3.57-beta — 2026-05-05 🧹
 **UX: ocultar selector "Destino (Restaurante)" en Productos cuando el módulo no está activo.**
 

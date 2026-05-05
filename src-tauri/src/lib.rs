@@ -161,6 +161,7 @@ pub fn run() {
             commands::combos::info_combo_resumen,
             commands::productos::eliminar_lote_caducidad,
             commands::productos::ajustar_cantidad_lote,
+            commands::productos::reparar_fechas_caducidad,
             commands::productos::listar_unidades_producto,
             commands::productos::guardar_unidades_producto,
             // Clientes

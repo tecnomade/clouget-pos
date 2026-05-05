@@ -239,6 +239,13 @@ export const eliminarLoteCaducidad = (loteId: number) =>
 export const ajustarCantidadLote = (loteId: number, cantidad: number) =>
   smartInvoke<void>("ajustar_cantidad_lote", { loteId, cantidad });
 
+/** Repara fechas de caducidad guardadas como Excel serial date (ej. "46265").
+ *  Idempotente: re-ejecutarlo no causa problema si no hay nada que reparar. */
+export const repararFechasCaducidad = () =>
+  smartInvoke<{ revisados: number; reparados: number; ejemplos: any[] }>(
+    "reparar_fechas_caducidad",
+  );
+
 // --- Categorías ---
 
 export async function crearCategoria(categoria: Categoria): Promise<number> {

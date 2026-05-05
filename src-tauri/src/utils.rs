@@ -3,6 +3,65 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Convierte un Excel serial date a string ISO YYYY-MM-DD.
+///
+/// Excel almacena fechas como días desde 1899-12-30 (con un bug histórico:
+/// trata 1900 como bisiesto aunque no lo fue). La fórmula compatible con
+/// el bug es: para serial >= 60, fecha = 1899-12-30 + (serial - 1) días.
+/// Para serial < 60 (raro, pre-marzo-1900), no aplicamos el ajuste.
+///
+/// Rango razonable de serials esperados:
+///   25569 = 1970-01-01
+///   46265 ≈ junio 2026
+///   54789 ≈ enero 2050
+///
+/// Retorna None si el serial está fuera de rango razonable (1900-2200).
+pub fn excel_serial_to_iso(serial: f64) -> Option<String> {
+    use chrono::{Duration, NaiveDate};
+
+    // Validar rango razonable: descartamos valores absurdos como 0, negativos,
+    // o gigantescos que claramente no son fechas Excel.
+    // Rango: 1 (1900-01-01) a ~110000 (2201-01-01).
+    if !(1.0..=110000.0).contains(&serial) {
+        return None;
+    }
+
+    let epoch = NaiveDate::from_ymd_opt(1899, 12, 30)?;
+    // Bug del año 1900: Excel trata 1900 como bisiesto (29-feb-1900 que no
+    // existió). Para serials >= 60 (post 1-mar-1900), restar 1 día compensa.
+    let dias = if serial >= 60.0 {
+        (serial as i64) - 1
+    } else {
+        serial as i64
+    };
+
+    epoch
+        .checked_add_signed(Duration::days(dias))
+        .map(|d| d.format("%Y-%m-%d").to_string())
+}
+
+/// Detecta si un string es un número puro (entero o decimal) que parece ser
+/// un Excel serial date en rango razonable de fechas (1982-2173).
+/// Si lo es, retorna el f64. Si no, None.
+pub fn parse_posible_serial_excel(s: &str) -> Option<f64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Solo acepta dígitos opcionalmente con un punto decimal
+    if !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let f: f64 = trimmed.parse().ok()?;
+    // Rango: 30000 (1982-03-15) a 100000 (2173-10-14). Cubre cualquier
+    // fecha de caducidad razonable de un producto real.
+    if (30000.0..=100000.0).contains(&f) {
+        Some(f)
+    } else {
+        None
+    }
+}
+
 /// Crea un Command que no muestra ventana de consola en Windows.
 /// En otros sistemas, equivalente a Command::new.
 pub fn silent_command(program: &str) -> Command {

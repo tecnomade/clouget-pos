@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { alertasCaducidad, listarTodosLotes, eliminarLoteCaducidad, ajustarCantidadLote } from "../services/api";
+import { alertasCaducidad, listarTodosLotes, eliminarLoteCaducidad, ajustarCantidadLote, repararFechasCaducidad } from "../services/api";
 import { useToast } from "../components/Toast";
 
 interface Lote {
@@ -77,6 +77,33 @@ export default function CaducidadPage() {
     } catch (err) { toastError("Error: " + err); }
   };
 
+  // Detectar lotes con fechas-bug (Excel serial date crudo). Cualquier lote
+  // con dias_restantes < -100000 (más de ~270 años "vencido") es claramente
+  // basura por el bug histórico de import de Excel.
+  const tieneFechasBug = useMemo(
+    () => lotes.some((l) => l.dias_restantes < -100000),
+    [lotes],
+  );
+
+  const handleRepararFechas = async () => {
+    if (!confirm(
+      "Esto detecta lotes cuya fecha de caducidad quedó mal guardada como número Excel " +
+      "(ej: \"46265\" en vez de \"2026-06-28\") y los corrige automáticamente.\n\n" +
+      "Operación segura e idempotente. ¿Continuar?"
+    )) return;
+    try {
+      const r = await repararFechasCaducidad();
+      if (r.reparados > 0) {
+        toastExito(`Reparados ${r.reparados} de ${r.revisados} lotes ✓`);
+      } else {
+        toastExito(`Revisados ${r.revisados} lotes — no había nada que reparar.`);
+      }
+      cargar();
+    } catch (err) {
+      toastError("Error reparando fechas: " + err);
+    }
+  };
+
   const exportarCsv = () => {
     try {
       const headers = ["Producto", "Codigo", "Lote", "Cantidad", "Unidad", "Elaboracion", "Caducidad", "Dias restantes", "Estado", "Ingreso", "Observacion"];
@@ -119,6 +146,26 @@ export default function CaducidadPage() {
       <div className="page-header">
         <h2>Control de Caducidad</h2>
         <div style={{ display: "flex", gap: 8 }}>
+          {/* Botón Reparar fechas: destacado si detectamos fechas-bug, sutil si no.
+              Se muestra siempre por si el usuario quiere correrlo manualmente. */}
+          <button
+            onClick={handleRepararFechas}
+            title="Repara lotes con fechas guardadas como número Excel (bug de import)"
+            style={{
+              fontSize: 12,
+              padding: "6px 12px",
+              borderRadius: 6,
+              border: tieneFechasBug
+                ? "2px solid var(--color-warning)"
+                : "1px solid var(--color-border)",
+              background: tieneFechasBug ? "rgba(245,158,11,0.12)" : "transparent",
+              color: tieneFechasBug ? "var(--color-warning)" : "var(--color-text)",
+              fontWeight: tieneFechasBug ? 700 : 500,
+              cursor: "pointer",
+            }}
+          >
+            🔧 {tieneFechasBug ? "Reparar fechas Excel ⚠" : "Reparar fechas"}
+          </button>
           <button className="btn btn-outline" onClick={exportarCsv} style={{ fontSize: 12 }}
             disabled={sinResultados}
             title={sinResultados ? "Sin lotes para exportar" : "Exportar a CSV"}>

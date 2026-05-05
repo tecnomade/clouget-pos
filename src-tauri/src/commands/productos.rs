@@ -903,6 +903,56 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
                 _ => None,
             }).unwrap_or(default)
         };
+        // Lectura específica para celdas de FECHA: detecta si Excel guardó la
+        // celda con formato Fecha (calamine entrega Float/DateTime con días serial)
+        // o como Texto (String "YYYY-MM-DD"). Convierte ambos casos a YYYY-MM-DD.
+        // Esto arregla el bug donde fechas formato Excel quedaban como "46265".
+        let get_fecha = |idx: Option<usize>| -> String {
+            let cell = match idx.and_then(|i| row.get(i)) {
+                Some(c) => c,
+                None => return String::new(),
+            };
+            match cell {
+                calamine::Data::DateTime(dt) => {
+                    crate::utils::excel_serial_to_iso(dt.as_f64()).unwrap_or_default()
+                }
+                calamine::Data::DateTimeIso(s) => {
+                    // Ya viene en formato ISO (raro pero posible). Tomamos solo YYYY-MM-DD.
+                    s.trim().chars().take(10).collect()
+                }
+                calamine::Data::Float(f) => {
+                    // Si es un número en rango de Excel serial dates → convertir
+                    if let Some(iso) = crate::utils::excel_serial_to_iso(*f) {
+                        if (30000.0..=100000.0).contains(f) {
+                            return iso;
+                        }
+                    }
+                    // Sino, devolver representación textual (raro caso)
+                    cell.to_string().trim().to_string()
+                }
+                calamine::Data::Int(i) => {
+                    let f = *i as f64;
+                    if let Some(iso) = crate::utils::excel_serial_to_iso(f) {
+                        if (30000.0..=100000.0).contains(&f) {
+                            return iso;
+                        }
+                    }
+                    i.to_string()
+                }
+                calamine::Data::String(s) => {
+                    let t = s.trim();
+                    // Si es un string que contiene un número en rango Excel serial → convertir
+                    if let Some(serial) = crate::utils::parse_posible_serial_excel(t) {
+                        if let Some(iso) = crate::utils::excel_serial_to_iso(serial) {
+                            return iso;
+                        }
+                    }
+                    // Sino, asumimos que ya es YYYY-MM-DD u otro formato textual válido
+                    t.to_string()
+                }
+                _ => String::new(),
+            }
+        };
 
         let nombre = get_str(Some(col_nombre));
         if nombre.is_empty() { continue; } // Skip empty rows
@@ -921,7 +971,11 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
         let requiere_serie = get_str(col_requiere_serie) == "1" || get_f64(col_requiere_serie, 0.0) == 1.0;
         let requiere_caducidad = get_str(col_requiere_caducidad) == "1" || get_f64(col_requiere_caducidad, 0.0) == 1.0;
         let lote_str = get_str(col_lote);
-        let fecha_caducidad_str = get_str(col_fecha_caducidad);
+        // IMPORTANTE: usar get_fecha (no get_str) para que celdas Excel formato
+        // Fecha se conviertan correctamente a YYYY-MM-DD en vez de quedar como
+        // serial Excel "46265" — bug histórico que causaba lotes con
+        // "vencimiento" en el año 1900 y -2,400,000 días restantes.
+        let fecha_caducidad_str = get_fecha(col_fecha_caducidad);
 
         // Si requiere_caducidad pero no hay fecha, marcar warning y forzar stock=0
         let mut warn_sin_fecha = false;
@@ -1152,6 +1206,27 @@ pub fn registrar_lote_caducidad(
     if cantidad <= 0.0 {
         return Err("La cantidad debe ser mayor a 0".into());
     }
+
+    // Validar que fecha_caducidad sea YYYY-MM-DD válido.
+    // Esto previene el bug histórico donde se guardaban Excel serial dates
+    // crudos (ej. "46265") como si fueran fechas, generando lotes con
+    // -2,400,000 días de "vida útil" basura.
+    if chrono::NaiveDate::parse_from_str(fecha_caducidad.trim(), "%Y-%m-%d").is_err() {
+        return Err(format!(
+            "Fecha de caducidad invalida: '{}'. Formato esperado: YYYY-MM-DD",
+            fecha_caducidad.trim()
+        ));
+    }
+    if let Some(ref fe) = fecha_elaboracion {
+        let fe_t = fe.trim();
+        if !fe_t.is_empty() && chrono::NaiveDate::parse_from_str(fe_t, "%Y-%m-%d").is_err() {
+            return Err(format!(
+                "Fecha de elaboracion invalida: '{}'. Formato esperado: YYYY-MM-DD",
+                fe_t
+            ));
+        }
+    }
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Validacion: la suma de lotes no puede superar el stock actual.
@@ -1184,6 +1259,99 @@ pub fn registrar_lote_caducidad(
         rusqlite::params![producto_id, lote, fecha_caducidad, cantidad, compra_id, observacion, fecha_elaboracion],
     ).map_err(|e| e.to_string())?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Repara lotes con fechas guardadas como Excel serial date crudo (ej. "46265").
+///
+/// Este bug ocurría cuando el cliente importaba productos desde Excel y la
+/// columna fecha_caducidad estaba formateada como "Fecha" en Excel — calamine
+/// devolvía el serial Excel y se guardaba como string crudo.
+///
+/// Recorre `lotes_caducidad` y `lotes_caducidad.fecha_elaboracion`, detecta
+/// strings que son números puros entre 30000-100000 (rango Excel serial dates
+/// 1982-2173), los convierte a YYYY-MM-DD usando `excel_serial_to_iso()` y
+/// hace UPDATE atómico.
+///
+/// Es idempotente: re-ejecutarlo no causa problema (los ya arreglados ya no
+/// matchean el patrón "número puro").
+///
+/// Retorna `{ revisados, reparados, ejemplos: [{id, antes, despues}] }`.
+#[tauri::command]
+pub fn reparar_fechas_caducidad(db: State<Database>) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Leer todos los lotes (id, fecha_caducidad, fecha_elaboracion)
+    let mut stmt = conn
+        .prepare("SELECT id, fecha_caducidad, COALESCE(fecha_elaboracion, '') FROM lotes_caducidad")
+        .map_err(|e| e.to_string())?;
+
+    let lotes: Vec<(i64, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let revisados = lotes.len();
+    let mut reparados = 0i64;
+    let mut ejemplos: Vec<serde_json::Value> = Vec::new();
+
+    for (id, fecha_cad, fecha_elab) in lotes {
+        // Reparar fecha_caducidad si es serial Excel
+        let nueva_fecha_cad = crate::utils::parse_posible_serial_excel(&fecha_cad)
+            .and_then(crate::utils::excel_serial_to_iso);
+        // Reparar fecha_elaboracion si es serial Excel
+        let nueva_fecha_elab = if !fecha_elab.is_empty() {
+            crate::utils::parse_posible_serial_excel(&fecha_elab)
+                .and_then(crate::utils::excel_serial_to_iso)
+        } else {
+            None
+        };
+
+        let cambio_cad = nueva_fecha_cad.is_some();
+        let cambio_elab = nueva_fecha_elab.is_some();
+
+        if !cambio_cad && !cambio_elab {
+            continue;
+        }
+
+        // Update atómico
+        let resultado = match (nueva_fecha_cad.as_deref(), nueva_fecha_elab.as_deref()) {
+            (Some(nc), Some(ne)) => conn.execute(
+                "UPDATE lotes_caducidad SET fecha_caducidad = ?1, fecha_elaboracion = ?2 WHERE id = ?3",
+                rusqlite::params![nc, ne, id],
+            ),
+            (Some(nc), None) => conn.execute(
+                "UPDATE lotes_caducidad SET fecha_caducidad = ?1 WHERE id = ?2",
+                rusqlite::params![nc, id],
+            ),
+            (None, Some(ne)) => conn.execute(
+                "UPDATE lotes_caducidad SET fecha_elaboracion = ?1 WHERE id = ?2",
+                rusqlite::params![ne, id],
+            ),
+            (None, None) => unreachable!(),
+        };
+
+        if resultado.is_ok() {
+            reparados += 1;
+            // Guardar primeros 10 ejemplos para el toast/log
+            if ejemplos.len() < 10 {
+                ejemplos.push(serde_json::json!({
+                    "id": id,
+                    "fecha_caducidad_antes": fecha_cad,
+                    "fecha_caducidad_despues": nueva_fecha_cad,
+                    "fecha_elaboracion_antes": fecha_elab,
+                    "fecha_elaboracion_despues": nueva_fecha_elab,
+                }));
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "revisados": revisados,
+        "reparados": reparados,
+        "ejemplos": ejemplos,
+    }))
 }
 
 #[tauri::command]
