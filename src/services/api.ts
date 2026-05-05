@@ -1366,3 +1366,7 @@ export const contarTransferenciasPendientes = () =>
 export const obtenerDetalleMovimientoBancario = (tipo: string, origenId: number) =>
   smartInvoke<any>("obtener_detalle_movimiento_bancario", { tipo, origenId });
 
+// ─── Re-export para módulos externos (ej. src/restaurante/api.ts) ─────────
+// Permite a otros módulos invocar comandos sin replicar la lógica de modo red.
+export { smartInvoke };
+

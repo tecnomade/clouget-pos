@@ -27,6 +27,12 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
     // licencia_modulos: lista canonica de modulos del demo (debe coincidir con LicenciaInfo.modulos abajo
     // y con el branch demo de obtener_estado_licencia). Se persiste en config para que la UI active
     // las secciones condicionales (Backup Cloud, Multi-POS, Multi-Almacen, etc).
+    // En builds Clouget se incluye "restaurante"; en DigitalServer no.
+    let modulos_demo_json = if crate::branding::BRAND.tiene_modulo_restaurante() {
+        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\",\"restaurante\"]"
+    } else {
+        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\"]"
+    };
     let configs = [
         ("nombre_negocio", "Tienda El Bosque"),
         ("ruc", "1790016919001"),
@@ -41,7 +47,7 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         ("demo_activo", "1"),
         ("caducidad_dias_alerta", "7"),
         ("auto_imprimir", "1"),
-        ("licencia_modulos", "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\"]"),
+        ("licencia_modulos", modulos_demo_json),
     ];
     for (key, value) in &configs {
         conn.execute(

@@ -1,9 +1,11 @@
 mod backup;
+mod branding;
 mod commands;
 mod db;
 mod models;
 mod offline;
 mod printing;
+mod restaurante;
 mod server;
 mod sri;
 pub mod utils;
@@ -45,6 +47,15 @@ async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let database = Database::new().expect("Error al inicializar la base de datos");
+
+    // Inicializar módulos opcionales según brand.
+    // El módulo Restaurante solo se carga en builds Clouget (no DigitalServer).
+    if branding::BRAND.tiene_modulo_restaurante() {
+        if let Err(e) = restaurante::init(&database) {
+            eprintln!("[Restaurante] Error al inicializar módulo: {}", e);
+        }
+    }
+
     let sesion_state = SesionState {
         sesion: Arc::new(Mutex::new(None)),
     };
@@ -399,6 +410,31 @@ pub fn run() {
             backup::cloud::guardar_gdrive_tokens,
             backup::cloud::desconectar_gdrive,
             backup::cloud::conectar_gdrive,
+            // ─── Módulo Restaurante (solo build Clouget) ──────────────
+            // Comandos siempre registrados — cada uno chequea licencia internamente
+            // via `requiere_modulo_restaurante()`. Si BRAND es DigitalServer estos
+            // comandos no se cargan porque el módulo no se compila.
+            restaurante::commands::rest_listar_zonas,
+            restaurante::commands::rest_crear_zona,
+            restaurante::commands::rest_actualizar_zona,
+            restaurante::commands::rest_eliminar_zona,
+            restaurante::commands::rest_crear_mesa,
+            restaurante::commands::rest_actualizar_mesa,
+            restaurante::commands::rest_eliminar_mesa,
+            restaurante::commands::rest_listar_mesas_con_estado,
+            restaurante::commands::rest_abrir_pedido,
+            restaurante::commands::rest_obtener_pedido,
+            restaurante::commands::rest_obtener_pedido_mesa,
+            restaurante::commands::rest_listar_pedidos_abiertos,
+            restaurante::commands::rest_cancelar_pedido,
+            restaurante::commands::rest_agregar_item,
+            restaurante::commands::rest_actualizar_item_cantidad,
+            restaurante::commands::rest_eliminar_item,
+            restaurante::commands::rest_enviar_cocina,
+            restaurante::commands::rest_listar_items_cocina_pendientes,
+            restaurante::commands::rest_marcar_item_cocina,
+            restaurante::commands::rest_pedir_cuenta,
+            restaurante::commands::rest_cerrar_pedido,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

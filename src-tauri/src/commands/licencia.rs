@@ -279,7 +279,7 @@ pub async fn obtener_estado_licencia(
         if demo == "1" {
             let mi_machine_id = obtener_machine_id().unwrap_or_default();
             // Modulos canonicos del demo — debe coincidir con activar_demo y la UI condicional.
-            let modulos_demo: Vec<String> = vec![
+            let mut modulos_demo: Vec<String> = vec![
                 "multi_pos".to_string(),
                 "multi_almacen".to_string(),
                 "backup_cloud".to_string(),
@@ -287,6 +287,11 @@ pub async fn obtener_estado_licencia(
                 "servicio_tecnico".to_string(),
                 "sri_ilimitado".to_string(),
             ];
+            // Modulo restaurante: solo en builds Clouget (compile-time gate).
+            // En DigitalServer no agregamos para que la UI ni siquiera lo muestre.
+            if crate::branding::BRAND.tiene_modulo_restaurante() {
+                modulos_demo.push("restaurante".to_string());
+            }
             let (nombre_negocio, modulos_persistidos) = {
                 let conn = db.conn.lock().map_err(|e| e.to_string())?;
                 let nombre = conn.query_row(

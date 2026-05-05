@@ -4,6 +4,9 @@ import { readFileSync } from "fs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const brandEnv = (process.env.CLOUGET_BRAND || "clouget").toLowerCase();
+const BRAND = brandEnv === "digitalserver" ? "digitalserver" : "clouget";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
 
@@ -12,6 +15,10 @@ export default defineConfig(async () => ({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // Brand flag — debe coincidir con src-tauri/src/branding.rs::BRAND.
+    // Para generar build DigitalServer: setear env var CLOUGET_BRAND=digitalserver
+    // antes de `npm run tauri build` y cambiar Brand::DigitalServer en branding.rs.
+    __BRAND__: JSON.stringify(BRAND),
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
