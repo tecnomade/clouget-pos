@@ -91,6 +91,11 @@ pub struct PedidoItem {
     pub estado_cocina: String,
     pub fecha_creacion: Option<String>,
     pub fecha_envio_cocina: Option<String>,
+    /// JOIN con productos.destino_preparacion — solo lectura.
+    /// 'COCINA' | 'BARRA' | 'DIRECTO'. Determina si el item va a /cocina
+    /// o se despacha directo (no aparece en cocina).
+    #[serde(default = "default_destino_preparacion")]
+    pub destino_preparacion: String,
 }
 
 /// Pedido + items + datos de mesa + totales calculados.
@@ -141,4 +146,7 @@ fn default_estado_pedido() -> String {
 }
 fn default_estado_cocina() -> String {
     "PENDIENTE".to_string()
+}
+fn default_destino_preparacion() -> String {
+    "COCINA".to_string()
 }

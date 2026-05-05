@@ -69,6 +69,8 @@ export interface PedidoItem {
   estado_cocina: string;
   fecha_creacion?: string | null;
   fecha_envio_cocina?: string | null;
+  /** COCINA | BARRA | DIRECTO — del producto, JOIN al consultar */
+  destino_preparacion?: string;
 }
 
 export interface PedidoDetalle {

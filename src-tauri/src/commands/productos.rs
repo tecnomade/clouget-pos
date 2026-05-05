@@ -57,12 +57,18 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
         _ => "SIMPLE".to_string(),
     };
 
+    // Restaurante: validar destino_preparacion (default COCINA si vacio o invalido)
+    let destino_preparacion = match producto.destino_preparacion.as_str() {
+        "BARRA" | "DIRECTO" => producto.destino_preparacion.clone(),
+        _ => "COCINA".to_string(),
+    };
+
     conn.execute(
         "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id,
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
          unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad, no_controla_stock,
-         tipo_producto)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+         tipo_producto, destino_preparacion)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         rusqlite::params![
             codigo,
             codigo_barras,
@@ -83,6 +89,7 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
             producto.requiere_caducidad as i32,
             producto.no_controla_stock as i32,
             tipo_producto,
+            destino_preparacion,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -130,13 +137,20 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
         _ => "SIMPLE".to_string(),
     };
 
+    // Restaurante: validar destino_preparacion
+    let destino_preparacion = match producto.destino_preparacion.as_str() {
+        "BARRA" | "DIRECTO" => producto.destino_preparacion.clone(),
+        _ => "COCINA".to_string(),
+    };
+
     conn.execute(
         "UPDATE productos SET codigo=?1, codigo_barras=?2, nombre=?3, descripcion=?4,
          categoria_id=?5, precio_costo=?6, precio_venta=?7, iva_porcentaje=?8,
          incluye_iva=?9, stock_actual=?10, stock_minimo=?11, unidad_medida=?12,
          es_servicio=?13, activo=?14, imagen=?15, requiere_serie=?16, requiere_caducidad=?17,
-         no_controla_stock=?18, tipo_producto=?19, updated_at=datetime('now','localtime')
-         WHERE id=?20",
+         no_controla_stock=?18, tipo_producto=?19, destino_preparacion=?20,
+         updated_at=datetime('now','localtime')
+         WHERE id=?21",
         rusqlite::params![
             producto.codigo,
             codigo_barras,
@@ -157,6 +171,7 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
             producto.requiere_caducidad as i32,
             producto.no_controla_stock as i32,
             tipo_producto,
+            destino_preparacion,
             id,
         ],
     )
@@ -300,7 +315,8 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
         "SELECT id, codigo, codigo_barras, nombre, descripcion, categoria_id,
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual,
          stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
-         no_controla_stock, COALESCE(tipo_producto, 'SIMPLE') as tipo_producto
+         no_controla_stock, COALESCE(tipo_producto, 'SIMPLE') as tipo_producto,
+         COALESCE(destino_preparacion, 'COCINA') as destino_preparacion
          FROM productos WHERE id = ?1",
         rusqlite::params![id],
         |row| {
@@ -325,6 +341,7 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
                 requiere_caducidad: row.get::<_, i32>(17)? != 0,
                 no_controla_stock: row.get::<_, i32>(18)? != 0,
                 tipo_producto: row.get(19)?,
+                destino_preparacion: row.get(20)?,
             })
         },
     )

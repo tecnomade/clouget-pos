@@ -110,3 +110,9 @@ export const pedirCuenta = (pedidoId: number) =>
 
 export const cerrarPedido = (pedidoId: number, ventaId: number) =>
   invoke<void>("rest_cerrar_pedido", { pedidoId, ventaId });
+
+// ─── Impresión ───────────────────────────────────────────────────────────
+
+/** Imprime el ticket de pre-cuenta (cortesía, no fiscal) en la térmica configurada. */
+export const imprimirPreCuenta = (pedidoId: number) =>
+  invoke<string>("rest_imprimir_pre_cuenta", { pedidoId });

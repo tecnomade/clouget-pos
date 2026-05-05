@@ -27,9 +27,17 @@ pub struct Producto {
     /// 'SIMPLE' (default) | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
     #[serde(default = "default_tipo_producto")]
     pub tipo_producto: String,
+    /// 'COCINA' (default) | 'BARRA' | 'DIRECTO'
+    /// Restaurante: define a dónde va el item al ser agregado a un pedido.
+    /// - COCINA: el cocinero lo prepara (aparece en /cocina)
+    /// - BARRA:  el bartender lo prepara (también en /cocina, distinguible por código)
+    /// - DIRECTO: el mesero lo despacha sin preparación (bebidas embotelladas, snacks)
+    #[serde(default = "default_destino_preparacion")]
+    pub destino_preparacion: String,
 }
 
 fn default_tipo_producto() -> String { "SIMPLE".to_string() }
+fn default_destino_preparacion() -> String { "COCINA".to_string() }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ComboGrupo {

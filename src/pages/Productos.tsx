@@ -717,6 +717,24 @@ function FormProducto({
           </span>
         </div>
 
+        {/* Destino de preparación — solo afecta al módulo Restaurante.
+            Si no usas restaurante, dejalo en COCINA (default) y no impacta nada. */}
+        <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed var(--color-border)" }}>
+          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>
+            🍴 Destino (Restaurante)
+          </label>
+          <select className="input" style={{ marginTop: 4, fontSize: 13 }}
+            value={form.destino_preparacion || "COCINA"}
+            onChange={(e) => setForm({ ...form, destino_preparacion: e.target.value })}>
+            <option value="COCINA">🍳 Cocina (requiere preparación)</option>
+            <option value="BARRA">🍷 Barra (cocteles, café preparado)</option>
+            <option value="DIRECTO">📦 Despacho directo (mesero toma del mostrador, no va a cocina)</option>
+          </select>
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
+            Solo aplica si usas el módulo Restaurante. Bebidas embotelladas, snacks, postres en exhibición → "Despacho directo" para que NO aparezcan en la pantalla de cocina.
+          </span>
+        </div>
+
         {/* Panel de Componentes (visible solo si es combo) */}
         {(form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") && (
           <div style={{ marginTop: 16, padding: 12, background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: "var(--radius)" }}>

@@ -22,6 +22,7 @@
 pub mod commands;
 pub mod http;
 pub mod models;
+pub mod printing;
 pub mod schema;
 
 use crate::db::Database;

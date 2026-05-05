@@ -21,6 +21,9 @@ export interface Producto {
   no_controla_stock?: boolean;
   /** SIMPLE (default) | COMBO_FIJO | COMBO_FLEXIBLE */
   tipo_producto?: string;
+  /** Restaurante: COCINA (default) | BARRA | DIRECTO.
+   *  Define a dónde va el item al ser agregado a un pedido de mesa. */
+  destino_preparacion?: string;
 }
 
 export interface ProductoTactil {

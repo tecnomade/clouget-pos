@@ -285,7 +285,7 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
 }
 
 /// Separador doble: ═══════════
-fn linea_separador_doble(ancho: usize) -> String {
+pub fn linea_separador_doble(ancho: usize) -> String {
     let mut s = String::with_capacity(ancho + 1);
     for _ in 0..ancho {
         s.push('=');
@@ -295,7 +295,7 @@ fn linea_separador_doble(ancho: usize) -> String {
 }
 
 /// Separador simple: ----------------
-fn linea_separador_simple(ancho: usize) -> String {
+pub fn linea_separador_simple(ancho: usize) -> String {
     let mut s = String::with_capacity(ancho + 1);
     for _ in 0..ancho {
         s.push('-');
@@ -304,13 +304,13 @@ fn linea_separador_simple(ancho: usize) -> String {
     s
 }
 
-fn linea_monto(label: &str, monto: f64, ancho: usize) -> String {
+pub fn linea_monto(label: &str, monto: f64, ancho: usize) -> String {
     let valor = format!("${:.2}", monto);
     let espacios = ancho.saturating_sub(label.len() + valor.len());
     format!("{}{}{}\n", label, " ".repeat(espacios), valor)
 }
 
-fn format_cantidad(cant: f64) -> String {
+pub fn format_cantidad(cant: f64) -> String {
     if cant == cant.floor() {
         format!("{:.0}", cant)
     } else {
@@ -321,6 +321,11 @@ fn format_cantidad(cant: f64) -> String {
 /// Convierte un logo base64-PNG a bytes ESC/POS raster (GS v 0).
 /// Retorna None si falla cualquier paso (decodificar, parsear imagen, etc.)
 /// max_width: ancho máximo en píxeles (debe ser múltiplo de 8, se ajusta)
+/// Wrapper público para usar logo_to_raster desde otros módulos (ej. restaurante::printing).
+pub fn logo_to_raster_pub(logo_b64: &str, max_width: u32) -> Option<Vec<u8>> {
+    logo_to_raster(logo_b64, max_width)
+}
+
 fn logo_to_raster(logo_b64: &str, max_width: u32) -> Option<Vec<u8>> {
     // Decodificar base64
     let png_bytes = BASE64.decode(logo_b64).ok()?;

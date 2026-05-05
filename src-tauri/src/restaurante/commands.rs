@@ -389,21 +389,38 @@ pub fn rest_agregar_item(
         return Err(format!("No se pueden agregar items a un pedido {}", estado));
     }
 
-    // Obtener precio del producto
-    let precio: f64 = conn
+    // Obtener precio + destino del producto
+    let (precio, destino): (f64, String) = conn
         .query_row(
-            "SELECT precio_venta FROM productos WHERE id = ?1 AND activo = 1",
+            "SELECT precio_venta, COALESCE(destino_preparacion, 'COCINA')
+             FROM productos WHERE id = ?1 AND activo = 1",
             params![producto_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| "Producto no encontrado o inactivo".to_string())?;
 
-    conn.execute(
-        "INSERT INTO rest_pedido_items (pedido_id, producto_id, cantidad, precio_unit, info_adicional)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![pedido_id, producto_id, cantidad, precio, info_adicional],
-    )
-    .map_err(|e| e.to_string())?;
+    // Si el destino es DIRECTO (bebidas embotelladas, snacks, etc.):
+    // marcar el item como YA enviado a cocina y YA entregado, para que NO
+    // aparezca en /cocina. El mesero lo despacha del mostrador.
+    let es_directo = destino == "DIRECTO";
+    if es_directo {
+        conn.execute(
+            "INSERT INTO rest_pedido_items
+             (pedido_id, producto_id, cantidad, precio_unit, info_adicional,
+              enviado_cocina, estado_cocina, fecha_envio_cocina)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, 'ENTREGADO', datetime('now', 'localtime'))",
+            params![pedido_id, producto_id, cantidad, precio, info_adicional],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        // COCINA o BARRA: flujo normal — mesero lo enviará a cocina cuando esté listo
+        conn.execute(
+            "INSERT INTO rest_pedido_items (pedido_id, producto_id, cantidad, precio_unit, info_adicional)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![pedido_id, producto_id, cantidad, precio, info_adicional],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(conn.last_insert_rowid())
 }
 
@@ -430,15 +447,24 @@ pub fn rest_actualizar_item_cantidad(
 pub fn rest_eliminar_item(db: State<'_, Database>, item_id: i64) -> Result<(), String> {
     requiere_modulo_restaurante(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    // Solo permitir eliminar items que NO han sido enviados a cocina
-    let enviado: i32 = conn
+    // Permitir eliminar:
+    //   1. Items NO enviados a cocina (mesero se equivocó al agregar) — OK
+    //   2. Items DIRECTO (bebidas/snacks que el mesero toma del mostrador):
+    //      aunque están marcados con enviado_cocina=1 al insertarse, NUNCA
+    //      pasaron por cocina, así que el mesero puede deshacerlos sin problema.
+    // BLOQUEAR:
+    //   3. Items COCINA/BARRA ya enviados a cocina (porque el cocinero ya los está preparando o ya están listos).
+    let (enviado, destino): (i32, String) = conn
         .query_row(
-            "SELECT enviado_cocina FROM rest_pedido_items WHERE id = ?1",
+            "SELECT i.enviado_cocina, COALESCE(p.destino_preparacion, 'COCINA')
+             FROM rest_pedido_items i
+             JOIN productos p ON i.producto_id = p.id
+             WHERE i.id = ?1",
             params![item_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| "Item no encontrado".to_string())?;
-    if enviado != 0 {
+    if enviado != 0 && destino != "DIRECTO" {
         return Err("No se puede eliminar un item ya enviado a cocina. Use anulación.".to_string());
     }
     conn.execute("DELETE FROM rest_pedido_items WHERE id = ?1", params![item_id])
@@ -459,12 +485,15 @@ pub fn rest_enviar_cocina(
     requiere_modulo_restaurante(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Obtener items pendientes ANTES de marcarlos
+    // Obtener items pendientes ANTES de marcarlos.
+    // Nota: items con destino DIRECTO se insertaron ya con enviado_cocina=1, asi que
+    // el filtro `enviado_cocina = 0` los excluye automáticamente. Solo COCINA + BARRA aqui.
     let mut stmt = conn
         .prepare(
             "SELECT i.id, i.pedido_id, i.producto_id, p.nombre, i.cantidad, i.precio_unit,
                     i.info_adicional, i.enviado_cocina, i.estado_cocina,
-                    i.fecha_creacion, i.fecha_envio_cocina
+                    i.fecha_creacion, i.fecha_envio_cocina,
+                    COALESCE(p.destino_preparacion, 'COCINA') as destino
              FROM rest_pedido_items i
              JOIN productos p ON i.producto_id = p.id
              WHERE i.pedido_id = ?1 AND i.enviado_cocina = 0
@@ -485,6 +514,7 @@ pub fn rest_enviar_cocina(
                 estado_cocina: row.get(8)?,
                 fecha_creacion: row.get(9)?,
                 fecha_envio_cocina: row.get(10)?,
+                destino_preparacion: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -613,6 +643,51 @@ pub fn rest_cerrar_pedido(
     Ok(())
 }
 
+// ─── Impresión ──────────────────────────────────────────────────────────
+
+/// Imprime el ticket de pre-cuenta en la impresora térmica configurada.
+/// La pre-cuenta NO es comprobante fiscal — solo informa al cliente del
+/// consumo antes de cobrar. La factura/nota de venta real se genera al cobrar.
+///
+/// Reutiliza la misma impresora configurada en `config.impresora` (la del POS).
+/// Se puede llamar múltiples veces (botón "Reimprimir pre-cuenta") sin efecto
+/// secundario.
+#[tauri::command]
+pub fn rest_imprimir_pre_cuenta(
+    db: State<'_, Database>,
+    pedido_id: i64,
+) -> Result<String, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let detalle = obtener_pedido_detalle(&conn, pedido_id)?;
+
+    if detalle.items.is_empty() {
+        return Err("El pedido no tiene items — no hay nada que imprimir".to_string());
+    }
+
+    // Cargar config (logo, nombre negocio, dirección, etc.)
+    let mut cfg_stmt = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+    let config: std::collections::HashMap<String, String> = cfg_stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let impresora = config
+        .get("impresora")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if impresora.is_empty() {
+        return Err("No hay impresora térmica configurada. Vaya a Configuración → Impresoras.".to_string());
+    }
+
+    let ticket = super::printing::generar_pre_cuenta(&detalle, &config);
+    crate::printing::imprimir_raw_windows(&impresora, &ticket)?;
+
+    Ok("Pre-cuenta impresa".to_string())
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────
 
 fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {
@@ -654,7 +729,8 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
         .prepare(
             "SELECT i.id, i.pedido_id, i.producto_id, p.nombre, i.cantidad, i.precio_unit,
                     i.info_adicional, i.enviado_cocina, i.estado_cocina,
-                    i.fecha_creacion, i.fecha_envio_cocina
+                    i.fecha_creacion, i.fecha_envio_cocina,
+                    COALESCE(p.destino_preparacion, 'COCINA') as destino
              FROM rest_pedido_items i
              JOIN productos p ON i.producto_id = p.id
              WHERE i.pedido_id = ?1
@@ -675,6 +751,7 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
                 estado_cocina: row.get(8)?,
                 fecha_creacion: row.get(9)?,
                 fecha_envio_cocina: row.get(10)?,
+                destino_preparacion: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?

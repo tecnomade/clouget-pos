@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.55-beta — 2026-05-05 🍴
+**Restaurante: despacho directo + pre-cuenta impresa** — UX completa para flujo real.
+
+Resuelve dos brechas críticas detectadas en la v2.3.54-beta cuando se usaba el módulo Restaurante con clientes reales:
+
+### 1. 📦 Despacho directo por producto (Opción A)
+- **Nuevo campo en cada producto: "Destino (Restaurante)"** con 3 opciones:
+  - 🍳 **Cocina** (default, comportamiento anterior — preparado por cocinero, aparece en /cocina)
+  - 🍷 **Barra** (cocteles, café preparado — también va a /cocina, badge violeta)
+  - 📦 **Despacho directo** (bebidas embotelladas, snacks, postres en exhibición — el mesero los toma del mostrador)
+- **Items DIRECTO no aparecen en /cocina**: se insertan en el pedido ya marcados como `enviado_cocina=1, estado_cocina='ENTREGADO'`. El cocinero/parrillero ya no ve la Coca-Cola ni el agua entre los items que tiene que preparar.
+- **Badge visual en pedido**: items DIRECTO se ven con fondo verde claro y badge "📦 DIRECTO". Items BARRA con badge "🍷 BARRA NUEVO" → "🍷 EN BARRA".
+- **Items DIRECTO se pueden eliminar** (no como los items COCINA enviados, que no se pueden borrar). Si el mesero se equivocó al agregar la Coca, la borra.
+- **Migración SQL safe**: `ALTER TABLE productos ADD COLUMN destino_preparacion TEXT NOT NULL DEFAULT 'COCINA'`. Productos existentes mantienen comportamiento anterior automáticamente.
+- **Configuración en pantalla Productos**: nuevo selector debajo del tipo de producto. Editas cada producto una vez y queda configurado para siempre.
+
+### 2. 📄 Pre-cuenta impresa al "Pedir cuenta"
+- Al click en **"Pedir cuenta"**, el sistema ahora **automáticamente imprime un ticket "PRE-CUENTA"** en la impresora térmica configurada (la misma del POS).
+- Ticket incluye: nombre negocio + logo (si está cargado), datos de mesa (nombre, zona, mesero, comensales, hora apertura, # pedido), detalle de items con observaciones, total, y aviso prominente: **"ESTE DOCUMENTO NO ES UN COMPROBANTE FISCAL — Solicite su factura al pagar"**.
+- La pre-cuenta es **solo informativa**. El comprobante fiscal real (Nota de Venta o Factura SRI) se sigue generando al cobrar (botón "💰 Cobrar"), igual que antes — sin cambios al flujo de cobro ni al sistema SRI.
+- **Nuevo botón "🖨 Reimprimir cuenta"** aparece después de pedir cuenta. Si el cliente la pierde o quiere otra copia, la reimprimís sin afectar nada.
+- Si NO hay impresora configurada, el botón "Pedir cuenta" igual marca la mesa como CUENTA_PEDIDA y muestra warning, pero no rompe el flujo.
+
+### 3. 🚫 Bloqueo de agregar items con cuenta pedida (con confirmación)
+- Después de pedir cuenta, el botón "+ Agregar productos" cambia su texto a **"+ Agregar productos (mesa pidió cuenta)"** y al click pide confirmación: *"Esta mesa ya pidió la cuenta y la pre-cuenta fue impresa. Si agregas más productos, deberás reimprimir la pre-cuenta. ¿Continuar?"*
+- Esto evita el caso real donde el cliente ve la pre-cuenta, paga, y después el sistema le cobra más.
+- Si el mesero confirma, agrega el item normalmente y el botón "Reimprimir cuenta" sigue disponible para emitir una pre-cuenta actualizada.
+
+### Cambios técnicos
+- **Backend**:
+  - `db/mod.rs`: migración ALTER TABLE productos (idempotente, .ok())
+  - `models/producto.rs`: campo `destino_preparacion` con default 'COCINA'
+  - `commands/productos.rs`: crear/actualizar/obtener leen el campo nuevo
+  - `restaurante/commands.rs`: `rest_agregar_item` lee destino → si DIRECTO inserta marcado como entregado; `rest_eliminar_item` permite borrar items DIRECTO; `rest_imprimir_pre_cuenta` (nuevo) reutiliza `printing/mod.rs`
+  - `restaurante/printing.rs` (nuevo): `generar_pre_cuenta()` — ticket ESC/POS estilo restaurante con cabecera negocio + datos mesa + items agrupados + totales + aviso fiscal
+  - `printing/mod.rs`: helpers (`linea_separador_simple/doble`, `linea_monto`, `format_cantidad`, `logo_to_raster_pub`) ahora públicos para reutilizar
+  - `server/dispatch.rs`: SELECT productos también trae `destino_preparacion`
+- **Frontend**:
+  - `types/index.ts`: campo `destino_preparacion?: string` en Producto
+  - `restaurante/types.ts`: campo `destino_preparacion?: string` en PedidoItem
+  - `pages/Productos.tsx`: selector "Destino (Restaurante)" debajo de tipo_producto
+  - `restaurante/api.ts`: nuevo wrapper `imprimirPreCuenta(pedidoId)`
+  - `restaurante/components/PedidoDetalle.tsx`:
+    - `handlePedirCuenta` ahora también llama `imprimirPreCuenta` (con fallback warning si falla impresora)
+    - `handleReimprimirPreCuenta` (nuevo)
+    - Botón "+ Agregar productos" pide confirmación si CUENTA_PEDIDA
+    - Botón "Pedir cuenta" se reemplaza por "🖨 Reimprimir cuenta" cuando estado=CUENTA_PEDIDA
+    - `ItemRow`: badges DIRECTO/BARRA + colores fondo distintos + permitir eliminar items DIRECTO
+
+### Cero impacto en POS normal
+- Productos existentes: mantienen `destino='COCINA'` por default. Sin cambios visibles si no usas Restaurante.
+- Sistema de ventas, SRI, combos, kardex, cierre de caja: intactos.
+- Solo se ven cambios si:
+  1. El build incluye el módulo (`branding::BRAND.tiene_modulo_restaurante()`) — sí en Clouget, no en DigitalServer
+  2. La licencia tiene `"restaurante"` en módulos (admin lo asigna por cliente)
+
 ## v2.3.54-beta — 2026-05-05 🍴
 **Nuevo módulo: Restaurante** (mesas, comandas, cocina) — versión BETA para early adopters.
 

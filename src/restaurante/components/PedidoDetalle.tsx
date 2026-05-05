@@ -20,6 +20,7 @@ import {
   pedirCuenta,
   cancelarPedido,
   cerrarPedido,
+  imprimirPreCuenta,
 } from "../api";
 import { registrarVenta, obtenerCajaAbierta } from "../../services/api";
 import type { PedidoDetalle as PedidoDetalleType } from "../types";
@@ -99,8 +100,28 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const handlePedirCuenta = async () => {
     try {
       await pedirCuenta(pedidoId);
-      toastExito("Cuenta solicitada");
+      // Auto-imprimir pre-cuenta. Si no hay impresora configurada, mostrar
+      // warning pero NO romper el flujo (el estado ya cambió a CUENTA_PEDIDA).
+      try {
+        await imprimirPreCuenta(pedidoId);
+        toastExito("Cuenta solicitada · Pre-cuenta impresa 🖨");
+      } catch (err: any) {
+        toastWarning(
+          "Cuenta marcada, pero no se pudo imprimir: " +
+            (err?.message || err) +
+            ". Verifica impresora en Configuración.",
+        );
+      }
       await cargar();
+    } catch (err: any) {
+      toastError(err?.message || String(err));
+    }
+  };
+
+  const handleReimprimirPreCuenta = async () => {
+    try {
+      await imprimirPreCuenta(pedidoId);
+      toastExito("Pre-cuenta reimpresa 🖨");
     } catch (err: any) {
       toastError(err?.message || String(err));
     }
@@ -305,13 +326,30 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
               </strong>
             </div>
 
-            {/* Botón Agregar productos */}
+            {/* Botón Agregar productos.
+                Si la mesa ya pidió cuenta, pedir confirmación antes de agregar
+                (porque la pre-cuenta impresa quedará desactualizada). */}
             <button
               className="btn btn-primary"
-              onClick={() => setMostrarSelector(true)}
-              style={{ width: "100%", padding: "10px" }}
+              onClick={() => {
+                if (detalle.pedido.estado === "CUENTA_PEDIDA") {
+                  if (!confirm(
+                    "Esta mesa ya pidió la cuenta y la pre-cuenta fue impresa.\n\n" +
+                    "Si agregas más productos, deberás reimprimir la pre-cuenta.\n\n" +
+                    "¿Continuar?"
+                  )) return;
+                }
+                setMostrarSelector(true);
+              }}
+              style={{
+                width: "100%",
+                padding: "10px",
+                opacity: detalle.pedido.estado === "CUENTA_PEDIDA" ? 0.7 : 1,
+              }}
             >
-              + Agregar productos
+              {detalle.pedido.estado === "CUENTA_PEDIDA"
+                ? "+ Agregar productos (mesa pidió cuenta)"
+                : "+ Agregar productos"}
             </button>
 
             {/* Acciones secundarias */}
@@ -325,14 +363,26 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
               >
                 🔔 Enviar cocina {itemsNuevos > 0 && `(${itemsNuevos})`}
               </button>
-              <button
-                className="btn btn-outline"
-                onClick={handlePedirCuenta}
-                disabled={detalle.pedido.estado === "CUENTA_PEDIDA" || detalle.items.length === 0}
-                style={{ padding: "8px" }}
-              >
-                📄 Pedir cuenta
-              </button>
+              {detalle.pedido.estado === "CUENTA_PEDIDA" ? (
+                <button
+                  className="btn btn-outline"
+                  onClick={handleReimprimirPreCuenta}
+                  style={{ padding: "8px" }}
+                  title="Reimprimir pre-cuenta (ya fue impresa)"
+                >
+                  🖨 Reimprimir cuenta
+                </button>
+              ) : (
+                <button
+                  className="btn btn-outline"
+                  onClick={handlePedirCuenta}
+                  disabled={detalle.items.length === 0}
+                  style={{ padding: "8px" }}
+                  title="Marca la mesa como CUENTA_PEDIDA e imprime ticket de cortesía"
+                >
+                  📄 Pedir cuenta
+                </button>
+              )}
             </div>
 
             {/* Cobrar y cancelar */}
@@ -449,6 +499,8 @@ interface ItemAgrupado {
   enviadoCocina: boolean;
   estadoCocina: string;
   infoAdicional: string | null;
+  /** COCINA | BARRA | DIRECTO */
+  destinoPreparacion: string;
   /** ids individuales para borrar */
   ids: number[];
 }
@@ -474,6 +526,7 @@ function agruparItems(items: PedidoDetalleType["items"]): ItemAgrupado[] {
         enviadoCocina: i.enviado_cocina,
         estadoCocina: i.estado_cocina,
         infoAdicional: i.info_adicional ?? null,
+        destinoPreparacion: i.destino_preparacion || "COCINA",
         ids: [i.id!],
       });
     }
@@ -482,14 +535,31 @@ function agruparItems(items: PedidoDetalleType["items"]): ItemAgrupado[] {
 }
 
 function ItemRow({ grupo, onEliminar }: { grupo: ItemAgrupado; onEliminar: (id: number) => void }) {
-  const colorEstado =
-    grupo.estadoCocina === "LISTO"
+  const esDirecto = grupo.destinoPreparacion === "DIRECTO";
+  const esBarra = grupo.destinoPreparacion === "BARRA";
+
+  const colorEstado = esDirecto
+    ? null // Items DIRECTO no muestran estados de cocina (van directo)
+    : grupo.estadoCocina === "LISTO"
       ? "var(--color-success)"
       : grupo.estadoCocina === "EN_PREPARACION"
         ? "var(--color-warning)"
         : grupo.estadoCocina === "ENTREGADO"
           ? "var(--color-text-muted)"
           : null;
+
+  // Color de fondo según destino y estado
+  const bgColor = esDirecto
+    ? "rgba(34, 197, 94, 0.08)" // verde claro = ya disponible para entregar
+    : grupo.enviadoCocina
+      ? "var(--color-surface)"
+      : "rgba(59, 130, 246, 0.06)"; // azul claro = nuevo, no enviado a cocina aún
+
+  const borderColor = esDirecto
+    ? "rgba(34, 197, 94, 0.3)"
+    : grupo.enviadoCocina
+      ? "var(--color-border)"
+      : "rgba(59, 130, 246, 0.3)";
 
   return (
     <div
@@ -498,8 +568,8 @@ function ItemRow({ grupo, onEliminar }: { grupo: ItemAgrupado; onEliminar: (id: 
         alignItems: "center",
         gap: 10,
         padding: "8px 10px",
-        background: grupo.enviadoCocina ? "var(--color-surface)" : "rgba(59, 130, 246, 0.06)",
-        border: `1px solid ${grupo.enviadoCocina ? "var(--color-border)" : "rgba(59, 130, 246, 0.3)"}`,
+        background: bgColor,
+        border: `1px solid ${borderColor}`,
         borderRadius: 8,
       }}
     >
@@ -533,22 +603,42 @@ function ItemRow({ grupo, onEliminar }: { grupo: ItemAgrupado; onEliminar: (id: 
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {grupo.nombre}
           </span>
-          {!grupo.enviadoCocina && (
+          {/* Badge DIRECTO/BARRA para distinguir destino. Solo muestra UNO según prioridad:
+              - Si es DIRECTO → 📦 DIRECTO (verde, ya disponible)
+              - Si es BARRA y aún no enviado → 🍷 BARRA NUEVO
+              - Si es COCINA y aún no enviado → NUEVO
+              - Si está en algún estado de cocina → badge del estado */}
+          {esDirecto ? (
             <span
               style={{
                 fontSize: 9,
                 fontWeight: 700,
                 padding: "1px 5px",
                 borderRadius: 3,
-                background: "var(--color-primary)",
+                background: "var(--color-success)",
+                color: "#fff",
+                flexShrink: 0,
+              }}
+              title="Despacho directo: el mesero lo toma del mostrador"
+            >
+              📦 DIRECTO
+            </span>
+          ) : !grupo.enviadoCocina ? (
+            <span
+              style={{
+                fontSize: 9,
+                fontWeight: 700,
+                padding: "1px 5px",
+                borderRadius: 3,
+                background: esBarra ? "#7c3aed" : "var(--color-primary)",
                 color: "#fff",
                 flexShrink: 0,
               }}
             >
-              NUEVO
+              {esBarra ? "🍷 BARRA NUEVO" : "NUEVO"}
             </span>
-          )}
-          {colorEstado && (
+          ) : null}
+          {colorEstado && !esDirecto && (
             <span
               style={{
                 fontSize: 9,
@@ -560,7 +650,9 @@ function ItemRow({ grupo, onEliminar }: { grupo: ItemAgrupado; onEliminar: (id: 
                 flexShrink: 0,
               }}
             >
-              {grupo.estadoCocina.replace("_", " ")}
+              {esBarra && grupo.estadoCocina === "EN_PREPARACION"
+                ? "🍷 EN BARRA"
+                : grupo.estadoCocina.replace("_", " ")}
             </span>
           )}
         </div>
@@ -576,7 +668,10 @@ function ItemRow({ grupo, onEliminar }: { grupo: ItemAgrupado; onEliminar: (id: 
       <strong style={{ fontSize: 14, minWidth: 60, textAlign: "right" }}>
         ${grupo.subtotal.toFixed(2)}
       </strong>
-      {!grupo.enviadoCocina && (
+      {/* Permitir eliminar items NO enviados a cocina, O items DIRECTO (porque
+          aunque estén marcados como entregados, no pasaron por la cocina y
+          el mesero podría haberlos agregado por error). */}
+      {(!grupo.enviadoCocina || esDirecto) && (
         <button
           onClick={() => onEliminar(grupo.ids[grupo.ids.length - 1])}
           title="Quitar uno"

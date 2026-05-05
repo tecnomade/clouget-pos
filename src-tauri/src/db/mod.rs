@@ -85,6 +85,15 @@ impl Database {
         )
         .ok();
 
+        // Migración: destino_preparacion en productos (Restaurante v2.3.55)
+        // Valores: 'COCINA' (default) | 'BARRA' | 'DIRECTO' (mesero despacha sin pasar por cocina)
+        // Default 'COCINA' es safe: productos existentes mantienen el comportamiento anterior.
+        conn.execute(
+            "ALTER TABLE productos ADD COLUMN destino_preparacion TEXT NOT NULL DEFAULT 'COCINA'",
+            [],
+        )
+        .ok();
+
         // Migración: configurar email service si está vacío
         conn.execute(
             "UPDATE config SET value = 'https://email.clouget.com' WHERE key = 'email_service_url' AND value = ''",
