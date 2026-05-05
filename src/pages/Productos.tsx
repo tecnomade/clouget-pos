@@ -4,7 +4,19 @@ import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, li
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { FEATURES } from "../config/branding";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
+
+/** Helper: ¿el módulo Restaurante está activo? Requiere brand Clouget + licencia con módulo. */
+function moduloRestauranteActivo(licenciaModulosJson?: string): boolean {
+  if (!FEATURES.restaurante) return false;
+  try {
+    const mods: string[] = JSON.parse(licenciaModulosJson || "[]");
+    return mods.includes("restaurante");
+  } catch {
+    return false;
+  }
+}
 
 function FormProducto({
   onGuardar,
@@ -717,23 +729,26 @@ function FormProducto({
           </span>
         </div>
 
-        {/* Destino de preparación — solo afecta al módulo Restaurante.
-            Si no usas restaurante, dejalo en COCINA (default) y no impacta nada. */}
-        <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed var(--color-border)" }}>
-          <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>
-            🍴 Destino (Restaurante)
-          </label>
-          <select className="input" style={{ marginTop: 4, fontSize: 13 }}
-            value={form.destino_preparacion || "COCINA"}
-            onChange={(e) => setForm({ ...form, destino_preparacion: e.target.value })}>
-            <option value="COCINA">🍳 Cocina (requiere preparación)</option>
-            <option value="BARRA">🍷 Barra (cocteles, café preparado)</option>
-            <option value="DIRECTO">📦 Despacho directo (mesero toma del mostrador, no va a cocina)</option>
-          </select>
-          <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
-            Solo aplica si usas el módulo Restaurante. Bebidas embotelladas, snacks, postres en exhibición → "Despacho directo" para que NO aparezcan en la pantalla de cocina.
-          </span>
-        </div>
+        {/* Destino de preparación — solo visible si el módulo Restaurante está
+            activo (licencia + brand Clouget). Si no, se mantiene el valor en
+            'COCINA' por default sin que el usuario tenga que verlo. */}
+        {moduloRestauranteActivo(config.licencia_modulos) && (
+          <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed var(--color-border)" }}>
+            <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>
+              🍴 Destino (Restaurante)
+            </label>
+            <select className="input" style={{ marginTop: 4, fontSize: 13 }}
+              value={form.destino_preparacion || "COCINA"}
+              onChange={(e) => setForm({ ...form, destino_preparacion: e.target.value })}>
+              <option value="COCINA">🍳 Cocina (requiere preparación)</option>
+              <option value="BARRA">🍷 Barra (cocteles, café preparado)</option>
+              <option value="DIRECTO">📦 Despacho directo (mesero toma del mostrador, no va a cocina)</option>
+            </select>
+            <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
+              Bebidas embotelladas, snacks, postres en exhibición → "Despacho directo" para que NO aparezcan en la pantalla de cocina.
+            </span>
+          </div>
+        )}
 
         {/* Panel de Componentes (visible solo si es combo) */}
         {(form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") && (

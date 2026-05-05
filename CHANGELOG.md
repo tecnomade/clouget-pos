@@ -6,6 +6,19 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.57-beta — 2026-05-05 🧹
+**UX: ocultar selector "Destino (Restaurante)" en Productos cuando el módulo no está activo.**
+
+Antes: la sección "🍴 Destino (Restaurante)" aparecía siempre al editar un producto, incluso para clientes que no tienen el módulo Restaurante en su licencia. Confundía porque mostraba opciones que no aplicaban.
+
+Ahora: la sección **solo aparece** si:
+1. El build incluye el módulo (`FEATURES.restaurante`, true en Clouget, false en DigitalServer)
+2. La licencia activa tiene `"restaurante"` en `licencia_modulos`
+
+Si las dos condiciones no se cumplen, la sección queda oculta y el producto mantiene `destino_preparacion = 'COCINA'` por default sin que el usuario tenga que verlo.
+
+Sin cambios técnicos en backend — solo UI condicional en `src/pages/Productos.tsx` con helper `moduloRestauranteActivo(config.licencia_modulos)`.
+
 ## v2.3.56-beta — 2026-05-05 🐛
 **Hotfix Restaurante: pre-cuenta auto-detecta impresora virtual y genera PDF nativo.**
 
