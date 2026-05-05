@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.58 — 2026-05-05 🚀 STABLE
+**Promoción a STABLE de los 5 cambios validados en canal beta.**
+
+Esta versión consolida en canal estable los cambios que se probaron durante varios días en canal BETA. Resumen ejecutivo:
+
+### 🔥 Hotfix crítico (urgente para todos)
+**Fechas de caducidad importadas como serial Excel** — al importar productos desde Excel donde la columna fecha_caducidad tenía formato Fecha (no Texto), se guardaba el número serial Excel crudo (ej. "46265") en vez de la fecha real ("2026-06-28"). Resultado: lotes con "días restantes: -2,414,893" y estado "Vencido" para productos buenos.
+
+**Fix triple**:
+- ✅ **Botón "🔧 Reparar fechas"** en página Caducidad. Si detectamos lotes con fechas-bug (días < -100000), aparece destacado en amarillo. Click → corrige TODOS los lotes en 1 segundo. Idempotente.
+- ✅ **Importer Excel arreglado** para futuras importaciones — detecta DateTime/Float/Int en rango Excel serial y convierte a YYYY-MM-DD automáticamente.
+- ✅ **Validación al guardar lote** con `chrono::NaiveDate` — previene que el bug entre por cualquier ruta.
+
+### 🍴 Módulo Restaurante (nuevo, opcional)
+Sistema completo para restaurantes/cafeterías/bares — solo visible si tu licencia tiene el módulo "restaurante" activo (sin el módulo, no se ve nada nuevo).
+
+**Funcionalidades**:
+- Mesas y zonas con estados visuales (libre/ocupada/cuenta pedida)
+- Pedidos por mesa con comandas a cocina
+- Pantalla cocina (TV/tablet) con flujo PENDIENTE → EN COCINA → LISTO → ENTREGADO
+- **Despacho directo** por producto (bebidas embotelladas, snacks no van a cocina)
+- **Pre-cuenta impresa** al pedir cuenta (con auto-detección de impresora térmica vs PDF nativo)
+- Cobrar mesa delega a `registrar_venta` → SRI, combos, IVA, secuenciales, stock, kardex funcionan automáticamente
+
+**Activación**: desde admin.clouget.com → Licencias → Editar Módulos → ✅ Restaurante.
+
+### 🎯 Resumen de cambios incluidos (v2.3.54 a v2.3.58 unificados)
+| Categoría | Cambio |
+|---|---|
+| ✨ Nuevo | Módulo Restaurante completo (mesas, cocina, comandas) |
+| ✨ Nuevo | Brand flag para variantes DigitalServer POS |
+| 💎 Mejora | Despacho directo por producto + pre-cuenta impresa |
+| 💎 Mejora | Pre-cuenta auto-genera PDF si impresora es virtual |
+| 🧹 UX | Ocultar selector "Destino Restaurante" si módulo inactivo |
+| 🐛 Hotfix | Reparación + import correcto de fechas Excel serial |
+
+### 📥 Para todos los clientes (con o sin Restaurante)
+- ✅ **Recibirán el botón "🔧 Reparar fechas"** automáticamente al actualizar
+- ✅ **Sus importaciones Excel futuras** ya no rompen fechas
+- ✅ **Su sistema de stock/SRI/combos/cierre de caja** intactos — cero cambios visibles
+- 🔒 **Si NO tienen módulo Restaurante**: no ven menú Mesas, Cocina ni opciones de pre-cuenta. El módulo está estrictamente gateado por licencia.
+
+### 🔧 Cambios técnicos consolidados (referencia para soporte)
+- `src-tauri/src/utils.rs`: `excel_serial_to_iso()`, `parse_posible_serial_excel()`
+- `src-tauri/src/branding.rs` (nuevo): brand flag compile-time Clouget vs DigitalServer
+- `src-tauri/src/restaurante/` (nuevo): mod, schema, models, commands, http stub, printing (ESC/POS + PDF)
+- `src-tauri/src/db/mod.rs`: migración `ALTER TABLE productos ADD COLUMN destino_preparacion`
+- `src-tauri/src/commands/productos.rs`: importer Excel con `get_fecha()`, validación NaiveDate, comando `reparar_fechas_caducidad`
+- `src/restaurante/`: pages (Mesas, Cocina, ConfigMesas) + components (PedidoDetalle, SelectorProductos)
+- `src/main.tsx` + `src/components/Layout.tsx`: rutas + nav items gateados por brand+licencia
+- `src/pages/Productos.tsx`: selector "Destino" condicional
+- `src/pages/CaducidadPage.tsx`: botón Reparar fechas
+
+### Versiones beta superadas
+v2.3.54-beta, v2.3.55-beta, v2.3.56-beta, v2.3.57-beta, v2.3.58-beta — todas consolidadas en este release stable.
+
 ## v2.3.58-beta — 2026-05-05 🐛📅
 **Hotfix crítico: fechas de caducidad importadas como serial Excel.**
 
