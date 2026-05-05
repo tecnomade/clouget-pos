@@ -645,13 +645,35 @@ pub fn rest_cerrar_pedido(
 
 // ─── Impresión ──────────────────────────────────────────────────────────
 
-/// Imprime el ticket de pre-cuenta en la impresora térmica configurada.
-/// La pre-cuenta NO es comprobante fiscal — solo informa al cliente del
-/// consumo antes de cobrar. La factura/nota de venta real se genera al cobrar.
+/// Detecta si el nombre de impresora corresponde a una "impresora virtual"
+/// (Microsoft Print to PDF, OneNote, XPS, Fax). Esas no entienden ESC/POS y
+/// generan basura si les enviamos los bytes crudos — para esos casos hay que
+/// generar PDF nativo y abrirlo con el visor del sistema.
+fn impresora_es_virtual(nombre: &str) -> bool {
+    let lower = nombre.to_lowercase();
+    lower.is_empty()
+        || lower.contains("pdf")
+        || lower.contains("onenote")
+        || lower.contains("xps")
+        || lower.contains("fax")
+        || lower.contains("microsoft print")
+}
+
+/// Imprime/genera el ticket de pre-cuenta.
 ///
-/// Reutiliza la misma impresora configurada en `config.impresora` (la del POS).
-/// Se puede llamar múltiples veces (botón "Reimprimir pre-cuenta") sin efecto
-/// secundario.
+/// **Auto-detecta** el tipo de impresora configurada:
+/// - **Impresora térmica real** (POS-58, Epson TM, etc.) → envía bytes ESC/POS directos.
+/// - **Impresora virtual** (Microsoft Print to PDF, OneNote, XPS, Fax) → genera
+///   un PDF nativo legible y lo abre con el visor del sistema. Antes este caso
+///   producía un PDF con bytes ESC/POS basura ilegible.
+/// - **Sin impresora configurada** → genera PDF nativo y lo abre.
+///
+/// La pre-cuenta NO es comprobante fiscal — solo informa al cliente. La
+/// factura/nota de venta real se genera al cobrar vía `registrar_venta`.
+/// Se puede llamar múltiples veces (botón "Reimprimir") sin efecto secundario.
+///
+/// Retorna mensaje descriptivo del método usado para que el frontend muestre
+/// el toast apropiado ("impresa" vs "PDF abierto").
 #[tauri::command]
 pub fn rest_imprimir_pre_cuenta(
     db: State<'_, Database>,
@@ -674,14 +696,49 @@ pub fn rest_imprimir_pre_cuenta(
         .collect::<Result<std::collections::HashMap<_, _>, _>>()
         .map_err(|e| e.to_string())?;
 
+    drop(cfg_stmt);
+    drop(conn);
+
     let impresora = config
         .get("impresora")
         .map(|s| s.to_string())
         .unwrap_or_default();
-    if impresora.is_empty() {
-        return Err("No hay impresora térmica configurada. Vaya a Configuración → Impresoras.".to_string());
+
+    // Caso 1: impresora virtual o vacía → PDF nativo
+    if impresora_es_virtual(&impresora) {
+        let pdf_bytes = super::printing::generar_pre_cuenta_pdf(&detalle, &config)?;
+
+        // Guardar en directorio temporal
+        let temp_dir = std::env::temp_dir();
+        let filename = format!(
+            "PreCuenta-Mesa{}-Ped{}.pdf",
+            detalle.mesa_nombre.replace(['/', '\\', ':', ' '], "_"),
+            detalle.pedido.id.unwrap_or(0)
+        );
+        let pdf_path = temp_dir.join(&filename);
+        std::fs::write(&pdf_path, &pdf_bytes)
+            .map_err(|e| format!("Error guardando pre-cuenta PDF: {}", e))?;
+
+        // Abrir con visor del sistema
+        #[cfg(target_os = "windows")]
+        {
+            crate::utils::silent_command("cmd")
+                .args(["/C", "start", "", &pdf_path.to_string_lossy()])
+                .spawn()
+                .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&pdf_path.to_string_lossy().to_string())
+                .spawn()
+                .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+        }
+
+        return Ok(format!("PDF generado y abierto: {}", filename));
     }
 
+    // Caso 2: impresora térmica real → ESC/POS
     let ticket = super::printing::generar_pre_cuenta(&detalle, &config);
     crate::printing::imprimir_raw_windows(&impresora, &ticket)?;
 
