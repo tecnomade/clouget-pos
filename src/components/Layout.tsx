@@ -6,7 +6,8 @@ import { useDemo } from "../contexts/DemoContext";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 import logoClouget from "../assets/logo-clouget.png";
-import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench } from "@phosphor-icons/react";
+import { FEATURES } from "../config/branding";
+import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 
 interface NavItem { path: string; label: string; icon: Icon; shortcut: string; todos: boolean; permiso?: string; }
@@ -28,6 +29,9 @@ const navItems: NavItem[] = [
   { path: "/caducidad", label: "Caducidad", icon: Calendar, shortcut: "", todos: false, permiso: "gestionar_inventario" },
   // Servicio Tecnico: visible si admin, gestionar o solo ver. El filtro luego acepta cualquiera de los dos.
   { path: "/servicio-tecnico", label: "Servicio", icon: Wrench, shortcut: "", todos: false, permiso: "gestionar_servicio_tecnico", permisoAlt: "ver_servicio_tecnico" } as any,
+  // Modulo Restaurante: visible si build incluye feature Y licencia tiene modulo (filtrado abajo).
+  { path: "/mesas", label: "Mesas", icon: ForkKnife, shortcut: "", todos: true },
+  { path: "/cocina", label: "Cocina", icon: CookingPot, shortcut: "", todos: true },
   { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes" },
 ];
 
@@ -45,6 +49,7 @@ export default function Layout() {
   const [moduloSeriesActivo, setModuloSeriesActivo] = useState(false);
   const [moduloCaducidadActivo, setModuloCaducidadActivo] = useState(false);
   const [moduloServicioTecnicoActivo, setModuloServicioTecnicoActivo] = useState(false);
+  const [moduloRestauranteActivo, setModuloRestauranteActivo] = useState(false);
   const [tooltip, setTooltip] = useState<{ label: string; top: number } | null>(null);
   const location = useLocation();
   const enPOS = location.pathname === "/pos";
@@ -56,6 +61,14 @@ export default function Layout() {
         setModuloSeriesActivo(cfg.modulo_series_activo === "1");
         setModuloCaducidadActivo(cfg.modulo_caducidad === "1");
         setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+        // Modulo Restaurante: activo si licencia.modulos incluye 'restaurante'
+        // (la licencia se persiste como JSON en config.licencia_modulos).
+        try {
+          const mods: string[] = JSON.parse(cfg.licencia_modulos || "[]");
+          setModuloRestauranteActivo(FEATURES.restaurante && mods.includes("restaurante"));
+        } catch {
+          setModuloRestauranteActivo(false);
+        }
       }).catch(() => {});
     });
   }, []);
@@ -84,8 +97,10 @@ export default function Layout() {
     if (!moduloSeriesActivo) items = items.filter(i => i.path !== "/series");
     if (!moduloCaducidadActivo) items = items.filter(i => i.path !== "/caducidad");
     if (!moduloServicioTecnicoActivo) items = items.filter(i => i.path !== "/servicio-tecnico");
+    // Mesas/Cocina: solo si modulo Restaurante activo (build Clouget + licencia con 'restaurante')
+    if (!moduloRestauranteActivo) items = items.filter(i => i.path !== "/mesas" && i.path !== "/cocina");
     return items;
-  }, [esAdmin, tienePermiso, moduloSeriesActivo, moduloCaducidadActivo, moduloServicioTecnicoActivo]);
+  }, [esAdmin, tienePermiso, moduloSeriesActivo, moduloCaducidadActivo, moduloServicioTecnicoActivo, moduloRestauranteActivo]);
 
   const headerNavFiltrados = esAdmin
     ? headerNavItems

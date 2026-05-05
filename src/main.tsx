@@ -25,12 +25,22 @@ import CaducidadPage from "./pages/CaducidadPage";
 import ServicioTecnicoPage from "./pages/ServicioTecnicoPage";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
+// Módulo Restaurante (gated por FEATURES.restaurante en branding.ts y por licencia.modulos)
+import MesasPage from "./restaurante/pages/MesasPage";
+import CocinaPage from "./restaurante/pages/CocinaPage";
+import ConfigMesasPage from "./restaurante/pages/ConfigMesasPage";
+import { FEATURES } from "./config/branding";
 import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarModoRed } from "./services/api";
 import { iniciarSyncService, sincronizarCacheProductos, reservarSecuenciales } from "./services/offlineSync";
 import ConnectionStatus from "./components/ConnectionStatus";
 import type { LicenciaInfo } from "./types";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./styles/global.css";
+
+/** Helper: ¿la licencia tiene este módulo activo? */
+function hasModulo(lic: LicenciaInfo | null, modulo: string): boolean {
+  return !!lic?.modulos?.includes(modulo);
+}
 
 // Auto-select all text in number inputs on focus (global)
 document.addEventListener("focusin", (e) => {
@@ -165,6 +175,16 @@ function AppGate() {
             )}
             {(esAdmin || tienePermiso("ver_reportes")) && (
               <Route path="/reportes" element={<ReportesPage />} />
+            )}
+            {/* Módulo Restaurante: rutas solo si build incluye feature Y licencia tiene módulo.
+                Layout filtrará el nav item con la misma lógica. Si el cliente no tiene módulo,
+                las rutas igual existen (catch-all redirige al dashboard). */}
+            {FEATURES.restaurante && hasModulo(licencia, "restaurante") && (
+              <>
+                <Route path="/mesas" element={<MesasPage />} />
+                <Route path="/cocina" element={<CocinaPage />} />
+                {esAdmin && <Route path="/config-mesas" element={<ConfigMesasPage />} />}
+              </>
             )}
             {/* Configuración: solo admin */}
             {esAdmin && (
