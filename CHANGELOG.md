@@ -6,6 +6,42 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.65 — 2026-05-06 🔒 STABLE
+**Hotfix anti-fuga: toast del descuadre revelaba el monto exacto al cajero.**
+
+### 🔥 Fix crítico
+
+**Problema reportado**: aún con el toggle anti-fuga activo y la alerta visual de descuadre oculta (v2.3.64), cuando el cajero presionaba "Cerrar Caja" con un monto incorrecto, aparecía un toast de error:
+
+> ❌ "Hay un descuadre de $-36.82. Debe explicar el motivo (mínimo 5 caracteres)."
+
+Eso le revelaba el monto exacto del faltante. El cajero deshonesto podía:
+1. Ingresar un valor cualquiera (ej. "1")
+2. Click "Cerrar"
+3. Leer el toast: "Hay un descuadre de $-36.82"
+4. Sumar 36.82 al valor ingresado
+5. Volver a cerrar y cuadrar perfecto
+6. Faltante real ocultado
+
+**Fix**: cuando modo anti-fuga activo + usuario es CAJERO (no admin):
+- Toast genérico **sin monto**: *"El monto contado no coincide con lo registrado. Escribe una observación (mínimo 5 caracteres) en el campo de abajo y vuelve a cerrar caja."*
+- El campo "Motivo del descuadre" sigue oculto
+- El cajero usa el campo "Observación adicional" (siempre visible) como motivo
+- El backend recibe esa observación como motivo del descuadre para que admin la vea al revisar
+- Admin sigue viendo toda la info completa (sin cambios para él)
+
+### Resultado
+
+Ahora el cajero NUNCA puede saber el monto del descuadre — ni en pantalla ni en toast. Si ingresa mal, solo sabe que "no coincide" pero no por cuánto. Con la herramienta deshonesta de "ir ajustando hasta cuadrar" eliminada por completo.
+
+### Cambios técnicos
+- `src/pages/CajaPage.tsx::intentarCerrarCaja`:
+  - Branching según `ocultarParaCajero`: mensaje genérico vs específico
+  - Si anti-fuga activo, valida `observacion` (no `motivoDescuadre`) ya que el campo de motivo está oculto
+  - El motivo final pasado al backend usa `observacion` para que admin lo vea al revisar el cierre
+
+Verificado: `tsc --noEmit` EXITCODE=0.
+
 ## v2.3.64 — 2026-05-06 🔍🔒 STABLE
 **Modal de diagnóstico transferencias + fix anti-fuga descuadre.**
 

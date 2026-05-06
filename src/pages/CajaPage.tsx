@@ -184,12 +184,32 @@ export default function CajaPage() {
     // NO restar retiros aqui porque ya estan dentro de monto_esperado.
     const esperado = cajaAbierta?.monto_esperado ?? 0;
     const dif = monto - esperado;
-    if (Math.abs(dif) > 0.01 && motivoDescuadre.trim().length < 5) {
-      toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
-      return false;
+    if (Math.abs(dif) > 0.01) {
+      // v2.3.65 anti-fuga: cuando modo activo Y NO admin, el cajero NO ve el
+      // campo "Motivo del descuadre" (estaria delatando que hay descuadre).
+      // En ese caso usamos el campo "Observación adicional" como motivo y
+      // mensaje genérico sin revelar el monto del descuadre. Antes el cajero
+      // podia leer "$-36.82" en el toast y ajustar su conteo perfecto.
+      if (ocultarParaCajero) {
+        if (observacion.trim().length < 5) {
+          toastError(`El monto contado no coincide con lo registrado. Escribe una observación (mínimo 5 caracteres) en el campo de abajo y vuelve a cerrar caja.`);
+          return false;
+        }
+        // Usar la observacion del cajero como motivo del descuadre interno
+        // (admin lo verá al revisar el cierre).
+      } else if (motivoDescuadre.trim().length < 5) {
+        toastError(`Hay un descuadre de $${dif.toFixed(2)}. Debe explicar el motivo (mínimo 5 caracteres).`);
+        return false;
+      }
     }
     try {
-      const res = await cerrarCaja(monto, observacion || undefined, motivoDescuadre.trim() || undefined, undefined, pinOverride);
+      // En modo anti-fuga, el cajero usa "Observación" como motivo (no ve el campo
+      // "Motivo del descuadre"). Le pasamos su observación como motivo al backend
+      // para que admin lo vea al revisar.
+      const motivoFinal = ocultarParaCajero && Math.abs(dif) > 0.01
+        ? observacion.trim()
+        : motivoDescuadre.trim();
+      const res = await cerrarCaja(monto, observacion || undefined, motivoFinal || undefined, undefined, pinOverride);
       setResumen(res);
       setCajaAbierta(null);
       setMontoReal("");
