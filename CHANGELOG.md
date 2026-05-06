@@ -6,6 +6,81 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.59 — 2026-05-05 🎨 STABLE
+**Rediseño UI: sidebar agrupado + header limpio + dashboard humanizado.**
+
+Mejoras 100% visuales/UX siguiendo principios de apps modernas (Linear, Notion, Stripe). Sin tocar lógica de negocio, base de datos ni backend.
+
+### 🗂️ Sidebar agrupado con expandir/colapsar
+Antes: 14+ íconos sueltos sin agrupar — saturado y difícil de escanear.
+
+Ahora:
+- **Items agrupados visualmente** en 7 secciones lógicas:
+  - PRINCIPAL (Inicio)
+  - VENTAS (Venta POS, Ventas día, Cobrar, Guías)
+  - GESTIÓN (Productos, Clientes, Inventario, Series, Caducidad)
+  - COMPRAS (Compras, Pagar, Bancos)
+  - OPERACIONES (Gastos, Servicio Técnico)
+  - RESTAURANTE (Mesas, Cocina) — solo si módulo activo
+  - ANALÍTICA (Reportes)
+- **Modo colapsado** (default, 56px): íconos + separadores sutiles entre grupos
+- **Modo expandido** (200px): íconos + labels + headers de grupos en uppercase + atajos visibles
+- **Botón toggle** (chevron arriba) alterna estados, **persistente en localStorage**
+- **Indicador activo** mejorado: barra azul de 3px a la izquierda del item activo (estilo Linear)
+- Atajos F1-F10 funcionan idéntico en ambos modos
+
+### 🏷️ Header limpio (sin logo redundante)
+Antes: el logo CLOUGET aparecía DOS veces (barra de Windows + header) — redundancia visual clásica.
+
+Ahora (estilo Notion/Linear):
+- Logo Windows mantiene branding (barra de título)
+- En el header solo: **logo pequeño 18px (botón "home") + NOMBRE DEL NEGOCIO + página actual** como breadcrumb
+- Ejemplo: `🟦 FERMAGRI · Caja` en vez de `🟦 CLOUGET Punto de Venta`
+- Le da contexto útil al usuario: sabe en qué empresa está y dónde
+- Aprovecha el espacio para info útil en lugar de duplicar branding
+
+### 👋 Dashboard con saludo personalizado
+Antes: `Inicio` + fecha plana `2026-05-05` arriba.
+
+Ahora:
+- **Saludo dinámico según hora**: "Buenos días/tardes/noches, [Nombre Usuario]" 👋
+- **Fecha en español natural**: "martes 5 de mayo · Caja abierta desde 8:30 a.m."
+- Estado de caja visible y contextual (verde si abierta, rojo si cerrada)
+
+### 🔔 Panel "Atención" reemplaza "Acciones Rápidas"
+Antes: card con 4 botones (POS, Ventas, Caja, Productos) que duplicaban el sidebar.
+
+Ahora: panel inteligente que muestra **solo lo que requiere acción**:
+- 🏦 Transferencias por verificar
+- ⏰ Pagos vencidos a proveedores
+- 💵 Pendiente de cobro a clientes (fiados)
+- 📅 Lotes vencidos
+- ⚠ Lotes por vencer pronto
+- 💰 Estado caja (con monto vendido si abierta, "Abrir →" si cerrada)
+- ✨ Si nada pendiente: mensaje positivo "Todo al día"
+
+Cada alerta es **clickeable** y navega directo a la página correspondiente. Lateral colorido por severidad (rojo/naranja/azul).
+
+### Cambios técnicos
+- `src/components/Layout.tsx`:
+  - `navItems` con campo `group: GroupKey`
+  - Render del sidebar agrupado con headers/separadores condicionales
+  - State `sidebarExpandido` persistente + CSS variable `--sidebar-width`
+  - State `nombreNegocio` (lee de config) + `tituloPagina` (mapea ruta)
+  - Header rediseñado con breadcrumb
+- `src/styles/global.css`:
+  - `.sidebar-compact` con width fijo eliminado (ahora dinámico via inline style)
+  - `.main-content` margin-left usa CSS variable
+  - `.sidebar-compact .nav-item` ajustado para soportar ambos modos
+  - `.nav-item.active` con barra lateral azul (estilo Linear)
+- `src/pages/DashboardPage.tsx`:
+  - Funciones `saludoHora()`, `fechaNatural()`, `horaCorta()`
+  - Nuevos states `caducidadVencidos`, `caducidadPorVencer`, `transferenciasPendientes`
+  - Header rediseñado
+  - Panel "Atención" con array dinámico de alertas
+
+Verificado: `tsc --noEmit` EXITCODE=0. Solo UI/UX, sin tocar backend ni lógica.
+
 ## v2.3.58 — 2026-05-05 🚀 STABLE
 **Promoción a STABLE de los 5 cambios validados en canal beta.**
 

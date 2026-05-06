@@ -4,7 +4,7 @@ import {
   resumenDiario, resumenDiarioAyer, resumenFiadosPendientes,
   alertasStockBajo, obtenerCajaAbierta, ventasPorDia,
   productosMasVendidosReporte, ultimasVentasDia, resumenDeudores,
-  alertasPagosVencidos,
+  alertasPagosVencidos, alertasCaducidad, contarTransferenciasPendientes,
 } from "../services/api";
 import { useSesion } from "../contexts/SesionContext";
 import type { ResumenDiario, AlertaStock, VentaDiaria, ProductoMasVendido, UltimaVenta } from "../services/api";
@@ -28,6 +28,38 @@ function fechaHace7Dias(): string {
   return `${y}-${m}-${dd}`;
 }
 
+/** Saludo según hora del día. Buenos días/tardes/noches. */
+function saludoHora(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Buenos días";
+  if (h < 19) return "Buenas tardes";
+  return "Buenas noches";
+}
+
+/** Fecha formato natural en español: "martes 5 de mayo de 2026". */
+function fechaNatural(): string {
+  const d = new Date();
+  const dias = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+  const meses = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+  ];
+  return `${dias[d.getDay()]} ${d.getDate()} de ${meses[d.getMonth()]}`;
+}
+
+/** Hora corta: "8:30 a.m." */
+function horaCorta(fechaIso: string | undefined): string {
+  if (!fechaIso) return "";
+  // fecha viene como "2026-05-05 08:30:00" o ISO
+  const partes = fechaIso.split(/[ T]/);
+  if (partes.length < 2) return "";
+  const [hh, mm] = partes[1].split(":");
+  const h = parseInt(hh, 10);
+  const ampm = h >= 12 ? "p.m." : "a.m.";
+  const h12 = h % 12 || 12;
+  return `${h12}:${mm} ${ampm}`;
+}
+
 export default function DashboardPage() {
   const { sesion, esAdmin, tienePermiso } = useSesion();
   const navigate = useNavigate();
@@ -41,6 +73,9 @@ export default function DashboardPage() {
   const [ultimasVentas, setUltimasVentas] = useState<UltimaVenta[]>([]);
   const [deudores, setDeudores] = useState<ResumenCliente[]>([]);
   const [pagosVencidos, setPagosVencidos] = useState<any[]>([]);
+  const [caducidadVencidos, setCaducidadVencidos] = useState(0);
+  const [caducidadPorVencer, setCaducidadPorVencer] = useState(0);
+  const [transferenciasPendientes, setTransferenciasPendientes] = useState(0);
   const [cargando, setCargando] = useState(true);
   const [cajaViejaAbierta, setCajaViejaAbierta] = useState(false);
 
@@ -51,6 +86,16 @@ export default function DashboardPage() {
     if (esAdmin || tienePermiso("gestionar_compras")) {
       alertasPagosVencidos().then(setPagosVencidos).catch(() => {});
     }
+    // Fetch alertas adicionales para panel "Atención"
+    alertasCaducidad()
+      .then(r => {
+        setCaducidadVencidos(r.vencidos || 0);
+        setCaducidadPorVencer(r.por_vencer || 0);
+      })
+      .catch(() => {});
+    contarTransferenciasPendientes()
+      .then(setTransferenciasPendientes)
+      .catch(() => {});
 
     Promise.all([
       resumenDiario(hoy).catch(() => null),
@@ -153,14 +198,38 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      <div className="page-header">
-        <h2>Inicio</h2>
+      {/* Header rediseñado: saludo personalizado + contexto del día.
+          Reemplaza "Inicio" + fecha YYYY-MM-DD plana por algo más cálido y útil. */}
+      <div className="page-header" style={{ alignItems: "flex-start" }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>
+            {saludoHora()}, <span style={{ color: "var(--color-primary)" }}>{sesion?.nombre}</span> 👋
+          </h2>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)", textTransform: "capitalize" }}>
+            {fechaNatural()}
+            {cajaAbierta?.fecha_apertura && (
+              <>
+                {" · "}
+                <span style={{ color: "var(--color-success)", fontWeight: 600 }}>
+                  Caja abierta desde {horaCorta(cajaAbierta.fecha_apertura)}
+                </span>
+              </>
+            )}
+            {!cajaAbierta && (
+              <>
+                {" · "}
+                <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>
+                  Caja cerrada
+                </span>
+              </>
+            )}
+          </div>
+        </div>
         <div className="flex gap-4 items-center">
           <button className="btn btn-success" style={{ fontSize: 12, padding: "6px 16px" }}
             onClick={() => navigate("/pos")}>
             + Nueva Venta
           </button>
-          <span className="text-secondary" style={{ fontSize: 13, marginLeft: 8 }}>{fechaHoy()}</span>
         </div>
       </div>
       <div className="page-body">
@@ -253,47 +322,93 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Indicador de caja + Acciones rápidas */}
-          <div className="card">
-            <div className="card-header">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
-                <span>Acciones Rapidas</span>
-                <span style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  padding: "2px 10px",
-                  borderRadius: 12,
-                  background: cajaAbierta ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.1)",
-                  color: cajaAbierta ? "var(--color-success)" : "var(--color-danger)",
-                }}>
-                  {cajaAbierta ? `CAJA ABIERTA — ${cajaAbierta.usuario ?? ""}` : "CAJA CERRADA"}
-                </span>
-              </div>
-            </div>
-            <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {cajaAbierta && (
-                <div style={{
-                  display: "flex", justifyContent: "space-between", padding: "6px 12px",
-                  background: "rgba(34, 197, 94, 0.1)", borderRadius: 6, fontSize: 12, marginBottom: 4,
-                }}>
-                  <span>Monto inicial: <b>${cajaAbierta.monto_inicial.toFixed(2)}</b></span>
-                  <span>Ventas: <b>${cajaAbierta.monto_ventas.toFixed(2)}</b></span>
+          {/* Panel "Atención": alertas inteligentes que requieren accion del usuario.
+              Reemplaza "Acciones Rapidas" que duplicaba el sidebar. Solo se muestran las
+              alertas con valor > 0 para no saturar. Si no hay nada → mensaje positivo. */}
+          {(() => {
+            const alertas: { icon: string; texto: string; ruta: string; color: string; count: number }[] = [];
+            if (transferenciasPendientes > 0)
+              alertas.push({ icon: "🏦", texto: `${transferenciasPendientes} transferencia${transferenciasPendientes > 1 ? "s" : ""} por verificar`, ruta: "/movimientos-bancarios", color: "var(--color-primary)", count: transferenciasPendientes });
+            if (pagosVencidos.length > 0 && (esAdmin || tienePermiso("gestionar_compras")))
+              alertas.push({ icon: "⏰", texto: `${pagosVencidos.length} pago${pagosVencidos.length > 1 ? "s" : ""} vencido${pagosVencidos.length > 1 ? "s" : ""} a proveedores`, ruta: "/pagar", color: "var(--color-danger)", count: pagosVencidos.length });
+            if (fiadosPendientes > 0)
+              alertas.push({ icon: "💵", texto: `$${fiadosPendientes.toFixed(2)} pendiente de cobro a clientes`, ruta: "/cuentas", color: "var(--color-warning)", count: fiadosPendientes });
+            if (caducidadVencidos > 0 && (esAdmin || tienePermiso("gestionar_inventario")))
+              alertas.push({ icon: "📅", texto: `${caducidadVencidos} lote${caducidadVencidos > 1 ? "s" : ""} de productos vencido${caducidadVencidos > 1 ? "s" : ""}`, ruta: "/caducidad", color: "var(--color-danger)", count: caducidadVencidos });
+            if (caducidadPorVencer > 0 && (esAdmin || tienePermiso("gestionar_inventario")))
+              alertas.push({ icon: "⚠", texto: `${caducidadPorVencer} lote${caducidadPorVencer > 1 ? "s" : ""} por vencer pronto`, ruta: "/caducidad", color: "var(--color-warning)", count: caducidadPorVencer });
+            if (alertas.length === 0 && alertas.length === 0 && (esAdmin || tienePermiso("gestionar_inventario")) && alertas.length === 0)
+              {/* placeholder for alert without items */}
+
+            return (
+              <div className="card">
+                <div className="card-header">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                    <span>🔔 Atención</span>
+                    {alertas.length > 0 && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
+                        background: "rgba(239, 68, 68, 0.15)", color: "var(--color-danger)",
+                      }}>
+                        {alertas.length} item{alertas.length > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              )}
-              <button className="btn btn-primary" onClick={() => navigate("/pos")} style={{ justifyContent: "center" }}>
-                Punto de Venta (F1)
-              </button>
-              <button className="btn btn-outline" onClick={() => navigate("/ventas")} style={{ justifyContent: "center" }}>
-                Ventas del Dia (F4)
-              </button>
-              <button className="btn btn-outline" onClick={() => navigate("/caja")} style={{ justifyContent: "center" }}>
-                {cajaAbierta ? "Ver Caja (F5)" : "Abrir Caja (F5)"}
-              </button>
-              <button className="btn btn-outline" onClick={() => navigate("/productos")} style={{ justifyContent: "center" }}>
-                Productos (F2)
-              </button>
-            </div>
-          </div>
+                <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 6, padding: 12 }}>
+                  {alertas.length === 0 ? (
+                    <div style={{ padding: "20px 0", textAlign: "center", color: "var(--color-text-secondary)" }}>
+                      <div style={{ fontSize: 32, marginBottom: 4 }}>✨</div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Todo al día</div>
+                      <div style={{ fontSize: 11, marginTop: 2 }}>Sin alertas pendientes</div>
+                    </div>
+                  ) : (
+                    alertas.map((a, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => navigate(a.ruta)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "10px 12px", background: "var(--color-surface)",
+                          border: "1px solid var(--color-border)",
+                          borderLeft: `3px solid ${a.color}`,
+                          borderRadius: 6, cursor: "pointer", textAlign: "left",
+                          color: "var(--color-text)",
+                          transition: "transform 0.1s, background 0.1s",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--color-surface-hover)"; e.currentTarget.style.transform = "translateX(2px)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "var(--color-surface)"; e.currentTarget.style.transform = "translateX(0)"; }}
+                      >
+                        <span style={{ fontSize: 18, flexShrink: 0 }}>{a.icon}</span>
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{a.texto}</span>
+                        <span style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>›</span>
+                      </button>
+                    ))
+                  )}
+                  {/* Caja status: indicador discreto al final, no como item de alerta */}
+                  <div style={{
+                    marginTop: 8, padding: "8px 12px",
+                    background: cajaAbierta ? "rgba(34, 197, 94, 0.08)" : "rgba(239, 68, 68, 0.06)",
+                    border: `1px solid ${cajaAbierta ? "rgba(34, 197, 94, 0.2)" : "rgba(239, 68, 68, 0.2)"}`,
+                    borderRadius: 6, fontSize: 12,
+                    display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer",
+                  }} onClick={() => navigate("/caja")}>
+                    {cajaAbierta ? (
+                      <>
+                        <span>💰 Caja abierta · {cajaAbierta.usuario ?? ""}</span>
+                        <span style={{ fontWeight: 600 }}>+${cajaAbierta.monto_ventas.toFixed(2)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>⚠ Caja cerrada</span>
+                        <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>Abrir →</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Fila 2: Top productos + Últimas ventas */}

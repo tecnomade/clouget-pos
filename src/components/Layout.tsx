@@ -7,32 +7,58 @@ import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 import logoClouget from "../assets/logo-clouget.png";
 import { FEATURES } from "../config/branding";
-import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot } from "@phosphor-icons/react";
+import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot, CaretLeft, CaretRight } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 
-interface NavItem { path: string; label: string; icon: Icon; shortcut: string; todos: boolean; permiso?: string; }
+/** Grupos del sidebar — organizan los items en secciones lógicas.
+ *  El orden aquí define el orden visual de los grupos. */
+type GroupKey = "principal" | "ventas" | "gestion" | "compras" | "operaciones" | "restaurante" | "analitica";
+const GROUPS: Record<GroupKey, { label: string; orden: number }> = {
+  principal:   { label: "PRINCIPAL",    orden: 0 },
+  ventas:      { label: "VENTAS",       orden: 1 },
+  gestion:     { label: "GESTIÓN",      orden: 2 },
+  compras:     { label: "COMPRAS",      orden: 3 },
+  operaciones: { label: "OPERACIONES",  orden: 4 },
+  restaurante: { label: "RESTAURANTE",  orden: 5 },
+  analitica:   { label: "ANALÍTICA",    orden: 6 },
+};
+
+interface NavItem {
+  path: string;
+  label: string;
+  icon: Icon;
+  shortcut: string;
+  todos: boolean;
+  permiso?: string;
+  permisoAlt?: string;
+  group: GroupKey;
+}
 
 const navItems: NavItem[] = [
-  { path: "/", label: "Inicio", icon: House, shortcut: "", todos: true },
-  { path: "/pos", label: "Venta", icon: Storefront, shortcut: "F1", todos: true },
-  { path: "/productos", label: "Productos", icon: Package, shortcut: "F2", todos: false, permiso: "gestionar_productos" },
-  { path: "/clientes", label: "Clientes", icon: Users, shortcut: "F3", todos: false, permiso: "gestionar_clientes" },
-  { path: "/ventas", label: "Ventas", icon: Receipt, shortcut: "F4", todos: true },
-  { path: "/guias", label: "Guías", icon: Truck, shortcut: "", todos: false, permiso: "ver_guias" },
-  { path: "/gastos", label: "Gastos", icon: Money, shortcut: "F7", todos: false, permiso: "gestionar_gastos" },
-  { path: "/cuentas", label: "Cobrar", icon: Coins, shortcut: "F8", todos: true },
-  { path: "/compras", label: "Compras", icon: ShoppingCart, shortcut: "", todos: false, permiso: "gestionar_compras" },
-  { path: "/pagar", label: "Pagar", icon: Wallet, shortcut: "", todos: false, permiso: "gestionar_compras" },
-  { path: "/movimientos-bancarios", label: "Bancos", icon: Bank, shortcut: "", todos: false, permiso: "ver_movimientos_bancarios" },
-  { path: "/inventario", label: "Inventario", icon: Warehouse, shortcut: "", todos: false, permiso: "gestionar_inventario" },
-  { path: "/series", label: "Series", icon: Barcode, shortcut: "", todos: false, permiso: "gestionar_inventario" },
-  { path: "/caducidad", label: "Caducidad", icon: Calendar, shortcut: "", todos: false, permiso: "gestionar_inventario" },
-  // Servicio Tecnico: visible si admin, gestionar o solo ver. El filtro luego acepta cualquiera de los dos.
-  { path: "/servicio-tecnico", label: "Servicio", icon: Wrench, shortcut: "", todos: false, permiso: "gestionar_servicio_tecnico", permisoAlt: "ver_servicio_tecnico" } as any,
-  // Modulo Restaurante: visible si build incluye feature Y licencia tiene modulo (filtrado abajo).
-  { path: "/mesas", label: "Mesas", icon: ForkKnife, shortcut: "", todos: true },
-  { path: "/cocina", label: "Cocina", icon: CookingPot, shortcut: "", todos: true },
-  { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes" },
+  { path: "/", label: "Inicio", icon: House, shortcut: "", todos: true, group: "principal" },
+  // VENTAS
+  { path: "/pos", label: "Venta", icon: Storefront, shortcut: "F1", todos: true, group: "ventas" },
+  { path: "/ventas", label: "Ventas", icon: Receipt, shortcut: "F4", todos: true, group: "ventas" },
+  { path: "/cuentas", label: "Cobrar", icon: Coins, shortcut: "F8", todos: true, group: "ventas" },
+  { path: "/guias", label: "Guías", icon: Truck, shortcut: "", todos: false, permiso: "ver_guias", group: "ventas" },
+  // GESTIÓN (productos, clientes, stock)
+  { path: "/productos", label: "Productos", icon: Package, shortcut: "F2", todos: false, permiso: "gestionar_productos", group: "gestion" },
+  { path: "/clientes", label: "Clientes", icon: Users, shortcut: "F3", todos: false, permiso: "gestionar_clientes", group: "gestion" },
+  { path: "/inventario", label: "Inventario", icon: Warehouse, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
+  { path: "/series", label: "Series", icon: Barcode, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
+  { path: "/caducidad", label: "Caducidad", icon: Calendar, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
+  // COMPRAS
+  { path: "/compras", label: "Compras", icon: ShoppingCart, shortcut: "", todos: false, permiso: "gestionar_compras", group: "compras" },
+  { path: "/pagar", label: "Pagar", icon: Wallet, shortcut: "", todos: false, permiso: "gestionar_compras", group: "compras" },
+  { path: "/movimientos-bancarios", label: "Bancos", icon: Bank, shortcut: "", todos: false, permiso: "ver_movimientos_bancarios", group: "compras" },
+  // OPERACIONES (gastos, servicio técnico)
+  { path: "/gastos", label: "Gastos", icon: Money, shortcut: "F7", todos: false, permiso: "gestionar_gastos", group: "operaciones" },
+  { path: "/servicio-tecnico", label: "Servicio", icon: Wrench, shortcut: "", todos: false, permiso: "gestionar_servicio_tecnico", permisoAlt: "ver_servicio_tecnico", group: "operaciones" },
+  // RESTAURANTE (filtrado por modulo)
+  { path: "/mesas", label: "Mesas", icon: ForkKnife, shortcut: "", todos: true, group: "restaurante" },
+  { path: "/cocina", label: "Cocina", icon: CookingPot, shortcut: "", todos: true, group: "restaurante" },
+  // ANALÍTICA
+  { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes", group: "analitica" },
 ];
 
 const headerNavItems = [
@@ -50,17 +76,29 @@ export default function Layout() {
   const [moduloCaducidadActivo, setModuloCaducidadActivo] = useState(false);
   const [moduloServicioTecnicoActivo, setModuloServicioTecnicoActivo] = useState(false);
   const [moduloRestauranteActivo, setModuloRestauranteActivo] = useState(false);
+  const [nombreNegocio, setNombreNegocio] = useState<string>("");
   const [tooltip, setTooltip] = useState<{ label: string; top: number } | null>(null);
+  // Sidebar expandido (mostrar labels + group headers). Persistente.
+  const [sidebarExpandido, setSidebarExpandido] = useState<boolean>(
+    () => localStorage.getItem("clouget-sidebar-expandido") === "1",
+  );
+  const sidebarWidth = sidebarExpandido ? 200 : 56;
+  useEffect(() => {
+    localStorage.setItem("clouget-sidebar-expandido", sidebarExpandido ? "1" : "0");
+    // Setear CSS variable para que .main-content ajuste su margin-left
+    document.documentElement.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+  }, [sidebarExpandido, sidebarWidth]);
   const location = useLocation();
   const enPOS = location.pathname === "/pos";
 
-  // Cargar config de módulos
+  // Cargar config de módulos + nombre negocio (para header limpio sin logo redundante)
   useEffect(() => {
     import("../services/api").then(({ obtenerConfig }) => {
       obtenerConfig().then(cfg => {
         setModuloSeriesActivo(cfg.modulo_series_activo === "1");
         setModuloCaducidadActivo(cfg.modulo_caducidad === "1");
         setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+        setNombreNegocio((cfg.nombre_negocio || "").trim());
         // Modulo Restaurante: activo si licencia.modulos incluye 'restaurante'
         // (la licencia se persiste como JSON en config.licencia_modulos).
         try {
@@ -72,6 +110,22 @@ export default function Layout() {
       }).catch(() => {});
     });
   }, []);
+
+  // Mapear ruta actual → nombre de página para mostrar en el header (estilo Notion/Linear).
+  // Usa navItems.label cuando existe, agrega rutas que no están en sidebar.
+  const tituloPagina = useMemo(() => {
+    const titulosExtra: Record<string, string> = {
+      "/caja": "Caja",
+      "/config": "Configuración",
+      "/config-mesas": "Configuración de Mesas",
+    };
+    if (titulosExtra[location.pathname]) return titulosExtra[location.pathname];
+    const item = navItems.find(i => i.path === location.pathname);
+    if (item) return item.label;
+    // Fallback: capitalize última parte de la ruta
+    const last = location.pathname.split("/").filter(Boolean).pop() || "";
+    return last ? last.charAt(0).toUpperCase() + last.slice(1) : "Inicio";
+  }, [location.pathname]);
 
   // Tema claro/oscuro
   const [tema, setTema] = useState(() => localStorage.getItem("clouget-theme") || "light");
@@ -108,12 +162,66 @@ export default function Layout() {
 
   return (
     <div className="app-layout">
-      {/* Top Header */}
+      {/* Top Header — estilo Notion/Linear: NO duplicamos el logo (ya está en barra
+          de Windows). Mostramos nombre del negocio + página actual como breadcrumb.
+          Esto da contexto útil al usuario en lugar de branding redundante. */}
       <header className="top-header">
-        <NavLink to="/" className="top-header-logo" style={{ textDecoration: "none", color: "inherit", display: "flex", alignItems: "center", gap: 8 }}>
-          <img src={logoClouget} alt="Clouget"
-            style={{ height: 22, width: "auto", filter: "brightness(0) invert(1)", objectFit: "contain" }} />
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 400, letterSpacing: 0 }}>Punto de Venta</span>
+        <NavLink
+          to="/"
+          className="top-header-logo"
+          style={{
+            textDecoration: "none",
+            color: "inherit",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
+            overflow: "hidden",
+          }}
+          title="Ir a Inicio"
+        >
+          {/* Logo MUY pequeño solo como botón "home" — estilo Spotify */}
+          <img
+            src={logoClouget}
+            alt=""
+            style={{
+              height: 18,
+              width: "auto",
+              filter: "brightness(0) invert(1)",
+              objectFit: "contain",
+              opacity: 0.85,
+              flexShrink: 0,
+            }}
+          />
+          {nombreNegocio && (
+            <span
+              style={{
+                fontSize: 14,
+                color: "rgba(255,255,255,0.95)",
+                fontWeight: 600,
+                letterSpacing: 0.2,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                maxWidth: 280,
+              }}
+            >
+              {nombreNegocio}
+            </span>
+          )}
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", fontWeight: 400 }}>·</span>
+          <span
+            style={{
+              fontSize: 13,
+              color: "rgba(255,255,255,0.6)",
+              fontWeight: 500,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {tituloPagina}
+          </span>
         </NavLink>
 
         <div className="top-header-right">
@@ -229,40 +337,161 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Sidebar Compacto (siempre visible) */}
-      <nav className="sidebar-compact">
-        {navFiltrados.map((item) => {
-          const IconComp = item.icon;
-          const labelCompleto = `${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`;
-          return (
-            <NavLink key={item.path} to={item.path} end={item.path === "/"}
-              title={labelCompleto}
-              onMouseEnter={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                setTooltip({ label: labelCompleto, top: r.top + r.height / 2 });
-              }}
-              onMouseLeave={() => setTooltip(null)}
-              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-              <IconComp size={22} weight="regular" />
-            </NavLink>
-          );
-        })}
+      {/* Sidebar agrupado — colapsado (íconos) o expandido (íconos + labels + group headers).
+          Estado persistente en localStorage. Atajos F1-F10 funcionan independiente del estado. */}
+      <nav
+        className={`sidebar-compact ${sidebarExpandido ? "sidebar-expandido" : ""}`}
+        style={{
+          width: sidebarWidth,
+          transition: "width 0.18s ease",
+          overflow: sidebarExpandido ? "visible" : "hidden",
+          overflowY: "auto",
+        }}
+      >
+        {/* Botón toggle expandir/colapsar */}
+        <button
+          onClick={() => setSidebarExpandido(v => !v)}
+          title={sidebarExpandido ? "Colapsar menú" : "Expandir menú"}
+          style={{
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--color-text-muted, rgba(255,255,255,0.4))",
+            padding: sidebarExpandido ? "8px 14px" : "8px 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: sidebarExpandido ? "flex-end" : "center",
+            width: "100%",
+            fontSize: 11,
+            gap: 6,
+          }}
+        >
+          {sidebarExpandido ? <CaretLeft size={14} /> : <CaretRight size={14} />}
+        </button>
+
+        {/* Items agrupados */}
+        {(Object.keys(GROUPS) as GroupKey[])
+          .sort((a, b) => GROUPS[a].orden - GROUPS[b].orden)
+          .map((gk) => {
+            const itemsGrupo = navFiltrados.filter(i => i.group === gk);
+            if (itemsGrupo.length === 0) return null;
+            return (
+              <div key={gk} style={{ display: "flex", flexDirection: "column", marginBottom: 4 }}>
+                {/* Header del grupo (solo en modo expandido O separador en modo colapsado) */}
+                {sidebarExpandido ? (
+                  <div
+                    style={{
+                      padding: "6px 14px 2px",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      letterSpacing: 1,
+                      color: "var(--color-text-muted, rgba(255,255,255,0.35))",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {GROUPS[gk].label}
+                  </div>
+                ) : (
+                  // Modo colapsado: línea sutil entre grupos para dar agrupación visual
+                  gk !== "principal" && (
+                    <div
+                      style={{
+                        height: 1,
+                        background: "rgba(255,255,255,0.08)",
+                        margin: "6px 14px 4px",
+                      }}
+                    />
+                  )
+                )}
+                {/* Items del grupo */}
+                {itemsGrupo.map((item) => {
+                  const IconComp = item.icon;
+                  const labelCompleto = `${item.label}${item.shortcut ? ` (${item.shortcut})` : ""}`;
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      end={item.path === "/"}
+                      title={labelCompleto}
+                      onMouseEnter={(e) => {
+                        if (sidebarExpandido) return; // sin tooltip si ya hay label visible
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setTooltip({ label: labelCompleto, top: r.top + r.height / 2 });
+                      }}
+                      onMouseLeave={() => setTooltip(null)}
+                      className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: sidebarExpandido ? 12 : 0,
+                        justifyContent: sidebarExpandido ? "flex-start" : "center",
+                        padding: sidebarExpandido ? "8px 14px" : undefined,
+                      }}
+                    >
+                      <IconComp size={22} weight="regular" />
+                      {sidebarExpandido && (
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 500,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            flex: 1,
+                          }}
+                        >
+                          {item.label}
+                        </span>
+                      )}
+                      {sidebarExpandido && item.shortcut && (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            opacity: 0.4,
+                            fontFamily: "monospace",
+                          }}
+                        >
+                          {item.shortcut}
+                        </span>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            );
+          })}
+
         <div className="nav-spacer" />
-        <div className="nav-item"
+
+        {/* Cerrar sesión - siempre al final */}
+        <div
+          className="nav-item"
           onClick={cerrarSesion}
           title="Cerrar Sesión"
           onMouseEnter={(e) => {
+            if (sidebarExpandido) return;
             const r = e.currentTarget.getBoundingClientRect();
             setTooltip({ label: "Cerrar Sesión", top: r.top + r.height / 2 });
           }}
           onMouseLeave={() => setTooltip(null)}
-          style={{ cursor: "pointer" }}>
+          style={{
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: sidebarExpandido ? 12 : 0,
+            justifyContent: sidebarExpandido ? "flex-start" : "center",
+            padding: sidebarExpandido ? "8px 14px" : undefined,
+          }}
+        >
           <SignOut size={20} />
+          {sidebarExpandido && (
+            <span style={{ fontSize: 13, fontWeight: 500 }}>Cerrar sesión</span>
+          )}
         </div>
       </nav>
 
-      {/* Tooltip flotante (fuera del overflow del sidebar) */}
-      {tooltip && (
+      {/* Tooltip flotante (solo en modo colapsado, fuera del overflow del sidebar) */}
+      {tooltip && !sidebarExpandido && (
         <div
           style={{
             position: "fixed",

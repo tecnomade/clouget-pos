@@ -95,19 +95,10 @@ button, input, select, textarea {
   user-select: none;
 }
 
+/* Header limpio (estilo Notion/Linear): logo pequeno + nombre negocio + pagina actual.
+   Los inline styles del componente sobrescriben. Mantenemos esto vacio para no forzar. */
 .top-header-logo {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
   color: white;
-}
-
-.top-header-logo span {
-  font-size: 10px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.4);
-  margin-left: 8px;
-  letter-spacing: 0;
 }
 
 .top-header-right {
@@ -129,22 +120,24 @@ button, input, select, textarea {
   color: white !important;
 }
 
-/* Main Content */
+/* Main Content — margin-left dinamico segun ancho sidebar (CSS variable). */
 .main-content {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  margin-left: 56px;
-  transition: margin-left 0.2s;
+  margin-left: var(--sidebar-width, 56px);
+  transition: margin-left 0.18s ease;
 }
 
 .main-content.no-sidebar {
   margin-left: 0;
 }
 
-/* Sidebar compacto */
+/* Sidebar compacto. El width se setea inline desde React (64 colapsado, 200 expandido)
+   pero el default fallback es 56 para compatibilidad con paginas que aun no expongan
+   el var. Cuando .sidebar-expandido esta presente, el width ya viene del inline style. */
 .sidebar-compact {
   position: fixed;
   left: 0;
@@ -155,7 +148,7 @@ button, input, select, textarea {
   z-index: 10;
   display: flex;
   flex-direction: column;
-  padding: 8px 0;
+  padding: 6px 0;
   overflow-y: auto;
   overflow-x: visible;
   border-right: 1px solid rgba(255,255,255,0.06);
@@ -165,25 +158,40 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  margin: 2px auto;
-  border-radius: 10px;
-  color: rgba(255,255,255,0.5);
+  /* width/height/margin se ajustan dinamicamente. En modo colapsado: cuadrado 44x44 centrado.
+     En modo expandido: full-width con padding para acomodar label. */
+  min-height: 38px;
+  width: auto;
+  margin: 1px 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: rgba(255,255,255,0.55);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.12s;
   text-decoration: none;
   position: relative;
 }
 
 .sidebar-compact .nav-item:hover {
-  background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.9);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.95);
 }
 
 .sidebar-compact .nav-item.active {
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.18);
   color: #60a5fa;
+}
+
+.sidebar-compact .nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: #60a5fa;
+  border-radius: 0 3px 3px 0;
 }
 
 .sidebar-compact .nav-spacer {
