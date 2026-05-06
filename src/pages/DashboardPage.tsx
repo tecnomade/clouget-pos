@@ -233,14 +233,72 @@ export default function DashboardPage() {
         </div>
       </div>
       <div className="page-body">
-        {/* KPI Cards con comparativo */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
-          <KpiCard label="Ventas Hoy" valor={resumen?.total_ventas ?? 0} ayer={resumenAyer?.total_ventas} prefix="$" color="var(--color-success)" />
-          <KpiCard label="Transacciones" valor={resumen?.num_ventas ?? 0} ayer={resumenAyer?.num_ventas} />
-          <KpiCard label="Utilidad Bruta" valor={resumen?.utilidad_bruta ?? 0} ayer={resumenAyer?.utilidad_bruta} prefix="$" color="var(--color-success)" />
-          <KpiCard label="Efectivo" valor={resumen?.total_efectivo ?? 0} ayer={resumenAyer?.total_efectivo} prefix="$" />
-          <KpiCard label="Transferencia" valor={resumen?.total_transferencia ?? 0} ayer={resumenAyer?.total_transferencia} prefix="$" />
-          <KpiCard label="Por Cobrar" valor={fiadosPendientes} prefix="$" color={fiadosPendientes > 0 ? "var(--color-warning)" : undefined} />
+        {/* KPI Hero (estilo Stripe): el numero mas importante (Ventas Hoy) prominente,
+            con ticket promedio + transacciones como contexto. Cards secundarios abajo
+            para los breakdowns por forma de pago. */}
+        <div className="kpi-hero anim-fade-up" style={{
+          background: "var(--color-surface)",
+          border: "1px solid var(--color-border)",
+          borderRadius: 14,
+          padding: "20px 24px",
+          marginBottom: 14,
+          boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06)",
+          display: "grid",
+          gridTemplateColumns: "1fr auto",
+          gap: 20,
+          alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.8, color: "var(--color-text-secondary)", textTransform: "uppercase", marginBottom: 4 }}>
+              Ventas hoy
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 36, fontWeight: 800, color: "var(--color-text)", lineHeight: 1 }}>
+                ${(resumen?.total_ventas ?? 0).toFixed(2)}
+              </span>
+              {resumenAyer && resumenAyer.total_ventas > 0 && (() => {
+                const hoy = resumen?.total_ventas ?? 0;
+                const ayer = resumenAyer.total_ventas;
+                const pct = ayer > 0 ? ((hoy - ayer) / ayer) * 100 : 0;
+                const sube = pct >= 0;
+                return (
+                  <span style={{
+                    fontSize: 13, fontWeight: 700,
+                    padding: "3px 9px", borderRadius: 999,
+                    background: sube ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+                    color: sube ? "var(--color-success)" : "var(--color-danger)",
+                  }}>
+                    {sube ? "↑" : "↓"} {Math.abs(pct).toFixed(0)}%
+                  </span>
+                );
+              })()}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginTop: 6 }}>
+              {resumen?.num_ventas ?? 0} transacc.
+              {(resumen?.num_ventas ?? 0) > 0 && (
+                <> · ticket promedio <strong style={{ color: "var(--color-text)" }}>${((resumen?.total_ventas ?? 0) / (resumen?.num_ventas ?? 1)).toFixed(2)}</strong></>
+              )}
+              {(resumen?.utilidad_bruta ?? 0) > 0 && (
+                <> · utilidad <strong style={{ color: "var(--color-success)" }}>${(resumen?.utilidad_bruta ?? 0).toFixed(2)}</strong></>
+              )}
+            </div>
+          </div>
+          <div style={{ fontSize: 56, opacity: 0.15, lineHeight: 1, display: "flex", alignItems: "center" }}>
+            💰
+          </div>
+        </div>
+
+        {/* KPIs secundarios: forma de pago + cobros pendientes */}
+        <div className="kpi-grid anim-fade-up" style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          gap: 10,
+          marginBottom: 18,
+          animationDelay: "60ms",
+        }}>
+          <KpiCard label="Efectivo" valor={resumen?.total_efectivo ?? 0} ayer={resumenAyer?.total_efectivo} prefix="$" color="var(--color-success)" icon="💵" />
+          <KpiCard label="Transferencia" valor={resumen?.total_transferencia ?? 0} ayer={resumenAyer?.total_transferencia} prefix="$" color="var(--color-primary)" icon="🏦" />
+          <KpiCard label="Por cobrar" valor={fiadosPendientes} prefix="$" color={fiadosPendientes > 0 ? "var(--color-warning)" : undefined} icon="📋" />
         </div>
 
         {/* Alertas: Pagos vencidos + Stock bajo */}
@@ -490,43 +548,94 @@ export default function DashboardPage() {
 
         {/* Fila 3: Stock Bajo + Cuentas por cobrar */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {/* Stock Bajo con colores */}
-          <div className="card" style={{ borderColor: alertas.length > 0 ? "var(--color-warning)" : undefined }}>
-            <div className="card-header" style={alertas.length > 0 ? { background: "rgba(245, 158, 11, 0.1)", color: "var(--color-warning)" } : {}}>
-              Stock Bajo ({alertas.length})
-            </div>
-            <div className="card-body" style={{ padding: 0 }}>
-              {alertas.length === 0 ? (
-                <div className="text-center text-secondary" style={{ padding: 24, fontSize: 13 }}>
-                  Todos los productos tienen stock suficiente
-                </div>
-              ) : (
-                alertas.slice(0, 8).map((a) => {
-                  const pct = a.stock_minimo > 0 ? Math.min((a.stock_actual / a.stock_minimo) * 100, 100) : 0;
-                  const esAgotado = a.stock_actual <= 0;
-                  return (
-                    <div key={a.id} style={{
-                      padding: "6px 12px", borderBottom: "1px solid var(--color-border)",
-                      background: esAgotado ? "rgba(239, 68, 68, 0.1)" : undefined,
-                    }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                        <span>{a.nombre}</span>
-                        <span style={{ fontWeight: 600, color: esAgotado ? "var(--color-danger)" : "var(--color-warning)" }}>
-                          {a.stock_actual} / {a.stock_minimo}
+          {/* Stock Bajo con chips de severidad y barras de progreso */}
+          {(() => {
+            const sinStock = alertas.filter(a => a.stock_actual <= 0).length;
+            const criticos = alertas.length - sinStock;
+            return (
+              <div className="card">
+                <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>📦 Stock Bajo</span>
+                  {alertas.length > 0 && (
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {sinStock > 0 && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999,
+                          background: "rgba(239,68,68,0.15)", color: "var(--color-danger)",
+                        }}>
+                          🔴 {sinStock} sin stock
                         </span>
+                      )}
+                      {criticos > 0 && (
+                        <span style={{
+                          fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 999,
+                          background: "rgba(245,158,11,0.15)", color: "var(--color-warning)",
+                        }}>
+                          🟠 {criticos} crítico{criticos > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="card-body" style={{ padding: 0 }}>
+                  {alertas.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: "center" }}>
+                      <div style={{ fontSize: 28, marginBottom: 4 }}>✨</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-success)" }}>
+                        Stock OK
                       </div>
-                      <div style={{ height: 4, background: "var(--color-border)", borderRadius: 2 }}>
-                        <div style={{
-                          width: `${pct}%`, height: "100%", borderRadius: 2,
-                          background: esAgotado ? "var(--color-danger)" : pct < 50 ? "var(--color-warning)" : "var(--color-success)",
-                        }} />
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                        Todos los productos con stock suficiente
                       </div>
                     </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+                  ) : (
+                    alertas.slice(0, 8).map((a) => {
+                      const pct = a.stock_minimo > 0 ? Math.min((a.stock_actual / a.stock_minimo) * 100, 100) : 0;
+                      const esAgotado = a.stock_actual <= 0;
+                      const colorBarra = esAgotado ? "var(--color-danger)" : pct < 50 ? "var(--color-warning)" : "var(--color-success)";
+                      return (
+                        <div key={a.id} style={{
+                          padding: "8px 12px", borderBottom: "1px solid var(--color-border)",
+                          background: esAgotado ? "rgba(239, 68, 68, 0.05)" : undefined,
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, alignItems: "center" }}>
+                            <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: 8 }}>
+                              {a.nombre}
+                            </span>
+                            <span style={{
+                              fontSize: 11, fontWeight: 700,
+                              padding: "2px 7px", borderRadius: 4,
+                              background: esAgotado ? "rgba(239,68,68,0.12)" : "rgba(245,158,11,0.12)",
+                              color: esAgotado ? "var(--color-danger)" : "var(--color-warning)",
+                              flexShrink: 0,
+                            }}>
+                              {a.stock_actual} / {a.stock_minimo}
+                            </span>
+                          </div>
+                          <div style={{ height: 5, background: "var(--color-border)", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{
+                              width: `${Math.max(pct, esAgotado ? 0 : 4)}%`, height: "100%", borderRadius: 3,
+                              background: colorBarra, transition: "width 0.3s ease",
+                            }} />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  {alertas.length > 8 && (
+                    <button onClick={() => navigate("/inventario")} style={{
+                      width: "100%", padding: "8px",
+                      background: "transparent", border: "none",
+                      color: "var(--color-primary)", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      borderTop: "1px solid var(--color-border)",
+                    }}>
+                      Ver los {alertas.length - 8} restantes →
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Resumen de cuentas por cobrar / deudores */}
           <div className="card" style={{ borderColor: deudores.length > 0 ? "var(--color-danger)" : undefined }}>
@@ -563,8 +672,8 @@ export default function DashboardPage() {
 }
 
 /* --- KPI Card con comparativo vs ayer --- */
-function KpiCard({ label, valor, ayer, prefix, color }: {
-  label: string; valor: number; ayer?: number | null; prefix?: string; color?: string;
+function KpiCard({ label, valor, ayer, prefix, color, icon }: {
+  label: string; valor: number; ayer?: number | null; prefix?: string; color?: string; icon?: string;
 }) {
   const formatted = prefix
     ? `${prefix}${valor.toFixed(2)}`
@@ -578,15 +687,24 @@ function KpiCard({ label, valor, ayer, prefix, color }: {
   }
 
   return (
-    <div className="card" style={{ padding: 14 }}>
-      <div className="text-secondary" style={{ fontSize: 11 }}>{label}</div>
-      <div className="text-xl font-bold" style={{ color }}>{formatted}</div>
+    <div className="card kpi-card" style={{
+      padding: 14,
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div className="text-secondary" style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.4, textTransform: "uppercase" }}>{label}</div>
+        {icon && (
+          <span style={{ fontSize: 14, opacity: 0.4 }}>{icon}</span>
+        )}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4, color }}>{formatted}</div>
       {diff !== null && diffPct !== null && (
         <div style={{
-          fontSize: 10, marginTop: 2,
+          fontSize: 10, marginTop: 4,
           color: diff > 0 ? "var(--color-success)" : diff < 0 ? "var(--color-danger)" : "var(--color-text-secondary)",
         }}>
-          {diff > 0 ? "▲" : diff < 0 ? "▼" : "="}{" "}
+          {diff > 0 ? "↑" : diff < 0 ? "↓" : "="}{" "}
           {Math.abs(diffPct).toFixed(0)}% vs ayer
         </div>
       )}

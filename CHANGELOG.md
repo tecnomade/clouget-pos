@@ -6,6 +6,71 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.61 — 2026-05-05 ✨ STABLE
+**Fase 2 polish premium**: dashboard rediseñado + sistema de diseño consistente.
+
+Continúa el rediseño UI iniciado en v2.3.59, llevándolo a nivel "premium SaaS" (Stripe / Linear). 100% visual, sin tocar lógica de negocio.
+
+### 💰 KPI Hero (estilo Stripe)
+**Antes**: 6 cards iguales del mismo tamaño, todos compitiendo por atención.
+
+**Ahora**:
+- **1 Hero card** prominente arriba con el número MÁS importante (Ventas Hoy) en 36px
+- Comparación vs ayer con badge ↑12% / ↓5% en color contextual (verde/rojo)
+- Contexto adicional: "9 transacciones · ticket promedio $5.20 · utilidad $39.02"
+- Ícono decorativo 💰 al lado (sutil, 56px con opacidad 15%)
+- **3 cards secundarios** abajo (Efectivo, Transferencia, Por cobrar) con ícono propio
+- Hover: lift sutil + sombra mejorada (estilo Linear)
+
+### 📦 Stock Bajo más visual
+**Antes**: lista plana con barras de progreso, header simple "Stock Bajo (1301)".
+
+**Ahora**:
+- **Chips de severidad** en el header: 🔴 X sin stock + 🟠 Y crítico
+- Barras de progreso con color contextual (rojo=agotado, naranja=crítico, verde=OK)
+- Cantidades como **badges coloreados** (no solo texto)
+- Estado vacío celebratorio: "✨ Stock OK — Todos los productos con stock suficiente"
+- **Botón "Ver los X restantes →"** si hay más de 8 productos con stock bajo
+- Transiciones suaves en las barras
+
+### 🎨 Sistema de diseño consistente
+- **Sombras nuevas estilo Stripe/Linear**: 2 capas sutiles en vez de border prominente
+  - `--shadow`: 1px+3px sutil (cards default)
+  - `--shadow-md`: 2px+8px (cards hover/elevated)
+  - `--shadow-lg`: 4px+24px (modals, drawers)
+  - `--shadow-hover`: estado hover de cards interactivas
+- **Radius consistente**: `--radius` 10px (default), `--radius-sm` 6px (chips), `--radius-lg` 14px (hero)
+- **Tipografía con escala**: H1 22px / H2 18px / H3 15px / body 14px / caption 12px / micro 10-11px uppercase
+- **Card-header**: bordes más delgados (1px en vez de 2px) para look más refinado
+
+### ✨ Animaciones sutiles
+- `.anim-fade-up`: cards aparecen con fade + slide up (320ms cubic-bezier)
+- `.anim-fade-in`: aparición simple (250ms)
+- `.skeleton`: shimmer animado para estados de carga (en lugar de "Cargando..." plano)
+- `.kpi-card:hover`: lift de 1px + sombra mejorada
+- `prefers-reduced-motion`: respeta accesibilidad del usuario
+
+### 🌓 Tema dark refinado
+- Sombras dark theme con 2 capas (más realistas)
+- Mantiene contraste sin ser "duras"
+
+### Cambios técnicos
+- `src/styles/global.css`:
+  - Variables CSS: nuevas `--radius-sm/lg`, sombras refactoradas
+  - `.card`: transición + sombras nuevas
+  - `.kpi-card`: hover lift dedicado
+  - Sistema tipográfico (h1-h3 con sizes definidos)
+  - Keyframes `anim-fade-up`, `anim-fade-in`, `anim-skeleton`
+  - Clases reutilizables `.anim-fade-up`, `.skeleton`
+  - Media query `prefers-reduced-motion`
+- `src/pages/DashboardPage.tsx`:
+  - KPI Hero card grande estilo Stripe con comparativo
+  - 3 KPIs secundarios con íconos
+  - Stock Bajo: chips de severidad + estado vacío celebratorio + botón "ver más"
+- `src/pages/DashboardPage.tsx::KpiCard`: prop `icon` opcional + estilos refinados
+
+Verificado: `tsc --noEmit` EXITCODE=0. Solo UI/UX, cero impacto backend.
+
 ## v2.3.60 — 2026-05-05 🐛🔒 STABLE
 **5 fixes + 1 feature de seguridad** (anti-fuga en cierre de caja).
 
