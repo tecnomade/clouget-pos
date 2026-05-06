@@ -278,6 +278,34 @@ export default function Configuracion() {
                     <option value="BLOQUEAR_OCULTAR">🚫 Bloquear + ocultar agotados del POS</option>
                   </select>
                 </div>
+                {/* Anti-fuga en cierre de caja: ocultar monto esperado a cajeros.
+                    Si está activo, los cajeros NO ven cuánto deberían contar — cuentan
+                    a ciegas y el sistema detecta diferencias sin que ellos puedan
+                    "ajustar" lo que faltó/sobró. Admin siempre lo ve. */}
+                <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={config.ocultar_monto_esperado_caja === "1"}
+                    onChange={(e) => {
+                      const v = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, ocultar_monto_esperado_caja: v });
+                      guardarConfig({ ocultar_monto_esperado_caja: v });
+                      toastExito(e.target.checked
+                        ? "Cajeros NO verán el monto esperado al cerrar caja"
+                        : "Cajeros volverán a ver el monto esperado");
+                    }}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>🔒 Ocultar monto esperado a cajeros (anti-fuga)</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Si está activo, los cajeros NO verán el desglose de monto esperado al cerrar caja.
+                      Cuentan el efectivo a ciegas y el sistema detecta diferencias.
+                      Útil para evitar que un cajero que cobró de más sepa cuánto "ajustar".
+                      Admin siempre ve toda la info.
+                    </div>
+                  </div>
+                </label>
                 {config.modulo_servicio_tecnico === "1" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginLeft: 24, background: "var(--color-surface-alt)", borderRadius: 8 }}>
                     <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de taller:</label>

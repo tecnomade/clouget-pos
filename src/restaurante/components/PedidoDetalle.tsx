@@ -22,9 +22,9 @@ import {
   cerrarPedido,
   imprimirPreCuenta,
 } from "../api";
-import { registrarVenta, obtenerCajaAbierta } from "../../services/api";
+import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
 import type { PedidoDetalle as PedidoDetalleType } from "../types";
-import type { NuevaVenta, VentaDetalle } from "../../types";
+import type { NuevaVenta, VentaDetalle, CuentaBanco } from "../../types";
 import SelectorProductos from "./SelectorProductos";
 
 interface Props {
@@ -137,14 +137,19 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
     }
   };
 
-  const handleCobrar = async (formaPago: string, esFiado: boolean) => {
+  const handleCobrar = async (
+    formaPago: string,
+    esFiado: boolean,
+    extras?: { bancoId?: number | null; referencia?: string | null },
+  ) => {
     if (!detalle) return;
     if (detalle.items.length === 0) {
       toastWarning("No hay items para cobrar");
       return;
     }
 
-    // Validar caja abierta
+    // Validar caja abierta — usa la MISMA caja del POS normal (no hay caja
+    // separada para restaurante; el cobro se registra como una venta normal).
     try {
       const caja = await obtenerCajaAbierta();
       if (!caja) {
@@ -157,7 +162,7 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
     }
 
     // Construir payload de Venta delegando a registrar_venta (que maneja
-    // combos, SRI, secuenciales, IVA correctamente).
+    // combos, SRI, secuenciales, IVA, kardex, banco/referencia correctamente).
     const items: VentaDetalle[] = detalle.items.map((i) => ({
       producto_id: i.producto_id,
       cantidad: i.cantidad,
@@ -178,6 +183,10 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
       tipo_documento: "NOTA_VENTA",
       es_fiado: esFiado,
       observacion: `Mesa: ${detalle.mesa_nombre}${detalle.zona_nombre ? ` (${detalle.zona_nombre})` : ""} · Pedido #${pedidoId}`,
+      // Transferencia: pasar banco + referencia para que aparezca en
+      // /movimientos-bancarios y /verificacion (panel admin) — mismo flujo POS.
+      banco_id: extras?.bancoId ?? null,
+      referencia_pago: extras?.referencia?.trim() || null,
     };
 
     try {
@@ -435,9 +444,9 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
       {modoCobro === "elegir-pago" && (
         <ModalCobro
           total={detalle.total}
-          onCobrar={(forma, fiado) => {
+          onCobrar={(forma, fiado, extras) => {
             setModoCobro(null);
-            handleCobrar(forma, fiado);
+            handleCobrar(forma, fiado, extras);
           }}
           onCancelar={() => setModoCobro(null)}
         />
@@ -698,30 +707,167 @@ function ModalCobro({
   onCancelar,
 }: {
   total: number;
-  onCobrar: (forma: string, esFiado: boolean) => void;
+  onCobrar: (
+    forma: string,
+    esFiado: boolean,
+    extras?: { bancoId?: number | null; referencia?: string | null },
+  ) => void;
   onCancelar: () => void;
 }) {
-  return (
-    <div className="modal-overlay" onClick={onCancelar}>
-      <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3 style={{ margin: 0 }}>Cobrar ${total.toFixed(2)}</h3>
-        </div>
-        <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-muted)" }}>
-            Selecciona la forma de pago. Se generará una nota de venta y la mesa quedará libre.
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <BotonPago label="💵 Efectivo" color="#16a34a" onClick={() => onCobrar("EFECTIVO", false)} />
-            <BotonPago label="💳 Tarjeta" color="#2563eb" onClick={() => onCobrar("TARJETA", false)} />
-            <BotonPago label="🏦 Transfer." color="#0ea5e9" onClick={() => onCobrar("TRANSFER", false)} />
-            <BotonPago label="📋 Crédito" color="#f59e0b" onClick={() => onCobrar("CREDITO", true)} />
+  // Sub-paso para transferencia: pide banco + referencia ANTES de confirmar.
+  // Mismo flujo que el POS normal cuando se cobra con transferencia.
+  const [modoTransfer, setModoTransfer] = useState(false);
+  const [cuentas, setCuentas] = useState<CuentaBanco[]>([]);
+  const [cuentaSel, setCuentaSel] = useState<number | null>(null);
+  const [referencia, setReferencia] = useState("");
+  const [requiereRef, setRequiereRef] = useState(false);
+
+  // Cargar cuentas bancarias + config "transferencia_requiere_referencia"
+  useEffect(() => {
+    if (!modoTransfer) return;
+    Promise.all([
+      listarCuentasBanco().catch(() => []),
+      obtenerConfig().catch(() => ({} as Record<string, string>)),
+    ]).then(([cs, cfg]) => {
+      const activas = cs.filter((c) => c.activa);
+      setCuentas(activas);
+      if (activas.length > 0 && cuentaSel === null) {
+        setCuentaSel(activas[0].id ?? null);
+      }
+      setRequiereRef(cfg.transferencia_requiere_referencia === "1");
+    });
+  }, [modoTransfer]);
+
+  const handleConfirmarTransfer = () => {
+    if (cuentas.length > 0 && cuentaSel === null) {
+      alert("Selecciona la cuenta bancaria");
+      return;
+    }
+    if (requiereRef && !referencia.trim()) {
+      alert("La referencia es obligatoria para transferencias (configurado en Cuentas Bancarias)");
+      return;
+    }
+    onCobrar("TRANSFER", false, {
+      bancoId: cuentaSel,
+      referencia: referencia.trim() || null,
+    });
+  };
+
+  // Vista 1: elegir forma de pago
+  if (!modoTransfer) {
+    return (
+      <div className="modal-overlay" onClick={onCancelar}>
+        <div className="modal-content" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-header">
+            <h3 style={{ margin: 0 }}>Cobrar ${total.toFixed(2)}</h3>
+          </div>
+          <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-muted)" }}>
+              Selecciona la forma de pago. Se generará una nota de venta y la mesa quedará libre.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <BotonPago label="💵 Efectivo" color="#16a34a" onClick={() => onCobrar("EFECTIVO", false)} />
+              <BotonPago label="💳 Tarjeta" color="#2563eb" onClick={() => onCobrar("TARJETA", false)} />
+              <BotonPago label="🏦 Transfer." color="#0ea5e9" onClick={() => setModoTransfer(true)} />
+              <BotonPago label="📋 Crédito" color="#f59e0b" onClick={() => onCobrar("CREDITO", true)} />
+            </div>
+          </div>
+          <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn btn-outline" onClick={onCancelar}>
+              Cancelar
+            </button>
           </div>
         </div>
-        <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button className="btn btn-outline" onClick={onCancelar}>
-            Cancelar
+      </div>
+    );
+  }
+
+  // Vista 2: datos de transferencia
+  return (
+    <div className="modal-overlay" onClick={onCancelar}>
+      <div className="modal-content" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3 style={{ margin: 0 }}>🏦 Cobrar por transferencia ${total.toFixed(2)}</h3>
+        </div>
+        <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {cuentas.length === 0 ? (
+            <div style={{
+              padding: 12, background: "rgba(245,158,11,0.1)",
+              border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6,
+              fontSize: 12, color: "var(--color-warning)",
+            }}>
+              ⚠ No hay cuentas bancarias configuradas. Igual puedes registrar la transferencia
+              ingresando solo la referencia. Para mejor control, ve a Configuración → Cuentas Bancarias.
+            </div>
+          ) : (
+            <label style={{ fontSize: 13, fontWeight: 600, display: "block" }}>
+              Cuenta bancaria de destino
+              <select
+                value={cuentaSel ?? ""}
+                onChange={(e) => setCuentaSel(e.target.value ? parseInt(e.target.value, 10) : null)}
+                className="input"
+                style={{ width: "100%", marginTop: 4 }}
+                autoFocus
+              >
+                {cuentas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre}
+                    {c.numero_cuenta ? ` — ${c.numero_cuenta}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <label style={{ fontSize: 13, fontWeight: 600, display: "block" }}>
+            Referencia / N° comprobante {requiereRef && <span style={{ color: "var(--color-danger)" }}>*</span>}
+            <input
+              value={referencia}
+              onChange={(e) => setReferencia(e.target.value)}
+              className="input"
+              placeholder="Ej: TX-12345 o número del comprobante"
+              style={{ width: "100%", marginTop: 4 }}
+              onKeyDown={(e) => e.key === "Enter" && handleConfirmarTransfer()}
+            />
+            {!requiereRef && (
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 2, display: "block" }}>
+                Opcional, pero recomendado para verificación posterior.
+              </span>
+            )}
+          </label>
+
+          <div style={{
+            padding: 10, background: "rgba(14,165,233,0.08)",
+            border: "1px solid rgba(14,165,233,0.2)", borderRadius: 6,
+            fontSize: 11, color: "var(--color-text-muted)",
+          }}>
+            ℹ La transferencia quedará registrada en <strong>Movimientos Bancarios</strong>.
+            Si tu admin tiene activa la verificación, la venta queda en estado pendiente
+            hasta que admin confirme el ingreso (Cuentas → Verificación).
+          </div>
+        </div>
+        <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+          <button
+            className="btn btn-outline"
+            onClick={() => setModoTransfer(false)}
+            style={{ fontSize: 12 }}
+          >
+            ← Volver
           </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-outline" onClick={onCancelar}>
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmarTransfer}
+              style={{
+                padding: "8px 18px", background: "#0ea5e9", color: "#fff",
+                border: "none", borderRadius: 6, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              Confirmar transferencia
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -180,22 +180,29 @@ button, input, select, textarea {
 .sidebar-compact .nav-item.active {
   background: rgba(59, 130, 246, 0.18);
   color: #60a5fa;
-}
-
-.sidebar-compact .nav-item.active::before {
-  content: "";
-  position: absolute;
-  left: -6px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 60%;
-  background: #60a5fa;
-  border-radius: 0 3px 3px 0;
+  /* Indicador lateral via box-shadow inset (no usa pseudo-element con left negativo
+     para no chocar con overflowX:hidden necesario para el scroll vertical). */
+  box-shadow: inset 3px 0 0 0 #60a5fa;
 }
 
 .sidebar-compact .nav-spacer {
   flex: 1;
+  min-height: 8px;
+}
+
+/* Scrollbar sutil para no ensuciar el sidebar (estilo Linear) */
+.sidebar-compact::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-compact::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+.sidebar-compact::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.sidebar-compact::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* Cart slide-in panel */

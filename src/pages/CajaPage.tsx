@@ -19,6 +19,10 @@ export default function CajaPage() {
   const [cargando, setCargando] = useState(true);
   const [confirmarCierre, setConfirmarCierre] = useState(false);
   const [ticketUsarPdf, setTicketUsarPdf] = useState(false);
+  // Anti-fuga: si admin lo activa en config, los cajeros no ven el monto esperado
+  // al cerrar caja (cuentan a ciegas). Admin SIEMPRE ve la info completa.
+  const [ocultarMontoEsperado, setOcultarMontoEsperado] = useState(false);
+  const ocultarParaCajero = ocultarMontoEsperado && !esAdmin;
   const [imprimiendo, setImprimiendo] = useState(false);
   const [mostrarRetiro, setMostrarRetiro] = useState(false);
   const [retiroMonto, setRetiroMonto] = useState("");
@@ -126,7 +130,10 @@ export default function CajaPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [mostrarHistorial]);
   useEffect(() => {
-    obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
+    obtenerConfig().then((cfg) => {
+      setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
+      setOcultarMontoEsperado(cfg.ocultar_monto_esperado_caja === "1");
+    }).catch(() => {});
   }, []);
   useEffect(() => {
     if (cajaAbierta && cajaAbierta.id) {
@@ -628,6 +635,19 @@ export default function CajaPage() {
                 <span className="text-secondary">Monto inicial:</span>
                 <span className="font-bold" style={{ marginLeft: 8 }}>${cajaAbierta.monto_inicial.toFixed(2)}</span>
               </div>
+              {/* Modo anti-fuga (cajeros): si admin activó "ocultar_monto_esperado_caja"
+                  Y el usuario actual NO es admin, ocultamos el desglose y mostramos
+                  un mensaje neutro. El cajero cuenta el efectivo a ciegas. */}
+              {ocultarParaCajero ? (
+                <div className="mb-4" style={{
+                  padding: "12px 14px", background: "rgba(245, 158, 11, 0.08)",
+                  borderRadius: 8, border: "1px solid rgba(245, 158, 11, 0.3)",
+                  fontSize: 12, color: "var(--color-text-secondary)",
+                }}>
+                  🔒 <strong>Conteo a ciegas</strong> — Ingresa el monto real contado en caja.
+                  El sistema verificará la diferencia. El monto esperado lo ve solo el administrador.
+                </div>
+              ) : (
               <div className="mb-4" style={{
                 padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
                 border: "1px solid rgba(34, 197, 94, 0.3)",
@@ -761,6 +781,7 @@ export default function CajaPage() {
                   );
                 })()}
               </div>
+              )}
               <div>
                 <label className="text-secondary" style={{ fontSize: 12 }}>Monto real contado en caja</label>
                 <input

@@ -344,8 +344,10 @@ export default function Layout() {
         style={{
           width: sidebarWidth,
           transition: "width 0.18s ease",
-          overflow: sidebarExpandido ? "visible" : "hidden",
+          // SIEMPRE permitir scroll vertical para items que no caben en pantalla.
+          // overflowX:hidden evita que tooltips/indicadores se escapen lateralmente.
           overflowY: "auto",
+          overflowX: "hidden",
         }}
       >
         {/* Botón toggle expandir/colapsar */}

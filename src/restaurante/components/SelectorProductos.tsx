@@ -287,7 +287,7 @@ function CardProducto({
       <div
         style={{
           height: 80,
-          background: "var(--color-surface-hover)",
+          background: "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.05) 100%)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -296,12 +296,19 @@ function CardProducto({
       >
         {producto.imagen ? (
           <img
-            src={producto.imagen}
+            src={`data:image/png;base64,${producto.imagen}`}
             alt={producto.nombre}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
         ) : (
-          <span style={{ fontSize: 30, opacity: 0.3 }}>🍽️</span>
+          // Fallback estilo POS normal: inicial del nombre en grande con gradient
+          <span style={{
+            fontSize: 32, fontWeight: 800,
+            color: "var(--color-primary)",
+            opacity: 0.6,
+          }}>
+            {producto.nombre.charAt(0).toUpperCase()}
+          </span>
         )}
       </div>
       <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 2 }}>

@@ -197,6 +197,11 @@ pub fn verificar_transferencia(
 
 /// Cuenta cuantas transferencias estan pendientes de verificar.
 /// Util para mostrar un badge en el sidebar/menu del admin.
+///
+/// IMPORTANTE: filtra por los ultimos 60 dias para mantener consistencia con lo
+/// que se muestra en /movimientos-bancarios (filtro "Este mes" por defecto).
+/// Sin este filtro, transferencias viejas olvidadas se cuentan eternamente
+/// y no se ven al hacer click en la alerta — confunde al usuario.
 #[tauri::command]
 pub fn contar_transferencias_pendientes(db: State<Database>) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -204,7 +209,8 @@ pub fn contar_transferencias_pendientes(db: State<Database>) -> Result<i64, Stri
         "SELECT COUNT(*) FROM ventas
          WHERE UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')
            AND COALESCE(pago_estado, 'NO_APLICA') = 'REGISTRADO'
-           AND anulada = 0",
+           AND anulada = 0
+           AND DATE(fecha) >= DATE('now', '-60 days', 'localtime')",
         [], |r| r.get(0),
     ).unwrap_or(0);
     let from_pagos: i64 = conn.query_row(
@@ -212,7 +218,8 @@ pub fn contar_transferencias_pendientes(db: State<Database>) -> Result<i64, Stri
          JOIN ventas v ON v.id = pv.venta_id
          WHERE UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
            AND COALESCE(pv.pago_estado, 'NO_APLICA') = 'REGISTRADO'
-           AND v.anulada = 0",
+           AND v.anulada = 0
+           AND DATE(v.fecha) >= DATE('now', '-60 days', 'localtime')",
         [], |r| r.get(0),
     ).unwrap_or(0);
     Ok(from_ventas + from_pagos)

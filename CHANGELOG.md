@@ -6,6 +6,44 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.60 — 2026-05-05 🐛🔒 STABLE
+**5 fixes + 1 feature de seguridad** (anti-fuga en cierre de caja).
+
+### 🐛 Bugs corregidos
+
+1. **Imágenes no se mostraban en módulo Restaurante** (selector productos): faltaba el prefix `data:image/png;base64,` que SÍ usa el POS normal. Ahora se muestran iguales que en el POS, con fallback de inicial estilizada cuando no hay imagen.
+
+2. **Cobrar mesa con TRANSFER no permitía elegir cuenta bancaria**: ahora al click en "🏦 Transfer." abre un sub-modal con selector de banco + referencia + aviso de verificación. Mismo flujo que el POS normal — la transferencia queda registrada en `/movimientos-bancarios` y aparece en panel de verificación admin.
+
+3. **Sidebar expandido no permitía scroll** — items inferiores (Operaciones, Reportes, Cerrar sesión) quedaban cortados sin acceso. Causa: `overflow:visible` para mostrar pseudo-element del indicador activo bloqueaba el scroll. Fix: indicador activo ahora con `box-shadow inset` (no se sale del item) + `overflow-y:auto` siempre activo. Bonus: scrollbar sutil estilo Linear.
+
+4. **Contador "transferencias por verificar" mostraba transferencias YA verificadas**: el query contaba TODAS las transferencias `REGISTRADO` sin límite de tiempo, incluyendo las de pruebas viejas que el usuario olvidó. Ahora limita a últimos 60 días para mantener consistencia con el filtro "Este mes" de `/movimientos-bancarios`.
+
+### 🔒 Feature nueva: Ocultar monto esperado a cajeros (anti-fuga)
+
+**Problema real**: si el cajero cobra de más a un cliente y se queda con la diferencia, viendo el "monto esperado" puede "ajustar" su conteo para que cuadre exactamente, ocultando el faltante.
+
+**Solución**: nueva opción en **Configuración → Sistema → Control y Seguridad**:
+- ☑ **🔒 Ocultar monto esperado a cajeros (anti-fuga)**
+
+Cuando se activa:
+- **Cajeros NO ven** el desglose verde con el monto esperado al cerrar caja. Solo ven mensaje neutral "Conteo a ciegas — Ingresa el monto real contado en caja".
+- **Cuentan el efectivo a ciegas** y el sistema detecta diferencias.
+- **Admin SIEMPRE ve** la información completa (no se oculta para él).
+
+Esto evita que un cajero deshonesto sepa cuánto debe ajustar para que "cuadre".
+
+### Cambios técnicos
+- `src/restaurante/components/SelectorProductos.tsx`: prefix base64 + fallback inicial
+- `src/restaurante/components/PedidoDetalle.tsx`: ModalCobro con sub-vista TRANSFER (selector banco + referencia + obtenerConfig para `transferencia_requiere_referencia`); handleCobrar pasa `banco_id` y `referencia_pago` al payload
+- `src/components/Layout.tsx`: sidebar `overflowY:auto` + `overflowX:hidden` siempre
+- `src/styles/global.css`: indicador activo con `box-shadow inset 3px 0 0 #60a5fa`; scrollbar `::-webkit-scrollbar` estilo Linear
+- `src-tauri/src/commands/verificacion.rs::contar_transferencias_pendientes`: filtro `DATE(fecha) >= DATE('now', '-60 days')`
+- `src/pages/Configuracion.tsx`: toggle `ocultar_monto_esperado_caja` en sección Control y Seguridad
+- `src/pages/CajaPage.tsx`: state `ocultarMontoEsperado` + `ocultarParaCajero`; condicional en bloque verde de cierre
+
+Verificado: `cargo check` OK (16 warnings preexistentes), `tsc --noEmit` EXITCODE=0.
+
 ## v2.3.59 — 2026-05-05 🎨 STABLE
 **Rediseño UI: sidebar agrupado + header limpio + dashboard humanizado.**
 
