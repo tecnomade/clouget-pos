@@ -2470,3 +2470,123 @@ fn generar_guia_remision_pdf(
 
     Ok(buffer)
 }
+
+// ─── Impresión de Notas de Crédito / Devoluciones (v2.3.62) ─────────────
+// Antes solo se podía imprimir RIDE de NC SRI autorizadas. Las devoluciones
+// internas no tenían NINGÚN botón de imprimir. Esto resuelve ese gap.
+
+/// Imprime el ticket ESC/POS de una NC (SRI o devolución interna) en la
+/// impresora térmica configurada. Reutiliza `printing::generar_ticket`
+/// adaptando la NC a un struct `Venta` con `tipo_documento='NOTA_CREDITO'`.
+#[tauri::command]
+pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let (nc_numero, _nc_venta_id, nc_motivo, nc_fecha, nc_cliente_id,
+         nc_estado_sri, nc_autorizacion, nc_clave, nc_total,
+         nc_subtotal_sin_iva, nc_subtotal_con_iva, nc_iva,
+         nc_metodo_reembolso, nc_efectivo, nc_transfer, nc_credito) = conn.query_row(
+        "SELECT numero, venta_id, motivo, fecha, COALESCE(cliente_id, 1),
+         COALESCE(estado_sri, 'NO_APLICA'),
+         autorizacion_sri, clave_acceso, total, subtotal_sin_iva, subtotal_con_iva, iva,
+         COALESCE(metodo_reembolso, 'EFECTIVO'),
+         COALESCE(monto_efectivo_devuelto, 0),
+         COALESCE(monto_transfer_devuelto, 0),
+         COALESCE(monto_credito_devuelto, 0)
+         FROM notas_credito WHERE id = ?1",
+        rusqlite::params![nc_id],
+        |row| Ok((
+            row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?, row.get::<_, i64>(4)?, row.get::<_, String>(5)?,
+            row.get::<_, Option<String>>(6)?, row.get::<_, Option<String>>(7)?,
+            row.get::<_, f64>(8)?, row.get::<_, f64>(9)?, row.get::<_, f64>(10)?,
+            row.get::<_, f64>(11)?, row.get::<_, String>(12)?, row.get::<_, f64>(13)?,
+            row.get::<_, f64>(14)?, row.get::<_, f64>(15)?,
+        )),
+    ).map_err(|_| "Nota de crédito no encontrada".to_string())?;
+
+    let venta_fake = crate::models::Venta {
+        id: Some(nc_id),
+        numero: nc_numero.clone(),
+        cliente_id: Some(nc_cliente_id),
+        fecha: Some(nc_fecha.clone()),
+        subtotal_sin_iva: nc_subtotal_sin_iva,
+        subtotal_con_iva: nc_subtotal_con_iva,
+        descuento: 0.0,
+        iva: nc_iva,
+        total: nc_total,
+        forma_pago: nc_metodo_reembolso.clone(),
+        monto_recibido: nc_total,
+        cambio: 0.0,
+        estado: "COMPLETADA".to_string(),
+        tipo_documento: "NOTA_CREDITO".to_string(),
+        estado_sri: nc_estado_sri,
+        autorizacion_sri: nc_autorizacion,
+        clave_acceso: nc_clave,
+        observacion: Some(format!(
+            "DEVOLUCION — Motivo: {} | Reembolsado: efectivo ${:.2} / transfer ${:.2} / credito ${:.2}",
+            nc_motivo, nc_efectivo, nc_transfer, nc_credito
+        )),
+        numero_factura: None,
+        establecimiento: None, punto_emision: None,
+        banco_id: None, referencia_pago: None, banco_nombre: None,
+        comprobante_imagen: None, caja_id: None, cliente_nombre: None,
+        tipo_estado: None,
+        guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
+        anulada: None,
+    };
+
+    let mut stmt = conn.prepare(
+        "SELECT d.id, d.nota_credito_id, d.producto_id, p.nombre, d.cantidad,
+         d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal
+         FROM nota_credito_detalles d
+         JOIN productos p ON d.producto_id = p.id
+         WHERE d.nota_credito_id = ?1"
+    ).map_err(|e| e.to_string())?;
+
+    let detalles: Vec<crate::models::VentaDetalle> = stmt.query_map(
+        rusqlite::params![nc_id],
+        |row| Ok(crate::models::VentaDetalle {
+            id: Some(row.get(0)?),
+            venta_id: Some(row.get(1)?),
+            producto_id: row.get(2)?,
+            nombre_producto: Some(row.get(3)?),
+            cantidad: row.get(4)?,
+            precio_unitario: row.get(5)?,
+            descuento: row.get(6)?,
+            iva_porcentaje: row.get(7)?,
+            subtotal: row.get(8)?,
+            info_adicional: None, unidad_id: None, unidad_nombre: None,
+            factor_unidad: None, lote_id: None, combo_seleccion: None,
+        })
+    ).map_err(|e| e.to_string())?
+     .collect::<Result<Vec<_>, _>>()
+     .map_err(|e| e.to_string())?;
+
+    let cliente_nombre: Option<String> = conn.query_row(
+        "SELECT nombre FROM clientes WHERE id = ?1",
+        rusqlite::params![nc_cliente_id], |row| row.get(0),
+    ).ok();
+
+    let mut cfg_stmt = conn.prepare("SELECT key, value FROM config")
+        .map_err(|e| e.to_string())?;
+    let config: std::collections::HashMap<String, String> = cfg_stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let venta_completa = crate::models::VentaCompleta {
+        venta: venta_fake, detalles, cliente_nombre,
+    };
+
+    let ticket_data = crate::printing::generar_ticket(&venta_completa, &config);
+
+    let impresora = config.get("impresora").map(|s| s.to_string()).unwrap_or_default();
+    if impresora.is_empty() {
+        return Err("No hay impresora térmica configurada. Use 'Imprimir PDF' en su lugar.".to_string());
+    }
+
+    crate::printing::imprimir_raw_windows(&impresora, &ticket_data)?;
+    Ok("Nota de crédito impresa correctamente".to_string())
+}

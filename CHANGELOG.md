@@ -6,6 +6,79 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.62 — 2026-05-05 🐛📄 STABLE
+**Fix crítico Notas de Crédito + vista detalle + impresión universal + UX anti-fuga.**
+
+Soluciona brechas críticas detectadas en auditoría del flujo de devoluciones / NC.
+
+### 🔥 Fix crítico: NC SRI ahora afecta caja correctamente
+
+**Problema**: cuando se hacía una NC SRI sobre una venta que se cobró en EFECTIVO, el sistema NO descontaba el dinero devuelto del `monto_esperado` de caja. Resultado: cierres de caja silenciosamente descuadrados por el monto reembolsado. Bug crítico que afectaba TODOS los clientes desde la primera versión.
+
+**Fix**: extraje la lógica de "calcular reembolso + crear retiro automático" en helper compartido `calcular_y_aplicar_reembolso()`. Ahora tanto `registrar_nota_credito` (SRI) como `crear_devolucion_interna` la usan idéntico:
+- Lee `forma_pago` original (incluido MIXTO con desglose proporcional desde `pagos_venta`)
+- Calcula desglose: efectivo / transferencia / crédito a devolver
+- Si hay efectivo y caja abierta → crea `retiro_caja` con motivo "Devolución NC X — efectivo a cliente"
+- Resta `monto_esperado` para mantener cierre cuadrado
+
+### 💾 Persistencia del reembolso (auditoría futura)
+
+**Problema**: el desglose calculado se mostraba al cajero pero NO se guardaba en BD. Si volvías a buscar la NC mañana, no sabías cómo se devolvió el dinero.
+
+**Fix**: nuevas columnas en `notas_credito` (migración SQL idempotente):
+- `tipo_devolucion` (`'PARCIAL'` | `'TOTAL'`)
+- `monto_efectivo_devuelto`, `monto_transfer_devuelto`, `monto_credito_devuelto`
+- `metodo_reembolso` (`'EFECTIVO'` | `'TRANSFER'` | `'CREDITO'` | `'MIXTO'`)
+- `retiro_caja_id` (FK al retiro automático generado)
+
+NCs antiguas (creadas antes de v2.3.62) muestran "Sin información de reembolso registrada" — sin afectar nada existente.
+
+### 👁 Vista detalle de NC (nueva)
+
+**Antes**: al hacer click en una NC del listado, no abría nada. Solo botones SRI/XML/RIDE. No podías ver qué items se devolvieron sin abrir el PDF.
+
+**Ahora**: nuevo botón **👁** en cada fila → abre `ModalDetalleNc`:
+- Header con número, motivo, fecha, cliente, factura original, badge de estado SRI
+- Tabla de items devueltos con cantidades, precios y subtotales
+- **Sección "💵 Reembolso al cliente"** con desglose visual (3 cards: Efectivo / Transfer / Crédito)
+- Indicador si se generó retiro automático de caja (#)
+- Aviso si transferencia: "el reembolso lo realiza admin manualmente desde su app bancaria"
+- Botones **🖨 Térmica** y **📄 PDF** para imprimir
+
+### 🖨 Impresión universal de NC
+
+**Antes**: el botón RIDE PDF solo aparecía para NC SRI autorizadas. Las devoluciones internas NO tenían forma de imprimir comprobante físico.
+
+**Ahora**:
+- Nuevo comando `imprimir_ticket_nc(nc_id)` → ESC/POS térmica para CUALQUIER NC
+- Botón 📄 PDF disponible para autorizadas Y devoluciones internas
+- El cliente siempre sale con comprobante físico
+
+### 🔒 UX fix anti-fuga: aviso al admin cuando el modo está activo
+
+**Problema reportado**: admin activa el toggle "Ocultar monto esperado a cajeros", abre Caja, ve el monto esperado y piensa "no funciona".
+
+**Fix**: ahora cuando el modo anti-fuga está activo y el admin abre Caja, aparece un banner azul punteado:
+> 🔒 **Modo anti-fuga ACTIVO** — Los cajeros NO ven este desglose. Vos sí (admin) para auditoría.
+
+### Cambios técnicos
+- `src-tauri/src/db/mod.rs`: 6 ALTER TABLE notas_credito (idempotentes con `.ok()`)
+- `src-tauri/src/commands/ventas.rs`:
+  - Nueva función helper `calcular_y_aplicar_reembolso()` (lógica compartida NC SRI + interna)
+  - `registrar_nota_credito` ahora aplica el helper (fix crítico de caja)
+  - `crear_devolucion_interna` refactorizada para usar el helper (sin duplicación)
+  - Ambas persisten desglose en columnas nuevas
+  - Nuevo `obtener_nota_credito(nc_id)` con header + items + datos venta original + reembolso
+  - `listar_notas_credito` retorna también el desglose para mostrar en listado
+- `src-tauri/src/commands/impresion.rs`: nuevo `imprimir_ticket_nc()` que reutiliza `printing::generar_ticket` adaptando NC a struct Venta con tipo_documento='NOTA_CREDITO'
+- `src-tauri/src/lib.rs`: registrados nuevos comandos
+- `src/services/api.ts`: wrappers `obtenerNotaCredito`, `imprimirTicketNc`
+- `src/components/ModalDetalleNc.tsx` (nuevo, ~280 líneas): vista completa de detalle
+- `src/pages/VentasDia.tsx`: state `verDetalleNcId`, botón 👁 en cada fila, botón PDF disponible para devoluciones internas
+- `src/pages/CajaPage.tsx`: banner aviso anti-fuga visible al admin cuando el toggle está activo
+
+Verificado: `cargo check` OK, `tsc --noEmit` EXITCODE=0.
+
 ## v2.3.61 — 2026-05-05 ✨ STABLE
 **Fase 2 polish premium**: dashboard rediseñado + sistema de diseño consistente.
 

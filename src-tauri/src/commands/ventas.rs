@@ -1076,6 +1076,105 @@ pub fn listar_notas_credito_sesion_caja(
 
 // --- Notas de Crédito ---
 
+/// Resultado del cálculo + aplicación del reembolso de una NC/devolución.
+/// Lo usan tanto `registrar_nota_credito` (SRI) como `crear_devolucion_interna`
+/// para mantener una sola fuente de verdad sobre cómo se reembolsa el dinero
+/// y cómo afecta la caja.
+struct ReembolsoResultado {
+    monto_efectivo: f64,
+    monto_transfer: f64,
+    monto_credito: f64,
+    metodo_reembolso: String, // 'EFECTIVO' | 'TRANSFER' | 'CREDITO' | 'MIXTO'
+    retiro_caja_id: Option<i64>,
+}
+
+/// Calcula el desglose del reembolso (efectivo/transfer/crédito) según la
+/// forma de pago original de la venta, y si hay efectivo a devolver crea un
+/// retiro automático en la caja abierta para mantener el cuadre.
+///
+/// Es la lógica COMPARTIDA entre NC SRI y devolución interna — antes solo la
+/// devolución interna lo hacía, lo cual descuadraba la caja al hacer NC SRI
+/// sobre ventas en efectivo (bug crítico v2.3.61 y anteriores).
+fn calcular_y_aplicar_reembolso(
+    conn: &rusqlite::Connection,
+    venta_id: i64,
+    venta_forma_pago: &str,
+    venta_total: f64,
+    total_nc: f64,
+    nc_numero: &str,
+    usuario_nombre: &str,
+    usuario_id: i64,
+) -> ReembolsoResultado {
+    let proporcion = if venta_total > 0.01 { total_nc / venta_total } else { 1.0 };
+
+    let (efectivo, transfer, credito) = if venta_forma_pago == "MIXTO" {
+        // Sumar por forma desde pagos_venta y aplicar proporcion devuelta
+        let efe: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+             WHERE venta_id = ?1 AND UPPER(forma_pago) = 'EFECTIVO'",
+            rusqlite::params![venta_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        let tra: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+             WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')",
+            rusqlite::params![venta_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        let cre: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
+             WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('CREDITO','FIADO')",
+            rusqlite::params![venta_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        (efe * proporcion, tra * proporcion, cre * proporcion)
+    } else {
+        match venta_forma_pago.to_uppercase().as_str() {
+            "EFECTIVO" => (total_nc, 0.0, 0.0),
+            "TRANSFER" | "TRANSFERENCIA" => (0.0, total_nc, 0.0),
+            "CREDITO" | "FIADO" => (0.0, 0.0, total_nc),
+            _ => (total_nc, 0.0, 0.0),
+        }
+    };
+
+    // Determinar método de reembolso textual
+    let metodo = match (efectivo > 0.01, transfer > 0.01, credito > 0.01) {
+        (true, false, false) => "EFECTIVO".to_string(),
+        (false, true, false) => "TRANSFER".to_string(),
+        (false, false, true) => "CREDITO".to_string(),
+        _ => "MIXTO".to_string(),
+    };
+
+    // Si hay efectivo, crear retiro_caja automático para que la caja CUADRE.
+    // Si no hay caja abierta, igual seguimos — la NC se persiste, el efectivo
+    // simplemente no se compensa automáticamente (admin ajusta manual).
+    let mut retiro_id: Option<i64> = None;
+    if efectivo > 0.01 {
+        if let Ok(caja_id) = conn.query_row(
+            "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1",
+            [], |r| r.get::<_, i64>(0),
+        ) {
+            let motivo_retiro = format!("Devolución NC {} — efectivo a cliente", nc_numero);
+            if conn.execute(
+                "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado)
+                 VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, 'SIN_DEPOSITO')",
+                rusqlite::params![caja_id, efectivo, motivo_retiro, usuario_nombre, usuario_id],
+            ).is_ok() {
+                retiro_id = Some(conn.last_insert_rowid());
+                let _ = conn.execute(
+                    "UPDATE caja SET monto_esperado = monto_esperado - ?1 WHERE id = ?2",
+                    rusqlite::params![efectivo, caja_id],
+                );
+            }
+        }
+    }
+
+    ReembolsoResultado {
+        monto_efectivo: efectivo,
+        monto_transfer: transfer,
+        monto_credito: credito,
+        metodo_reembolso: metodo,
+        retiro_caja_id: retiro_id,
+    }
+}
+
 #[tauri::command]
 pub fn registrar_nota_credito(
     db: State<Database>,
@@ -1105,12 +1204,13 @@ pub fn registrar_nota_credito(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Validar que la venta original sea FACTURA AUTORIZADA
-    let (factura_numero, cliente_id): (String, i64) = conn
+    // Validar que la venta original sea FACTURA AUTORIZADA + leer datos para reembolso
+    let (factura_numero, cliente_id, venta_total, venta_forma_pago): (String, i64, f64, String) = conn
         .query_row(
-            "SELECT numero, cliente_id FROM ventas WHERE id = ?1 AND tipo_documento = 'FACTURA' AND estado_sri = 'AUTORIZADA' AND anulada = 0",
+            "SELECT numero, COALESCE(cliente_id, 1), total, COALESCE(forma_pago, 'EFECTIVO')
+             FROM ventas WHERE id = ?1 AND tipo_documento = 'FACTURA' AND estado_sri = 'AUTORIZADA' AND anulada = 0",
             rusqlite::params![nota.venta_id],
-            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1))),
+            |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(1), row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| "La venta no existe, no es factura o no está autorizada por el SRI".to_string())?;
 
@@ -1260,6 +1360,39 @@ pub fn registrar_nota_credito(
         rusqlite::params![establecimiento, punto_emision],
     )
     .map_err(|e| e.to_string())?;
+
+    // === Reembolso (v2.3.62 fix critico) ===
+    // Antes: NC SRI no tocaba caja → cierres descuadrados al hacer NC sobre venta efectivo.
+    // Ahora: usamos el mismo helper que devolución interna para calcular desglose
+    // efectivo/transfer/credito y crear retiro_caja automatico si aplica.
+    let reembolso = calcular_y_aplicar_reembolso(
+        &conn, nota.venta_id, &venta_forma_pago, venta_total, total,
+        &numero, &usuario_nombre, usuario_id,
+    );
+
+    // Determinar tipo (PARCIAL si total NC < total venta, TOTAL si igual)
+    let tipo_devolucion = if (total - venta_total).abs() < 0.01 { "TOTAL" } else { "PARCIAL" };
+
+    // Persistir desglose de reembolso en notas_credito (v2.3.62)
+    let _ = conn.execute(
+        "UPDATE notas_credito SET
+            tipo_devolucion = ?1,
+            monto_efectivo_devuelto = ?2,
+            monto_transfer_devuelto = ?3,
+            monto_credito_devuelto = ?4,
+            retiro_caja_id = ?5,
+            metodo_reembolso = ?6
+         WHERE id = ?7",
+        rusqlite::params![
+            tipo_devolucion,
+            reembolso.monto_efectivo,
+            reembolso.monto_transfer,
+            reembolso.monto_credito,
+            reembolso.retiro_caja_id,
+            reembolso.metodo_reembolso,
+            nc_id,
+        ],
+    );
 
     Ok(NotaCreditoInfo {
         id: nc_id,
@@ -1503,81 +1636,43 @@ pub fn crear_devolucion_interna(
     )
     .map_err(|e| e.to_string())?;
 
-    // === Devolución del dinero al cliente — efecto sobre caja según forma_pago ===
-    // Para que el cierre de caja CUADRE despues de una devolucion, calculamos cuanto
-    // efectivo realmente sale de la caja (porcion EFECTIVO de la venta) y registramos
-    // un retiro automatico con motivo claro. Para TRANSFER no tocamos caja (admin
-    // hace la devolucion por su app del banco).
-    //
-    // Casos:
-    //   forma_pago='EFECTIVO' o sin pagos_venta: devolucion EFECTIVO completa
-    //   forma_pago='MIXTO': leer pagos_venta, devolver proporcional al EFECTIVO
-    //   forma_pago='TRANSFER' / 'CREDITO': no afecta caja (mensaje informativo)
-    //
-    // Calcular proporcion EFECTIVO si MIXTO. Si no, asumir 100% del forma_pago.
-    let (monto_efectivo_devolver, monto_transfer_devolver, monto_credito_devolver) = {
-        let venta_total: f64 = conn.query_row(
-            "SELECT total FROM ventas WHERE id = ?1",
-            rusqlite::params![venta_id], |r| r.get(0),
-        ).unwrap_or(0.0);
-        let proporcion_devuelta = if venta_total > 0.01 { total / venta_total } else { 1.0 };
+    // === Devolución del dinero al cliente — efecto sobre caja segun forma_pago ===
+    // Refactorizado v2.3.62: usa helper compartido `calcular_y_aplicar_reembolso`
+    // que ahora tambien usa registrar_nota_credito (SRI). Misma logica, sin duplicar.
+    let venta_total_real: f64 = conn.query_row(
+        "SELECT total FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id], |r| r.get(0),
+    ).unwrap_or(0.0);
 
-        if venta_forma_pago == "MIXTO" {
-            // Sumar por forma desde pagos_venta y aplicar proporcion
-            let efe: f64 = conn.query_row(
-                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
-                 WHERE venta_id = ?1 AND UPPER(forma_pago) = 'EFECTIVO'",
-                rusqlite::params![venta_id], |r| r.get(0),
-            ).unwrap_or(0.0);
-            let tra: f64 = conn.query_row(
-                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
-                 WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')",
-                rusqlite::params![venta_id], |r| r.get(0),
-            ).unwrap_or(0.0);
-            let cre: f64 = conn.query_row(
-                "SELECT COALESCE(SUM(monto), 0) FROM pagos_venta
-                 WHERE venta_id = ?1 AND UPPER(forma_pago) IN ('CREDITO','FIADO')",
-                rusqlite::params![venta_id], |r| r.get(0),
-            ).unwrap_or(0.0);
-            (efe * proporcion_devuelta, tra * proporcion_devuelta, cre * proporcion_devuelta)
-        } else {
-            match venta_forma_pago.to_uppercase().as_str() {
-                "EFECTIVO" => (total, 0.0, 0.0),
-                "TRANSFER" | "TRANSFERENCIA" => (0.0, total, 0.0),
-                "CREDITO" | "FIADO" => (0.0, 0.0, total),
-                _ => (total, 0.0, 0.0), // fallback: tratar como efectivo
-            }
-        }
-    };
+    let reembolso = calcular_y_aplicar_reembolso(
+        &conn, venta_id, &venta_forma_pago, venta_total_real, total,
+        &numero, &usuario_nombre, usuario_id,
+    );
 
-    // Si hay efectivo devuelto, registrar retiro automatico para que la caja cuadre
-    let mut retiro_creado: Option<i64> = None;
-    if monto_efectivo_devolver > 0.01 {
-        // Buscar caja abierta — si no hay, no creamos retiro pero igual seguimos
-        // (la devolucion se registro bien, el efectivo simplemente no se compensa
-        // automaticamente, y al abrir nueva caja se podria ajustar).
-        if let Ok(caja_id) = conn.query_row(
-            "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1",
-            [], |r| r.get::<_, i64>(0),
-        ) {
-            let motivo_retiro = format!("Devolución NC {} — efectivo a cliente", numero);
-            // Insertamos directo sin pasar por la validacion de "no permitir negativo",
-            // porque la devolucion es un evento real que ya paso. Si la caja queda
-            // negativa, es responsabilidad del admin hacer ajuste manual despues.
-            if conn.execute(
-                "INSERT INTO retiros_caja (caja_id, monto, motivo, banco_id, referencia, usuario, usuario_id, estado)
-                 VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, 'SIN_DEPOSITO')",
-                rusqlite::params![caja_id, monto_efectivo_devolver, motivo_retiro, usuario_nombre, usuario_id],
-            ).is_ok() {
-                retiro_creado = Some(conn.last_insert_rowid());
-                // Actualizar monto_esperado stored para consistencia inmediata
-                let _ = conn.execute(
-                    "UPDATE caja SET monto_esperado = monto_esperado - ?1 WHERE id = ?2",
-                    rusqlite::params![monto_efectivo_devolver, caja_id],
-                );
-            }
-        }
-    }
+    // Determinar tipo (PARCIAL si NC < venta, TOTAL si igual)
+    let tipo_devolucion = if (total - venta_total_real).abs() < 0.01 { "TOTAL" } else { "PARCIAL" };
+
+    // Persistir desglose de reembolso en notas_credito (v2.3.62)
+    // Antes esta info se perdia despues de cerrar la app.
+    let _ = conn.execute(
+        "UPDATE notas_credito SET
+            tipo_devolucion = ?1,
+            monto_efectivo_devuelto = ?2,
+            monto_transfer_devuelto = ?3,
+            monto_credito_devuelto = ?4,
+            retiro_caja_id = ?5,
+            metodo_reembolso = ?6
+         WHERE id = ?7",
+        rusqlite::params![
+            tipo_devolucion,
+            reembolso.monto_efectivo,
+            reembolso.monto_transfer,
+            reembolso.monto_credito,
+            reembolso.retiro_caja_id,
+            reembolso.metodo_reembolso,
+            nc_id,
+        ],
+    );
 
     Ok(serde_json::json!({
         "id": nc_id,
@@ -1588,10 +1683,12 @@ pub fn crear_devolucion_interna(
         "total": total,
         "estado_sri": "NO_APLICA",
         // Info para el frontend: que pasar al usuario segun forma_pago
-        "monto_efectivo_devuelto": monto_efectivo_devolver,
-        "monto_transfer_devuelto": monto_transfer_devolver,
-        "monto_credito_devuelto": monto_credito_devolver,
-        "retiro_caja_creado_id": retiro_creado,
+        "monto_efectivo_devuelto": reembolso.monto_efectivo,
+        "monto_transfer_devuelto": reembolso.monto_transfer,
+        "monto_credito_devuelto": reembolso.monto_credito,
+        "retiro_caja_creado_id": reembolso.retiro_caja_id,
+        "metodo_reembolso": reembolso.metodo_reembolso,
+        "tipo_devolucion": tipo_devolucion,
         "venta_forma_pago": venta_forma_pago,
     }))
 }
@@ -1646,16 +1743,24 @@ pub fn listar_notas_credito(
 ) -> Result<Vec<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // v2.3.62: incluimos columnas nuevas (tipo_devolucion, montos reembolso, metodo)
+    // para que el listado pueda mostrar la info de reembolso sin tener que abrir cada NC
     let base_query = "SELECT nc.id, nc.numero, nc.venta_id, nc.motivo, nc.total, nc.estado_sri,
              nc.fecha, nc.clave_acceso, nc.autorizacion_sri, nc.numero_factura_nc,
              COALESCE(v.numero_factura, v.numero) as venta_numero,
-             COALESCE(cl.nombre, 'CONSUMIDOR FINAL') as cliente_nombre
+             COALESCE(cl.nombre, 'CONSUMIDOR FINAL') as cliente_nombre,
+             COALESCE(nc.tipo_devolucion, 'TOTAL'),
+             COALESCE(nc.monto_efectivo_devuelto, 0),
+             COALESCE(nc.monto_transfer_devuelto, 0),
+             COALESCE(nc.monto_credito_devuelto, 0),
+             COALESCE(nc.metodo_reembolso, 'EFECTIVO'),
+             nc.retiro_caja_id
              FROM notas_credito nc
              LEFT JOIN ventas v ON nc.venta_id = v.id
              LEFT JOIN clientes cl ON nc.cliente_id = cl.id
              WHERE date(nc.fecha) >= date(?1) AND date(nc.fecha) <= date(?2)";
 
-    let query = if let Some(ref est) = estado {
+    let query = if let Some(ref _est) = estado {
         format!("{} AND nc.estado_sri = ?3 ORDER BY nc.fecha DESC", base_query)
     } else {
         format!("{} ORDER BY nc.fecha DESC", base_query)
@@ -1678,6 +1783,12 @@ pub fn listar_notas_credito(
                 "numero_factura_nc": row.get::<_, Option<String>>(9)?,
                 "venta_numero": row.get::<_, String>(10)?,
                 "cliente_nombre": row.get::<_, String>(11)?,
+                "tipo_devolucion": row.get::<_, String>(12)?,
+                "monto_efectivo_devuelto": row.get::<_, f64>(13)?,
+                "monto_transfer_devuelto": row.get::<_, f64>(14)?,
+                "monto_credito_devuelto": row.get::<_, f64>(15)?,
+                "metodo_reembolso": row.get::<_, String>(16)?,
+                "retiro_caja_id": row.get::<_, Option<i64>>(17)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -1698,6 +1809,12 @@ pub fn listar_notas_credito(
                 "numero_factura_nc": row.get::<_, Option<String>>(9)?,
                 "venta_numero": row.get::<_, String>(10)?,
                 "cliente_nombre": row.get::<_, String>(11)?,
+                "tipo_devolucion": row.get::<_, String>(12)?,
+                "monto_efectivo_devuelto": row.get::<_, f64>(13)?,
+                "monto_transfer_devuelto": row.get::<_, f64>(14)?,
+                "monto_credito_devuelto": row.get::<_, f64>(15)?,
+                "metodo_reembolso": row.get::<_, String>(16)?,
+                "retiro_caja_id": row.get::<_, Option<i64>>(17)?,
             }))
         })
         .map_err(|e| e.to_string())?
@@ -2934,3 +3051,111 @@ pub fn anular_venta(
 
     Ok(())
 }
+
+// ─── Detalle completo de NC (v2.3.62) ────────────────────────────────────
+// Para que el modal de detalle pueda mostrar todo: header + items + venta original
+// + desglose de reembolso + retiro_caja vinculado.
+
+#[tauri::command]
+pub fn obtener_nota_credito(
+    db: State<Database>,
+    nc_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // 1. Header de la NC con TODOS los campos nuevos
+    let header: serde_json::Value = conn
+        .query_row(
+            "SELECT nc.id, nc.numero, nc.venta_id, nc.cliente_id, nc.motivo, nc.fecha,
+                    nc.subtotal_sin_iva, nc.subtotal_con_iva, nc.iva, nc.total,
+                    nc.estado_sri, nc.autorizacion_sri, nc.clave_acceso, nc.numero_factura_nc,
+                    nc.usuario, nc.establecimiento, nc.punto_emision,
+                    COALESCE(nc.tipo_devolucion, 'TOTAL'),
+                    COALESCE(nc.monto_efectivo_devuelto, 0),
+                    COALESCE(nc.monto_transfer_devuelto, 0),
+                    COALESCE(nc.monto_credito_devuelto, 0),
+                    COALESCE(nc.metodo_reembolso, 'EFECTIVO'),
+                    nc.retiro_caja_id,
+                    COALESCE(cl.nombre, 'CONSUMIDOR FINAL') as cliente_nombre,
+                    COALESCE(cl.identificacion, '') as cliente_identificacion,
+                    COALESCE(v.numero_factura, v.numero) as venta_numero,
+                    COALESCE(v.forma_pago, 'EFECTIVO') as venta_forma_pago,
+                    v.fecha as venta_fecha,
+                    v.total as venta_total,
+                    v.tipo_documento as venta_tipo
+             FROM notas_credito nc
+             LEFT JOIN clientes cl ON nc.cliente_id = cl.id
+             LEFT JOIN ventas v ON nc.venta_id = v.id
+             WHERE nc.id = ?1",
+            rusqlite::params![nc_id],
+            |row| {
+                Ok(serde_json::json!({
+                    "id": row.get::<_, i64>(0)?,
+                    "numero": row.get::<_, String>(1)?,
+                    "venta_id": row.get::<_, i64>(2)?,
+                    "cliente_id": row.get::<_, Option<i64>>(3)?,
+                    "motivo": row.get::<_, String>(4)?,
+                    "fecha": row.get::<_, String>(5)?,
+                    "subtotal_sin_iva": row.get::<_, f64>(6)?,
+                    "subtotal_con_iva": row.get::<_, f64>(7)?,
+                    "iva": row.get::<_, f64>(8)?,
+                    "total": row.get::<_, f64>(9)?,
+                    "estado_sri": row.get::<_, String>(10).unwrap_or_else(|_| "NO_APLICA".to_string()),
+                    "autorizacion_sri": row.get::<_, Option<String>>(11)?,
+                    "clave_acceso": row.get::<_, Option<String>>(12)?,
+                    "numero_factura_nc": row.get::<_, Option<String>>(13)?,
+                    "usuario": row.get::<_, Option<String>>(14)?,
+                    "establecimiento": row.get::<_, Option<String>>(15)?,
+                    "punto_emision": row.get::<_, Option<String>>(16)?,
+                    "tipo_devolucion": row.get::<_, String>(17)?,
+                    "monto_efectivo_devuelto": row.get::<_, f64>(18)?,
+                    "monto_transfer_devuelto": row.get::<_, f64>(19)?,
+                    "monto_credito_devuelto": row.get::<_, f64>(20)?,
+                    "metodo_reembolso": row.get::<_, String>(21)?,
+                    "retiro_caja_id": row.get::<_, Option<i64>>(22)?,
+                    "cliente_nombre": row.get::<_, String>(23)?,
+                    "cliente_identificacion": row.get::<_, String>(24)?,
+                    "venta_numero": row.get::<_, String>(25)?,
+                    "venta_forma_pago": row.get::<_, String>(26)?,
+                    "venta_fecha": row.get::<_, Option<String>>(27)?,
+                    "venta_total": row.get::<_, Option<f64>>(28)?,
+                    "venta_tipo": row.get::<_, Option<String>>(29)?,
+                }))
+            },
+        )
+        .map_err(|_| "Nota de crédito no encontrada".to_string())?;
+
+    // 2. Items con nombre de producto
+    let mut stmt = conn
+        .prepare(
+            "SELECT d.id, d.producto_id, p.nombre, d.cantidad, d.precio_unitario,
+                    d.descuento, d.iva_porcentaje, d.subtotal
+             FROM nota_credito_detalles d
+             JOIN productos p ON d.producto_id = p.id
+             WHERE d.nota_credito_id = ?1
+             ORDER BY d.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let items: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params![nc_id], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "producto_id": row.get::<_, i64>(1)?,
+                "nombre_producto": row.get::<_, String>(2)?,
+                "cantidad": row.get::<_, f64>(3)?,
+                "precio_unitario": row.get::<_, f64>(4)?,
+                "descuento": row.get::<_, f64>(5)?,
+                "iva_porcentaje": row.get::<_, f64>(6)?,
+                "subtotal": row.get::<_, f64>(7)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "header": header,
+        "items": items,
+    }))
+}
+

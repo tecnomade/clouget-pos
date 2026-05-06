@@ -7,6 +7,7 @@ import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import ModalNotaCredito from "../components/ModalNotaCredito";
+import ModalDetalleNc from "../components/ModalDetalleNc";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { ResumenDiario, ResumenPeriodo, ProductoMasVendido, AlertaStock, VentaDiaria } from "../services/api";
 import type { Venta, VentaCompleta, NotaCreditoInfo } from "../types";
@@ -61,6 +62,8 @@ export default function VentasDia() {
   const [notasCredito, setNotasCredito] = useState<NotaCreditoInfo[]>([]);
   const [ncVenta, setNcVenta] = useState<{ id: number; numero: string; esDevolucion?: boolean } | null>(null);
   const [reintentandoNcSri, setReintentandoNcSri] = useState<number | null>(null);
+  // v2.3.62: detalle de NC (cualquier estado SRI o devolución interna)
+  const [verDetalleNcId, setVerDetalleNcId] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
   const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
@@ -509,6 +512,17 @@ export default function VentasDia() {
                           </td>
                           <td>
                             <div className="flex gap-1">
+                              {/* v2.3.62: botón "Ver detalle" — disponible para CUALQUIER NC
+                                  (SRI o devolución interna). Antes no había forma de ver
+                                  los items devueltos sin abrir el RIDE PDF. */}
+                              <button className="btn btn-outline" style={{
+                                padding: "2px 6px", fontSize: 10,
+                                color: "var(--color-primary)", borderColor: "rgba(59,130,246,0.4)",
+                              }}
+                                title="Ver detalle: items, motivo, reembolso"
+                                onClick={() => setVerDetalleNcId(nc.id)}>
+                                👁
+                              </button>
                               {(nc.estado_sri === "PENDIENTE" || nc.estado_sri === "RECHAZADA") && (
                                 <button className="btn btn-outline" style={{
                                   padding: "2px 6px", fontSize: 10,
@@ -558,13 +572,15 @@ export default function VentasDia() {
                                   XML
                                 </button>
                               )}
-                              {nc.estado_sri === "AUTORIZADA" && (
+                              {/* v2.3.62: PDF disponible TAMBIÉN para devoluciones internas (NO_APLICA)
+                                  Antes solo para AUTORIZADA. Las devoluciones internas no tenían PDF. */}
+                              {(nc.estado_sri === "AUTORIZADA" || nc.estado_sri === "NO_APLICA") && (
                                 <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 10 }}
-                                  title="Imprimir RIDE NC (PDF A4)"
+                                  title={nc.estado_sri === "AUTORIZADA" ? "Imprimir RIDE NC (PDF A4)" : "Imprimir PDF de devolución interna"}
                                   onClick={() => generarRideNcPdf(nc.id)
-                                    .then(() => toastExito("RIDE NC abierto"))
-                                    .catch((e) => toastError("Error RIDE NC: " + e))}>
-                                  RIDE
+                                    .then(() => toastExito("PDF abierto"))
+                                    .catch((e) => toastError("Error PDF: " + e))}>
+                                  📄
                                 </button>
                               )}
                             </div>
@@ -1013,6 +1029,14 @@ export default function VentasDia() {
           toastExito={toastExito}
           toastError={toastError}
           toastWarning={toastWarning}
+        />
+      )}
+
+      {/* v2.3.62: Modal de detalle de NC ya creada — items, motivo, reembolso, imprimir */}
+      {verDetalleNcId !== null && (
+        <ModalDetalleNc
+          ncId={verDetalleNcId}
+          onCerrar={() => setVerDetalleNcId(null)}
         />
       )}
 

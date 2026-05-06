@@ -94,6 +94,41 @@ impl Database {
         )
         .ok();
 
+        // Migración: trazabilidad de reembolso en notas_credito (v2.3.62)
+        // Antes solo se calculaba el desglose efectivo/transfer/credito y se mostraba
+        // al usuario, pero no se persistía. Si volvías a buscar la NC mañana no sabías
+        // cómo se devolvió el dinero. Estas columnas guardan esa info para auditoría.
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN tipo_devolucion TEXT NOT NULL DEFAULT 'TOTAL'",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN monto_efectivo_devuelto REAL NOT NULL DEFAULT 0",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN monto_transfer_devuelto REAL NOT NULL DEFAULT 0",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN monto_credito_devuelto REAL NOT NULL DEFAULT 0",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN retiro_caja_id INTEGER",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE notas_credito ADD COLUMN metodo_reembolso TEXT NOT NULL DEFAULT 'EFECTIVO'",
+            [],
+        )
+        .ok();
+
         // Migración: configurar email service si está vacío
         conn.execute(
             "UPDATE config SET value = 'https://email.clouget.com' WHERE key = 'email_service_url' AND value = ''",

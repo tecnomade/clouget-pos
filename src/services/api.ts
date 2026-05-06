@@ -913,6 +913,16 @@ export async function listarNotasCredito(fechaDesde: string, fechaHasta: string,
   return smartInvoke("listar_notas_credito", { fechaDesde, fechaHasta, estado: estado ?? null });
 }
 
+/** Detalle completo de una NC: header + items + datos venta original + reembolso. */
+export async function obtenerNotaCredito(ncId: number): Promise<{ header: any; items: any[] }> {
+  return smartInvoke("obtener_nota_credito", { ncId });
+}
+
+/** Imprime el ticket ESC/POS de una NC (SRI o devolución interna) en térmica. */
+export async function imprimirTicketNc(ncId: number): Promise<string> {
+  return smartInvoke("imprimir_ticket_nc", { ncId });
+}
+
 // --- Ventas por sesión de caja (para cajeros) ---
 
 export async function listarVentasSesionCaja(): Promise<Venta[]> {

@@ -176,6 +176,7 @@ pub fn run() {
             commands::ventas::listar_ventas_dia,
             commands::ventas::obtener_venta,
             commands::ventas::registrar_nota_credito,
+            commands::ventas::obtener_nota_credito,
             commands::ventas::crear_devolucion_interna,
             commands::ventas::anular_venta,
             commands::ventas::listar_notas_credito_dia,
@@ -232,6 +233,7 @@ pub fn run() {
             commands::impresion::listar_impresoras_cached,
             commands::impresion::refrescar_impresoras,
             commands::impresion::imprimir_guia_remision_pdf,
+            commands::impresion::imprimir_ticket_nc,
             // Reportes
             commands::reportes::resumen_diario,
             commands::reportes::productos_mas_vendidos_reporte,
