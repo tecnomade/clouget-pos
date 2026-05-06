@@ -7,6 +7,7 @@ import {
   alertasPagosVencidos, alertasCaducidad, contarTransferenciasPendientes,
 } from "../services/api";
 import { useSesion } from "../contexts/SesionContext";
+import ModalTransferenciasPendientes from "../components/ModalTransferenciasPendientes";
 import type { ResumenDiario, AlertaStock, VentaDiaria, ProductoMasVendido, UltimaVenta } from "../services/api";
 import type { Caja, ResumenCliente } from "../types";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -76,6 +77,8 @@ export default function DashboardPage() {
   const [caducidadVencidos, setCaducidadVencidos] = useState(0);
   const [caducidadPorVencer, setCaducidadPorVencer] = useState(0);
   const [transferenciasPendientes, setTransferenciasPendientes] = useState(0);
+  // v2.3.64: modal de diagnóstico transferencias
+  const [verModalTransferencias, setVerModalTransferencias] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [cajaViejaAbierta, setCajaViejaAbierta] = useState(false);
 
@@ -384,9 +387,16 @@ export default function DashboardPage() {
               Reemplaza "Acciones Rapidas" que duplicaba el sidebar. Solo se muestran las
               alertas con valor > 0 para no saturar. Si no hay nada → mensaje positivo. */}
           {(() => {
-            const alertas: { icon: string; texto: string; ruta: string; color: string; count: number }[] = [];
+            // v2.3.64: action puede ser navegar (ruta) o abrir modal (onClick)
+            const alertas: { icon: string; texto: string; ruta?: string; onClick?: () => void; color: string; count: number }[] = [];
             if (transferenciasPendientes > 0)
-              alertas.push({ icon: "🏦", texto: `${transferenciasPendientes} transferencia${transferenciasPendientes > 1 ? "s" : ""} por verificar`, ruta: "/movimientos-bancarios", color: "var(--color-primary)", count: transferenciasPendientes });
+              alertas.push({
+                icon: "🏦",
+                texto: `${transferenciasPendientes} transferencia${transferenciasPendientes > 1 ? "s" : ""} por verificar`,
+                onClick: () => setVerModalTransferencias(true),
+                color: "var(--color-primary)",
+                count: transferenciasPendientes,
+              });
             if (pagosVencidos.length > 0 && (esAdmin || tienePermiso("gestionar_compras")))
               alertas.push({ icon: "⏰", texto: `${pagosVencidos.length} pago${pagosVencidos.length > 1 ? "s" : ""} vencido${pagosVencidos.length > 1 ? "s" : ""} a proveedores`, ruta: "/pagar", color: "var(--color-danger)", count: pagosVencidos.length });
             if (fiadosPendientes > 0)
@@ -424,7 +434,10 @@ export default function DashboardPage() {
                     alertas.map((a, idx) => (
                       <button
                         key={idx}
-                        onClick={() => navigate(a.ruta)}
+                        onClick={() => {
+                          if (a.onClick) a.onClick();
+                          else if (a.ruta) navigate(a.ruta);
+                        }}
                         style={{
                           display: "flex", alignItems: "center", gap: 10,
                           padding: "10px 12px", background: "var(--color-surface)",
@@ -667,6 +680,19 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* v2.3.64: modal diagnóstico transferencias pendientes */}
+      {verModalTransferencias && (
+        <ModalTransferenciasPendientes
+          onCerrar={() => setVerModalTransferencias(false)}
+          onCambio={() => {
+            // Refrescar el contador después de forzar verificación
+            import("../services/api").then(({ contarTransferenciasPendientes }) => {
+              contarTransferenciasPendientes().then(setTransferenciasPendientes).catch(() => {});
+            });
+          }}
+        />
+      )}
     </>
   );
 }

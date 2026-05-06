@@ -636,19 +636,11 @@ export default function CajaPage() {
                 <span className="text-secondary">Monto inicial:</span>
                 <span className="font-bold" style={{ marginLeft: 8 }}>${cajaAbierta.monto_inicial.toFixed(2)}</span>
               </div>
-              {/* Modo anti-fuga (v2.3.63): toggle activo + NO admin → ocultar
-                  desglose. Admin SIEMPRE ve toda la info (no banner, no mensaje
-                  de ruido). Cajero ve mensaje neutral "Conteo a ciegas". */}
-              {ocultarParaCajero ? (
-                <div className="mb-4" style={{
-                  padding: "12px 14px", background: "rgba(245, 158, 11, 0.08)",
-                  borderRadius: 8, border: "1px solid rgba(245, 158, 11, 0.3)",
-                  fontSize: 12, color: "var(--color-text-secondary)",
-                }}>
-                  🔒 <strong>Conteo a ciegas</strong> — Ingresa el monto real contado en caja.
-                  El sistema verificará la diferencia.
-                </div>
-              ) : (
+              {/* Modo anti-fuga (v2.3.64): toggle activo + NO admin → simplemente
+                  ocultar desglose verde. Sin mensajes "Conteo a ciegas" ni nada
+                  que delate la feature al cajero (eso lo confunde y/o le da pistas).
+                  Admin SIEMPRE ve la info completa para auditoría. */}
+              {!ocultarParaCajero && (
               <div className="mb-4" style={{
                 padding: "10px 14px", background: "rgba(34, 197, 94, 0.1)", borderRadius: 8,
                 border: "1px solid rgba(34, 197, 94, 0.3)",
@@ -798,10 +790,16 @@ export default function CajaPage() {
               {/* Alerta de descuadre + motivo obligatorio.
                   Solo se muestra cuando el cajero ya escribio un monto (no aparece
                   por defecto al abrir la pantalla, asi no asusta al usuario nuevo
-                  haciendo creer que la caja esta descuadrada antes de contar). */}
+                  haciendo creer que la caja esta descuadrada antes de contar).
+                  v2.3.64: NO se muestra al cajero si modo anti-fuga activo
+                  (delataba el monto esperado — cajero deshonesto ajustaba hasta cuadrar). */}
               {(() => {
                 // Si el campo esta vacio (default), no mostrar nada todavia
                 if (montoReal.trim() === "") return null;
+                // ANTI-FUGA: cajero NUNCA ve el descuadre; sino podria ajustar
+                // el monto subiendo poco a poco hasta llegar al "exacto" y ocultar
+                // un faltante real.
+                if (ocultarParaCajero) return null;
                 const monto = parseFloat(montoReal) || 0;
                 const esperado = cajaAbierta.monto_esperado ?? 0;
                 const dif = monto - esperado;

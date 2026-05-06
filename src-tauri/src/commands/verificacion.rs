@@ -280,3 +280,112 @@ pub fn contar_transferencias_pendientes(db: State<Database>) -> Result<i64, Stri
     ).unwrap_or(0);
     Ok(from_ventas + from_pagos)
 }
+
+/// v2.3.64: detalle EXACTO de qué transferencias está contando el badge.
+/// Útil para diagnóstico cuando el usuario reporta "dice 1 pero ya verifiqué todas".
+/// Retorna lista con id, número, fecha, monto, origen (VENTA o PAGO_MIXTO) — sin
+/// filtro de fecha (ve TODO lo que el query de contar suma).
+#[tauri::command]
+pub fn detalle_transferencias_pendientes(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+
+    // De ventas (pago_estado='REGISTRADO')
+    let mut stmt = conn.prepare(
+        "SELECT v.id, v.numero, v.fecha, v.total, v.forma_pago,
+                COALESCE(c.nombre, 'CONSUMIDOR FINAL') as cliente_nombre,
+                COALESCE(v.pago_estado, 'NO_APLICA') as estado,
+                v.anulada
+         FROM ventas v
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE UPPER(v.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+           AND COALESCE(v.pago_estado, 'NO_APLICA') = 'REGISTRADO'
+         ORDER BY v.fecha DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt.query_map([], |row| Ok(serde_json::json!({
+        "origen": "VENTA",
+        "id": row.get::<_, i64>(0)?,
+        "numero": row.get::<_, String>(1)?,
+        "fecha": row.get::<_, String>(2)?,
+        "monto": row.get::<_, f64>(3)?,
+        "forma_pago": row.get::<_, String>(4)?,
+        "cliente": row.get::<_, String>(5)?,
+        "pago_estado": row.get::<_, String>(6)?,
+        "anulada": row.get::<_, i32>(7)?,
+    }))).map_err(|e| e.to_string())?;
+    for r in rows { if let Ok(v) = r { out.push(v); } }
+
+    // De pagos_venta (de ventas mixtas)
+    let mut stmt2 = conn.prepare(
+        "SELECT pv.id, v.numero, v.fecha, pv.monto, pv.forma_pago,
+                COALESCE(c.nombre, 'CONSUMIDOR FINAL') as cliente_nombre,
+                COALESCE(pv.pago_estado, 'NO_APLICA') as estado,
+                v.anulada, v.id as venta_id
+         FROM pagos_venta pv
+         JOIN ventas v ON v.id = pv.venta_id
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+           AND COALESCE(pv.pago_estado, 'NO_APLICA') = 'REGISTRADO'
+         ORDER BY v.fecha DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let rows2 = stmt2.query_map([], |row| Ok(serde_json::json!({
+        "origen": "PAGO_MIXTO",
+        "id": row.get::<_, i64>(0)?,
+        "numero": row.get::<_, String>(1)?,
+        "fecha": row.get::<_, String>(2)?,
+        "monto": row.get::<_, f64>(3)?,
+        "forma_pago": row.get::<_, String>(4)?,
+        "cliente": row.get::<_, String>(5)?,
+        "pago_estado": row.get::<_, String>(6)?,
+        "anulada": row.get::<_, i32>(7)?,
+        "venta_id": row.get::<_, i64>(8)?,
+    }))).map_err(|e| e.to_string())?;
+    for r in rows2 { if let Ok(v) = r { out.push(v); } }
+
+    Ok(out)
+}
+
+/// v2.3.64: marcar como VERIFICADA una transferencia específica que está
+/// "atrapada" en estado REGISTRADO. Útil cuando el cleanup automático no
+/// la pesca (p.ej. la venta padre está REGISTRADO también, no VERIFICADO).
+/// Solo admin. Sirve como "última opción" para limpiar el badge fantasma.
+#[tauri::command]
+pub fn forzar_marcar_transferencia_verificada(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    origen: String,  // "VENTA" o "PAGO_MIXTO"
+    id: i64,
+    motivo: String,
+) -> Result<(), String> {
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard.as_ref()
+        .ok_or("Debe iniciar sesión".to_string())?;
+    if sesion_actual.rol != "ADMIN" {
+        return Err("Solo administradores pueden forzar verificación".to_string());
+    }
+    let usuario_id = sesion_actual.usuario_id;
+    drop(sesion_guard);
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let fecha = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let motivo_full = format!("[FORZADO] {}", motivo);
+
+    let tabla = match origen.as_str() {
+        "VENTA" => "ventas",
+        "PAGO_MIXTO" => "pagos_venta",
+        _ => return Err("Origen invalido".to_string()),
+    };
+    let sql = format!(
+        "UPDATE {} SET pago_estado = 'VERIFICADO', verificado_por = ?1,
+         fecha_verificacion = ?2, motivo_verificacion = ?3 WHERE id = ?4",
+        tabla
+    );
+    let n = conn.execute(&sql, rusqlite::params![usuario_id, fecha, motivo_full, id])
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("Transferencia no encontrada".to_string());
+    }
+    Ok(())
+}

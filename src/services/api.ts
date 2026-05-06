@@ -1379,6 +1379,15 @@ export const verificarTransferencia = (origen: string, origenId: number, aprobar
 export const contarTransferenciasPendientes = () =>
   smartInvoke<number>("contar_transferencias_pendientes");
 
+/** v2.3.64: lista detallada de qué transferencias está contando el badge.
+ *  Útil para diagnóstico cuando el usuario reporta "ya verifiqué pero sigue contando". */
+export const detalleTransferenciasPendientes = () =>
+  smartInvoke<any[]>("detalle_transferencias_pendientes");
+
+/** v2.3.64: forzar marcar como verificada (último recurso para limpiar badges fantasma). */
+export const forzarMarcarTransferenciaVerificada = (origen: string, id: number, motivo: string) =>
+  smartInvoke<void>("forzar_marcar_transferencia_verificada", { origen, id, motivo });
+
 // === Detalle expandido de un movimiento bancario ===
 export const obtenerDetalleMovimientoBancario = (tipo: string, origenId: number) =>
   smartInvoke<any>("obtener_detalle_movimiento_bancario", { tipo, origenId });

@@ -381,6 +381,8 @@ pub fn run() {
             commands::verificacion::listar_transferencias_verificacion,
             commands::verificacion::verificar_transferencia,
             commands::verificacion::contar_transferencias_pendientes,
+            commands::verificacion::detalle_transferencias_pendientes,
+            commands::verificacion::forzar_marcar_transferencia_verificada,
             // Servicio Técnico
             commands::servicio_tecnico::crear_orden_servicio,
             commands::servicio_tecnico::actualizar_orden_servicio,

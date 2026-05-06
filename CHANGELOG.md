@@ -6,6 +6,40 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.64 — 2026-05-06 🔍🔒 STABLE
+**Modal de diagnóstico transferencias + fix anti-fuga descuadre.**
+
+### 🔒 Fix crítico: descuadre delataba el monto esperado al cajero (anti-fuga)
+
+**Problema reportado**: aún con el toggle anti-fuga activo, cuando el cajero ingresaba un monto en "Monto real contado en caja", aparecía la alerta "⚠ Descuadre: -$42.82 (faltante)" + el motivo obligatorio. Eso le permitía al cajero ir aumentando el monto poco a poco hasta llegar al "exacto" — exactamente lo que la feature buscaba PREVENIR.
+
+**Fix**: en modo anti-fuga, el cajero NUNCA ve la alerta de descuadre ni el campo "Motivo del descuadre". Solo ve "Monto real contado en caja" + botón Cerrar Caja. Cuenta a ciegas, envía, y el admin audita después.
+
+**Bonus**: también se eliminó el banner ruidoso "🔒 Conteo a ciegas" — el cajero solo ve el input limpio, sin pistas que delaten la feature.
+
+### 🔍 Modal de diagnóstico de transferencias pendientes
+
+**Problema reportado** (recurrente desde v2.3.60): el badge "1 transferencia por verificar" del Dashboard sigue apareciendo aunque el usuario verificó todas. El cleanup automático no las pesca cuando la venta padre también está REGISTRADO.
+
+**Fix**: nuevo modal que se abre al click en la alerta del Dashboard. Muestra **exactamente qué está contando** el sistema:
+- Lista completa de transferencias pendientes (sin filtro de fecha)
+- Por cada una: # venta, fecha, monto, cliente, tipo (VENTA o MIXTO)
+- Botón **"Forzar verificar"** (solo admin) — último recurso si el cleanup no resuelve
+
+Esto resuelve la frustración del usuario: ahora ve qué hay, decide si es real o fantasma, y si es fantasma lo limpia con 1 click.
+
+### Cambios técnicos
+- `src/pages/CajaPage.tsx`: condicional `if (ocultarParaCajero) return null;` antes de mostrar la alerta de descuadre + sin banner anti-fuga
+- `src-tauri/src/commands/verificacion.rs`:
+  - Nuevo `detalle_transferencias_pendientes()` retorna lista detallada sin filtro de fecha
+  - Nuevo `forzar_marcar_transferencia_verificada(origen, id, motivo)` para admin
+- `src-tauri/src/lib.rs`: registrar nuevos comandos
+- `src/services/api.ts`: wrappers `detalleTransferenciasPendientes`, `forzarMarcarTransferenciaVerificada`
+- `src/components/ModalTransferenciasPendientes.tsx` (nuevo): modal con tabla + acción forzar
+- `src/pages/DashboardPage.tsx`: alerta de transferencias ahora abre modal en vez de navegar; refresh automático del contador después de forzar
+
+Verificado: cargo check OK, tsc EXITCODE=0.
+
 ## v2.3.63 — 2026-05-06 💵🐛 STABLE
 **Descuentos por forma de pago + 3 fixes críticos.**
 
