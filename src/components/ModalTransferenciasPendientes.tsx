@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { detalleTransferenciasPendientes, forzarMarcarTransferenciaVerificada } from "../services/api";
 import { useToast } from "./Toast";
 import { useSesion } from "../contexts/SesionContext";
@@ -24,9 +25,25 @@ interface Props {
 export default function ModalTransferenciasPendientes({ onCerrar, onCambio }: Props) {
   const { toastExito, toastError } = useToast();
   const { esAdmin } = useSesion();
+  const navigate = useNavigate();
   const [items, setItems] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
   const [forzandoId, setForzandoId] = useState<string | null>(null);
+
+  // v2.3.66 UX: navegar a Movimientos Bancarios con la fecha de la transferencia
+  // específica + filtro "Por verificar". Resuelve el problema reportado: antes
+  // si la transferencia era de abril y el usuario estaba en mayo, hacía click
+  // en la alerta y no la veía (filtro "Este mes"). Ahora va directo.
+  const handleIrAVerificar = (item: any) => {
+    const fecha = (item.fecha || "").slice(0, 10); // YYYY-MM-DD
+    if (!fecha) {
+      navigate("/movimientos-bancarios?estado=REGISTRADO");
+    } else {
+      // Filtrar 1 día específico para ver solo esa transferencia
+      navigate(`/movimientos-bancarios?desde=${fecha}&hasta=${fecha}&estado=REGISTRADO`);
+    }
+    onCerrar();
+  };
 
   const cargar = async () => {
     setCargando(true);
@@ -130,7 +147,7 @@ export default function ModalTransferenciasPendientes({ onCerrar, onCambio }: Pr
                     <th style={{ padding: "8px", textAlign: "left", fontSize: 10, fontWeight: 600 }}>Cliente</th>
                     <th style={{ padding: "8px", textAlign: "right", fontSize: 10, fontWeight: 600 }}>Monto</th>
                     <th style={{ padding: "8px", textAlign: "center", fontSize: 10, fontWeight: 600 }}>Tipo</th>
-                    {esAdmin && <th style={{ padding: "8px", textAlign: "center", fontSize: 10, fontWeight: 600 }}>Acción</th>}
+                    <th style={{ padding: "8px", textAlign: "center", fontSize: 10, fontWeight: 600 }}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -152,21 +169,35 @@ export default function ModalTransferenciasPendientes({ onCerrar, onCambio }: Pr
                             {it.origen === "VENTA" ? "VENTA" : "MIXTO"}
                           </span>
                         </td>
-                        {esAdmin && (
-                          <td style={{ padding: "8px", textAlign: "center" }}>
+                        <td style={{ padding: "8px", textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                             <button
-                              onClick={() => handleForzar(it)}
-                              disabled={forzandoId === key}
+                              onClick={() => handleIrAVerificar(it)}
+                              title="Ir a Movimientos Bancarios filtrado por esta fecha"
                               style={{
                                 fontSize: 10, padding: "4px 10px", borderRadius: 4,
-                                background: "var(--color-warning)", color: "#fff",
+                                background: "var(--color-primary)", color: "#fff",
                                 border: "none", cursor: "pointer", fontWeight: 600,
                               }}
                             >
-                              {forzandoId === key ? "..." : "Forzar"}
+                              Ir →
                             </button>
-                          </td>
-                        )}
+                            {esAdmin && (
+                              <button
+                                onClick={() => handleForzar(it)}
+                                disabled={forzandoId === key}
+                                title="Marcar como verificada (último recurso)"
+                                style={{
+                                  fontSize: 10, padding: "4px 10px", borderRadius: 4,
+                                  background: "var(--color-warning)", color: "#fff",
+                                  border: "none", cursor: "pointer", fontWeight: 600,
+                                }}
+                              >
+                                {forzandoId === key ? "..." : "Forzar"}
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}

@@ -6,6 +6,52 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.66 — 2026-05-06 🧭 STABLE
+**UX flow transferencias: navegación inteligente desde el modal a la fecha exacta.**
+
+### Problema reportado
+
+El usuario tenía una transferencia de **abril** pendiente de verificar. Al hacer click en la alerta del Dashboard se abría Movimientos Bancarios con filtro "Este mes" (mayo) y la transferencia NO aparecía. El usuario tenía que cambiar manualmente el período a abril para encontrarla.
+
+### Fix
+
+**Modal de transferencias pendientes** (v2.3.64 + v2.3.66):
+- Cada fila ahora tiene botón **"Ir →"** (admin y cajero) que navega a Movimientos Bancarios con la fecha EXACTA de esa transferencia + filtro "Por verificar" preconfigurado
+- Botón **"Forzar"** (solo admin) para limpiar badges fantasma — sin cambios
+
+**MovimientosBancariosPage** (nuevo):
+- Lee URL params: `?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&estado=REGISTRADO`
+- Aplica filtros automáticamente al montar
+- **Chip visible** con el filtro de estado activo: "⚠ Filtrando por estado: Por verificar [✕ Quitar filtro]"
+- Filtro combinado con tipo (Todos/Ventas/Retiros caja/etc.)
+
+### Resultado
+
+```
+ANTES:
+1. Click "1 transferencia por verificar" → Bancos (filtro mes actual)
+2. No aparece → confusión
+3. Cambiar período a abril manualmente
+4. Buscar la transferencia
+5. Verificar
+
+AHORA:
+1. Click alerta → Modal con detalle
+2. Click "Ir →" → Bancos filtrado en la fecha exacta + estado=Por verificar
+3. La transferencia aparece directamente
+4. Verificar
+```
+
+### Cambios técnicos
+- `src/components/ModalTransferenciasPendientes.tsx`: `useNavigate` + handler `handleIrAVerificar` que navega con URL params; columna "Acciones" combina "Ir" + "Forzar"
+- `src/pages/MovimientosBancariosPage.tsx`:
+  - `useSearchParams` para leer `desde`, `hasta`, `estado`
+  - State `filtroEstado` con valor inicial desde URL
+  - `useMemo` `movimientosFiltrados` aplica filtro tipo + estado
+  - Chip visual con filtro activo + botón quitar
+
+Verificado: tsc EXITCODE=0.
+
 ## v2.3.65 — 2026-05-06 🔒 STABLE
 **Hotfix anti-fuga: toast del descuadre revelaba el monto exacto al cajero.**
 

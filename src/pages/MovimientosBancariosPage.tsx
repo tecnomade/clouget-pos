@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
+import { useSearchParams } from "react-router-dom";
 import { listarMovimientosBancarios, listarCuentasBanco, obtenerDetalleMovimientoBancario, verificarTransferencia } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
@@ -36,14 +37,26 @@ interface MovimientoBancario {
 export default function MovimientosBancariosPage() {
   const { toastError, toastExito } = useToast();
   const { esAdmin } = useSesion();
+  const [searchParams] = useSearchParams();
   const [movimientos, setMovimientos] = useState<MovimientoBancario[]>([]);
   const [cuentasBanco, setCuentasBanco] = useState<CuentaBanco[]>([]);
   const [bancoFiltro, setBancoFiltro] = useState<number | undefined>(undefined);
-  const [periodo, setPeriodo] = useState<Periodo>("mes");
-  const [fechaDesde, setFechaDesde] = useState(primerDiaMes());
-  const [fechaHasta, setFechaHasta] = useState(fechaHoy());
+  // v2.3.66: leer URL params al montar para preconfigurar filtros (deep-link)
+  // Ej: /movimientos-bancarios?desde=2026-04-01&hasta=2026-04-30&estado=REGISTRADO
+  // Se usa cuando el usuario viene del modal de transferencias pendientes del Dashboard.
+  const initialDesde = searchParams.get("desde") || primerDiaMes();
+  const initialHasta = searchParams.get("hasta") || fechaHoy();
+  const initialEstado = searchParams.get("estado") || ""; // "REGISTRADO" desde modal
+  const initialPeriodo: Periodo = searchParams.get("desde") ? "custom" : "mes";
+
+  const [periodo, setPeriodo] = useState<Periodo>(initialPeriodo);
+  const [fechaDesde, setFechaDesde] = useState(initialDesde);
+  const [fechaHasta, setFechaHasta] = useState(initialHasta);
   const [cargando, setCargando] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState<string>(""); // "" = todos
+  // v2.3.66: filtro por estado (REGISTRADO=Por verificar / VERIFICADO / RECHAZADO).
+  // Si viene en URL, se aplica automáticamente.
+  const [filtroEstado, setFiltroEstado] = useState<string>(initialEstado);
   const [expandido, setExpandido] = useState<string | null>(null); // tipo:origen_id
   const [detalle, setDetalle] = useState<Record<string, any>>({});
   const [comprobanteFs, setComprobanteFs] = useState<string | null>(null);
@@ -52,7 +65,7 @@ export default function MovimientosBancariosPage() {
     listarCuentasBanco().then(setCuentasBanco).catch(() => {});
   }, []);
 
-  // Update dates when periodo changes
+  // Update dates when periodo changes (excepto si es custom desde URL params)
   useEffect(() => {
     if (periodo === "hoy") {
       setFechaDesde(fechaHoy());
@@ -172,11 +185,19 @@ export default function MovimientosBancariosPage() {
     }
   };
 
-  const movimientosFiltrados = filtroTipo
-    ? movimientos.filter(m => filtroTipo === "VENTA"
+  // v2.3.66: combinar filtroTipo + filtroEstado (compuesto)
+  const movimientosFiltrados = useMemo(() => {
+    let arr = movimientos;
+    if (filtroTipo) {
+      arr = arr.filter(m => filtroTipo === "VENTA"
         ? (m.tipo === "VENTA" || m.tipo === "PAGO_VENTA")
-        : m.tipo === filtroTipo)
-    : movimientos;
+        : m.tipo === filtroTipo);
+    }
+    if (filtroEstado) {
+      arr = arr.filter(m => m.pago_estado === filtroEstado);
+    }
+    return arr;
+  }, [movimientos, filtroTipo, filtroEstado]);
 
   return (
     <>
@@ -274,6 +295,39 @@ export default function MovimientosBancariosPage() {
             </button>
           ))}
         </div>
+
+        {/* v2.3.66: Filtro por estado de verificación + chip activo si viene de URL.
+            Cuando el usuario llega desde el modal "Transferencias por verificar"
+            del Dashboard, el filtro REGISTRADO se aplica automáticamente. */}
+        {(filtroEstado || initialEstado) && (
+          <div style={{
+            display: "flex", gap: 8, alignItems: "center", marginBottom: 8,
+            padding: "8px 12px", background: "rgba(245,158,11,0.08)",
+            border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-warning)" }}>
+              ⚠ Filtrando por estado:
+            </span>
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+              background: "var(--color-warning)", color: "#fff",
+            }}>
+              {filtroEstado === "REGISTRADO" ? "⏱ Por verificar" :
+               filtroEstado === "VERIFICADO" ? "✓ Verificadas" :
+               filtroEstado === "RECHAZADO" ? "✗ Rechazadas" : filtroEstado}
+            </span>
+            <button
+              onClick={() => setFiltroEstado("")}
+              style={{
+                marginLeft: "auto", fontSize: 11, padding: "3px 10px",
+                background: "transparent", border: "1px solid var(--color-warning)",
+                borderRadius: 4, color: "var(--color-warning)", cursor: "pointer", fontWeight: 600,
+              }}
+            >
+              ✕ Quitar filtro
+            </button>
+          </div>
+        )}
 
         {/* Table */}
         <div className="card">
