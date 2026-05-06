@@ -192,6 +192,38 @@ pub fn verificar_transferencia(
         return Err("Transferencia no encontrada".to_string());
     }
 
+    // v2.3.63 FIX: si verificamos una VENTA con forma_pago=TRANSFER pero la venta
+    // ALSO tiene filas en pagos_venta (caso raro pero posible), marcar tambien
+    // esas filas para evitar el contador "fantasma" que persistia despues de
+    // verificar manualmente.
+    if origen == "VENTA" {
+        let _ = conn.execute(
+            "UPDATE pagos_venta
+             SET pago_estado = ?1, verificado_por = ?2, fecha_verificacion = ?3, motivo_verificacion = ?4
+             WHERE venta_id = ?5
+               AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+               AND COALESCE(pago_estado, 'NO_APLICA') = 'REGISTRADO'",
+            rusqlite::params![nuevo_estado, usuario_id, fecha, motivo, origen_id],
+        );
+    }
+    // Caso simetrico: si verificamos un PAGO_MIXTO y todos los demas pagos de
+    // esa venta tambien estan VERIFICADOS, marcar la venta padre tambien.
+    if origen == "PAGO_MIXTO" {
+        let _ = conn.execute(
+            "UPDATE ventas
+             SET pago_estado = ?1, verificado_por = ?2, fecha_verificacion = ?3
+             WHERE id = (SELECT venta_id FROM pagos_venta WHERE id = ?4)
+               AND COALESCE(pago_estado, 'NO_APLICA') = 'REGISTRADO'
+               AND NOT EXISTS (
+                   SELECT 1 FROM pagos_venta pv
+                   WHERE pv.venta_id = ventas.id
+                     AND UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+                     AND COALESCE(pv.pago_estado, 'NO_APLICA') = 'REGISTRADO'
+               )",
+            rusqlite::params![nuevo_estado, usuario_id, fecha, origen_id],
+        );
+    }
+
     Ok(())
 }
 
@@ -205,6 +237,30 @@ pub fn verificar_transferencia(
 #[tauri::command]
 pub fn contar_transferencias_pendientes(db: State<Database>) -> Result<i64, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // v2.3.63 FIX: cleanup retroactivo de huerfanos.
+    // Antes de v2.3.63 si verificabas una venta MIXTA, solo se actualizaba
+    // ventas.pago_estado pero los pagos_venta correspondientes quedaban en
+    // 'REGISTRADO'. Esto causaba el contador "fantasma" que persistia.
+    // Esta limpieza es idempotente — si no hay huerfanos no hace nada.
+    let _ = conn.execute(
+        "UPDATE pagos_venta
+         SET pago_estado = 'VERIFICADO'
+         WHERE COALESCE(pago_estado, 'NO_APLICA') = 'REGISTRADO'
+           AND venta_id IN (
+               SELECT id FROM ventas
+               WHERE COALESCE(pago_estado, 'NO_APLICA') = 'VERIFICADO'
+                 AND anulada = 0
+           )",
+        [],
+    );
+    // Tambien limpiar ventas anuladas que aun figuran como REGISTRADO
+    let _ = conn.execute(
+        "UPDATE ventas SET pago_estado = 'NO_APLICA'
+         WHERE anulada = 1 AND COALESCE(pago_estado, 'NO_APLICA') = 'REGISTRADO'",
+        [],
+    );
+
     let from_ventas: i64 = conn.query_row(
         "SELECT COUNT(*) FROM ventas
          WHERE UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA')

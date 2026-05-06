@@ -637,6 +637,150 @@ export default function Configuracion() {
             </div>
           </div>
 
+          {/* v2.3.63: Descuentos automáticos por forma de pago */}
+          <div className="card">
+            <div className="card-header">💵 Descuentos por forma de pago</div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
+                Aplica un % de descuento automático según cómo paga el cliente. Útil para incentivar pagos en efectivo o evitar comisiones de banco. El cajero ve el descuento aplicado al elegir forma de pago en el POS.
+              </p>
+
+              {/* Toggle activar */}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer", marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={config.descuento_forma_pago_activo === "1"}
+                  onChange={(e) => {
+                    const v = e.target.checked ? "1" : "0";
+                    setConfig({ ...config, descuento_forma_pago_activo: v });
+                    guardarConfig({ descuento_forma_pago_activo: v });
+                    toastExito(e.target.checked ? "Descuentos por forma de pago ACTIVADOS" : "Descuentos DESACTIVADOS");
+                  }}
+                  style={{ marginTop: 3 }}
+                />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>
+                    Activar descuentos automáticos por forma de pago
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Cuando se activa, el POS aplica automáticamente el % configurado abajo según la forma de pago elegida.
+                  </div>
+                </div>
+              </label>
+
+              {config.descuento_forma_pago_activo === "1" && (
+                <>
+                  {/* Porcentajes por método */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 12 }}>
+                    {([
+                      { key: "descuento_efectivo_pct", label: "💵 Efectivo", color: "#16a34a" },
+                      { key: "descuento_tarjeta_pct", label: "💳 Tarjeta", color: "#2563eb" },
+                      { key: "descuento_transfer_pct", label: "🏦 Transferencia", color: "#0ea5e9" },
+                      { key: "descuento_credito_pct", label: "📋 Crédito/Fiado", color: "#f59e0b" },
+                    ] as const).map((m) => (
+                      <div key={m.key} style={{
+                        padding: 10, background: "var(--color-surface)",
+                        border: "1px solid var(--color-border)",
+                        borderLeft: `3px solid ${m.color}`,
+                        borderRadius: 8,
+                      }}>
+                        <label style={{ fontSize: 11, fontWeight: 600, color: m.color }}>
+                          {m.label}
+                        </label>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.5"
+                            className="input"
+                            style={{ width: 70, fontSize: 13, padding: "4px 8px" }}
+                            value={config[m.key] ?? "0"}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setConfig({ ...config, [m.key]: v });
+                            }}
+                            onBlur={(e) => {
+                              const v = e.target.value || "0";
+                              guardarConfig({ [m.key]: v });
+                            }}
+                          />
+                          <span style={{ fontSize: 13, fontWeight: 600 }}>% descuento</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "8px 10px", background: "rgba(245,158,11,0.08)", borderRadius: 6, marginBottom: 12 }}>
+                    ℹ <strong>Pago MIXTO</strong> NO aplica descuento (decisión de diseño para evitar abusos). Cuando un cliente paga parte efectivo + parte tarjeta, paga el precio completo.
+                  </div>
+
+                  {/* Aplicar sobre */}
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
+                      Aplicar descuento sobre:
+                    </label>
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
+                        <input
+                          type="radio"
+                          name="aplicar_sobre"
+                          value="SUBTOTAL_SIN_IVA"
+                          checked={(config.descuento_forma_pago_aplicar_sobre || "SUBTOTAL_SIN_IVA") === "SUBTOTAL_SIN_IVA"}
+                          onChange={(e) => {
+                            setConfig({ ...config, descuento_forma_pago_aplicar_sobre: e.target.value });
+                            guardarConfig({ descuento_forma_pago_aplicar_sobre: e.target.value });
+                          }}
+                        />
+                        Subtotal sin IVA <span style={{ color: "var(--color-text-secondary)" }}>(recomendado)</span>
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
+                        <input
+                          type="radio"
+                          name="aplicar_sobre"
+                          value="TOTAL_CON_IVA"
+                          checked={config.descuento_forma_pago_aplicar_sobre === "TOTAL_CON_IVA"}
+                          onChange={(e) => {
+                            setConfig({ ...config, descuento_forma_pago_aplicar_sobre: e.target.value });
+                            guardarConfig({ descuento_forma_pago_aplicar_sobre: e.target.value });
+                          }}
+                        />
+                        Total con IVA
+                      </label>
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                      <strong>Subtotal sin IVA</strong>: el IVA cobrado al SRI no cambia, solo se descuenta del precio base.
+                      <strong> Total con IVA</strong>: descuento sobre todo, reduce IVA proporcional.
+                    </div>
+                  </div>
+
+                  {/* Monto mínimo */}
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                      Monto mínimo de compra para aplicar descuento
+                    </label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>$</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="input"
+                        style={{ width: 100, fontSize: 13, padding: "4px 8px" }}
+                        value={config.descuento_forma_pago_minimo ?? "0"}
+                        onChange={(e) => setConfig({ ...config, descuento_forma_pago_minimo: e.target.value })}
+                        onBlur={(e) => guardarConfig({ descuento_forma_pago_minimo: e.target.value || "0" })}
+                      />
+                      <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                        (0 = sin mínimo, aplica a cualquier compra)
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
           {/* Impresora */}
           <div className="card">
             <div className="card-header">Impresora de Tickets</div>

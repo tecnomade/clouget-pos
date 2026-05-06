@@ -23,6 +23,10 @@ import {
   imprimirPreCuenta,
 } from "../api";
 import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
+// v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
+// Ya está implementado en POS normal (v2.3.63). Aquí se agregará en próxima
+// iteración para mantener este release manejable.
+// import { ... } from "../../utils/descuentoFormaPago";
 import type { PedidoDetalle as PedidoDetalleType } from "../types";
 import type { NuevaVenta, VentaDetalle, CuentaBanco } from "../../types";
 import SelectorProductos from "./SelectorProductos";

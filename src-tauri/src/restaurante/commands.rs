@@ -160,6 +160,24 @@ pub fn rest_listar_mesas_con_estado(
 }
 
 fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEstado>, String> {
+    // v2.3.63 FIX: usar subquery con MAX(id) para garantizar UN SOLO pedido
+    // por mesa. Si por algun bug/race condition hay multiples pedidos abiertos
+    // para la misma mesa, agarramos el MÁS RECIENTE (que probablemente es el
+    // que tiene los items reales). Esto previene el bug "items desaparecen"
+    // que pasa cuando el LEFT JOIN devuelve filas duplicadas y aleatorio cual
+    // gana en SQLite.
+    //
+    // Ademas: AUTO-LIMPIEZA al pasada — cierra pedidos abiertos VACIOS de mas
+    // de 24h (sin items, claramente abandonados). Idempotente y safe.
+    let _ = conn.execute(
+        "UPDATE rest_pedidos_abiertos
+         SET estado = 'CANCELADO', fecha_cierre = datetime('now', 'localtime')
+         WHERE estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+           AND julianday('now') - julianday(fecha_apertura) > 1.0
+           AND id NOT IN (SELECT DISTINCT pedido_id FROM rest_pedido_items)",
+        [],
+    );
+
     let mut stmt = conn
         .prepare(
             "SELECT
@@ -168,7 +186,13 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
              FROM rest_mesas m
              LEFT JOIN rest_zonas z ON m.zona_id = z.id
              LEFT JOIN rest_pedidos_abiertos p
-                ON p.mesa_id = m.id AND p.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+                ON p.id = (
+                    -- Pedido MÁS RECIENTE de esta mesa, abierto o con cuenta pedida.
+                    -- Si hay multiples (bug), gana el de id mayor (mas reciente).
+                    SELECT MAX(p2.id) FROM rest_pedidos_abiertos p2
+                    WHERE p2.mesa_id = m.id
+                      AND p2.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+                )
              WHERE m.activa = 1
              ORDER BY z.orden NULLS LAST, m.orden, m.nombre",
         )

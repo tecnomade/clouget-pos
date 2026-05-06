@@ -6,6 +6,80 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.63 — 2026-05-06 💵🐛 STABLE
+**Descuentos por forma de pago + 3 fixes críticos.**
+
+### 💵 Nueva feature: Descuentos automáticos por forma de pago
+
+Permite configurar % de descuento automático según cómo paga el cliente. Caso típico Ecuador: incentivar pago en efectivo (sin comisión bancaria) o evitar pasar comisiones de tarjeta al cliente.
+
+**Configuración** (admin → Configuración → "💵 Descuentos por forma de pago"):
+- ☑ Activar descuentos automáticos
+- % por método: Efectivo / Tarjeta / Transferencia / Crédito
+- Aplicar sobre: Subtotal sin IVA (recomendado, no afecta IVA al SRI) o Total con IVA
+- Monto mínimo de compra (opcional)
+
+**POS**: cuando se activa, al elegir forma de pago el sistema calcula y muestra el descuento automáticamente:
+```
+Subtotal:        $100.00
+IVA 15%:         $ 15.00
+Total bruto:     $115.00 ───
+✨ Descuento -5% por pago en EFECTIVO  -$5.75
+TOTAL:           $109.25
+```
+
+**Pago MIXTO** NO aplica descuento (decisión por simplicidad — evita gaming del sistema).
+
+Persistencia: el descuento se guarda en `ventas.descuento` (campo existente) con observación automática "Descuento -X% por pago en METODO" para trazabilidad en reportes.
+
+**Pendiente Fase 2** (próxima versión): aplicar el mismo sistema al cobrar mesa en módulo Restaurante.
+
+### 🐛 Fix crítico: items de mesa "desaparecen" al marcar como entregado
+
+**Problema reportado**: usuario marca items como ENTREGADO desde pantalla de cocina y al volver a la mesa, los items habían desaparecido (mesa OCUPADA con $0.00 y "Sin items aún").
+
+**Causa**: el query `rest_listar_mesas_con_estado` hacía LEFT JOIN simple a `rest_pedidos_abiertos` sin garantizar unicidad. Si por race condition o estado inconsistente había 2+ pedidos abiertos para la misma mesa, SQLite elegía aleatoriamente cuál mostrar — a veces uno vacío.
+
+**Fix**:
+- Subquery con `MAX(p.id)` garantiza que solo el pedido MÁS RECIENTE de cada mesa se muestre
+- **Auto-limpieza idempotente**: pedidos abiertos vacíos (sin items) de más de 24h se cancelan automáticamente al cargar la página de mesas
+- Sin afectar pedidos con items reales
+
+### 🐛 Fix crítico: contador "transferencias por verificar" mostraba huérfanos
+
+**Problema reportado**: el panel "Atención" del Dashboard mostraba "1 transferencia por verificar" aunque la única transferencia ya estaba marcada como Verificada.
+
+**Causa**: en ventas MIXTAS (parte efectivo + parte transferencia), si admin verificaba la venta, se actualizaba `ventas.pago_estado='VERIFICADO'` pero la fila correspondiente en `pagos_venta` quedaba en `'REGISTRADO'`. El contador sumaba ambas tablas y contaba la huérfana.
+
+**Fix**:
+- `verificar_transferencia` ahora actualiza ambas tablas en cascada (origen='VENTA' también marca pagos_venta hijos; origen='PAGO_MIXTO' marca venta padre si todos los pagos están verificados)
+- **Cleanup retroactivo idempotente** al cargar el contador: detecta huérfanos antiguos (creados antes de v2.3.63) y los marca como verificados
+- Bonus: ventas anuladas con pago_estado='REGISTRADO' se marcan como 'NO_APLICA'
+
+### ⌨️ UX fix: F10 (Nueva Venta) ahora pone focus en el buscador
+
+**Problema reportado**: al presionar F10 después de cobrar, se abría la pantalla del POS pero el cajero tenía que hacer click manual en el buscador para empezar la siguiente venta.
+
+**Fix**: agregado `setTimeout(50ms)` antes del `focus()` para esperar el re-render. Ahora el cursor va automáticamente al buscador y el cajero puede tipear inmediatamente. Bonus: si había texto previo, se selecciona todo (Ctrl+A automático).
+
+### 🔒 UX fix anti-fuga: sin banner ruidoso al admin
+
+**Problema reportado**: el banner "🔒 Modo anti-fuga ACTIVO" agregado en v2.3.62 generaba ruido visual al admin.
+
+**Fix**: eliminado el banner. Comportamiento simplificado:
+- Admin SIEMPRE ve el desglose verde con monto esperado (para auditoría)
+- Cajeros NO ven el desglose si el toggle está activo, solo ven mensaje neutral "🔒 Conteo a ciegas — Ingresa el monto real contado"
+
+### Cambios técnicos
+- `src/utils/descuentoFormaPago.ts` (nuevo): helper puro TS con `leerConfigDescuento()` + `calcularDescuentoFormaPago()`. Cero dependencia backend.
+- `src/pages/Configuracion.tsx`: nueva sección con toggle + 4 inputs % + radio buttons aplicar sobre + monto mínimo
+- `src/pages/PuntoVenta.tsx`: state `configDescuento`, cálculo `descuentoFp`, visualización en panel de totales con badge verde, payload `descuento` + `observacion` automáticos
+- `src/pages/CajaPage.tsx`: simplificación anti-fuga (sin banner)
+- `src-tauri/src/restaurante/commands.rs`: subquery `MAX(p.id)` + auto-cleanup pedidos vacíos > 24h
+- `src-tauri/src/commands/verificacion.rs`: cascada `verificar_transferencia` (VENTA↔PAGO_MIXTO) + cleanup retroactivo en `contar_transferencias_pendientes`
+
+Verificado: `cargo check` OK, `tsc --noEmit` EXITCODE=0.
+
 ## v2.3.62 — 2026-05-05 🐛📄 STABLE
 **Fix crítico Notas de Crédito + vista detalle + impresión universal + UX anti-fuga.**
 

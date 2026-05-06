@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
+import { calcularDescuentoFormaPago, leerConfigDescuento, type DescuentoConfig } from "../utils/descuentoFormaPago";
 import type { DireccionCliente } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { useToast } from "../components/Toast";
@@ -89,6 +90,8 @@ export default function PuntoVenta() {
   // Control de stock negativo (config 'stock_negativo_modo'):
   //   PERMITIR | BLOQUEAR | BLOQUEAR_OCULTAR
   const [stockModo, setStockModo] = useState<"PERMITIR" | "BLOQUEAR" | "BLOQUEAR_OCULTAR">("PERMITIR");
+  // v2.3.63: config descuentos por forma de pago (cargada en useEffect de obtenerConfig)
+  const [configDescuento, setConfigDescuento] = useState<DescuentoConfig>(() => leerConfigDescuento({}));
 
   // Panel documentos recientes
   const [mostrarRecientes, setMostrarRecientes] = useState(false);
@@ -256,6 +259,8 @@ export default function PuntoVenta() {
       setAutoImprimirSri(cfg.auto_imprimir_sri === "1");
       const modo = (cfg.stock_negativo_modo || "PERMITIR") as any;
       setStockModo(modo === "BLOQUEAR" || modo === "BLOQUEAR_OCULTAR" ? modo : "PERMITIR");
+      // v2.3.63: cargar config de descuentos por forma de pago
+      setConfigDescuento(leerConfigDescuento(cfg));
       // Cargar productos y categorias para grid
       listarProductosTactil().then(setProductosTactil).catch(() => {});
       listarCategorias().then(setCategoriasTactil).catch(() => {});
@@ -643,7 +648,23 @@ export default function PuntoVenta() {
     }
     return sum + i.subtotal * (i.iva_porcentaje / 100);
   }, 0);
-  const total = subtotal + iva;
+  const totalBruto = subtotal + iva;
+
+  // v2.3.63: Descuento automático por forma de pago.
+  // Solo aplica si:
+  //  - Feature activa en config
+  //  - Forma de pago tiene % configurado > 0
+  //  - No es pago mixto, no es fiado/credito sin %
+  //  - Monto mínimo (si configurado) alcanzado
+  const usarMixtoVisible = modoPagoMixto && pagosMixtos.length > 0;
+  const descuentoFp = calcularDescuentoFormaPago(
+    esFiado ? "CREDITO" : (usarMixtoVisible ? "MIXTO" : formaPago),
+    subtotal,
+    totalBruto,
+    configDescuento,
+  );
+  const descuentoAplicado = descuentoFp.activo ? descuentoFp.montoDescuento : 0;
+  const total = totalBruto - descuentoAplicado;
   const cambio = parseFloat(montoRecibido || "0") - total;
 
   const procesarVenta = useCallback(async () => {
@@ -759,7 +780,10 @@ export default function PuntoVenta() {
       }),
       forma_pago: usarMixto ? "MIXTO" : formaPago,
       monto_recibido: usarMixto ? total : (esFiado ? 0 : parseFloat(montoRecibido || "0")),
-      descuento: 0,
+      // v2.3.63: descuento automático por forma de pago (helper calcula 0 si
+      // no aplica: feature off, mixto, % no configurado, o monto < mínimo).
+      descuento: descuentoAplicado,
+      observacion: descuentoFp.activo ? descuentoFp.etiqueta : undefined,
       tipo_documento: tipoDocumento,
       // es_fiado solo cuando NO es mixto y es CREDITO; en mixto, el credito se maneja por pagos[]
       es_fiado: usarMixto ? false : esFiado,
@@ -878,7 +902,14 @@ export default function PuntoVenta() {
     setPagosMixtos([]);
     setModoPagoMixto(false);
     setTipoDocumento(regimen !== "RIMPE_POPULAR" ? "FACTURA" : "NOTA_VENTA");
-    inputRef.current?.focus();
+    // v2.3.63 UX: setTimeout asegura que el focus se aplique DESPUÉS del re-render.
+    // Sin esto, el modal de venta completada todavía está montado cuando se llama
+    // focus(), y React lo descarta porque el input aún no está visible. El cajero
+    // tenía que hacer click manual en el buscador para empezar la siguiente venta.
+    setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select(); // Seleccionar todo si hubiera texto previo
+    }, 50);
   }, [regimen]);
 
   // Recalcular precios del carrito al cambiar de cliente
@@ -1722,9 +1753,28 @@ export default function PuntoVenta() {
                   <span>${iva.toFixed(2)}</span>
                 </div>
               )}
+              {/* v2.3.63: descuento automático por forma de pago */}
+              {descuentoFp.activo && (
+                <>
+                  <div className="flex justify-between" style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    <span>Total bruto:</span>
+                    <span style={{ textDecoration: "line-through" }}>${totalBruto.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between" style={{
+                    fontSize: 12, fontWeight: 600, color: "var(--color-success)",
+                    padding: "3px 6px", background: "rgba(34,197,94,0.08)",
+                    borderRadius: 4, margin: "2px 0",
+                  }}>
+                    <span>✨ {descuentoFp.etiqueta}</span>
+                    <span>-${descuentoFp.montoDescuento.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between" style={{ fontSize: 22, fontWeight: 700, margin: "6px 0" }}>
                 <span>TOTAL:</span>
-                <span>${total.toFixed(2)}</span>
+                <span style={descuentoFp.activo ? { color: "var(--color-success)" } : undefined}>
+                  ${total.toFixed(2)}
+                </span>
               </div>
             </div>
 
