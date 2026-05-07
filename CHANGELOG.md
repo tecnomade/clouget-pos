@@ -6,6 +6,66 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.70 — 2026-05-07 📊 STABLE
+**Reporte de ventas detalladas filtrable con export Excel/PDF.**
+
+Nueva pestaña en `/reportes` que lista cada venta individual del período con filtros multi-criterio. Antes solo había reportes agregados (utilidad, balance, top productos, IVA, CxC, CxP, inventario, kardex, cajeros) — faltaba poder ver el listado plano de ventas para auditoría, conciliación y comprobación de cajeros/categorías.
+
+### 🎯 Caso de uso
+
+- "Quiero ver todas las ventas que hizo Juan en transferencia esta semana"
+- "Quiero el detalle de las ventas de la categoría Bebidas en abril para conciliar con bodega"
+- "Quiero exportar a Excel todas las facturas del mes para mi contadora"
+- "Quiero las ventas anuladas del trimestre"
+
+### 🔍 Filtros disponibles
+
+- **Rango de fecha** (desde/hasta) — heredado del header común de reportes
+- **Cajero** — selector con los usuarios que tuvieron ventas en el rango
+- **Forma de pago** — EFECTIVO, TRANSFERENCIA, CRÉDITO, etc.
+- **Tipo documento** — NOTA_VENTA, FACTURA, NOTA_CREDITO
+- **Categoría** — filtra ventas que tengan al menos un item de esa categoría (EXISTS subquery)
+- **Incluir anuladas** — checkbox (default OFF)
+
+Los selectores se cargan dinámicamente con valores ÚNICOS que aparecen en el rango (no muestra opciones vacías).
+
+### 📊 KPIs y desglose
+
+Encima de la tabla:
+- 5 KPIs: número de ventas, total facturado, ticket promedio, IVA generado, descuentos
+- Chips por forma de pago: cada forma con su total y número de ventas
+
+### 📋 Tabla de ventas
+
+11 columnas: fecha, número, cliente (con identificación), cajero, forma de pago, tipo doc, subtotal, IVA, descuento, total y estado. Footer con totales agregados. Las anuladas se muestran con opacidad reducida y badge "ANULADA".
+
+### 📁 Export
+
+Botones Excel (.xlsx) y PDF (apaisado por defecto) reutilizando `exportar_tabla_xlsx` / `exportar_tabla_pdf`. El subtítulo del archivo incluye automáticamente todos los filtros aplicados (período + cajero + forma + tipo + categoría + flag anuladas).
+
+### 🛠 Backend
+
+- `reporte_ventas_filtrable(fecha_desde, fecha_hasta, cajero?, cliente_id?, forma_pago?, tipo_documento?, categoria_id?, incluir_anuladas?)` — construcción dinámica del WHERE con `params_from_iter`
+- `reporte_ventas_filtros_disponibles(fecha_desde, fecha_hasta)` — devuelve cajeros / formas / tipos / categorías que aparecen en el rango (alimenta los selectores)
+- Filtro por categoría via `EXISTS` subquery contra `venta_detalles + productos` (evita duplicar ventas que tienen varios items de la misma categoría)
+- KPIs y desglose por forma de pago calculados en el mismo command (un solo round-trip)
+
+### 🎨 Frontend
+
+- Nueva pestaña **"Ventas detalladas"** en `/reportes` (3ra después de Estado de Resultados y Balance)
+- `ReporteVentasFiltrable`: bloque de filtros (grid auto-fit), KPIs, chips por forma de pago, tabla scrolleable, footer con totales
+- Reuso completo de `KpiCard`, `exportarTablaXlsx`, `exportarTablaPdf` ya existentes
+- Helper `construirSubtituloVentas` que documenta los filtros aplicados en el archivo exportado
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/commands/reportes.rs` — 2 comandos nuevos (~140 líneas)
+- `src-tauri/src/lib.rs` — registro
+- `src/services/api.ts` — tipos `FiltrosReporteVentas`, `VentaReporteRow`, `ReporteVentasResultado` + 2 wrappers
+- `src/pages/ReportesPage.tsx` — nueva tab + componente `ReporteVentasFiltrable` + helper subtítulo
+
+---
+
 ## v2.3.69 — 2026-05-07 ✂️ STABLE
 **Restaurante: Dividir cuenta — completa el trío de features pedidas.**
 

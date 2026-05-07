@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteIvaMensual,
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
   reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple,
-  exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf, reporteVentasPorCajero } from "../services/api";
+  exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf, reporteVentasPorCajero,
+  reporteVentasFiltrable, reporteVentasFiltrosDisponibles } from "../services/api";
+import type { ReporteVentasResultado, VentaReporteRow } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -31,8 +33,20 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros" | "ventas">("utilidad");
   const [cajerosData, setCajerosData] = useState<any>(null);
+  // v2.3.70 — Reporte de ventas individuales filtrable
+  const [ventasReporte, setVentasReporte] = useState<ReporteVentasResultado | null>(null);
+  const [ventasFiltros, setVentasFiltros] = useState<{
+    cajero: string;
+    formaPago: string;
+    tipoDocumento: string;
+    categoriaId: number | null;
+    incluirAnuladas: boolean;
+  }>({ cajero: "", formaPago: "", tipoDocumento: "", categoriaId: null, incluirAnuladas: false });
+  const [ventasOpciones, setVentasOpciones] = useState<{
+    cajeros: string[]; formas_pago: string[]; tipos_documento: string[]; categorias: { id: number; nombre: string }[];
+  } | null>(null);
   // Kardex multi-categoria
   const [kardexMultiData, setKardexMultiData] = useState<any | null>(null);
   const [categoriasMaestro, setCategoriasMaestro] = useState<Array<{ id: number; nombre: string }>>([]);
@@ -92,6 +106,22 @@ export default function ReportesPage() {
       else if (tab === "cajeros") {
         const data = await reporteVentasPorCajero(desde, hasta);
         setCajerosData(data);
+      }
+      else if (tab === "ventas") {
+        // Cargar opciones de filtro + datos en paralelo
+        const [opciones, datos] = await Promise.all([
+          reporteVentasFiltrosDisponibles(desde, hasta),
+          reporteVentasFiltrable({
+            fechaDesde: desde, fechaHasta: hasta,
+            cajero: ventasFiltros.cajero || null,
+            formaPago: ventasFiltros.formaPago || null,
+            tipoDocumento: ventasFiltros.tipoDocumento || null,
+            categoriaId: ventasFiltros.categoriaId,
+            incluirAnuladas: ventasFiltros.incluirAnuladas,
+          }),
+        ]);
+        setVentasOpciones(opciones);
+        setVentasReporte(datos);
       }
     } catch (err) {
       toastError("Error: " + err);
@@ -539,6 +569,7 @@ export default function ReportesPage() {
           {([
             ["utilidad", "Estado de Resultados"],
             ["balance", "Balance"],
+            ["ventas", "Ventas detalladas"],
             ["productos", "Rentabilidad por Producto"],
             ["iva", "Declaracion IVA"],
             ["cxc", "Cuentas por Cobrar"],
@@ -1490,10 +1521,294 @@ export default function ReportesPage() {
             )}
           </div>
         )}
+
+        {/* v2.3.70 — Ventas detalladas filtrable */}
+        {!cargando && tab === "ventas" && (
+          <ReporteVentasFiltrable
+            opciones={ventasOpciones}
+            datos={ventasReporte}
+            filtros={ventasFiltros}
+            onFiltrosChange={setVentasFiltros}
+            onAplicar={cargar}
+            onExportar={async (formato) => {
+              if (!ventasReporte) return;
+              const ext = formato === "xlsx" ? "xlsx" : "pdf";
+              const ruta = await save({
+                defaultPath: `ventas_${desde}_${hasta}.${ext}`,
+                filters: [{ name: formato === "xlsx" ? "Excel" : "PDF", extensions: [ext] }],
+              });
+              if (!ruta) return;
+              const encabezados = [
+                "Fecha", "Número", "Cliente", "Identif.", "Cajero",
+                "Forma pago", "Tipo doc.", "Subtotal", "IVA", "Descuento", "Total", "Estado",
+              ];
+              const filas: string[][] = ventasReporte.ventas.map((v: VentaReporteRow) => [
+                v.fecha.slice(0, 16),
+                v.numero,
+                v.cliente_nombre || "",
+                v.cliente_identificacion || "",
+                v.cajero,
+                v.forma_pago,
+                v.tipo_documento,
+                v.subtotal_sin_iva.toFixed(2),
+                v.iva.toFixed(2),
+                v.descuento.toFixed(2),
+                v.total.toFixed(2),
+                v.anulada ? "ANULADA" : v.estado,
+              ]);
+              // Fila de totales
+              filas.push([
+                "", "", "", "", "", "", "TOTAL",
+                "",
+                ventasReporte.iva_global.toFixed(2),
+                ventasReporte.descuento_global.toFixed(2),
+                ventasReporte.total_global.toFixed(2),
+                "",
+              ]);
+              const subtitulo = construirSubtituloVentas(desde, hasta, ventasFiltros, ventasOpciones);
+              try {
+                if (formato === "xlsx") {
+                  await exportarTablaXlsx(ruta, "Reporte de Ventas", subtitulo, encabezados, filas, [7, 8, 9, 10]);
+                } else {
+                  await exportarTablaPdf(ruta, "Reporte de Ventas", subtitulo, encabezados, filas, true);
+                }
+                toastExito(`Reporte exportado a ${ruta}`);
+              } catch (err) {
+                toastError("Error exportando: " + err);
+              }
+            }}
+          />
+        )}
       </div>
     </>
   );
 }
+
+// ─── v2.3.70 — Helper subtítulo del export ──────────────────────────────
+function construirSubtituloVentas(
+  desde: string,
+  hasta: string,
+  filtros: { cajero: string; formaPago: string; tipoDocumento: string; categoriaId: number | null; incluirAnuladas: boolean },
+  opciones: { categorias: { id: number; nombre: string }[] } | null,
+): string {
+  const partes: string[] = [`Período: ${desde} al ${hasta}`];
+  if (filtros.cajero) partes.push(`Cajero: ${filtros.cajero}`);
+  if (filtros.formaPago) partes.push(`Forma pago: ${filtros.formaPago}`);
+  if (filtros.tipoDocumento) partes.push(`Documento: ${filtros.tipoDocumento}`);
+  if (filtros.categoriaId && opciones) {
+    const cat = opciones.categorias.find(c => c.id === filtros.categoriaId);
+    if (cat) partes.push(`Categoría: ${cat.nombre}`);
+  }
+  if (filtros.incluirAnuladas) partes.push("Incluye anuladas");
+  return partes.join(" · ");
+}
+
+// ─── v2.3.70 — Componente Reporte Ventas Filtrable ──────────────────────
+interface ReporteVentasProps {
+  opciones: { cajeros: string[]; formas_pago: string[]; tipos_documento: string[]; categorias: { id: number; nombre: string }[] } | null;
+  datos: ReporteVentasResultado | null;
+  filtros: { cajero: string; formaPago: string; tipoDocumento: string; categoriaId: number | null; incluirAnuladas: boolean };
+  onFiltrosChange: React.Dispatch<React.SetStateAction<{ cajero: string; formaPago: string; tipoDocumento: string; categoriaId: number | null; incluirAnuladas: boolean }>>;
+  onAplicar: () => void;
+  onExportar: (formato: "xlsx" | "pdf") => void;
+}
+
+function ReporteVentasFiltrable({ opciones, datos, filtros, onFiltrosChange, onAplicar, onExportar }: ReporteVentasProps) {
+  if (!datos) {
+    return (
+      <div style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)" }}>
+        Click en "Aplicar" para cargar el reporte de ventas.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Filtros */}
+      <div style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: 8,
+        padding: 12,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+        gap: 10,
+      }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Cajero</label>
+          <select
+            className="input"
+            value={filtros.cajero}
+            onChange={e => onFiltrosChange(f => ({ ...f, cajero: e.target.value }))}
+            style={{ width: "100%", fontSize: 12 }}
+          >
+            <option value="">— Todos —</option>
+            {opciones?.cajeros.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Forma de pago</label>
+          <select
+            className="input"
+            value={filtros.formaPago}
+            onChange={e => onFiltrosChange(f => ({ ...f, formaPago: e.target.value }))}
+            style={{ width: "100%", fontSize: 12 }}
+          >
+            <option value="">— Todas —</option>
+            {opciones?.formas_pago.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Tipo documento</label>
+          <select
+            className="input"
+            value={filtros.tipoDocumento}
+            onChange={e => onFiltrosChange(f => ({ ...f, tipoDocumento: e.target.value }))}
+            style={{ width: "100%", fontSize: 12 }}
+          >
+            <option value="">— Todos —</option>
+            {opciones?.tipos_documento.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>Categoría</label>
+          <select
+            className="input"
+            value={filtros.categoriaId ?? ""}
+            onChange={e => onFiltrosChange(f => ({ ...f, categoriaId: e.target.value ? parseInt(e.target.value, 10) : null }))}
+            style={{ width: "100%", fontSize: 12 }}
+          >
+            <option value="">— Todas —</option>
+            {opciones?.categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+          <label style={{ fontSize: 12, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={filtros.incluirAnuladas}
+              onChange={e => onFiltrosChange(f => ({ ...f, incluirAnuladas: e.target.checked }))}
+            />
+            Incluir anuladas
+          </label>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6 }}>
+          <button className="btn btn-primary" onClick={onAplicar} style={{ flex: 1, fontSize: 12 }}>
+            🔍 Aplicar
+          </button>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+        <KpiCard label="Ventas en el período" valor={String(datos.num_ventas)} />
+        <KpiCard label="Total facturado" valor={`$${datos.total_global.toFixed(2)}`} color="var(--color-success)" />
+        <KpiCard label="Ticket promedio" valor={`$${datos.ticket_promedio.toFixed(2)}`} />
+        <KpiCard label="IVA generado" valor={`$${datos.iva_global.toFixed(2)}`} />
+        <KpiCard label="Descuentos" valor={`$${datos.descuento_global.toFixed(2)}`} color="var(--color-warning)" />
+      </div>
+
+      {/* Desglose por forma de pago */}
+      {datos.por_forma_pago.length > 0 && (
+        <div style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          padding: 10,
+          background: "var(--color-surface-alt)",
+          borderRadius: 6,
+          alignItems: "center",
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 700, marginRight: 4 }}>Por forma de pago:</span>
+          {datos.por_forma_pago.map(p => (
+            <span key={p.forma_pago} style={{
+              fontSize: 11,
+              padding: "3px 8px",
+              borderRadius: 12,
+              background: "var(--color-surface)",
+              border: "1px solid var(--color-border)",
+            }}>
+              <strong>{p.forma_pago}</strong>: ${p.total.toFixed(2)} ({p.num_ventas})
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Botones export */}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+        <button className="btn btn-outline" onClick={() => onExportar("xlsx")} style={{ fontSize: 12 }}>
+          📊 Exportar Excel
+        </button>
+        <button className="btn btn-outline" onClick={() => onExportar("pdf")} style={{ fontSize: 12 }}>
+          📄 Exportar PDF
+        </button>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ overflowX: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: "var(--color-surface-alt)" }}>
+              <th style={thStyle}>Fecha</th>
+              <th style={thStyle}>Número</th>
+              <th style={thStyle}>Cliente</th>
+              <th style={thStyle}>Cajero</th>
+              <th style={thStyle}>Forma</th>
+              <th style={thStyle}>Doc.</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Subtotal</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>IVA</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Desc.</th>
+              <th style={{ ...thStyle, textAlign: "right" }}>Total</th>
+              <th style={thStyle}>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {datos.ventas.length === 0 ? (
+              <tr><td colSpan={11} style={{ padding: 24, textAlign: "center", color: "var(--color-text-secondary)" }}>Sin ventas para los filtros seleccionados</td></tr>
+            ) : (
+              datos.ventas.map(v => (
+                <tr key={v.id} style={{ borderTop: "1px solid var(--color-border)", opacity: v.anulada ? 0.6 : 1 }}>
+                  <td style={tdStyle}>{v.fecha.slice(0, 16).replace("T", " ")}</td>
+                  <td style={tdStyle}>{v.numero}</td>
+                  <td style={tdStyle}>
+                    {v.cliente_nombre || "—"}
+                    {v.cliente_identificacion && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{v.cliente_identificacion}</div>}
+                  </td>
+                  <td style={tdStyle}>{v.cajero}</td>
+                  <td style={tdStyle}>{v.forma_pago}</td>
+                  <td style={tdStyle}>{v.tipo_documento}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>${v.subtotal_sin_iva.toFixed(2)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>${v.iva.toFixed(2)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right" }}>${v.descuento.toFixed(2)}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>${v.total.toFixed(2)}</td>
+                  <td style={tdStyle}>
+                    {v.anulada
+                      ? <span style={{ color: "var(--color-danger)", fontWeight: 600 }}>ANULADA</span>
+                      : v.estado}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+          {datos.ventas.length > 0 && (
+            <tfoot>
+              <tr style={{ background: "var(--color-surface-alt)", fontWeight: 700 }}>
+                <td style={tdStyle} colSpan={6}>TOTAL ({datos.num_ventas} ventas)</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>${datos.ventas.reduce((s, v) => s + v.subtotal_sin_iva, 0).toFixed(2)}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>${datos.iva_global.toFixed(2)}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>${datos.descuento_global.toFixed(2)}</td>
+                <td style={{ ...tdStyle, textAlign: "right", color: "var(--color-success)" }}>${datos.total_global.toFixed(2)}</td>
+                <td style={tdStyle}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const thStyle: React.CSSProperties = { padding: "8px 10px", textAlign: "left", fontWeight: 700, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 };
+const tdStyle: React.CSSProperties = { padding: "6px 10px" };
 
 function KpiCard({ label, valor, sub, color, destacado }: { label: string; valor: string; sub?: string; color?: string; destacado?: boolean }) {
   return (

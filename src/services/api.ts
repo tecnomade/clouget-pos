@@ -1166,6 +1166,73 @@ export const exportarTablaXlsx = (ruta: string, titulo: string, subtitulo: strin
 export const exportarTablaPdf = (ruta: string, titulo: string, subtitulo: string | null, encabezados: string[], filas: string[][], orientacionHorizontal: boolean | null = true) =>
   smartInvoke<void>("exportar_tabla_pdf", { ruta, titulo, subtitulo, encabezados, filas, orientacionHorizontal });
 
+// --- v2.3.70 — Reporte de ventas individuales filtrable ---
+export interface FiltrosReporteVentas {
+  fechaDesde: string;
+  fechaHasta: string;
+  cajero?: string | null;
+  clienteId?: number | null;
+  formaPago?: string | null;
+  tipoDocumento?: string | null;
+  categoriaId?: number | null;
+  incluirAnuladas?: boolean;
+}
+
+export interface VentaReporteRow {
+  id: number;
+  numero: string;
+  fecha: string;
+  cliente_id: number | null;
+  cliente_nombre: string;
+  cliente_identificacion: string;
+  cajero: string;
+  forma_pago: string;
+  tipo_documento: string;
+  subtotal_sin_iva: number;
+  subtotal_con_iva: number;
+  descuento: number;
+  iva: number;
+  total: number;
+  estado: string;
+  anulada: boolean;
+  observacion: string | null;
+  banco_id: number | null;
+  banco_nombre: string;
+  referencia_pago: string | null;
+}
+
+export interface ReporteVentasResultado {
+  ventas: VentaReporteRow[];
+  num_ventas: number;
+  total_global: number;
+  iva_global: number;
+  descuento_global: number;
+  ticket_promedio: number;
+  por_forma_pago: { forma_pago: string; total: number; num_ventas: number }[];
+  fecha_desde: string;
+  fecha_hasta: string;
+}
+
+export const reporteVentasFiltrable = (f: FiltrosReporteVentas) =>
+  smartInvoke<ReporteVentasResultado>("reporte_ventas_filtrable", {
+    fechaDesde: f.fechaDesde,
+    fechaHasta: f.fechaHasta,
+    cajero: f.cajero ?? null,
+    clienteId: f.clienteId ?? null,
+    formaPago: f.formaPago ?? null,
+    tipoDocumento: f.tipoDocumento ?? null,
+    categoriaId: f.categoriaId ?? null,
+    incluirAnuladas: f.incluirAnuladas ?? false,
+  });
+
+export const reporteVentasFiltrosDisponibles = (fechaDesde: string, fechaHasta: string) =>
+  smartInvoke<{
+    cajeros: string[];
+    formas_pago: string[];
+    tipos_documento: string[];
+    categorias: { id: number; nombre: string }[];
+  }>("reporte_ventas_filtros_disponibles", { fechaDesde, fechaHasta });
+
 // --- Multi-unidad (v1.9.7) ---
 export const listarUnidadesProducto = (productoId: number) =>
   smartInvoke<Array<{ id: number; nombre: string; abreviatura: string | null; factor: number; precio: number; es_base: boolean; orden: number; activa: boolean }>>(

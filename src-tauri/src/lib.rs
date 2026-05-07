@@ -257,6 +257,8 @@ pub fn run() {
             commands::reportes::reporte_kardex_producto,
             commands::reportes::reporte_kardex_multi,
             commands::reportes::reporte_ventas_por_cajero,
+            commands::reportes::reporte_ventas_filtrable,
+            commands::reportes::reporte_ventas_filtros_disponibles,
             commands::reportes::listar_categorias_simple,
             // Gastos
             commands::gastos::crear_gasto,

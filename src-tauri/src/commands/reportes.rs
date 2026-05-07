@@ -1403,3 +1403,245 @@ pub fn reporte_kardex_producto(db: State<Database>, producto_id: i64, fecha_desd
         "total_movimientos": movimientos.len(),
     }))
 }
+
+// ─── v2.3.70 — Reporte de ventas individuales filtrable ──────────────────
+//
+// Este reporte lista cada venta individualmente con todos sus campos
+// relevantes y permite filtrar por:
+//   - rango de fecha (desde/hasta)
+//   - cajero (string usuario)
+//   - cliente_id
+//   - forma_pago
+//   - tipo_documento
+//   - categoria_id (filtra ventas que tengan al menos un item de esa categoría)
+//   - sólo_anuladas / excluir_anuladas
+//
+// Para alimentar los selectores del frontend, hay un comando auxiliar
+// `reporte_ventas_filtros_disponibles` que devuelve los valores únicos
+// (cajeros, formas de pago, categorías con ventas) en el rango de fechas.
+
+#[tauri::command]
+pub fn reporte_ventas_filtrable(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+    cajero: Option<String>,
+    cliente_id: Option<i64>,
+    forma_pago: Option<String>,
+    tipo_documento: Option<String>,
+    categoria_id: Option<i64>,
+    incluir_anuladas: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let inc_anu = incluir_anuladas.unwrap_or(false);
+
+    // Construcción dinámica del WHERE — usamos params ordenados.
+    let mut where_parts: Vec<String> = vec![
+        "date(v.fecha) >= date(?1)".to_string(),
+        "date(v.fecha) <= date(?2)".to_string(),
+    ];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![
+        Box::new(fecha_desde.clone()),
+        Box::new(fecha_hasta.clone()),
+    ];
+
+    if !inc_anu {
+        where_parts.push("COALESCE(v.anulada, 0) = 0".to_string());
+    }
+    if let Some(cj) = cajero.as_ref().filter(|s| !s.is_empty()) {
+        params_vec.push(Box::new(cj.clone()));
+        where_parts.push(format!("COALESCE(v.usuario, '') = ?{}", params_vec.len()));
+    }
+    if let Some(cid) = cliente_id {
+        params_vec.push(Box::new(cid));
+        where_parts.push(format!("v.cliente_id = ?{}", params_vec.len()));
+    }
+    if let Some(fp) = forma_pago.as_ref().filter(|s| !s.is_empty()) {
+        params_vec.push(Box::new(fp.clone()));
+        where_parts.push(format!("v.forma_pago = ?{}", params_vec.len()));
+    }
+    if let Some(td) = tipo_documento.as_ref().filter(|s| !s.is_empty()) {
+        params_vec.push(Box::new(td.clone()));
+        where_parts.push(format!("v.tipo_documento = ?{}", params_vec.len()));
+    }
+    if let Some(cat) = categoria_id {
+        // Filtro por categoría: la venta debe tener AL MENOS un item con
+        // producto de esa categoría. EXISTS evita duplicar filas.
+        params_vec.push(Box::new(cat));
+        where_parts.push(format!(
+            "EXISTS (SELECT 1 FROM venta_detalles vd
+                     JOIN productos p ON vd.producto_id = p.id
+                     WHERE vd.venta_id = v.id AND p.categoria_id = ?{})",
+            params_vec.len()
+        ));
+    }
+
+    let where_sql = where_parts.join(" AND ");
+
+    let sql = format!(
+        "SELECT v.id, v.numero, v.fecha, v.cliente_id,
+                COALESCE(c.razon_social, c.nombres, '') as cliente_nombre,
+                COALESCE(c.identificacion, '') as cliente_identificacion,
+                COALESCE(v.usuario, '(sin usuario)') as cajero,
+                v.forma_pago, v.tipo_documento, v.subtotal_sin_iva, v.subtotal_con_iva,
+                v.descuento, v.iva, v.total, v.estado,
+                COALESCE(v.anulada, 0) as anulada,
+                v.observacion,
+                v.banco_id, COALESCE(b.nombre, '') as banco_nombre,
+                v.referencia_pago
+         FROM ventas v
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         LEFT JOIN cuentas_banco b ON v.banco_id = b.id
+         WHERE {}
+         ORDER BY v.fecha DESC, v.id DESC",
+        where_sql
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+
+    let ventas: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params_from_iter(params_refs.iter()), |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "numero": r.get::<_, String>(1)?,
+                "fecha": r.get::<_, String>(2)?,
+                "cliente_id": r.get::<_, Option<i64>>(3)?,
+                "cliente_nombre": r.get::<_, String>(4)?,
+                "cliente_identificacion": r.get::<_, String>(5)?,
+                "cajero": r.get::<_, String>(6)?,
+                "forma_pago": r.get::<_, String>(7)?,
+                "tipo_documento": r.get::<_, String>(8)?,
+                "subtotal_sin_iva": r.get::<_, f64>(9)?,
+                "subtotal_con_iva": r.get::<_, f64>(10)?,
+                "descuento": r.get::<_, f64>(11)?,
+                "iva": r.get::<_, f64>(12)?,
+                "total": r.get::<_, f64>(13)?,
+                "estado": r.get::<_, String>(14)?,
+                "anulada": r.get::<_, i64>(15)? != 0,
+                "observacion": r.get::<_, Option<String>>(16)?,
+                "banco_id": r.get::<_, Option<i64>>(17)?,
+                "banco_nombre": r.get::<_, String>(18)?,
+                "referencia_pago": r.get::<_, Option<String>>(19)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // KPIs agregados
+    let total_global: f64 = ventas.iter().filter_map(|v| v["total"].as_f64()).sum();
+    let iva_global: f64 = ventas.iter().filter_map(|v| v["iva"].as_f64()).sum();
+    let descuento_global: f64 = ventas.iter().filter_map(|v| v["descuento"].as_f64()).sum();
+    let num = ventas.len() as i64;
+    let ticket_promedio = if num > 0 { total_global / num as f64 } else { 0.0 };
+
+    // Desglose por forma de pago
+    let mut por_forma: std::collections::HashMap<String, (f64, i64)> = std::collections::HashMap::new();
+    for v in &ventas {
+        let fp = v["forma_pago"].as_str().unwrap_or("").to_string();
+        let total = v["total"].as_f64().unwrap_or(0.0);
+        let entry = por_forma.entry(fp).or_insert((0.0, 0));
+        entry.0 += total;
+        entry.1 += 1;
+    }
+    let formas: Vec<serde_json::Value> = por_forma.into_iter()
+        .map(|(forma, (total, num))| serde_json::json!({
+            "forma_pago": forma,
+            "total": total,
+            "num_ventas": num,
+        }))
+        .collect();
+
+    Ok(serde_json::json!({
+        "ventas": ventas,
+        "num_ventas": num,
+        "total_global": total_global,
+        "iva_global": iva_global,
+        "descuento_global": descuento_global,
+        "ticket_promedio": ticket_promedio,
+        "por_forma_pago": formas,
+        "fecha_desde": fecha_desde,
+        "fecha_hasta": fecha_hasta,
+    }))
+}
+
+/// Devuelve los valores únicos disponibles en el rango para alimentar los
+/// selectores de filtro del frontend (cajeros, formas de pago, categorías
+/// con ventas, tipos de documento usados).
+#[tauri::command]
+pub fn reporte_ventas_filtros_disponibles(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Cajeros únicos con ventas en el rango
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT COALESCE(usuario, '(sin usuario)') AS cajero
+         FROM ventas
+         WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+         ORDER BY cajero"
+    ).map_err(|e| e.to_string())?;
+    let cajeros: Vec<String> = stmt
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Formas de pago únicas
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT forma_pago FROM ventas
+         WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+           AND forma_pago IS NOT NULL AND forma_pago != ''
+         ORDER BY forma_pago"
+    ).map_err(|e| e.to_string())?;
+    let formas: Vec<String> = stmt
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Tipos de documento únicos
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT tipo_documento FROM ventas
+         WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+           AND tipo_documento IS NOT NULL AND tipo_documento != ''
+         ORDER BY tipo_documento"
+    ).map_err(|e| e.to_string())?;
+    let tipos: Vec<String> = stmt
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Categorías que tuvieron ventas en el rango
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT cat.id, cat.nombre
+         FROM categorias cat
+         JOIN productos p ON p.categoria_id = cat.id
+         JOIN venta_detalles vd ON vd.producto_id = p.id
+         JOIN ventas v ON vd.venta_id = v.id
+         WHERE date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+           AND COALESCE(v.anulada, 0) = 0
+         ORDER BY cat.nombre"
+    ).map_err(|e| e.to_string())?;
+    let categorias: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "nombre": r.get::<_, String>(1)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "cajeros": cajeros,
+        "formas_pago": formas,
+        "tipos_documento": tipos,
+        "categorias": categorias,
+    }))
+}
