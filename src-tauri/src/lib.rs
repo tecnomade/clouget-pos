@@ -446,6 +446,12 @@ pub fn run() {
             restaurante::commands::rest_unir_mesas,
             restaurante::commands::rest_desunir_mesa,
             restaurante::commands::rest_listar_mesas_libres_para_unir,
+            // v2.3.69 — Dividir cuenta (sub-cuentas)
+            restaurante::commands::rest_dividir_cuenta,
+            restaurante::commands::rest_listar_subcuentas,
+            restaurante::commands::rest_cancelar_division,
+            restaurante::commands::rest_marcar_subcuenta_cobrada,
+            restaurante::commands::rest_producto_division_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -100,6 +100,40 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_mesa ON rest_pedido_mesas_extra(mesa_id);
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_pedido ON rest_pedido_mesas_extra(pedido_id);
+
+        -- ─── Sub-cuentas (división de cuenta v2.3.69) ──────────────
+        -- Cuando un grupo decide pagar por separado, el pedido se divide en N
+        -- sub-cuentas. Cada una se cobra de forma independiente (su propia
+        -- forma de pago), generando una venta REAL apuntando a un producto
+        -- especial '_DIVISION_CUENTA_' (es_servicio=1, IVA 0%).
+        --
+        -- Estado:  PENDIENTE | COBRADA
+        -- numero:  1, 2, 3, ... N (orden visible al mesero)
+        -- venta_id: NULL hasta que se cobra; luego apunta a la venta generada
+        --
+        -- Cuando TODAS las sub-cuentas de un pedido están COBRADAS, el sistema
+        -- marca el pedido como COBRADO (vinculándolo con la venta de la PRIMERA
+        -- sub-cuenta cobrada) y libera la(s) mesa(s).
+        --
+        -- LIMITACIÓN MVP: el stock de los items reales NO se descuenta porque
+        -- cada venta es por monto plano. Aceptable para restaurantes pequeños.
+        CREATE TABLE IF NOT EXISTS rest_subcuentas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            numero INTEGER NOT NULL,
+            total REAL NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+            forma_pago TEXT,
+            banco_id INTEGER,
+            referencia_pago TEXT,
+            venta_id INTEGER,
+            fecha_cobro TEXT,
+            FOREIGN KEY (pedido_id) REFERENCES rest_pedidos_abiertos(id) ON DELETE CASCADE,
+            FOREIGN KEY (banco_id) REFERENCES cuentas_banco(id),
+            FOREIGN KEY (venta_id) REFERENCES ventas(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rest_subcuentas_pedido ON rest_subcuentas(pedido_id);
+        CREATE INDEX IF NOT EXISTS idx_rest_subcuentas_estado ON rest_subcuentas(estado);
         ",
     )
 }
@@ -107,6 +141,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 /// Inserta zonas y mesas iniciales si la tabla está vacía.
 /// Asumimos un restaurante simple: 1 zona "Salón" con 6 mesas de capacidad 4.
 /// El dueño puede borrarlas y rehacer todo desde Configuración.
+///
+/// v2.3.69: También garantiza la existencia del producto especial
+/// `_DIVISION_CUENTA_` (es_servicio=1, IVA 0%, oculto en POS) usado al cobrar
+/// sub-cuentas — cada sub-cuenta se materializa como una venta de ese producto
+/// con precio_unitario = monto de la sub-cuenta.
 pub fn seed_default(conn: &Connection) -> Result<(), rusqlite::Error> {
     let count_zonas: i64 = conn
         .query_row("SELECT COUNT(*) FROM rest_zonas", params![], |row| row.get(0))
@@ -126,6 +165,31 @@ pub fn seed_default(conn: &Connection) -> Result<(), rusqlite::Error> {
                 params![zona_id, format!("Mesa {}", i), i],
             )?;
         }
+    }
+
+    // v2.3.69 — Producto especial "_DIVISION_CUENTA_" usado por el cobro de
+    // sub-cuentas. Es un servicio (no descuenta stock), IVA 0% (el IVA real ya
+    // se contabilizó en los items del pedido — la división es solo un cobro
+    // partido). Se identifica por su `codigo` único '_DIVISION_CUENTA_' para
+    // que sea fácil filtrarlo en reportes.
+    let existe: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM productos WHERE codigo = '_DIVISION_CUENTA_'",
+            params![],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if existe == 0 {
+        // INSERT OR IGNORE por si en concurrencia se intenta crear dos veces
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO productos
+             (codigo, nombre, descripcion, precio_costo, precio_venta,
+              iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
+              unidad_medida, es_servicio, activo)
+             VALUES ('_DIVISION_CUENTA_', 'Cuota Mesa Restaurante', 'Producto interno para división de cuenta — no se vende manualmente',
+                     0, 0, 0, 0, 0, 0, 'UND', 1, 1)",
+            params![],
+        );
     }
 
     Ok(())

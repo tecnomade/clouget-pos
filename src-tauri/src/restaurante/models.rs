@@ -138,6 +138,35 @@ pub struct PedidoDetalle {
     pub capacidad_total: i32,
 }
 
+// ─── v2.3.69 — Sub-cuentas (división de cuenta) ──────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Subcuenta {
+    pub id: i64,
+    pub pedido_id: i64,
+    pub numero: i32,
+    pub total: f64,
+    /// PENDIENTE | COBRADA
+    pub estado: String,
+    pub forma_pago: Option<String>,
+    pub banco_id: Option<i64>,
+    pub banco_nombre: Option<String>,
+    pub referencia_pago: Option<String>,
+    pub venta_id: Option<i64>,
+    /// numero asignado a la venta cuando ya se cobró (ej. NV-001-001-000000042)
+    pub venta_numero: Option<String>,
+    pub fecha_cobro: Option<String>,
+}
+
+/// Resultado de marcar una sub-cuenta como cobrada — el frontend usa
+/// `todas_cobradas` para saber si debe mostrar el toast "Mesa liberada".
+#[derive(Debug, Serialize, Clone)]
+pub struct ResultadoCobroSubcuenta {
+    pub todas_cobradas: bool,
+    /// Cantidad de sub-cuentas pendientes restantes
+    pub pendientes: i32,
+}
+
 /// Item enriquecido para la vista de cocina (incluye mesa para context).
 #[derive(Debug, Serialize, Clone)]
 pub struct ItemCocina {

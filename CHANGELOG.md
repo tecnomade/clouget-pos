@@ -6,7 +6,71 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
-## v2.3.68 — 2026-05-05 🔗 STABLE
+## v2.3.69 — 2026-05-07 ✂️ STABLE
+**Restaurante: Dividir cuenta — completa el trío de features pedidas.**
+
+Tercera y última feature del paquete restaurante solicitado. Las tres features (`v2.3.67` comandas a cocina, `v2.3.68` unir mesas, `v2.3.69` dividir cuenta) cubren los flujos clave que el cliente real reclamó.
+
+### ✂️ Caso de uso
+
+Un grupo de 4 personas come junto y quieren pagar por separado. Antes había que cobrar todo a una sola persona; ahora el mesero divide la cuenta en N partes iguales y cada comensal paga la suya con su propia forma de pago (efectivo, tarjeta, transferencia, crédito).
+
+### Cómo se usa
+
+1. Cuando el pedido tenga items y esté listo para cobrar, click en **✂️ Dividir cuenta entre varios** (debajo del botón Cobrar)
+2. Modal pregunta **número de partes** (2 a 20). Default = número de comensales del pedido. Total se divide en partes iguales (la última lleva el residuo del redondeo: $100/3 → $33.33, $33.33, $33.34)
+3. Click **✂️ Dividir** → la sección Cobrar se reemplaza por la **lista de sub-cuentas** con su monto y botón **💰 Cobrar** independiente
+4. Cada vez que se cobra una sub-cuenta:
+   - Aparece modal de forma de pago (mismo flujo que cobrar normal: efectivo / transfer / crédito)
+   - Se genera una **nota de venta independiente** con el monto exacto
+   - La sub-cuenta queda marcada `COBRADA` con el número de venta visible
+5. Cuando **TODAS** las sub-cuentas están cobradas → el pedido se cierra y la(s) mesa(s) se liberan automáticamente
+6. Mientras NINGUNA esté cobrada, se puede **Cancelar división** para volver al cobro normal
+
+### Detalles técnicos importantes
+
+- **Producto especial** `_DIVISION_CUENTA_` (auto-creado en `seed_default`): es_servicio=1, IVA 0%, oculto del POS normal. Cada venta de sub-cuenta usa este producto con `precio_unitario = monto de la parte`
+- **Observación de cada venta**: incluye "Mesa X · Pedido #Y · Sub-cuenta i/N" y `info_adicional` con el detalle de items reales del pedido (trazabilidad)
+- **Número de venta visible**: cada sub-cuenta cobrada muestra su número (ej. NV-001-001-000000042) junto a la forma de pago
+
+### ⚠️ Limitación conocida (MVP)
+
+El stock de los items reales del pedido **NO se descuenta** — es el tradeoff del approach simple. Aceptable para restaurantes pequeños donde el inventario fino no es crítico. Para descuento de stock + IVA desglosado por sub-cuenta haría falta refactorizar `registrar_venta` para soportar pagos múltiples sobre una sola venta (queda como mejora futura).
+
+### 🛠 Backend
+
+- **Schema**: tabla `rest_subcuentas(id, pedido_id, numero, total, estado, forma_pago, banco_id, referencia_pago, venta_id, fecha_cobro)` con FK CASCADE al pedido
+- **Producto especial** auto-creado en `seed_default()`: codigo='_DIVISION_CUENTA_', es_servicio=1, IVA 0
+- **Comandos Tauri**:
+  - `rest_dividir_cuenta(pedido_id, n_partes)` — crea N sub-cuentas con reparto en centavos
+  - `rest_listar_subcuentas(pedido_id)` — JOIN con cuentas_banco y ventas
+  - `rest_cancelar_division(pedido_id)` — solo si NINGUNA cobrada
+  - `rest_marcar_subcuenta_cobrada(subcuenta_id, venta_id, forma_pago, banco_id?, referencia?)` — auto-cierra el pedido si todas las sub-cuentas quedan cobradas
+  - `rest_producto_division_id()` — devuelve el ID del producto especial
+- **Validaciones**: división solo si pedido ABIERTO/CUENTA_PEDIDA, mínimo 2 / máximo 20 partes, total > 0
+
+### 🎨 Frontend
+
+- **PedidoDetalle**:
+  - Botón discreto **✂️ Dividir cuenta entre varios** debajo del botón Cobrar (solo si hay items y NO está dividido aún)
+  - Cuando está dividido: oculta botón Cobrar y muestra una **caja con lista de sub-cuentas** (parte i/N, monto, botón Cobrar individual o badge COBRADA)
+  - Cobro de sub-cuenta usa el `ModalCobro` existente (reuso completo)
+  - Botón **Cancelar división** visible solo si ninguna sub-cuenta cobrada
+- **ModalDividirCuenta** nuevo: input numérico con +/− (2-20), preview "cada parte paga $X", warning sobre limitaciones
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/restaurante/schema.rs` — tabla `rest_subcuentas` + producto especial en seed
+- `src-tauri/src/restaurante/models.rs` — `Subcuenta`, `ResultadoCobroSubcuenta`
+- `src-tauri/src/restaurante/commands.rs` — 5 comandos nuevos + helper `listar_subcuentas_internal`
+- `src-tauri/src/lib.rs` — registro de comandos
+- `src/restaurante/types.ts`, `src/restaurante/api.ts` — mirror TS
+- `src/restaurante/components/PedidoDetalle.tsx` — UI sub-cuentas + ModalDividirCuenta
+
+---
+
+## v2.3.68 — 2026-05-07 🔗 STABLE  
+*(release inmediatamente anterior a v2.3.69 — el mismo día)*
 **Restaurante: Unir mesas para grupos grandes (2 de 3 features pedidas).**
 
 Segunda feature de las 3 solicitadas. Próxima: **v2.3.69 (dividir cuenta)**.

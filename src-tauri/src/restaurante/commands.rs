@@ -1136,6 +1136,226 @@ pub fn rest_listar_mesas_libres_para_unir(
     Ok(mesas)
 }
 
+// ─── v2.3.69 — Dividir cuenta (sub-cuentas) ──────────────────────────────
+
+/// Divide el total del pedido en N partes iguales y crea N sub-cuentas
+/// PENDIENTES de cobro. Si ya existen sub-cuentas para este pedido, falla
+/// (hay que cancelar primero la división).
+///
+/// El reparto: cada sub-cuenta lleva floor(total*100/N)/100 centavos. La
+/// ÚLTIMA sub-cuenta absorbe el residuo de redondeo para que la suma cuadre
+/// exactamente con el total. Ejemplo: total $100 / 3 → $33.33, $33.33, $33.34.
+#[tauri::command]
+pub fn rest_dividir_cuenta(
+    db: State<'_, Database>,
+    pedido_id: i64,
+    n_partes: i32,
+) -> Result<Vec<Subcuenta>, String> {
+    requiere_modulo_restaurante(&db)?;
+    if !(2..=20).contains(&n_partes) {
+        return Err("El número de partes debe ser entre 2 y 20".to_string());
+    }
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validar que el pedido esté activo
+    let estado: String = conn
+        .query_row(
+            "SELECT estado FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Pedido no encontrado".to_string())?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(format!("No se puede dividir un pedido {}", estado));
+    }
+
+    // No re-dividir si ya hay sub-cuentas
+    let existentes: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if existentes > 0 {
+        return Err("Este pedido ya está dividido. Cancele la división actual primero.".to_string());
+    }
+
+    // Calcular total del pedido (suma de items)
+    let total: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(cantidad * precio_unit), 0)
+             FROM rest_pedido_items WHERE pedido_id = ?1",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+    if total <= 0.0 {
+        return Err("El pedido no tiene total para dividir (sin items)".to_string());
+    }
+
+    // Reparto en centavos para evitar imprecisión float
+    let total_centavos: i64 = (total * 100.0).round() as i64;
+    let parte_centavos: i64 = total_centavos / (n_partes as i64);
+    let residuo: i64 = total_centavos - parte_centavos * (n_partes as i64);
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for i in 1..=n_partes {
+        let centavos = if i == n_partes {
+            parte_centavos + residuo
+        } else {
+            parte_centavos
+        };
+        let monto = (centavos as f64) / 100.0;
+        tx.execute(
+            "INSERT INTO rest_subcuentas (pedido_id, numero, total) VALUES (?1, ?2, ?3)",
+            params![pedido_id, i, monto],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // Devolver las sub-cuentas creadas
+    listar_subcuentas_internal(&conn, pedido_id)
+}
+
+/// Lista las sub-cuentas asociadas al pedido (con datos de banco y venta JOIN).
+/// Vacío si el pedido no está dividido.
+#[tauri::command]
+pub fn rest_listar_subcuentas(
+    db: State<'_, Database>,
+    pedido_id: i64,
+) -> Result<Vec<Subcuenta>, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    listar_subcuentas_internal(&conn, pedido_id)
+}
+
+/// Cancela la división del pedido (borra todas las sub-cuentas). Solo permitido
+/// si NINGUNA sub-cuenta fue cobrada todavía.
+#[tauri::command]
+pub fn rest_cancelar_division(
+    db: State<'_, Database>,
+    pedido_id: i64,
+) -> Result<(), String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let cobradas: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1 AND estado = 'COBRADA'",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if cobradas > 0 {
+        return Err(format!(
+            "No se puede cancelar la división: ya hay {} sub-cuenta(s) cobrada(s).",
+            cobradas
+        ));
+    }
+
+    conn.execute(
+        "DELETE FROM rest_subcuentas WHERE pedido_id = ?1",
+        params![pedido_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Marca una sub-cuenta como COBRADA, vinculándola con la venta ya generada
+/// en el frontend (vía `registrar_venta`). El frontend genera la venta usando
+/// el producto especial `_DIVISION_CUENTA_` con precio = monto de la sub-cuenta.
+///
+/// Cuando TODAS las sub-cuentas del pedido quedan COBRADAS, automáticamente
+/// cierra el pedido (`estado=COBRADO`) vinculándolo con la venta de la primera
+/// sub-cuenta cobrada — esto libera la mesa principal y todas las extras.
+#[tauri::command]
+pub fn rest_marcar_subcuenta_cobrada(
+    db: State<'_, Database>,
+    subcuenta_id: i64,
+    venta_id: i64,
+    forma_pago: String,
+    banco_id: Option<i64>,
+    referencia_pago: Option<String>,
+) -> Result<ResultadoCobroSubcuenta, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validar que exista y esté pendiente
+    let (pedido_id, estado): (i64, String) = conn
+        .query_row(
+            "SELECT pedido_id, estado FROM rest_subcuentas WHERE id = ?1",
+            params![subcuenta_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "Sub-cuenta no encontrada".to_string())?;
+    if estado == "COBRADA" {
+        return Err("Esta sub-cuenta ya fue cobrada".to_string());
+    }
+
+    conn.execute(
+        "UPDATE rest_subcuentas
+         SET estado = 'COBRADA', forma_pago = ?1, banco_id = ?2, referencia_pago = ?3,
+             venta_id = ?4, fecha_cobro = datetime('now', 'localtime')
+         WHERE id = ?5",
+        params![forma_pago, banco_id, referencia_pago, venta_id, subcuenta_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // ¿Quedan pendientes?
+    let pendientes: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1 AND estado = 'PENDIENTE'",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let todas_cobradas = pendientes == 0;
+
+    if todas_cobradas {
+        // Vincular el pedido con la venta de la PRIMERA sub-cuenta cobrada
+        // (cualquiera sirve como ancla — VentasDia mostrará todas independientes).
+        let primera_venta_id: i64 = conn
+            .query_row(
+                "SELECT venta_id FROM rest_subcuentas
+                 WHERE pedido_id = ?1 AND venta_id IS NOT NULL
+                 ORDER BY numero LIMIT 1",
+                params![pedido_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(venta_id);
+
+        conn.execute(
+            "UPDATE rest_pedidos_abiertos
+             SET estado = 'COBRADO', venta_id = ?1, fecha_cierre = datetime('now', 'localtime')
+             WHERE id = ?2",
+            params![primera_venta_id, pedido_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(ResultadoCobroSubcuenta {
+        todas_cobradas,
+        pendientes,
+    })
+}
+
+/// ID del producto especial usado para sub-cuentas. El frontend lo necesita
+/// para construir la venta al cobrar cada sub-cuenta.
+#[tauri::command]
+pub fn rest_producto_division_id(db: State<'_, Database>) -> Result<i64, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT id FROM productos WHERE codigo = '_DIVISION_CUENTA_'",
+        params![],
+        |row| row.get(0),
+    )
+    .map_err(|_| "Producto especial _DIVISION_CUENTA_ no encontrado. Reinicia la app.".to_string())
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────
 
 fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {
@@ -1256,4 +1476,44 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
         mesas_extra,
         capacidad_total,
     })
+}
+
+/// v2.3.69 — Lista las sub-cuentas del pedido con datos enriquecidos
+/// (nombre del banco, número de venta) — usado por `rest_listar_subcuentas`
+/// y por `rest_dividir_cuenta` (devuelve las recién creadas).
+fn listar_subcuentas_internal(conn: &Connection, pedido_id: i64) -> Result<Vec<Subcuenta>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT s.id, s.pedido_id, s.numero, s.total, s.estado,
+                    s.forma_pago, s.banco_id, b.nombre AS banco_nombre,
+                    s.referencia_pago, s.venta_id, v.numero AS venta_numero,
+                    s.fecha_cobro
+             FROM rest_subcuentas s
+             LEFT JOIN cuentas_banco b ON s.banco_id = b.id
+             LEFT JOIN ventas v ON s.venta_id = v.id
+             WHERE s.pedido_id = ?1
+             ORDER BY s.numero",
+        )
+        .map_err(|e| e.to_string())?;
+    let subs: Vec<Subcuenta> = stmt
+        .query_map(params![pedido_id], |row| {
+            Ok(Subcuenta {
+                id: row.get(0)?,
+                pedido_id: row.get(1)?,
+                numero: row.get(2)?,
+                total: row.get(3)?,
+                estado: row.get(4)?,
+                forma_pago: row.get(5)?,
+                banco_id: row.get(6)?,
+                banco_nombre: row.get(7)?,
+                referencia_pago: row.get(8)?,
+                venta_id: row.get(9)?,
+                venta_numero: row.get(10)?,
+                fecha_cobro: row.get(11)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(subs)
 }

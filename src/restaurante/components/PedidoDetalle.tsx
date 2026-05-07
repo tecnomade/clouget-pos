@@ -25,13 +25,18 @@ import {
   unirMesas,
   desunirMesa,
   listarMesasLibresParaUnir,
+  dividirCuenta,
+  listarSubcuentas,
+  cancelarDivision,
+  marcarSubcuentaCobrada,
+  productoDivisionId,
 } from "../api";
 import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
 // v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
 // Ya está implementado en POS normal (v2.3.63). Aquí se agregará en próxima
 // iteración para mantener este release manejable.
 // import { ... } from "../../utils/descuentoFormaPago";
-import type { PedidoDetalle as PedidoDetalleType, MesaResumen } from "../types";
+import type { PedidoDetalle as PedidoDetalleType, MesaResumen, Subcuenta } from "../types";
 import type { NuevaVenta, VentaDetalle, CuentaBanco } from "../../types";
 import SelectorProductos from "./SelectorProductos";
 
@@ -52,11 +57,20 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const [confirmCancelar, setConfirmCancelar] = useState(false);
   // v2.3.68 — Unir mesas
   const [mostrarUnirMesas, setMostrarUnirMesas] = useState(false);
+  // v2.3.69 — Dividir cuenta
+  const [subcuentas, setSubcuentas] = useState<Subcuenta[]>([]);
+  const [mostrarDividir, setMostrarDividir] = useState(false);
+  /** sub-cuenta que se está cobrando (modal de forma de pago) */
+  const [cobrandoSubcuenta, setCobrandoSubcuenta] = useState<Subcuenta | null>(null);
 
   const cargar = useCallback(async () => {
     try {
-      const d = await obtenerPedido(pedidoId);
+      const [d, subs] = await Promise.all([
+        obtenerPedido(pedidoId),
+        listarSubcuentas(pedidoId).catch(() => [] as Subcuenta[]),
+      ]);
       setDetalle(d);
+      setSubcuentas(subs);
     } catch (err: any) {
       toastError("Error cargando pedido: " + (err?.message || err));
       onCerrar(true);
@@ -194,6 +208,109 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
       await cargar();
     } catch (err: any) {
       toastError("No se pudo desunir: " + (err?.message || err));
+    }
+  };
+
+  // v2.3.69 — Dividir cuenta
+  const handleDividirCuenta = async (nPartes: number) => {
+    if (!detalle || detalle.items.length === 0) {
+      toastWarning("El pedido no tiene items para dividir");
+      return;
+    }
+    try {
+      const subs = await dividirCuenta(pedidoId, nPartes);
+      setSubcuentas(subs);
+      setMostrarDividir(false);
+      toastExito(`Cuenta dividida en ${nPartes} partes (~$${(detalle.total / nPartes).toFixed(2)} c/u)`);
+    } catch (err: any) {
+      toastError("No se pudo dividir: " + (err?.message || err));
+    }
+  };
+
+  const handleCancelarDivision = async () => {
+    if (!confirm("¿Deshacer la división? Volverá a una sola cuenta.")) return;
+    try {
+      await cancelarDivision(pedidoId);
+      setSubcuentas([]);
+      toastExito("División cancelada");
+    } catch (err: any) {
+      toastError(err?.message || String(err));
+    }
+  };
+
+  /** Cobra una sub-cuenta: genera una venta con el producto especial
+   *  _DIVISION_CUENTA_ por el monto exacto, luego marca la sub-cuenta como
+   *  cobrada. Si todas quedan cobradas → cierra pedido y libera mesa(s). */
+  const handleCobrarSubcuenta = async (
+    sub: Subcuenta,
+    formaPago: string,
+    esFiado: boolean,
+    extras?: { bancoId?: number | null; referencia?: string | null },
+  ) => {
+    if (!detalle) return;
+    try {
+      // Verificar caja abierta (usa la del POS, no hay caja separada para restaurante)
+      const caja = await obtenerCajaAbierta();
+      if (!caja) {
+        toastError("Debes abrir una caja antes de cobrar");
+        return;
+      }
+    } catch {
+      toastError("Error verificando caja");
+      return;
+    }
+
+    let prodId: number;
+    try {
+      prodId = await productoDivisionId();
+    } catch (err: any) {
+      toastError("No se pudo obtener producto especial: " + (err?.message || err));
+      return;
+    }
+
+    const item: VentaDetalle = {
+      producto_id: prodId,
+      cantidad: 1,
+      precio_unitario: sub.total,
+      descuento: 0,
+      iva_porcentaje: 0,
+      subtotal: sub.total,
+      info_adicional: `Items consumidos: ${detalle.items
+        .map((i) => `${i.cantidad}x ${i.producto_nombre || ""}`.trim())
+        .join(", ")}`,
+    };
+
+    const payload: NuevaVenta = {
+      items: [item],
+      forma_pago: formaPago,
+      monto_recibido: esFiado ? 0 : sub.total,
+      descuento: 0,
+      tipo_documento: "NOTA_VENTA",
+      es_fiado: esFiado,
+      observacion: `Mesa: ${detalle.mesa_nombre}${detalle.zona_nombre ? ` (${detalle.zona_nombre})` : ""} · Pedido #${pedidoId} · Sub-cuenta ${sub.numero}/${subcuentas.length}`,
+      banco_id: extras?.bancoId ?? null,
+      referencia_pago: extras?.referencia?.trim() || null,
+    };
+
+    try {
+      const resultado = await registrarVenta(payload);
+      const cobro = await marcarSubcuentaCobrada(
+        sub.id,
+        resultado.venta.id!,
+        formaPago,
+        extras?.bancoId ?? null,
+        extras?.referencia?.trim() || null,
+      );
+
+      if (cobro.todas_cobradas) {
+        toastExito(`Sub-cuenta ${sub.numero} cobrada · 🎉 Mesa liberada (todas pagadas)`);
+        onCerrar(true);
+      } else {
+        toastExito(`Sub-cuenta ${sub.numero} cobrada · Quedan ${cobro.pendientes} pendiente(s)`);
+        await cargar();
+      }
+    } catch (err: any) {
+      toastError("No se pudo cobrar la sub-cuenta: " + (err?.message || err));
     }
   };
 
@@ -557,7 +674,104 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
               </button>
             )}
 
-            {/* Cobrar y cancelar */}
+            {/* v2.3.69 — Sub-cuentas (división de cuenta) */}
+            {subcuentas.length > 0 && (
+              <div style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+                background: "var(--color-surface)",
+                border: "1.5px solid var(--color-primary)",
+                borderRadius: 8,
+                padding: 8,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <strong style={{ fontSize: 12, color: "var(--color-primary)" }}>
+                    ✂️ Cuenta dividida en {subcuentas.length} partes
+                  </strong>
+                  {subcuentas.every(s => s.estado === "PENDIENTE") && (
+                    <button
+                      onClick={handleCancelarDivision}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "var(--color-danger)",
+                        fontSize: 11,
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                        padding: 0,
+                      }}
+                      title="Deshacer la división (solo si ninguna está cobrada)"
+                    >
+                      Cancelar división
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {subcuentas.map(sub => {
+                    const cobrada = sub.estado === "COBRADA";
+                    return (
+                      <div
+                        key={sub.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "6px 8px",
+                          background: cobrada ? "rgba(34, 197, 94, 0.08)" : "var(--color-surface-hover)",
+                          borderRadius: 6,
+                          opacity: cobrada ? 0.7 : 1,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>
+                            Parte {sub.numero}/{subcuentas.length} · ${sub.total.toFixed(2)}
+                          </div>
+                          {cobrada && (
+                            <div style={{ fontSize: 10, color: "var(--color-success)" }}>
+                              ✓ {sub.forma_pago}{sub.venta_numero ? ` · ${sub.venta_numero}` : ""}
+                            </div>
+                          )}
+                        </div>
+                        {cobrada ? (
+                          <span style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: 10,
+                            background: "var(--color-success)",
+                            color: "#fff",
+                          }}>
+                            COBRADA
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setCobrandoSubcuenta(sub)}
+                            style={{
+                              padding: "6px 14px",
+                              background: "var(--color-success)",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: 6,
+                              fontSize: 12,
+                              fontWeight: 700,
+                              cursor: "pointer",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            💰 Cobrar
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Cobrar y cancelar — solo si NO hay división activa */}
+            {subcuentas.length === 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
               <button
                 onClick={() => setModoCobro("elegir-pago")}
@@ -591,6 +805,29 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
                 Cancelar
               </button>
             </div>
+            )}
+
+            {/* v2.3.69 — Dividir cuenta (solo si NO hay división y hay items) */}
+            {subcuentas.length === 0 && detalle.items.length > 0 &&
+              detalle.pedido.estado !== "COBRADO" && detalle.pedido.estado !== "CANCELADO" && (
+                <button
+                  onClick={() => setMostrarDividir(true)}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    background: "transparent",
+                    color: "var(--color-text-muted)",
+                    border: "1px dashed var(--color-border)",
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                  }}
+                  title="Divide el total en partes iguales (cada comensal paga su parte)"
+                >
+                  ✂️ Dividir cuenta entre varios
+                </button>
+              )}
           </div>
         </div>
       </div>
@@ -663,6 +900,29 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
           mesaPrincipalNombre={detalle.mesa_nombre}
           onUnir={handleUnirMesas}
           onCerrar={() => setMostrarUnirMesas(false)}
+        />
+      )}
+
+      {/* v2.3.69 — Modal dividir cuenta */}
+      {mostrarDividir && (
+        <ModalDividirCuenta
+          totalPedido={detalle.total}
+          comensales={detalle.pedido.comensales}
+          onDividir={handleDividirCuenta}
+          onCerrar={() => setMostrarDividir(false)}
+        />
+      )}
+
+      {/* v2.3.69 — Modal cobrar sub-cuenta (reusa ModalCobro) */}
+      {cobrandoSubcuenta && (
+        <ModalCobro
+          total={cobrandoSubcuenta.total}
+          onCobrar={(forma, fiado, extras) => {
+            const sub = cobrandoSubcuenta;
+            setCobrandoSubcuenta(null);
+            handleCobrarSubcuenta(sub, forma, fiado, extras);
+          }}
+          onCancelar={() => setCobrandoSubcuenta(null)}
         />
       )}
     </>
@@ -1234,6 +1494,162 @@ function ModalUnirMesas({ pedidoId, mesaPrincipalNombre, onUnir, onCerrar }: Pro
               🔗 Unir {seleccionadas.size > 0 ? `(${seleccionadas.size})` : ""}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── v2.3.69 — Modal dividir cuenta ──────────────────────────────────────
+
+interface PropsModalDividirCuenta {
+  totalPedido: number;
+  comensales: number;
+  onDividir: (nPartes: number) => void;
+  onCerrar: () => void;
+}
+
+function ModalDividirCuenta({ totalPedido, comensales, onDividir, onCerrar }: PropsModalDividirCuenta) {
+  // Default: dividir entre el número de comensales del pedido
+  const [nPartes, setNPartes] = useState<number>(Math.max(2, Math.min(20, comensales || 2)));
+
+  const montoPorPersona = totalPedido / nPartes;
+
+  const incrementar = () => setNPartes(n => Math.min(20, n + 1));
+  const decrementar = () => setNPartes(n => Math.max(2, n - 1));
+
+  return (
+    <div className="modal-overlay" onClick={onCerrar}>
+      <div
+        className="modal-content"
+        onClick={e => e.stopPropagation()}
+        style={{ maxWidth: 420 }}
+      >
+        <div className="modal-header" style={{ borderBottom: "1px solid var(--color-border)", padding: "14px 18px" }}>
+          <h3 style={{ margin: 0, fontSize: 17 }}>✂️ Dividir cuenta</h3>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+            Cada parte se cobra de forma independiente con su propia forma de pago.
+          </div>
+        </div>
+        <div className="modal-body" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginBottom: 4 }}>Total pedido</div>
+            <strong style={{ fontSize: 22, color: "var(--color-primary)" }}>
+              ${totalPedido.toFixed(2)}
+            </strong>
+          </div>
+
+          <div>
+            <label style={{ fontSize: 13, fontWeight: 600, display: "block", marginBottom: 8 }}>
+              Número de partes
+            </label>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <button
+                onClick={decrementar}
+                disabled={nPartes <= 2}
+                style={{
+                  width: 38,
+                  height: 38,
+                  background: nPartes <= 2 ? "var(--color-border)" : "var(--color-surface)",
+                  border: "1.5px solid var(--color-border)",
+                  borderRadius: 8,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  cursor: nPartes <= 2 ? "not-allowed" : "pointer",
+                  color: "var(--color-text)",
+                }}
+              >
+                −
+              </button>
+              <input
+                type="number"
+                min="2"
+                max="20"
+                value={nPartes}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v)) setNPartes(Math.max(2, Math.min(20, v)));
+                }}
+                className="input"
+                style={{
+                  width: 80,
+                  fontSize: 22,
+                  textAlign: "center",
+                  fontWeight: 700,
+                  padding: "6px 4px",
+                }}
+              />
+              <button
+                onClick={incrementar}
+                disabled={nPartes >= 20}
+                style={{
+                  width: 38,
+                  height: 38,
+                  background: nPartes >= 20 ? "var(--color-border)" : "var(--color-surface)",
+                  border: "1.5px solid var(--color-border)",
+                  borderRadius: 8,
+                  fontSize: 20,
+                  fontWeight: 700,
+                  cursor: nPartes >= 20 ? "not-allowed" : "pointer",
+                  color: "var(--color-text)",
+                }}
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          <div style={{
+            background: "var(--color-surface-hover)",
+            padding: "12px 16px",
+            borderRadius: 8,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Cada parte paga</span>
+            <strong style={{ fontSize: 20, color: "var(--color-success)" }}>
+              ${montoPorPersona.toFixed(2)}
+            </strong>
+          </div>
+
+          <div style={{
+            fontSize: 11,
+            color: "var(--color-text-muted)",
+            background: "rgba(245, 158, 11, 0.08)",
+            border: "1px solid rgba(245, 158, 11, 0.3)",
+            padding: "8px 10px",
+            borderRadius: 6,
+            lineHeight: 1.4,
+          }}>
+            ⚠️ <strong>Nota:</strong> Cada sub-cuenta genera una nota de venta independiente.
+            La división puede cancelarse mientras NINGUNA sub-cuenta esté cobrada.
+          </div>
+        </div>
+        <div className="modal-footer" style={{
+          borderTop: "1px solid var(--color-border)",
+          padding: "12px 18px",
+          display: "flex",
+          gap: 8,
+          justifyContent: "flex-end",
+        }}>
+          <button className="btn btn-outline" onClick={onCerrar}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => onDividir(nPartes)}
+            style={{
+              padding: "8px 18px",
+              background: "var(--color-primary)",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            ✂️ Dividir en {nPartes}
+          </button>
         </div>
       </div>
     </div>

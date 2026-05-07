@@ -115,3 +115,26 @@ export interface ItemCocina {
 }
 
 export type EstadoCocina = "PENDIENTE" | "EN_PREPARACION" | "LISTO" | "ENTREGADO";
+
+// ─── v2.3.69 — Sub-cuentas (división de cuenta) ──────────────────────────
+
+export interface Subcuenta {
+  id: number;
+  pedido_id: number;
+  numero: number;
+  total: number;
+  /** PENDIENTE | COBRADA */
+  estado: "PENDIENTE" | "COBRADA";
+  forma_pago: string | null;
+  banco_id: number | null;
+  banco_nombre: string | null;
+  referencia_pago: string | null;
+  venta_id: number | null;
+  venta_numero: string | null;
+  fecha_cobro: string | null;
+}
+
+export interface ResultadoCobroSubcuenta {
+  todas_cobradas: boolean;
+  pendientes: number;
+}

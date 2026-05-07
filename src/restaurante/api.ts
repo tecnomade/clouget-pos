@@ -13,6 +13,8 @@ import type {
   MesaResumen,
   PedidoAbierto,
   PedidoDetalle,
+  ResultadoCobroSubcuenta,
+  Subcuenta,
   Zona,
 } from "./types";
 
@@ -138,3 +140,39 @@ export const desunirMesa = (pedidoId: number, mesaId: number) =>
 /** Lista mesas LIBRES disponibles para unir al pedido. */
 export const listarMesasLibresParaUnir = (pedidoId: number) =>
   invoke<MesaResumen[]>("rest_listar_mesas_libres_para_unir", { pedidoId });
+
+// ─── Dividir cuenta (v2.3.69) ────────────────────────────────────────────
+
+/** Divide el pedido en N partes iguales. Falla si ya está dividido. */
+export const dividirCuenta = (pedidoId: number, nPartes: number) =>
+  invoke<Subcuenta[]>("rest_dividir_cuenta", { pedidoId, nPartes });
+
+/** Lista las sub-cuentas del pedido (vacío si no está dividido). */
+export const listarSubcuentas = (pedidoId: number) =>
+  invoke<Subcuenta[]>("rest_listar_subcuentas", { pedidoId });
+
+/** Cancela la división (solo si NINGUNA sub-cuenta fue cobrada). */
+export const cancelarDivision = (pedidoId: number) =>
+  invoke<void>("rest_cancelar_division", { pedidoId });
+
+/** Marca una sub-cuenta como cobrada — vincula con la venta ya generada
+ *  por el frontend mediante registrarVenta(). Si todas quedaron cobradas,
+ *  cierra el pedido y libera mesas automáticamente. */
+export const marcarSubcuentaCobrada = (
+  subcuentaId: number,
+  ventaId: number,
+  formaPago: string,
+  bancoId?: number | null,
+  referenciaPago?: string | null,
+) =>
+  invoke<ResultadoCobroSubcuenta>("rest_marcar_subcuenta_cobrada", {
+    subcuentaId,
+    ventaId,
+    formaPago,
+    bancoId: bancoId ?? null,
+    referenciaPago: referenciaPago ?? null,
+  });
+
+/** ID del producto especial _DIVISION_CUENTA_ usado al cobrar sub-cuentas. */
+export const productoDivisionId = () =>
+  invoke<number>("rest_producto_division_id");
