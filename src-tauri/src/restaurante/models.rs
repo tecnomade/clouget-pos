@@ -53,6 +53,16 @@ pub struct MesaConEstado {
     pub items_pendientes_cocina: i32,
     pub fecha_apertura: Option<String>,
     pub minutos_abierta: Option<i64>,
+    // ─── v2.3.68 — Unir mesas ──────────────────────────────────────
+    /// Si esta mesa está unida como EXTRA a un pedido cuyo principal es otra mesa.
+    /// Ejemplo: Mesa 5 unida a Mesa 2 → en Mesa 5 estos campos apuntan a Mesa 2.
+    /// Si NULL, esta mesa es la principal (o está libre).
+    pub mesa_principal_id: Option<i64>,
+    pub mesa_principal_nombre: Option<String>,
+    /// Cantidad de mesas EXTRA unidas a esta (cuando es la principal de un pedido).
+    /// 0 si no tiene mesas unidas o si esta mesa es extra.
+    #[serde(default)]
+    pub mesas_unidas_count: i32,
 }
 
 // ─── Pedido ──────────────────────────────────────────────────────────────
@@ -98,6 +108,16 @@ pub struct PedidoItem {
     pub destino_preparacion: String,
 }
 
+/// Mesa "ligera" (id + nombre + capacidad) — usado en listados embebidos
+/// (mesas extra de un pedido, mesas libres para unir).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MesaResumen {
+    pub id: i64,
+    pub nombre: String,
+    pub capacidad: i32,
+    pub zona_nombre: Option<String>,
+}
+
 /// Pedido + items + datos de mesa + totales calculados.
 /// Es el shape completo que consume la pantalla "Detalle de pedido".
 #[derive(Debug, Serialize, Clone)]
@@ -109,6 +129,13 @@ pub struct PedidoDetalle {
     pub subtotal: f64,
     pub iva: f64,
     pub total: f64,
+    /// v2.3.68 — Mesas EXTRA unidas a este pedido (NO incluye la principal).
+    /// Si vacío, el pedido ocupa solo la mesa principal.
+    #[serde(default)]
+    pub mesas_extra: Vec<MesaResumen>,
+    /// v2.3.68 — Capacidad efectiva del grupo: mesa principal + extras.
+    #[serde(default)]
+    pub capacidad_total: i32,
 }
 
 /// Item enriquecido para la vista de cocina (incluye mesa para context).

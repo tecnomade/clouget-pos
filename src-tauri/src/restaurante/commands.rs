@@ -178,21 +178,35 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
         [],
     );
 
+    // v2.3.68: COALESCE entre pedido propio y pedido al que esta mesa fue unida como EXTRA.
+    // Una mesa "extra" muestra el estado del pedido principal y debe ser clickeable
+    // (abre el mismo pedido). El campo mesa_principal_id != NULL indica que esta mesa
+    // es secundaria del grupo.
     let mut stmt = conn
         .prepare(
             "SELECT
                 m.id, m.zona_id, z.nombre, z.color, m.nombre, m.capacidad, m.orden,
-                p.id, p.mesero_nombre, p.comensales, p.estado, p.fecha_apertura
+                COALESCE(p_propio.id, p_extra.id)              AS pedido_id,
+                COALESCE(p_propio.mesero_nombre, p_extra.mesero_nombre) AS mesero,
+                COALESCE(p_propio.comensales, p_extra.comensales)       AS comensales,
+                COALESCE(p_propio.estado, p_extra.estado)               AS estado,
+                COALESCE(p_propio.fecha_apertura, p_extra.fecha_apertura) AS fecha_apertura,
+                p_extra.id                                              AS pedido_extra_id,
+                p_extra.mesa_id                                         AS mesa_principal_id,
+                m_principal.nombre                                      AS mesa_principal_nombre
              FROM rest_mesas m
              LEFT JOIN rest_zonas z ON m.zona_id = z.id
-             LEFT JOIN rest_pedidos_abiertos p
-                ON p.id = (
-                    -- Pedido MÁS RECIENTE de esta mesa, abierto o con cuenta pedida.
-                    -- Si hay multiples (bug), gana el de id mayor (mas reciente).
+             LEFT JOIN rest_pedidos_abiertos p_propio
+                ON p_propio.id = (
                     SELECT MAX(p2.id) FROM rest_pedidos_abiertos p2
                     WHERE p2.mesa_id = m.id
                       AND p2.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
                 )
+             LEFT JOIN rest_pedido_mesas_extra pe ON pe.mesa_id = m.id
+             LEFT JOIN rest_pedidos_abiertos p_extra
+                ON p_extra.id = pe.pedido_id
+                AND p_extra.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+             LEFT JOIN rest_mesas m_principal ON m_principal.id = p_extra.mesa_id
              WHERE m.activa = 1
              ORDER BY z.orden NULLS LAST, m.orden, m.nombre",
         )
@@ -207,6 +221,8 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
                 Some("ABIERTO") => "OCUPADA".to_string(),
                 _ => "LIBRE".to_string(),
             };
+            // pedido_extra_id != NULL → esta mesa es EXTRA del grupo
+            let es_extra: bool = row.get::<_, Option<i64>>(12)?.is_some();
             Ok(MesaConEstado {
                 id: row.get(0)?,
                 zona_id: row.get(1)?,
@@ -223,34 +239,23 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
                 items_pendientes_cocina: 0,
                 fecha_apertura: row.get(11)?,
                 minutos_abierta: None,
+                mesa_principal_id: if es_extra { row.get(13)? } else { None },
+                mesa_principal_nombre: if es_extra { row.get(14)? } else { None },
+                mesas_unidas_count: 0,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    // Para cada mesa con pedido, calcular total y items pendientes en cocina
+    // Para cada mesa con pedido, calcular total y items pendientes en cocina.
+    // v2.3.68: Solo calculamos esto para la mesa PRINCIPAL del pedido. Las mesas
+    // EXTRA muestran el indicador de "unida a X" pero NO el total ni los items
+    // (eso ya lo refleja la principal — duplicar en extras inflaría el "Total abierto").
     for m in &mut mesas {
         if let Some(pid) = m.pedido_id {
-            let total: f64 = conn
-                .query_row(
-                    "SELECT COALESCE(SUM(cantidad * precio_unit), 0) FROM rest_pedido_items WHERE pedido_id = ?1",
-                    params![pid],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0.0);
-            m.total_actual = total;
-
-            let pendientes: i32 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM rest_pedido_items WHERE pedido_id = ?1 AND estado_cocina IN ('PENDIENTE', 'EN_PREPARACION')",
-                    params![pid],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            m.items_pendientes_cocina = pendientes;
-
-            // Calcular minutos desde apertura
+            // Calcular minutos desde apertura — siempre (también en mesas extra,
+            // para que muestren cuánto tiempo llevan ocupadas)
             if let Some(fecha) = &m.fecha_apertura {
                 if let Ok(mins) = conn.query_row(
                     "SELECT CAST((julianday('now', 'localtime') - julianday(?1)) * 24 * 60 AS INTEGER)",
@@ -259,6 +264,36 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
                 ) {
                     m.minutos_abierta = Some(mins);
                 }
+            }
+
+            // Solo la principal acumula total/items pendientes/count de mesas unidas
+            if m.mesa_principal_id.is_none() {
+                let total: f64 = conn
+                    .query_row(
+                        "SELECT COALESCE(SUM(cantidad * precio_unit), 0) FROM rest_pedido_items WHERE pedido_id = ?1",
+                        params![pid],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0.0);
+                m.total_actual = total;
+
+                let pendientes: i32 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM rest_pedido_items WHERE pedido_id = ?1 AND estado_cocina IN ('PENDIENTE', 'EN_PREPARACION')",
+                        params![pid],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                m.items_pendientes_cocina = pendientes;
+
+                let count: i32 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM rest_pedido_mesas_extra WHERE pedido_id = ?1",
+                        params![pid],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0);
+                m.mesas_unidas_count = count;
             }
         }
     }
@@ -902,6 +937,205 @@ pub fn rest_imprimir_comanda_cocina(
     }
 }
 
+// ─── v2.3.68 — Unir mesas ────────────────────────────────────────────────
+
+/// Une una o varias mesas LIBRES al pedido `pedido_id`. La mesa principal
+/// (la del pedido) NO cambia — solo se agregan mesas extra al grupo.
+///
+/// Reglas:
+/// - El pedido debe estar ABIERTO o CUENTA_PEDIDA
+/// - Cada mesa target debe estar LIBRE: sin pedido propio activo y sin
+///   estar ya unida a OTRO pedido
+/// - No se puede unir la misma mesa principal del pedido
+///
+/// Si alguna mesa falla la validación, retorna error y NO une ninguna
+/// (transacción atómica).
+#[tauri::command]
+pub fn rest_unir_mesas(
+    db: State<'_, Database>,
+    pedido_id: i64,
+    mesas_ids: Vec<i64>,
+) -> Result<(), String> {
+    requiere_modulo_restaurante(&db)?;
+    if mesas_ids.is_empty() {
+        return Err("Debe seleccionar al menos una mesa".to_string());
+    }
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validar pedido
+    let (mesa_principal, estado): (i64, String) = conn
+        .query_row(
+            "SELECT mesa_id, estado FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|_| "Pedido no encontrado".to_string())?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(format!("No se pueden unir mesas a un pedido {}", estado));
+    }
+
+    // Transacción: validar TODAS las mesas y luego insertar TODAS
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for &mesa_id in &mesas_ids {
+        if mesa_id == mesa_principal {
+            return Err("No se puede unir la mesa principal a sí misma".to_string());
+        }
+
+        // Validar que la mesa exista y esté activa
+        let activa: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM rest_mesas WHERE id = ?1 AND activa = 1",
+                params![mesa_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if activa == 0 {
+            return Err(format!("Mesa {} no encontrada o inactiva", mesa_id));
+        }
+
+        // Validar que NO tenga pedido propio activo
+        let pedido_propio: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM rest_pedidos_abiertos
+                 WHERE mesa_id = ?1 AND estado IN ('ABIERTO', 'CUENTA_PEDIDA')",
+                params![mesa_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if pedido_propio > 0 {
+            let nombre: String = tx
+                .query_row(
+                    "SELECT nombre FROM rest_mesas WHERE id = ?1",
+                    params![mesa_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| format!("#{}", mesa_id));
+            return Err(format!("La mesa {} ya tiene un pedido propio abierto", nombre));
+        }
+
+        // Validar que NO esté unida a otro pedido activo
+        let unida_a_otro: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM rest_pedido_mesas_extra pe
+                 JOIN rest_pedidos_abiertos p ON pe.pedido_id = p.id
+                 WHERE pe.mesa_id = ?1 AND pe.pedido_id != ?2
+                   AND p.estado IN ('ABIERTO', 'CUENTA_PEDIDA')",
+                params![mesa_id, pedido_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if unida_a_otro > 0 {
+            let nombre: String = tx
+                .query_row(
+                    "SELECT nombre FROM rest_mesas WHERE id = ?1",
+                    params![mesa_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| format!("#{}", mesa_id));
+            return Err(format!("La mesa {} ya está unida a otro pedido", nombre));
+        }
+
+        // Insertar (idempotente — INSERT OR IGNORE por si se reintenta)
+        tx.execute(
+            "INSERT OR IGNORE INTO rest_pedido_mesas_extra (pedido_id, mesa_id) VALUES (?1, ?2)",
+            params![pedido_id, mesa_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Desune una mesa EXTRA del pedido (la libera). NO se puede usar sobre la
+/// mesa principal del pedido (esa solo se libera al cobrar/cancelar).
+#[tauri::command]
+pub fn rest_desunir_mesa(
+    db: State<'_, Database>,
+    pedido_id: i64,
+    mesa_id: i64,
+) -> Result<(), String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // El pedido debe estar abierto/cuenta pedida
+    let estado: String = conn
+        .query_row(
+            "SELECT estado FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Pedido no encontrado".to_string())?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(format!("No se pueden desunir mesas de un pedido {}", estado));
+    }
+
+    let filas = conn
+        .execute(
+            "DELETE FROM rest_pedido_mesas_extra WHERE pedido_id = ?1 AND mesa_id = ?2",
+            params![pedido_id, mesa_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if filas == 0 {
+        return Err("Esa mesa no estaba unida a este pedido".to_string());
+    }
+    Ok(())
+}
+
+/// Lista las mesas LIBRES disponibles para unir a un pedido. Excluye:
+/// - La mesa principal del pedido
+/// - Mesas con pedido propio activo
+/// - Mesas ya unidas a este o cualquier otro pedido activo
+/// - Mesas inactivas
+#[tauri::command]
+pub fn rest_listar_mesas_libres_para_unir(
+    db: State<'_, Database>,
+    pedido_id: i64,
+) -> Result<Vec<MesaResumen>, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mesa_principal: i64 = conn
+        .query_row(
+            "SELECT mesa_id FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Pedido no encontrado".to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.id, m.nombre, m.capacidad, z.nombre
+             FROM rest_mesas m
+             LEFT JOIN rest_zonas z ON m.zona_id = z.id
+             WHERE m.activa = 1
+               AND m.id != ?1
+               AND NOT EXISTS (
+                    SELECT 1 FROM rest_pedidos_abiertos p
+                    WHERE p.mesa_id = m.id AND p.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+               )
+               AND NOT EXISTS (
+                    SELECT 1 FROM rest_pedido_mesas_extra pe
+                    JOIN rest_pedidos_abiertos p2 ON pe.pedido_id = p2.id
+                    WHERE pe.mesa_id = m.id AND p2.estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+               )
+             ORDER BY z.orden NULLS LAST, m.orden, m.nombre",
+        )
+        .map_err(|e| e.to_string())?;
+    let mesas: Vec<MesaResumen> = stmt
+        .query_map(params![mesa_principal], |row| {
+            Ok(MesaResumen {
+                id: row.get(0)?,
+                nombre: row.get(1)?,
+                capacidad: row.get(2)?,
+                zona_nombre: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(mesas)
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────
 
 fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {
@@ -977,6 +1211,40 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
     let iva = 0.0;
     let total = subtotal + iva;
 
+    // v2.3.68: Mesas EXTRA unidas a este pedido + capacidad efectiva del grupo.
+    let mut mesas_extra_stmt = conn
+        .prepare(
+            "SELECT m.id, m.nombre, m.capacidad, z.nombre
+             FROM rest_pedido_mesas_extra pe
+             JOIN rest_mesas m ON pe.mesa_id = m.id
+             LEFT JOIN rest_zonas z ON m.zona_id = z.id
+             WHERE pe.pedido_id = ?1
+             ORDER BY z.orden NULLS LAST, m.orden, m.nombre",
+        )
+        .map_err(|e| e.to_string())?;
+    let mesas_extra: Vec<MesaResumen> = mesas_extra_stmt
+        .query_map(params![pedido_id], |row| {
+            Ok(MesaResumen {
+                id: row.get(0)?,
+                nombre: row.get(1)?,
+                capacidad: row.get(2)?,
+                zona_nombre: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    // Capacidad de la mesa principal (para sumar luego)
+    let capacidad_principal: i32 = conn
+        .query_row(
+            "SELECT capacidad FROM rest_mesas WHERE id = ?1",
+            params![pedido.mesa_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let capacidad_total: i32 = capacidad_principal + mesas_extra.iter().map(|m| m.capacidad).sum::<i32>();
+
     Ok(PedidoDetalle {
         pedido,
         items,
@@ -985,5 +1253,7 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
         subtotal,
         iva,
         total,
+        mesas_extra,
+        capacidad_total,
     })
 }

@@ -10,6 +10,7 @@ import type {
   ItemCocina,
   Mesa,
   MesaConEstado,
+  MesaResumen,
   PedidoAbierto,
   PedidoDetalle,
   Zona,
@@ -123,3 +124,17 @@ export const imprimirPreCuenta = (pedidoId: number) =>
  *  separados (cocina/barra) según `comanda_modo_separado`. */
 export const imprimirComandaCocina = (pedidoId: number, itemsIds?: number[]) =>
   invoke<string>("rest_imprimir_comanda_cocina", { pedidoId, itemsIds: itemsIds ?? null });
+
+// ─── Unir mesas (v2.3.68) ────────────────────────────────────────────────
+
+/** Une una o varias mesas LIBRES al pedido (grupos grandes que ocupan varias mesas) */
+export const unirMesas = (pedidoId: number, mesasIds: number[]) =>
+  invoke<void>("rest_unir_mesas", { pedidoId, mesasIds });
+
+/** Desune una mesa EXTRA del pedido (la libera). NO sirve para la mesa principal. */
+export const desunirMesa = (pedidoId: number, mesaId: number) =>
+  invoke<void>("rest_desunir_mesa", { pedidoId, mesaId });
+
+/** Lista mesas LIBRES disponibles para unir al pedido. */
+export const listarMesasLibresParaUnir = (pedidoId: number) =>
+  invoke<MesaResumen[]>("rest_listar_mesas_libres_para_unir", { pedidoId });

@@ -22,13 +22,16 @@ import {
   cerrarPedido,
   imprimirPreCuenta,
   imprimirComandaCocina,
+  unirMesas,
+  desunirMesa,
+  listarMesasLibresParaUnir,
 } from "../api";
 import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
 // v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
 // Ya está implementado en POS normal (v2.3.63). Aquí se agregará en próxima
 // iteración para mantener este release manejable.
 // import { ... } from "../../utils/descuentoFormaPago";
-import type { PedidoDetalle as PedidoDetalleType } from "../types";
+import type { PedidoDetalle as PedidoDetalleType, MesaResumen } from "../types";
 import type { NuevaVenta, VentaDetalle, CuentaBanco } from "../../types";
 import SelectorProductos from "./SelectorProductos";
 
@@ -47,6 +50,8 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const [mostrarSelector, setMostrarSelector] = useState(false);
   const [modoCobro, setModoCobro] = useState<ModoCobro>(null);
   const [confirmCancelar, setConfirmCancelar] = useState(false);
+  // v2.3.68 — Unir mesas
+  const [mostrarUnirMesas, setMostrarUnirMesas] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -168,6 +173,30 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
     }
   };
 
+  // v2.3.68 — Unir mesas
+  const handleUnirMesas = async (mesasIds: number[]) => {
+    if (mesasIds.length === 0) return;
+    try {
+      await unirMesas(pedidoId, mesasIds);
+      toastExito(`${mesasIds.length} mesa(s) unida(s) al pedido`);
+      setMostrarUnirMesas(false);
+      await cargar();
+    } catch (err: any) {
+      toastError("No se pudieron unir mesas: " + (err?.message || err));
+    }
+  };
+
+  const handleDesunirMesa = async (mesa: MesaResumen) => {
+    if (!confirm(`¿Liberar la ${mesa.nombre} del grupo? Sus items quedan en la mesa principal.`)) return;
+    try {
+      await desunirMesa(pedidoId, mesa.id);
+      toastExito(`${mesa.nombre} liberada del grupo`);
+      await cargar();
+    } catch (err: any) {
+      toastError("No se pudo desunir: " + (err?.message || err));
+    }
+  };
+
   const handleCobrar = async (
     formaPago: string,
     esFiado: boolean,
@@ -275,11 +304,76 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
               alignItems: "center",
             }}
           >
-            <div>
-              <h2 style={{ margin: 0, fontSize: 18 }}>{detalle.mesa_nombre}</h2>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2 style={{ margin: 0, fontSize: 18, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span>{detalle.mesa_nombre}</span>
+                {detalle.mesas_extra.length > 0 && (
+                  <span style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "2px 7px",
+                    borderRadius: 10,
+                    background: "var(--color-primary)",
+                    color: "#fff",
+                    whiteSpace: "nowrap",
+                  }} title="Pedido con mesas unidas">
+                    🔗 +{detalle.mesas_extra.length}
+                  </span>
+                )}
+              </h2>
               <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                {detalle.zona_nombre || "—"} · {detalle.pedido.comensales} comensales · {detalle.pedido.mesero_nombre || "—"}
+                {detalle.zona_nombre || "—"} · {detalle.pedido.comensales} comensales
+                {detalle.capacidad_total > 0 && ` (cap. ${detalle.capacidad_total})`}
+                {" · "}
+                {detalle.pedido.mesero_nombre || "—"}
               </div>
+              {/* v2.3.68 — Lista de mesas unidas con botón desunir cada una */}
+              {detalle.mesas_extra.length > 0 && (
+                <div style={{
+                  marginTop: 6,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 4,
+                }}>
+                  {detalle.mesas_extra.map(m => (
+                    <span
+                      key={m.id}
+                      style={{
+                        fontSize: 10,
+                        padding: "2px 6px 2px 8px",
+                        borderRadius: 10,
+                        background: "rgba(59, 130, 246, 0.15)",
+                        color: "var(--color-primary)",
+                        border: "1px solid rgba(59, 130, 246, 0.3)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                      title={`Capacidad ${m.capacidad}${m.zona_nombre ? ` · ${m.zona_nombre}` : ""}`}
+                    >
+                      🔗 {m.nombre}
+                      {detalle.pedido.estado !== "COBRADO" && detalle.pedido.estado !== "CANCELADO" && (
+                        <button
+                          onClick={() => handleDesunirMesa(m)}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: "var(--color-danger)",
+                            cursor: "pointer",
+                            padding: 0,
+                            fontSize: 14,
+                            lineHeight: 1,
+                            marginLeft: 2,
+                          }}
+                          title="Desunir esta mesa"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {detalle.pedido.estado === "CUENTA_PEDIDA" && (
@@ -442,6 +536,27 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
               )}
             </div>
 
+            {/* v2.3.68 — Unir mesas (solo si el pedido sigue activo) */}
+            {detalle.pedido.estado !== "COBRADO" && detalle.pedido.estado !== "CANCELADO" && (
+              <button
+                onClick={() => setMostrarUnirMesas(true)}
+                style={{
+                  width: "100%",
+                  padding: "8px",
+                  background: "transparent",
+                  color: "var(--color-primary)",
+                  border: "1.5px dashed var(--color-primary)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+                title="Une mesas libres a este pedido (grupos grandes)"
+              >
+                🔗 Unir mesas{detalle.mesas_extra.length > 0 ? ` (ya unidas: ${detalle.mesas_extra.length})` : ""}
+              </button>
+            )}
+
             {/* Cobrar y cancelar */}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 6 }}>
               <button
@@ -539,6 +654,16 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* v2.3.68 — Modal unir mesas */}
+      {mostrarUnirMesas && (
+        <ModalUnirMesas
+          pedidoId={pedidoId}
+          mesaPrincipalNombre={detalle.mesa_nombre}
+          onUnir={handleUnirMesas}
+          onCerrar={() => setMostrarUnirMesas(false)}
+        />
       )}
     </>
   );
@@ -942,5 +1067,175 @@ function BotonPago({ label, color, onClick }: { label: string; color: string; on
     >
       {label}
     </button>
+  );
+}
+
+// ─── v2.3.68 — Modal unir mesas ──────────────────────────────────────────
+
+interface PropsModalUnirMesas {
+  pedidoId: number;
+  mesaPrincipalNombre: string;
+  onUnir: (mesasIds: number[]) => void;
+  onCerrar: () => void;
+}
+
+function ModalUnirMesas({ pedidoId, mesaPrincipalNombre, onUnir, onCerrar }: PropsModalUnirMesas) {
+  const { toastError } = useToast();
+  const [mesas, setMesas] = useState<MesaResumen[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [seleccionadas, setSeleccionadas] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    listarMesasLibresParaUnir(pedidoId)
+      .then(setMesas)
+      .catch((err: any) => toastError("Error cargando mesas: " + (err?.message || err)))
+      .finally(() => setCargando(false));
+  }, [pedidoId, toastError]);
+
+  const toggle = (id: number) => {
+    setSeleccionadas(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Agrupar mesas por zona para mejor UX
+  const porZona = mesas.reduce((acc, m) => {
+    const zona = m.zona_nombre || "Sin zona";
+    if (!acc[zona]) acc[zona] = [];
+    acc[zona].push(m);
+    return acc;
+  }, {} as Record<string, MesaResumen[]>);
+
+  const capacidadExtra = Array.from(seleccionadas)
+    .map(id => mesas.find(m => m.id === id)?.capacidad ?? 0)
+    .reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="modal-overlay" onClick={onCerrar}>
+      <div
+        className="modal-content"
+        onClick={e => e.stopPropagation()}
+        style={{ maxWidth: 560, width: "100%", maxHeight: "85vh", display: "flex", flexDirection: "column" }}
+      >
+        <div className="modal-header" style={{ borderBottom: "1px solid var(--color-border)", padding: "14px 18px" }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: 17 }}>🔗 Unir mesas a {mesaPrincipalNombre}</h3>
+            <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+              Para grupos grandes que ocupan varias mesas. Las mesas seleccionadas se liberan
+              automáticamente al cobrar.
+            </div>
+          </div>
+        </div>
+        <div className="modal-body" style={{ overflowY: "auto", padding: "12px 18px", flex: 1 }}>
+          {cargando ? (
+            <div style={{ padding: 24, textAlign: "center", color: "var(--color-text-muted)" }}>
+              Cargando mesas libres...
+            </div>
+          ) : mesas.length === 0 ? (
+            <div
+              style={{
+                padding: 24,
+                textAlign: "center",
+                color: "var(--color-text-muted)",
+                border: "2px dashed var(--color-border)",
+                borderRadius: 8,
+              }}
+            >
+              No hay mesas libres disponibles para unir.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {Object.entries(porZona).map(([zona, ms]) => (
+                <div key={zona}>
+                  <div style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5,
+                    color: "var(--color-text-muted)",
+                    marginBottom: 6,
+                  }}>
+                    {zona}
+                  </div>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                    gap: 8,
+                  }}>
+                    {ms.map(m => {
+                      const sel = seleccionadas.has(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => toggle(m.id)}
+                          style={{
+                            padding: "12px 8px",
+                            background: sel ? "var(--color-primary)" : "var(--color-surface)",
+                            color: sel ? "#fff" : "var(--color-text)",
+                            border: sel ? "2px solid var(--color-primary)" : "2px solid var(--color-border)",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            fontSize: 13,
+                            transition: "transform 0.05s, background 0.1s",
+                          }}
+                        >
+                          {sel && "✓ "}{m.nombre}
+                          <div style={{
+                            fontSize: 10,
+                            fontWeight: 400,
+                            opacity: 0.85,
+                            marginTop: 2,
+                          }}>
+                            cap. {m.capacidad}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer" style={{
+          borderTop: "1px solid var(--color-border)",
+          padding: "12px 18px",
+          display: "flex",
+          gap: 8,
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+            {seleccionadas.size > 0
+              ? `${seleccionadas.size} mesa(s) · +${capacidadExtra} comensales`
+              : "Selecciona una o más mesas"}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-outline" onClick={onCerrar}>
+              Cancelar
+            </button>
+            <button
+              onClick={() => onUnir(Array.from(seleccionadas))}
+              disabled={seleccionadas.size === 0}
+              style={{
+                padding: "8px 16px",
+                background: seleccionadas.size === 0 ? "var(--color-border)" : "var(--color-primary)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                fontWeight: 700,
+                cursor: seleccionadas.size === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              🔗 Unir {seleccionadas.size > 0 ? `(${seleccionadas.size})` : ""}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

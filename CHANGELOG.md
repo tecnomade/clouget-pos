@@ -6,6 +6,65 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.68 — 2026-05-05 🔗 STABLE
+**Restaurante: Unir mesas para grupos grandes (2 de 3 features pedidas).**
+
+Segunda feature de las 3 solicitadas. Próxima: **v2.3.69 (dividir cuenta)**.
+
+### 🔗 Caso de uso
+
+Llega un grupo grande de 10 personas y ninguna mesa los acomoda sola. El mesero abre pedido en una mesa "principal" (ej. Mesa 1) y une mesas adicionales (ej. Mesa 2 y Mesa 3) al mismo pedido. Todos los items van al mismo ticket, todas las mesas se liberan juntas al cobrar.
+
+### Cómo se usa
+
+1. **Abrir pedido** en cualquier mesa libre (esa será la "principal")
+2. En el drawer del pedido, click en **🔗 Unir mesas**
+3. Modal muestra todas las **mesas LIBRES** agrupadas por zona — seleccionar las que ocupará el grupo
+4. Click **🔗 Unir** → las mesas quedan vinculadas al pedido
+5. **Indicadores visuales**:
+   - **Mesa principal**: badge `🔗 +N` sobre el nombre
+   - **Mesas extra (unidas)**: borde azul, label "UNIDA", muestran "🔗 Unida a Mesa X"
+   - **Click en mesa extra** → abre el pedido principal (mismo flujo)
+6. Header del drawer muestra todas las mesas del grupo + capacidad total efectiva
+7. Click `×` en cada badge de mesa unida → **desunir** (libera esa mesa, sus items quedan en la principal)
+8. Al **cobrar** o **cancelar** el pedido: TODAS las mesas (principal + unidas) se liberan automáticamente
+
+### Reglas de validación
+
+- Solo se pueden unir mesas **LIBRES** (sin pedido propio activo y sin estar ya unidas a otro pedido)
+- No se puede unir la mesa principal a sí misma
+- Una mesa extra **NO** puede tener pedido propio (al unirse pierde esa capacidad hasta liberarse)
+- Solo se permite unir/desunir mientras el pedido esté **ABIERTO** o **CUENTA_PEDIDA**
+
+### 🛠 Backend
+
+- **Schema**: nueva tabla `rest_pedido_mesas_extra(pedido_id, mesa_id, fecha_union)` con FK CASCADE al pedido
+- **Comandos**:
+  - `rest_unir_mesas(pedido_id, mesas_ids: number[])` — transaccional, valida todas antes de insertar
+  - `rest_desunir_mesa(pedido_id, mesa_id)` — solo si pedido sigue activo
+  - `rest_listar_mesas_libres_para_unir(pedido_id)` — filtra disponibles
+- **Modificado** `rest_listar_mesas_con_estado`: query con COALESCE(pedido_propio, pedido_extra) — una mesa extra hereda el estado del pedido principal y trae `mesa_principal_id` + `mesa_principal_nombre`
+- **Modificado** `PedidoDetalle`: ahora incluye `mesas_extra: MesaResumen[]` y `capacidad_total: number`
+- **Liberación automática**: al pasar el pedido a COBRADO o CANCELADO, las mesas extra se sueltan sin lógica adicional (la query filtra solo pedidos ABIERTO/CUENTA_PEDIDA)
+
+### 🎨 Frontend
+
+- **MesasPage**: card de mesa extra muestra borde azul + "🔗 Unida a Mesa X" + click abre el pedido principal. Card de mesa principal muestra badge "🔗 +N" sobre el nombre
+- **PedidoDetalle**: header con lista de mesas unidas (chips desunibles), footer con botón "🔗 Unir mesas (N)", modal `ModalUnirMesas` con grid agrupado por zona y multi-select
+- **Total abierto** del header de MesasPage: NO duplica el total cuando una mesa está unida (solo la principal acumula)
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/restaurante/schema.rs` — tabla `rest_pedido_mesas_extra`
+- `src-tauri/src/restaurante/models.rs` — `MesaResumen`, `MesaConEstado.mesa_principal_*`, `PedidoDetalle.mesas_extra` + `capacidad_total`
+- `src-tauri/src/restaurante/commands.rs` — 3 comandos nuevos + query mesas con extras
+- `src-tauri/src/lib.rs` — registro de comandos
+- `src/restaurante/types.ts`, `src/restaurante/api.ts` — mirror TS
+- `src/restaurante/components/PedidoDetalle.tsx` — UI unir mesas + ModalUnirMesas
+- `src/restaurante/pages/MesasPage.tsx` — visualización de mesas unidas en grid
+
+---
+
 ## v2.3.67 — 2026-05-07 🍳 STABLE
 **Restaurante: Imprimir comandas a cocina (1 de 3 features pedidas).**
 

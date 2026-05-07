@@ -442,6 +442,10 @@ pub fn run() {
             restaurante::commands::rest_cerrar_pedido,
             restaurante::commands::rest_imprimir_pre_cuenta,
             restaurante::commands::rest_imprimir_comanda_cocina,
+            // v2.3.68 — Unir mesas
+            restaurante::commands::rest_unir_mesas,
+            restaurante::commands::rest_desunir_mesa,
+            restaurante::commands::rest_listar_mesas_libres_para_unir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -39,6 +39,12 @@ export interface MesaConEstado {
   items_pendientes_cocina: number;
   fecha_apertura: string | null;
   minutos_abierta: number | null;
+  // v2.3.68 — Unir mesas
+  /** Si != null, esta mesa es EXTRA del grupo y la principal es esta mesa */
+  mesa_principal_id: number | null;
+  mesa_principal_nombre: string | null;
+  /** Si esta mesa es la principal, cantidad de mesas extra unidas (0 si no hay) */
+  mesas_unidas_count: number;
 }
 
 export interface PedidoAbierto {
@@ -73,6 +79,13 @@ export interface PedidoItem {
   destino_preparacion?: string;
 }
 
+export interface MesaResumen {
+  id: number;
+  nombre: string;
+  capacidad: number;
+  zona_nombre: string | null;
+}
+
 export interface PedidoDetalle {
   pedido: PedidoAbierto;
   items: PedidoItem[];
@@ -81,6 +94,10 @@ export interface PedidoDetalle {
   subtotal: number;
   iva: number;
   total: number;
+  /** v2.3.68 — Mesas EXTRA unidas a este pedido (NO incluye la principal) */
+  mesas_extra: MesaResumen[];
+  /** v2.3.68 — Capacidad total efectiva (principal + extras) */
+  capacidad_total: number;
 }
 
 export interface ItemCocina {

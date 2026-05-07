@@ -299,22 +299,31 @@ function ZonaChip({
 }
 
 function CardMesa({ mesa, onClick }: { mesa: MesaConEstado; onClick: () => void }) {
+  // v2.3.68 — Si esta mesa es EXTRA del grupo (unida a otra principal),
+  // se ve diferente (gris-azulado, badge 🔗) y al hacer click abre el pedido principal.
+  const esExtra = mesa.mesa_principal_id != null;
+
   const colorBorde =
     mesa.estado === "LIBRE"
       ? "var(--color-border)"
-      : mesa.estado === "CUENTA_PEDIDA"
-        ? "var(--color-warning)"
-        : "var(--color-success)";
+      : esExtra
+        ? "var(--color-primary)"
+        : mesa.estado === "CUENTA_PEDIDA"
+          ? "var(--color-warning)"
+          : "var(--color-success)";
 
   const colorFondo =
     mesa.estado === "LIBRE"
       ? "var(--color-surface)"
-      : mesa.estado === "CUENTA_PEDIDA"
-        ? "rgba(245, 158, 11, 0.1)"
-        : "rgba(34, 197, 94, 0.1)";
+      : esExtra
+        ? "rgba(59, 130, 246, 0.10)"
+        : mesa.estado === "CUENTA_PEDIDA"
+          ? "rgba(245, 158, 11, 0.1)"
+          : "rgba(34, 197, 94, 0.1)";
 
-  const labelEstado =
-    mesa.estado === "LIBRE"
+  const labelEstado = esExtra
+    ? "UNIDA"
+    : mesa.estado === "LIBRE"
       ? "LIBRE"
       : mesa.estado === "CUENTA_PEDIDA"
         ? "CUENTA"
@@ -340,9 +349,25 @@ function CardMesa({ mesa, onClick }: { mesa: MesaConEstado; onClick: () => void 
       }}
       onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px)")}
       onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
+      title={esExtra ? `Unida a ${mesa.mesa_principal_nombre} — click para ver pedido` : undefined}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <strong style={{ fontSize: 16 }}>{mesa.nombre}</strong>
+        <strong style={{ fontSize: 16, display: "flex", alignItems: "center", gap: 4 }}>
+          {mesa.nombre}
+          {/* v2.3.68 — badge "+N" en mesa principal de un grupo unido */}
+          {mesa.mesas_unidas_count > 0 && (
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              padding: "1px 6px",
+              borderRadius: 8,
+              background: "var(--color-primary)",
+              color: "#fff",
+            }} title={`Unida con ${mesa.mesas_unidas_count} mesa(s) más`}>
+              🔗 +{mesa.mesas_unidas_count}
+            </span>
+          )}
+        </strong>
         <span
           style={{
             fontSize: 9,
@@ -364,45 +389,59 @@ function CardMesa({ mesa, onClick }: { mesa: MesaConEstado; onClick: () => void 
         </span>
       )}
 
-      {mesa.estado !== "LIBRE" && (
-        <>
-          {mesa.mesero_nombre && (
-            <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 2 }}>
-              👤 {mesa.mesero_nombre}
+      {/* v2.3.68 — Si es mesa extra, mostrar a quién pertenece y NO mostrar total propio */}
+      {esExtra ? (
+        <div style={{ marginTop: "auto", fontSize: 11, color: "var(--color-primary)", fontWeight: 600 }}>
+          🔗 Unida a <strong>{mesa.mesa_principal_nombre}</strong>
+          {mesa.minutos_abierta != null && (
+            <div style={{ fontSize: 10, color: "var(--color-text-muted)", fontWeight: 400, marginTop: 2 }}>
+              {mesa.minutos_abierta < 60
+                ? `${mesa.minutos_abierta}m`
+                : `${Math.floor(mesa.minutos_abierta / 60)}h ${mesa.minutos_abierta % 60}m`}
             </div>
           )}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: "auto" }}>
-            <strong style={{ fontSize: 18, color: "var(--color-primary)" }}>
-              ${mesa.total_actual.toFixed(2)}
-            </strong>
-            {mesa.minutos_abierta != null && (
-              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-                {mesa.minutos_abierta < 60
-                  ? `${mesa.minutos_abierta}m`
-                  : `${Math.floor(mesa.minutos_abierta / 60)}h ${mesa.minutos_abierta % 60}m`}
-              </span>
+        </div>
+      ) : (
+        mesa.estado !== "LIBRE" && (
+          <>
+            {mesa.mesero_nombre && (
+              <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 2 }}>
+                👤 {mesa.mesero_nombre}
+              </div>
             )}
-          </div>
-          {mesa.items_pendientes_cocina > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                top: 6,
-                right: 6,
-                background: "var(--color-danger)",
-                color: "#fff",
-                fontSize: 10,
-                fontWeight: 700,
-                padding: "2px 6px",
-                borderRadius: 999,
-                lineHeight: 1.2,
-              }}
-              title="Items pendientes en cocina"
-            >
-              🔔 {mesa.items_pendientes_cocina}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: "auto" }}>
+              <strong style={{ fontSize: 18, color: "var(--color-primary)" }}>
+                ${mesa.total_actual.toFixed(2)}
+              </strong>
+              {mesa.minutos_abierta != null && (
+                <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                  {mesa.minutos_abierta < 60
+                    ? `${mesa.minutos_abierta}m`
+                    : `${Math.floor(mesa.minutos_abierta / 60)}h ${mesa.minutos_abierta % 60}m`}
+                </span>
+              )}
             </div>
-          )}
-        </>
+            {mesa.items_pendientes_cocina > 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 6,
+                  right: 6,
+                  background: "var(--color-danger)",
+                  color: "#fff",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: "2px 6px",
+                  borderRadius: 999,
+                  lineHeight: 1.2,
+                }}
+                title="Items pendientes en cocina"
+              >
+                🔔 {mesa.items_pendientes_cocina}
+              </div>
+            )}
+          </>
+        )
       )}
     </button>
   );

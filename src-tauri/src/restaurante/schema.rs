@@ -77,6 +77,29 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_items_pedido ON rest_pedido_items(pedido_id);
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_items_estado ON rest_pedido_items(estado_cocina);
+
+        -- ─── Mesas EXTRA unidas a un pedido (v2.3.68) ──────────────
+        -- Para grupos grandes que ocupan varias mesas. La mesa
+        -- 'principal' sigue siendo `pedido.mesa_id` (no rompe schema).
+        -- Esta tabla M:N enumera las mesas SECUNDARIAS unidas al pedido.
+        --
+        -- Reglas:
+        --  - Una mesa libre puede unirse a un pedido existente
+        --  - Una mesa con pedido propio NO puede unirse a otro
+        --  - Al COBRAR / CANCELAR el pedido, todas las mesas extra se
+        --    liberan automáticamente (porque la query de mesas filtra
+        --    pedidos ABIERTO/CUENTA_PEDIDA — el cambio de estado las
+        --    suelta sin lógica adicional)
+        CREATE TABLE IF NOT EXISTS rest_pedido_mesas_extra (
+            pedido_id INTEGER NOT NULL,
+            mesa_id INTEGER NOT NULL,
+            fecha_union TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            PRIMARY KEY (pedido_id, mesa_id),
+            FOREIGN KEY (pedido_id) REFERENCES rest_pedidos_abiertos(id) ON DELETE CASCADE,
+            FOREIGN KEY (mesa_id) REFERENCES rest_mesas(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_mesa ON rest_pedido_mesas_extra(mesa_id);
+        CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_pedido ON rest_pedido_mesas_extra(pedido_id);
         ",
     )
 }
