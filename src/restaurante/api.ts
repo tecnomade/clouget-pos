@@ -116,3 +116,10 @@ export const cerrarPedido = (pedidoId: number, ventaId: number) =>
 /** Imprime el ticket de pre-cuenta (cortesía, no fiscal) en la térmica configurada. */
 export const imprimirPreCuenta = (pedidoId: number) =>
   invoke<string>("rest_imprimir_pre_cuenta", { pedidoId });
+
+/** v2.3.67: Imprime la comanda de cocina al enviar items.
+ *  itemsIds opcional: si vienen, solo esos items; si null, todos los del pedido (re-imprimir).
+ *  Usa `impresora_cocina` o fallback a `impresora` principal. Soporta 1 o 2 tickets
+ *  separados (cocina/barra) según `comanda_modo_separado`. */
+export const imprimirComandaCocina = (pedidoId: number, itemsIds?: number[]) =>
+  invoke<string>("rest_imprimir_comanda_cocina", { pedidoId, itemsIds: itemsIds ?? null });

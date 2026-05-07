@@ -6,6 +6,93 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.3.67 — 2026-05-07 🍳 STABLE
+**Restaurante: Imprimir comandas a cocina (1 de 3 features pedidas).**
+
+Primera de las 3 features que el cliente pidió para llevar el módulo Restaurante a nivel profesional. Las próximas: **v2.3.68 (unir mesas)** y **v2.3.69 (dividir cuenta)**.
+
+### 🍳 Comandas automáticas a cocina
+
+**Caso de uso real**: el mesero envía pedido a cocina → ticket impreso aparece automáticamente en la impresora de cocina → el cocinero lo lee y empieza a preparar.
+
+### Cómo funciona
+
+1. **Click "🔔 Enviar cocina"** en el drawer del pedido (como antes)
+2. **Automáticamente**: el sistema marca los items como enviados Y manda a imprimir la comanda en la impresora de cocina configurada
+3. **Toast de confirmación**: "X items enviados a cocina · 🍽 Comanda impresa"
+4. Si falla la impresora (no configurada, offline), warning en lugar de error — el flujo NO se rompe
+
+### Diseño del ticket de comanda
+
+```
+━━━━━━━━━━━━━━━━━
+   🍳 COCINA
+━━━━━━━━━━━━━━━━━
+  MESA: Mesa 5 (Salón)
+━━━━━━━━━━━━━━━━━
+ Mesero: Juan
+ Hora: 13:42:18 · Pedido #42
+ (Restaurante El Bosque)
+─────────────────
+ 2x  Hamburguesa BBQ
+     ↳ sin cebolla
+
+ 1x  Ensalada César
+
+ 1x  Papas Fritas
+─────────────────
+ 3 item(s) — 13:42:18
+━━━━━━━━━━━━━━━━━
+```
+
+Características clave:
+- **Sin precios** (cocina no necesita verlos)
+- **Cantidades en negrita doble alto** — se leen desde lejos
+- **Observaciones destacadas** ("sin cebolla", "término medio") con flecha + indentadas
+- **Mesa enorme** en la cabecera para identificar rápido
+- **Items DIRECTO ignorados** (bebidas embotelladas no van a cocina)
+
+### Configuración (Configuración → 🍳 Cocina)
+
+- **Impresora de cocina** (opcional): puede ser distinta a la del POS principal. Si dejás "misma del POS", usa la principal.
+- **Toggle "Imprimir tickets separados (Cocina y Barra)"**:
+  - **OFF** (default): 1 ticket combinado con tag `[BARRA]` en cada item de barra
+  - **ON**: 2 tickets independientes (uno cocina, uno barra) — útil si son áreas físicas distintas con impresoras dedicadas
+- **Impresora de barra** (solo si modo separado activo): impresora dedicada para items de barra. Si vacío, usa la de cocina.
+
+### Re-imprimir comanda
+
+Si la impresora se atascó o el ticket se perdió, hay un link pequeño debajo del botón "Enviar cocina":
+
+> 🖨 Reimprimir comanda
+
+Imprime la comanda completa con TODOS los items del pedido (no solo los nuevos).
+
+### Cambios técnicos
+- `src-tauri/src/restaurante/printing.rs`:
+  - `enum DestinoComanda { Cocina, Barra, Ambos }`
+  - `generar_comanda_cocina(...)` retorna `Option<Vec<u8>>` (None si no hay items que imprimir según el filtro)
+  - Items DIRECTO siempre filtrados out
+- `src-tauri/src/restaurante/commands.rs::rest_imprimir_comanda_cocina(pedido_id, items_ids?)`:
+  - Si `items_ids` viene, solo imprime esos (auto al enviar cocina)
+  - Si None, imprime todos (re-imprimir)
+  - Resuelve impresora: `impresora_cocina` → fallback a `impresora` principal
+  - Modo separado: 2 tickets independientes (cocina + barra)
+- `src-tauri/src/lib.rs`: registrado nuevo comando
+- `src/restaurante/api.ts`: wrapper `imprimirComandaCocina(pedidoId, itemsIds?)`
+- `src/restaurante/components/PedidoDetalle.tsx`:
+  - `handleEnviarCocina` ahora llama `imprimirComandaCocina(pedidoId, itemIds)` después de enviar
+  - `handleReimprimirComanda` (nuevo) llama sin `itemsIds`
+  - Botón pequeño "🖨 Reimprimir comanda" debajo de "Enviar cocina" si hay items ya enviados
+- `src/pages/Configuracion.tsx`: nueva sección "🍳 Cocina (Restaurante)" con selector de impresora + toggles
+
+Verificado: cargo check OK, tsc EXITCODE=0.
+
+### Próximas features de Restaurante (planificadas)
+
+- **v2.3.68** — 🔗 Unir mesas (combinar 2+ mesas en 1 pedido para grupos grandes)
+- **v2.3.69** — ✂️ Dividir cuenta (cobrar 1 mesa en N sub-cuentas independientes)
+
 ## v2.3.66 — 2026-05-06 🧭 STABLE
 **UX flow transferencias: navegación inteligente desde el modal a la fecha exacta.**
 

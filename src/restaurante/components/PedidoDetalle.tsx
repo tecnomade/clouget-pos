@@ -21,6 +21,7 @@ import {
   cancelarPedido,
   cerrarPedido,
   imprimirPreCuenta,
+  imprimirComandaCocina,
 } from "../api";
 import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
 // v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
@@ -93,11 +94,37 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const handleEnviarCocina = async () => {
     try {
       const items = await enviarCocina(pedidoId);
-      toastExito(`${items.length} item(s) enviado(s) a cocina`);
-      // TODO Fase 3: imprimir ticket cocina con `items`
+      // v2.3.67: auto-imprimir comanda con SOLO los items recién enviados
+      // (pasamos sus IDs para que el ticket no incluya items viejos).
+      // Si falla la impresión, no rompemos el flujo — el estado ya está actualizado.
+      const itemIds = items.map(i => i.id).filter((id): id is number => id != null);
+      let mensajeImpresion = "";
+      try {
+        const r = await imprimirComandaCocina(pedidoId, itemIds);
+        mensajeImpresion = ` · ${r}`;
+      } catch (err: any) {
+        // No bloquear: solo warn. Igual los items quedan marcados como enviados.
+        toastWarning(
+          `${items.length} item(s) enviado(s), pero la comanda no se imprimió: ${err?.message || err}. Verifica impresora en Configuración → Cocina.`,
+        );
+        await cargar();
+        return;
+      }
+      toastExito(`${items.length} item(s) enviado(s) a cocina${mensajeImpresion}`);
       await cargar();
     } catch (err: any) {
       toastError(err?.message || String(err));
+    }
+  };
+
+  // v2.3.67: re-imprimir comanda completa de un pedido (todos los items, no solo
+  // los recién enviados). Útil si el ticket se perdió o no salió bien.
+  const handleReimprimirComanda = async () => {
+    try {
+      const r = await imprimirComandaCocina(pedidoId);
+      toastExito(`Comanda reimpresa · ${r}`);
+    } catch (err: any) {
+      toastError(`No se pudo reimprimir: ${err?.message || err}`);
     }
   };
 
@@ -367,15 +394,32 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
 
             {/* Acciones secundarias */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              <button
-                className="btn btn-outline"
-                onClick={handleEnviarCocina}
-                disabled={itemsNuevos === 0}
-                title={itemsNuevos === 0 ? "No hay items nuevos" : ""}
-                style={{ padding: "8px" }}
-              >
-                🔔 Enviar cocina {itemsNuevos > 0 && `(${itemsNuevos})`}
-              </button>
+              <div>
+                <button
+                  className="btn btn-outline"
+                  onClick={handleEnviarCocina}
+                  disabled={itemsNuevos === 0}
+                  title={itemsNuevos === 0 ? "No hay items nuevos" : ""}
+                  style={{ padding: "8px", width: "100%" }}
+                >
+                  🔔 Enviar cocina {itemsNuevos > 0 && `(${itemsNuevos})`}
+                </button>
+                {/* v2.3.67: Si ya hay items enviados, ofrecer re-imprimir comanda */}
+                {detalle.items.some(i => i.enviado_cocina && i.destino_preparacion !== "DIRECTO") && (
+                  <button
+                    onClick={handleReimprimirComanda}
+                    style={{
+                      width: "100%", marginTop: 4, padding: "4px",
+                      background: "transparent", border: "none",
+                      color: "var(--color-primary)", fontSize: 10,
+                      cursor: "pointer", textDecoration: "underline",
+                    }}
+                    title="Re-imprimir comanda completa (todos los items del pedido)"
+                  >
+                    🖨 Reimprimir comanda
+                  </button>
+                )}
+              </div>
               {detalle.pedido.estado === "CUENTA_PEDIDA" ? (
                 <button
                   className="btn btn-outline"

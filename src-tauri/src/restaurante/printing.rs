@@ -9,7 +9,7 @@
 //! En ambos casos la pre-cuenta NO es comprobante fiscal — solo informativa.
 //! La factura/nota de venta real se genera al cobrar vía `registrar_venta`.
 
-use super::models::PedidoDetalle;
+use super::models::{PedidoDetalle, PedidoItem};
 use crate::printing::{
     format_cantidad, linea_monto, linea_separador_doble, linea_separador_simple,
     logo_to_raster_pub,
@@ -462,3 +462,177 @@ pub fn generar_pre_cuenta_pdf(
 
     Ok(buffer)
 }
+
+// ─── Comanda de Cocina (v2.3.67) ────────────────────────────────────────
+// Ticket impreso automáticamente al "Enviar cocina" para que el cocinero
+// vea qué preparar. Diseñado simple y grande:
+//   - SIN precios (cocina no necesita verlos)
+//   - Cantidades en negrita y grandes
+//   - Observaciones (sin cebolla, etc.) muy visibles
+//   - Cabecera grande con # mesa para que se lea desde lejos
+
+/// Filtro: qué tipo de comanda generar.
+/// COCINA = items con destino_preparacion='COCINA'
+/// BARRA  = items con destino_preparacion='BARRA'
+/// AMBOS  = todos (1 ticket combinado)
+pub enum DestinoComanda {
+    Cocina,
+    Barra,
+    Ambos,
+}
+
+/// Genera el ticket ESC/POS de comanda de cocina.
+/// Recibe los items YA enviados a cocina (después de UPDATE enviado_cocina=1).
+///
+/// Si el filtro es Cocina/Barra, solo incluye items de ese destino.
+/// Items DIRECTO se IGNORAN (el mesero los entrega del mostrador).
+///
+/// Retorna None si después del filtro no hay items que imprimir
+/// (ej: pedido solo tiene items DIRECTO o solo items del otro destino).
+pub fn generar_comanda_cocina(
+    pedido_id: i64,
+    mesa_nombre: &str,
+    zona_nombre: Option<&str>,
+    mesero: Option<&str>,
+    items: &[PedidoItem],
+    filtro: DestinoComanda,
+    config: &HashMap<String, String>,
+) -> Option<Vec<u8>> {
+    // Filtrar items según el destino de la comanda
+    let items_filtrados: Vec<&PedidoItem> = items.iter().filter(|i| {
+        match filtro {
+            DestinoComanda::Cocina => i.destino_preparacion == "COCINA",
+            DestinoComanda::Barra  => i.destino_preparacion == "BARRA",
+            DestinoComanda::Ambos  => i.destino_preparacion != "DIRECTO", // todo excepto directo
+        }
+    }).collect();
+
+    if items_filtrados.is_empty() {
+        return None;
+    }
+
+    let mut ticket: Vec<u8> = Vec::new();
+
+    // Comandos ESC/POS
+    let esc_init: &[u8] = &[0x1B, 0x40];
+    let esc_center: &[u8] = &[0x1B, 0x61, 0x01];
+    let esc_left: &[u8] = &[0x1B, 0x61, 0x00];
+    let esc_bold_on: &[u8] = &[0x1B, 0x45, 0x01];
+    let esc_bold_off: &[u8] = &[0x1B, 0x45, 0x00];
+    let esc_double_on: &[u8] = &[0x1B, 0x21, 0x30]; // doble alto+ancho (HUGE)
+    let esc_double_off: &[u8] = &[0x1B, 0x21, 0x00];
+    let esc_double_h: &[u8] = &[0x1B, 0x21, 0x10]; // solo doble alto
+    let esc_cut: &[u8] = &[0x1D, 0x56, 0x00];
+    let esc_feed: &[u8] = &[0x1B, 0x64, 0x05];
+
+    ticket.extend_from_slice(esc_init);
+
+    // === TÍTULO según destino ===
+    let titulo = match filtro {
+        DestinoComanda::Cocina => "🍳 COCINA",
+        DestinoComanda::Barra  => "🍷 BARRA",
+        DestinoComanda::Ambos  => "🍽 COMANDA",
+    };
+    ticket.extend_from_slice(esc_center);
+    ticket.extend_from_slice(esc_bold_on);
+    ticket.extend_from_slice(esc_double_on);
+    ticket.extend_from_slice(titulo.as_bytes());
+    ticket.push(b'\n');
+    ticket.extend_from_slice(esc_double_off);
+    ticket.extend_from_slice(esc_bold_off);
+    ticket.extend_from_slice(esc_left);
+
+    ticket.extend_from_slice(linea_separador_doble(ANCHO).as_bytes());
+
+    // === Cabecera grande: MESA (lo más importante de leer rápido) ===
+    ticket.extend_from_slice(esc_center);
+    ticket.extend_from_slice(esc_bold_on);
+    ticket.extend_from_slice(esc_double_h);
+    let mesa_label = match zona_nombre {
+        Some(z) => format!("MESA: {} ({})", mesa_nombre, z),
+        None => format!("MESA: {}", mesa_nombre),
+    };
+    ticket.extend_from_slice(mesa_label.as_bytes());
+    ticket.push(b'\n');
+    ticket.extend_from_slice(esc_double_off);
+    ticket.extend_from_slice(esc_bold_off);
+    ticket.extend_from_slice(esc_left);
+
+    // === Info contexto (más pequeño) ===
+    if let Some(m) = mesero {
+        ticket.extend_from_slice(format!("Mesero: {}\n", m).as_bytes());
+    }
+    let hora = chrono::Local::now().format("%H:%M:%S").to_string();
+    let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("");
+    ticket.extend_from_slice(format!("Hora: {} · Pedido #{}\n", hora, pedido_id).as_bytes());
+    if !nombre_negocio.is_empty() {
+        ticket.extend_from_slice(format!("({})\n", nombre_negocio).as_bytes());
+    }
+
+    ticket.extend_from_slice(linea_separador_simple(ANCHO).as_bytes());
+
+    // === Items: agrupados por nombre+observación, sin precios ===
+    use std::collections::BTreeMap;
+    #[derive(Clone)]
+    struct LineaCocina {
+        nombre: String,
+        info: Option<String>,
+        cantidad: f64,
+        destino: String,
+    }
+    let mut grupos: BTreeMap<String, LineaCocina> = BTreeMap::new();
+    for it in &items_filtrados {
+        let nombre = it.producto_nombre.clone().unwrap_or_else(|| "?".into());
+        let info_key = it.info_adicional.clone().unwrap_or_default();
+        let key = format!("{}|{}|{}", nombre, info_key, it.destino_preparacion);
+        grupos
+            .entry(key)
+            .and_modify(|g| g.cantidad += it.cantidad)
+            .or_insert(LineaCocina {
+                nombre: nombre.clone(),
+                info: it.info_adicional.clone(),
+                cantidad: it.cantidad,
+                destino: it.destino_preparacion.clone(),
+            });
+    }
+
+    for grupo in grupos.values() {
+        // Cantidad en negrita doble alto, nombre normal
+        ticket.extend_from_slice(esc_bold_on);
+        ticket.extend_from_slice(esc_double_h);
+        ticket.extend_from_slice(format!("{}x  ", format_cantidad(grupo.cantidad)).as_bytes());
+        ticket.extend_from_slice(esc_double_off);
+        ticket.extend_from_slice(grupo.nombre.as_bytes());
+        // Si es comanda combinada AMBOS, marcar de qué destino es
+        if matches!(filtro, DestinoComanda::Ambos) && grupo.destino == "BARRA" {
+            ticket.extend_from_slice(b" [BARRA]");
+        }
+        ticket.push(b'\n');
+        ticket.extend_from_slice(esc_bold_off);
+
+        // Observación destacada con flecha + indentada
+        if let Some(ref info) = grupo.info {
+            if !info.is_empty() {
+                ticket.extend_from_slice(esc_bold_on);
+                ticket.extend_from_slice(format!("    ↳ {}\n", info).as_bytes());
+                ticket.extend_from_slice(esc_bold_off);
+            }
+        }
+        // Espacio entre items para mejor lectura
+        ticket.push(b'\n');
+    }
+
+    ticket.extend_from_slice(linea_separador_doble(ANCHO).as_bytes());
+
+    // Pie pequeño
+    ticket.extend_from_slice(esc_center);
+    ticket.extend_from_slice(format!("{} item(s) — {}\n", grupos.len(), hora).as_bytes());
+    ticket.extend_from_slice(esc_left);
+
+    // Cortar
+    ticket.extend_from_slice(esc_feed);
+    ticket.extend_from_slice(esc_cut);
+
+    Some(ticket)
+}
+

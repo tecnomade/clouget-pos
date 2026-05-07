@@ -769,6 +769,139 @@ pub fn rest_imprimir_pre_cuenta(
     Ok("Pre-cuenta impresa".to_string())
 }
 
+/// v2.3.67: Imprime la comanda de cocina (lista de items a preparar).
+/// Se llama automáticamente desde el frontend después de "Enviar cocina"
+/// y opcionalmente puede usar una impresora SEPARADA (config `impresora_cocina`).
+///
+/// Modo de impresión configurable (`comanda_modo_separado`):
+/// - "0" (default): UN ticket combinado COCINA + BARRA (con [BARRA] tag en items)
+/// - "1": DOS tickets separados (cocina y barra) — útil si cocina y barra
+///   son áreas físicas distintas con impresoras propias.
+///
+/// Si `items_ids` viene con valores, solo imprime esos items (recién enviados).
+/// Si es None/vacío, imprime TODOS los items pendientes del pedido (re-imprimir).
+///
+/// Items DIRECTO (despacho directo, ej. bebidas embotelladas) NUNCA se imprimen.
+#[tauri::command]
+pub fn rest_imprimir_comanda_cocina(
+    db: State<'_, Database>,
+    pedido_id: i64,
+    items_ids: Option<Vec<i64>>,
+) -> Result<String, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let detalle = obtener_pedido_detalle(&conn, pedido_id)?;
+
+    // Filtrar items según items_ids (si vino) o usar todos los items COCINA/BARRA
+    let items_objetivo: Vec<super::models::PedidoItem> = if let Some(ids) = items_ids.as_ref() {
+        if ids.is_empty() {
+            return Err("No se especificaron items para imprimir".to_string());
+        }
+        detalle.items.iter()
+            .filter(|i| i.id.map(|id| ids.contains(&id)).unwrap_or(false))
+            .cloned()
+            .collect()
+    } else {
+        // Sin filtro = todos los items del pedido (re-imprimir)
+        detalle.items.clone()
+    };
+
+    if items_objetivo.is_empty() {
+        return Err("No hay items para imprimir comanda".to_string());
+    }
+
+    // Cargar config
+    let mut cfg_stmt = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+    let config: std::collections::HashMap<String, String> = cfg_stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    drop(cfg_stmt);
+    drop(conn);
+
+    // Resolver impresora: usar `impresora_cocina` si está configurada, sino `impresora` principal.
+    let impresora_cocina = config.get("impresora_cocina")
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let impresora_principal = config.get("impresora")
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let impresora_cocina_efectiva = impresora_cocina.clone().or_else(|| impresora_principal.clone());
+
+    // Impresora separada para barra (opcional, si config `comanda_modo_separado=1`)
+    let modo_separado = config.get("comanda_modo_separado").map(|s| s.as_str()) == Some("1");
+    let impresora_barra = config.get("impresora_barra")
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        .or_else(|| impresora_cocina_efectiva.clone()); // fallback a cocina si no hay separada
+
+    // Si no hay NINGUNA impresora configurada, error claro
+    if impresora_cocina_efectiva.is_none() {
+        return Err("No hay impresora configurada (ni 'impresora_cocina' ni 'impresora' principal). Vaya a Configuración.".to_string());
+    }
+
+    let mut mensajes: Vec<String> = Vec::new();
+
+    if modo_separado {
+        // 2 tickets separados: COCINA + BARRA
+        let ticket_cocina = super::printing::generar_comanda_cocina(
+            pedido_id,
+            &detalle.mesa_nombre,
+            detalle.zona_nombre.as_deref(),
+            detalle.pedido.mesero_nombre.as_deref(),
+            &items_objetivo,
+            super::printing::DestinoComanda::Cocina,
+            &config,
+        );
+        let ticket_barra = super::printing::generar_comanda_cocina(
+            pedido_id,
+            &detalle.mesa_nombre,
+            detalle.zona_nombre.as_deref(),
+            detalle.pedido.mesero_nombre.as_deref(),
+            &items_objetivo,
+            super::printing::DestinoComanda::Barra,
+            &config,
+        );
+
+        if let Some(t) = ticket_cocina {
+            if let Some(ref imp) = impresora_cocina_efectiva {
+                crate::printing::imprimir_raw_windows(imp, &t)?;
+                mensajes.push("🍳 Cocina impresa".to_string());
+            }
+        }
+        if let Some(t) = ticket_barra {
+            if let Some(ref imp) = impresora_barra {
+                crate::printing::imprimir_raw_windows(imp, &t)?;
+                mensajes.push("🍷 Barra impresa".to_string());
+            }
+        }
+    } else {
+        // 1 ticket combinado (default)
+        let ticket = super::printing::generar_comanda_cocina(
+            pedido_id,
+            &detalle.mesa_nombre,
+            detalle.zona_nombre.as_deref(),
+            detalle.pedido.mesero_nombre.as_deref(),
+            &items_objetivo,
+            super::printing::DestinoComanda::Ambos,
+            &config,
+        );
+        if let Some(t) = ticket {
+            if let Some(ref imp) = impresora_cocina_efectiva {
+                crate::printing::imprimir_raw_windows(imp, &t)?;
+                mensajes.push("🍽 Comanda impresa".to_string());
+            }
+        }
+    }
+
+    if mensajes.is_empty() {
+        // No había items COCINA/BARRA (todos eran DIRECTO) — no es error, solo informativo
+        Ok("Sin items para cocina (todos despacho directo)".to_string())
+    } else {
+        Ok(mensajes.join(" + "))
+    }
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────
 
 fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {

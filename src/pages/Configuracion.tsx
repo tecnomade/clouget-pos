@@ -887,6 +887,98 @@ export default function Configuracion() {
 
           {/* Categorías de Productos: gestionarlo en pagina Productos (eliminado de aqui) */}
 
+          {/* v2.3.67: Cocina del Restaurante (impresora separada + comandas).
+              Solo aplica si tienes el módulo Restaurante activo, pero la sección
+              se muestra siempre porque el toggle/info no afecta al POS normal. */}
+          <div className="card">
+            <div className="card-header">🍳 Cocina (Restaurante)</div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
+                Configuración para el ticket de comanda que se imprime al "Enviar cocina"
+                desde el módulo Restaurante. Si no usas mesas, ignora esta sección.
+              </p>
+
+              {/* Impresora de cocina (puede ser distinta a la del POS) */}
+              <div style={{ marginBottom: 12 }}>
+                <label className="text-secondary" style={{ fontSize: 12 }}>
+                  Impresora de cocina (opcional)
+                </label>
+                <select
+                  className="input"
+                  style={{ width: "100%", marginTop: 4 }}
+                  value={config.impresora_cocina ?? ""}
+                  onChange={(e) => {
+                    update("impresora_cocina", e.target.value);
+                    guardarConfig({ impresora_cocina: e.target.value });
+                  }}
+                >
+                  <option value="">⏷ Misma que la del POS principal</option>
+                  {impresoras.map((imp) => (
+                    <option key={imp} value={imp}>{imp}</option>
+                  ))}
+                  {config.impresora_cocina && config.impresora_cocina.trim() && !impresoras.includes(config.impresora_cocina) && (
+                    <option key={config.impresora_cocina} value={config.impresora_cocina}>
+                      {config.impresora_cocina} (no detectada)
+                    </option>
+                  )}
+                </select>
+                <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
+                  Si dejás "misma del POS", la comanda se imprime en la misma impresora que los tickets de venta. Si tenés una térmica dedicada en cocina, seleccionala aquí.
+                </span>
+              </div>
+
+              {/* Toggle 1 ticket vs 2 tickets separados */}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer", marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={config.comanda_modo_separado === "1"}
+                  onChange={(e) => {
+                    const v = e.target.checked ? "1" : "0";
+                    setConfig({ ...config, comanda_modo_separado: v });
+                    guardarConfig({ comanda_modo_separado: v });
+                  }}
+                  style={{ marginTop: 3 }}
+                />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>
+                    Imprimir tickets separados (Cocina y Barra)
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Si está activo, los items con destino BARRA (cocteles, café preparado) se imprimen en un ticket aparte. Útil si cocina y barra son áreas físicas distintas. Si está desactivado, todo va en 1 ticket combinado con tag [BARRA] en cada item.
+                  </div>
+                </div>
+              </label>
+
+              {/* Impresora de barra (solo si modo separado activo) */}
+              {config.comanda_modo_separado === "1" && (
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12 }}>
+                    Impresora de barra (opcional)
+                  </label>
+                  <select
+                    className="input"
+                    style={{ width: "100%", marginTop: 4 }}
+                    value={config.impresora_barra ?? ""}
+                    onChange={(e) => {
+                      update("impresora_barra", e.target.value);
+                      guardarConfig({ impresora_barra: e.target.value });
+                    }}
+                  >
+                    <option value="">⏷ Misma que cocina</option>
+                    {impresoras.map((imp) => (
+                      <option key={imp} value={imp}>{imp}</option>
+                    ))}
+                    {config.impresora_barra && config.impresora_barra.trim() && !impresoras.includes(config.impresora_barra) && (
+                      <option key={config.impresora_barra} value={config.impresora_barra}>
+                        {config.impresora_barra} (no detectada)
+                      </option>
+                    )}
+                  </select>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Listas de Precios */}
           <div className="card">
             <div className="card-header">Listas de Precios</div>
