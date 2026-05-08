@@ -26,8 +26,20 @@
 //! - `["app_movil"]`                       POS + app (vendedor piso, inventarista)
 //! - `["restaurante", "app_movil"]`        POS + restaurante + app (caso completo)
 
+pub mod schema;
+pub mod http;
+pub mod commands;
+
 use crate::db::Database;
 use rusqlite::params;
+
+/// Inicializa el módulo: corre migraciones SQL.
+/// Llamar desde `lib.rs` durante el setup de la app.
+pub fn init(db: &Database) -> Result<(), rusqlite::Error> {
+    let conn = db.conn.lock().unwrap();
+    schema::create_tables(&conn)?;
+    Ok(())
+}
 
 /// Verifica que la licencia activa tenga el módulo `"app_movil"`.
 ///

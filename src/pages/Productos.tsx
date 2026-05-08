@@ -1124,9 +1124,11 @@ function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }:
   };
 
   // Procesa un Blob/File → b64, valida tamaño, persiste si hay productoId
+  // v2.4.2: acepta hasta 5MB de entrada — el backend optimiza automáticamente
+  // (resize a 1024px max + JPEG calidad descendente) hasta entrar en 500KB.
   const procesarArchivo = async (file: File | Blob, sourceName: string) => {
-    if (file.size > 500_000) {
-      onError(`La imagen pesa ${(file.size / 1024).toFixed(1)} KB. Máximo 500 KB.`);
+    if (file.size > 5 * 1024 * 1024) {
+      onError(`La imagen pesa ${(file.size / (1024 * 1024)).toFixed(1)} MB. Máximo 5 MB.`);
       return;
     }
     setCargando(true);
@@ -1183,38 +1185,86 @@ function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productoId]);
 
-  // Handler drag & drop sobre el container
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(true);
-  };
-  const onDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-  };
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      onError("Solo se permiten archivos de imagen");
-      return;
-    }
-    procesarArchivo(file, file.name);
-  };
+  // v2.4.2 — Drag & drop en Tauri: NO funciona via React onDragOver/onDrop
+  // porque el webview de Tauri intercepta los eventos drag a nivel SO. Hay que
+  // usar la API de Tauri `getCurrentWebview().onDragDropEvent()` que devuelve
+  // el path absoluto del archivo soltado.
+  //
+  // Detectamos si el cursor está sobre nuestro container comparando la
+  // posición del drop con el bounding rect del container.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setup = async () => {
+      try {
+        // Import dinámico para evitar romper si la API no está disponible
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        const fn = await getCurrentWebview().onDragDropEvent(async (event) => {
+          // event.payload tiene { type: "over" | "drop" | "leave", paths?, position? }
+          const payload: any = event.payload;
+          const rect = containerRef.current?.getBoundingClientRect();
+
+          const dentroDelContainer = (): boolean => {
+            if (!rect || !payload.position) return false;
+            // Tauri da position en pixels físicos del webview — convertimos a logical
+            // dividiendo por devicePixelRatio. En Windows con escala 100% es 1.
+            const dpr = window.devicePixelRatio || 1;
+            const x = payload.position.x / dpr;
+            const y = payload.position.y / dpr;
+            return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+          };
+
+          if (payload.type === "over") {
+            setDragOver(dentroDelContainer());
+          } else if (payload.type === "leave") {
+            setDragOver(false);
+          } else if (payload.type === "drop") {
+            setDragOver(false);
+            if (!dentroDelContainer()) return;
+            const path = payload.paths?.[0];
+            if (!path) return;
+
+            // Verificar extensión
+            const ext = String(path).toLowerCase().split(".").pop() || "";
+            if (!FORMATOS_ACEPTADOS.includes(ext)) {
+              onError(`Formato no soportado: .${ext}. Usá: ${FORMATOS_ACEPTADOS.join(", ")}`);
+              return;
+            }
+
+            setCargando(true);
+            try {
+              if (productoId) {
+                const b64 = await cargarImagenProducto(productoId, path);
+                onChange(b64);
+              } else {
+                const b64 = await leerImagenArchivo(path);
+                onChange(b64);
+              }
+            } catch (err: any) {
+              onError("No se pudo cargar la imagen arrastrada: " + (err?.message || err));
+            } finally {
+              setCargando(false);
+            }
+          }
+        });
+        unlisten = fn;
+      } catch {
+        // En contexto no-Tauri (tests, web preview) simplemente no hay drag&drop
+      }
+    };
+
+    setup();
+    return () => {
+      if (unlisten) unlisten();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productoId]);
 
   const mime = imagen ? detectarMime(imagen) : "image/png";
 
   return (
     <div
       ref={containerRef}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
       style={{
         marginTop: 16,
         padding: 12,
@@ -1287,7 +1337,7 @@ function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }:
       </div>
       <span className="text-secondary" style={{ fontSize: 10, marginTop: 6, display: "block", lineHeight: 1.4 }}>
         💡 Puede <strong>cargar archivo</strong>, <strong>arrastrar</strong> o <strong>pegar (Ctrl+V)</strong> una imagen.<br/>
-        Formatos: PNG, JPG, WebP, GIF, BMP, AVIF, SVG. Máx 500 KB. Se muestra en modo táctil del POS.
+        Formatos: PNG, JPG, WebP, GIF, BMP, AVIF, SVG. Hasta <strong>5 MB</strong> — se reduce automáticamente al máx táctil del POS.
       </span>
       {/* Hidden input only used for accept hint — el real picker es Tauri open() */}
       <input type="file" accept={MIME_ACEPTADOS} style={{ display: "none" }} />

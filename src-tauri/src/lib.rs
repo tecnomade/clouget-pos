@@ -57,6 +57,14 @@ pub fn run() {
         }
     }
 
+    // v2.4.2 — Sprint 3a: módulo App Móvil. Disponible en ambas marcas
+    // (Clouget y DigitalServer). Crea la tabla `app_tokens`.
+    if branding::BRAND.tiene_modulo_app_movil() {
+        if let Err(e) = app_movil::init(&database) {
+            eprintln!("[App Móvil] Error al inicializar módulo: {}", e);
+        }
+    }
+
     let sesion_state = SesionState {
         sesion: Arc::new(Mutex::new(None)),
     };
@@ -456,6 +464,10 @@ pub fn run() {
             restaurante::commands::rest_cancelar_division,
             restaurante::commands::rest_marcar_subcuenta_cobrada,
             restaurante::commands::rest_producto_division_id,
+            // v2.4.2 — App Móvil: admin de dispositivos emparejados
+            app_movil::commands::app_listar_dispositivos,
+            app_movil::commands::app_revocar_dispositivo,
+            app_movil::commands::app_eliminar_dispositivo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

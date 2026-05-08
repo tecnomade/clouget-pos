@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos } from "../services/api";
+import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos, appListarDispositivos, appRevocarDispositivo, appEliminarDispositivo } from "../services/api";
+import type { DispositivoApp } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
@@ -2129,93 +2130,19 @@ export default function Configuracion() {
           </div>
           )}
 
-          {/* v2.4.1 — App Móvil — solo si tiene módulo app_movil */}
+          {/* v2.4.1+ — App Móvil — solo si tiene módulo app_movil */}
           {(config.licencia_modulos || "").includes("app_movil") && (
-          <div className="card">
-            <div className="card-header">📱 App Móvil (clouget-pos-app)</div>
-            <div className="card-body">
-              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
-                App para tablets y teléfonos: meseros toman pedidos, cocineros ven comandas,
-                vendedores de piso atienden caminando, inventaristas hacen conteos, dueño
-                consulta dashboard remoto. Cada usuario ve solo lo que sus permisos le habilitan.
-              </p>
-
-              {/* Resumen de usuarios con permisos relevantes */}
-              {(() => {
-                const meseros = usuarios.filter(u => {
-                  if (u.rol === "ADMIN") return true;
-                  try {
-                    const p = JSON.parse(u.permisos || "{}");
-                    return p.atiende_mesas || p.ve_cocina || p.vende_piso || p.inventaria || p.dueno_dashboard;
-                  } catch { return false; }
-                });
-                return (
-                  <div style={{
-                    background: "var(--color-surface-alt)",
-                    padding: 10,
-                    borderRadius: 6,
-                    marginBottom: 12,
-                  }}>
-                    <div style={{ fontSize: 12, marginBottom: 6 }}>
-                      <strong>{meseros.length}</strong> usuario(s) con acceso a la app
-                      {meseros.length === 0 && (
-                        <span style={{ color: "var(--color-warning)" }}> — asigne permisos arriba para que puedan loguearse</span>
-                      )}
-                    </div>
-                    {meseros.length > 0 && (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {meseros.map(u => (
-                          <span key={u.id} style={{
-                            fontSize: 11,
-                            padding: "2px 8px",
-                            borderRadius: 10,
-                            background: "var(--color-surface)",
-                            border: "1px solid var(--color-border)",
-                          }}>
-                            👤 {u.nombre}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* Estado de servidor + emparejamiento */}
-              <div style={{
-                background: "rgba(245, 158, 11, 0.08)",
-                border: "1px solid rgba(245, 158, 11, 0.3)",
-                padding: "10px 12px",
-                borderRadius: 6,
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}>
-                <strong>🚧 Endpoints HTTP en construcción (Sprint 3)</strong>
-                <div style={{ marginTop: 4, color: "var(--color-text-secondary)" }}>
-                  La app móvil <code>clouget-pos-app</code> está en desarrollo. Esta sección
-                  mostrará próximamente: lista de dispositivos emparejados, código QR para emparejar
-                  un dispositivo nuevo, y discovery automático por mDNS.
-                </div>
-                <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20, fontSize: 11 }}>
-                  <li>✅ Permisos por categoría (v2.4.0)</li>
-                  <li>✅ Módulo <code>app_movil</code> en licencia (v2.4.1 — esta release)</li>
-                  <li>⏳ Endpoints HTTP <code>/api/v1/app/*</code> + auth PIN (próximo)</li>
-                  <li>⏳ Descubrimiento mDNS (próximo)</li>
-                  <li>⏳ App móvil v0.1: login + mesas + pedido (próximo)</li>
-                </ul>
-              </div>
-
-              {(config.licencia_modulos || "").includes("restaurante") ? (
-                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 8, fontStyle: "italic" }}>
-                  ✓ Tu licencia tiene <strong>Restaurante + App Móvil</strong> — la app soportará el flujo completo de mesero/cocinero.
-                </div>
-              ) : (
-                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 8, fontStyle: "italic" }}>
-                  ✓ Tu licencia tiene <strong>App Móvil</strong> sin restaurante — la app será para vendedor de piso, inventarista y dashboard.
-                </div>
-              )}
-            </div>
-          </div>
+            <PanelAppMovil
+              licenciaModulos={config.licencia_modulos || ""}
+              servidorPuerto={config.servidor_puerto || "8847"}
+              usuariosConPermisos={usuarios.filter(u => {
+                if (u.rol === "ADMIN") return true;
+                try {
+                  const p = JSON.parse(u.permisos || "{}");
+                  return p.atiende_mesas || p.ve_cocina || p.vende_piso || p.inventaria || p.dueno_dashboard || p.cobra_caja;
+                } catch { return false; }
+              })}
+            />
           )}
 
           {/* Backup Cloud — solo si tiene módulo backup_cloud */}
@@ -2432,5 +2359,261 @@ export default function Configuracion() {
         </div>
       )}
     </>
+  );
+}
+
+// ─── v2.4.2 — Sprint 3a: Panel App Móvil ─────────────────────────────────
+
+interface PanelAppMovilProps {
+  licenciaModulos: string;
+  servidorPuerto: string;
+  usuariosConPermisos: { id: number; nombre: string; rol: string }[];
+}
+
+function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }: PanelAppMovilProps) {
+  const { toastExito, toastError } = useToast();
+  const [dispositivos, setDispositivos] = useState<DispositivoApp[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [ipLocal, setIpLocal] = useState<string>("");
+
+  const tieneRestaurante = licenciaModulos.includes("restaurante");
+
+  const cargar = async () => {
+    setCargando(true);
+    try {
+      const ds = await appListarDispositivos();
+      setDispositivos(ds);
+    } catch (err: any) {
+      toastError("No se pudieron cargar dispositivos: " + (err?.message || err));
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => {
+    cargar();
+    // Detectar IP local probable (placeholder hasta Sprint 3c con mDNS)
+    setIpLocal(window.location.hostname || "192.168.x.x");
+  }, []);
+
+  const formatHora = (iso: string): string => {
+    if (!iso) return "—";
+    return iso.replace("T", " ").slice(0, 16);
+  };
+
+  const formatInactivo = (mins: number): string => {
+    if (mins < 1) return "ahora";
+    if (mins < 60) return `hace ${mins} min`;
+    if (mins < 60 * 24) return `hace ${Math.floor(mins / 60)} h`;
+    return `hace ${Math.floor(mins / (60 * 24))} d`;
+  };
+
+  const handleRevocar = async (d: DispositivoApp) => {
+    if (!confirm(`¿Revocar el dispositivo "${d.dispositivo_nombre || d.dispositivo_modelo || `#${d.id}`}" de ${d.usuario_nombre}?\n\nEl próximo intento de uso pedirá login con PIN otra vez.`)) return;
+    try {
+      await appRevocarDispositivo(d.id);
+      toastExito("Dispositivo revocado");
+      cargar();
+    } catch (err: any) {
+      toastError("No se pudo revocar: " + (err?.message || err));
+    }
+  };
+
+  const handleEliminar = async (d: DispositivoApp) => {
+    if (!confirm(`¿Eliminar permanentemente este dispositivo del registro?`)) return;
+    try {
+      await appEliminarDispositivo(d.id);
+      toastExito("Dispositivo eliminado");
+      cargar();
+    } catch (err: any) {
+      toastError("No se pudo eliminar: " + (err?.message || err));
+    }
+  };
+
+  const activos = dispositivos.filter(d => !d.revoked);
+  const revocados = dispositivos.filter(d => d.revoked);
+
+  return (
+    <div className="card">
+      <div className="card-header">📱 App Móvil (clouget-pos-app)</div>
+      <div className="card-body">
+        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+          App para tablets y teléfonos: meseros toman pedidos, cocineros ven comandas,
+          vendedores de piso atienden caminando, inventaristas hacen conteos, dueño consulta
+          dashboard remoto. Cada usuario ve solo lo que sus permisos le habilitan.
+        </p>
+
+        {/* Resumen usuarios */}
+        <div style={{
+          background: "var(--color-surface-alt)",
+          padding: 10,
+          borderRadius: 6,
+          marginBottom: 12,
+        }}>
+          <div style={{ fontSize: 12, marginBottom: 6 }}>
+            <strong>{usuariosConPermisos.length}</strong> usuario(s) con acceso a la app
+            {usuariosConPermisos.length === 0 && (
+              <span style={{ color: "var(--color-warning)" }}> — asigne permisos arriba para que puedan loguearse</span>
+            )}
+          </div>
+          {usuariosConPermisos.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {usuariosConPermisos.map(u => (
+                <span key={u.id} style={{
+                  fontSize: 11, padding: "2px 8px", borderRadius: 10,
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border)",
+                }}>
+                  👤 {u.nombre}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Datos de conexión */}
+        <div style={{
+          background: "rgba(59, 130, 246, 0.06)",
+          border: "1px solid rgba(59, 130, 246, 0.25)",
+          padding: "10px 12px",
+          borderRadius: 6,
+          fontSize: 12,
+          marginBottom: 12,
+          lineHeight: 1.6,
+        }}>
+          <strong>🌐 Conexión para la app móvil</strong>
+          <div style={{ marginTop: 4, color: "var(--color-text-secondary)" }}>
+            En la app, configurá el servidor con:<br/>
+            <code>http://{ipLocal}:{servidorPuerto}</code>
+            <span style={{ marginLeft: 6, fontStyle: "italic", fontSize: 11 }}>
+              (reemplazá <code>{ipLocal}</code> por la IP real de esta PC en la red local)
+            </span>
+            <br/>
+            <span style={{ fontSize: 11 }}>
+              📝 En Sprint 3c agregaremos descubrimiento automático (mDNS) y código QR.
+            </span>
+          </div>
+        </div>
+
+        {/* Dispositivos emparejados */}
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <strong style={{ fontSize: 13 }}>
+              Dispositivos emparejados {activos.length > 0 && `(${activos.length} activo${activos.length !== 1 ? "s" : ""})`}
+            </strong>
+            <button
+              onClick={cargar}
+              disabled={cargando}
+              style={{
+                background: "transparent", border: "1px solid var(--color-border)",
+                borderRadius: 4, padding: "2px 10px", fontSize: 11, cursor: "pointer",
+                color: "var(--color-text)",
+              }}
+            >
+              {cargando ? "..." : "🔄 Refrescar"}
+            </button>
+          </div>
+
+          {cargando ? (
+            <div style={{ padding: 16, textAlign: "center", color: "var(--color-text-secondary)", fontSize: 12 }}>
+              Cargando dispositivos...
+            </div>
+          ) : dispositivos.length === 0 ? (
+            <div style={{
+              padding: 20,
+              textAlign: "center",
+              border: "2px dashed var(--color-border)",
+              borderRadius: 6,
+              color: "var(--color-text-secondary)",
+              fontSize: 12,
+            }}>
+              📭 Aún no hay dispositivos emparejados.<br/>
+              <span style={{ fontSize: 11 }}>Cuando un usuario haga login con PIN desde la app aparecerá aquí.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {[...activos, ...revocados].map(d => (
+                <div key={d.id} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                  padding: "8px 12px",
+                  background: d.revoked ? "rgba(239, 68, 68, 0.05)" : "var(--color-surface)",
+                  border: `1px solid ${d.revoked ? "rgba(239, 68, 68, 0.2)" : "var(--color-border)"}`,
+                  borderRadius: 6,
+                  opacity: d.revoked ? 0.7 : 1,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>
+                      👤 {d.usuario_nombre}
+                      {d.dispositivo_nombre && <span style={{ fontWeight: 400 }}> · {d.dispositivo_nombre}</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      {d.dispositivo_modelo || "Modelo desconocido"}
+                      {d.dispositivo_so && ` · ${d.dispositivo_so}`}
+                      {" · "}
+                      {d.revoked
+                        ? <span style={{ color: "var(--color-danger)" }}>REVOCADO</span>
+                        : `último uso ${formatInactivo(d.minutos_inactivo)}`
+                      }
+                      {" · creado "}{formatHora(d.created_at)}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {!d.revoked ? (
+                      <button onClick={() => handleRevocar(d)} style={{
+                        padding: "4px 10px", fontSize: 11,
+                        background: "transparent",
+                        color: "var(--color-danger)",
+                        border: "1px solid var(--color-danger)",
+                        borderRadius: 4, cursor: "pointer",
+                      }}>
+                        Revocar
+                      </button>
+                    ) : (
+                      <button onClick={() => handleEliminar(d)} style={{
+                        padding: "4px 10px", fontSize: 11,
+                        background: "transparent",
+                        color: "var(--color-text-secondary)",
+                        border: "1px solid var(--color-border)",
+                        borderRadius: 4, cursor: "pointer",
+                      }}>
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Roadmap */}
+        <div style={{
+          background: "rgba(34, 197, 94, 0.06)",
+          border: "1px solid rgba(34, 197, 94, 0.25)",
+          padding: "10px 12px",
+          borderRadius: 6,
+          fontSize: 11,
+          marginTop: 12,
+          lineHeight: 1.5,
+        }}>
+          <strong>📍 Estado del módulo</strong>
+          <ul style={{ marginTop: 4, marginBottom: 0, paddingLeft: 20 }}>
+            <li>✅ Permisos por categoría (v2.4.0)</li>
+            <li>✅ Módulo en licencia (v2.4.1)</li>
+            <li>✅ Endpoints HTTP base + auth PIN (v2.4.2 — esta release)</li>
+            <li>⏳ Endpoints completos de pedidos/cocina/cobrar (próximo)</li>
+            <li>⏳ Discovery mDNS + QR de emparejamiento (próximo)</li>
+            <li>⏳ App móvil v0.1: login + mesas + pedido (próximo)</li>
+          </ul>
+        </div>
+
+        <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 8, fontStyle: "italic" }}>
+          {tieneRestaurante
+            ? <>✓ Tu licencia tiene <strong>Restaurante + App Móvil</strong> — la app soportará el flujo completo de mesero/cocinero.</>
+            : <>✓ Tu licencia tiene <strong>App Móvil</strong> sin restaurante — la app será para vendedor de piso, inventarista y dashboard.</>
+          }
+        </div>
+      </div>
+    </div>
   );
 }

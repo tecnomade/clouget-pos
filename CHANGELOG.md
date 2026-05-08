@@ -6,6 +6,107 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.2 — 2026-05-07 🌐 STABLE
+**Sprint 3a / 7 — Backend HTTP completo para la app móvil + 2 hotfixes imagen.**
+
+### 🛠 Hotfixes incluidos
+
+**Hotfix 1 — Drag & drop de imagen no funcionaba en Tauri**
+
+En Tauri el webview captura los eventos drag&drop a nivel SO y NO los entrega a React (`onDragOver`/`onDrop` no se disparan). Por eso solo el Ctrl+V (paste) funcionaba.
+
+Fix: usar la API `getCurrentWebview().onDragDropEvent()` de Tauri 2 que entrega el path absoluto del archivo soltado. Detectamos si el cursor está sobre el cuadro de imagen comparando coordenadas con el `boundingRect` del container.
+
+**Hotfix 2 — Imágenes >500KB ahora se aceptan y reducen automáticamente**
+
+Antes: imagen > 500 KB era rechazada con error.
+Ahora: acepta hasta **5 MB de input** y el backend optimiza:
+1. Decodifica con `image` crate (PNG, JPG, GIF, BMP, WebP, etc.)
+2. Si lado mayor > 1024 px → redimensiona con Lanczos3 (mantiene aspect ratio)
+3. Re-encode como JPEG con calidad descendente (85→75→65→50→35) hasta entrar en 500 KB
+4. Si tras todo eso no entra (improbable con 1024px JPEG q=35), error
+
+Funciona en los 3 caminos: Cargar archivo, Pegar (Ctrl+V), Drag & drop. Formatos exóticos (SVG, HEIC) que `image` no decodifica siguen requiriendo entrada <500 KB (raros que excedan).
+
+
+
+Esta release implementa toda la base que la app móvil (`clouget-pos-app`, repo aparte, próximo Sprint 5) necesita para hablar con el POS escritorio: auth con PIN, middleware de autorización por permisos, endpoints REST y panel de administración de dispositivos.
+
+### 🆕 Lo que entrega
+
+#### 1. **Auth con PIN** (`POST /api/v1/app/auth/pin`)
+La app envía `{ usuario_id, pin, dispositivo_nombre, dispositivo_modelo, dispositivo_so }` y recibe un **token UUID v4 único por dispositivo**. El servidor valida:
+- PIN contra `usuarios.pin_hash` (mismo hash que el login local)
+- Que el usuario esté activo
+- Que tenga **al menos un permiso de app** (`atiende_mesas`, `ve_cocina`, `vende_piso`, `inventaria`, `dueno_dashboard`, `cobra_caja`) o sea ADMIN
+
+El token se persiste en la nueva tabla `app_tokens` con timestamp, dispositivo y push token (para Sprint 6).
+
+#### 2. **Middleware de autorización**
+`extract_app_session(headers, state)` valida el token en cada request, carga los permisos del usuario y bloquea automáticamente si la licencia no tiene `app_movil`. Helpers en handlers:
+```rust
+session.tiene("atiende_mesas")        // bool
+session.requiere("divide_cuenta")?    // -> 403 si no tiene
+```
+
+#### 3. **6 endpoints REST funcionales**
+
+| Método | Ruta | Auth | Permiso | Qué hace |
+|---|---|---|---|---|
+| GET | `/api/v1/app/ping` | No | — | Conectividad + nombre negocio + módulos |
+| POST | `/api/v1/app/auth/pin` | No | — | Login PIN, devuelve token |
+| POST | `/api/v1/app/auth/logout` | Token | — | Revoca el token actual |
+| GET | `/api/v1/app/me` | Token | — | Usuario + permisos + módulos licencia |
+| GET | `/api/v1/app/productos` | Token | — | Catálogo (con `?q=` opcional) |
+| GET | `/api/v1/app/mesas` | Token | atiende_mesas o ve_cocina | Grid mesas (reusa lógica del POS) |
+
+CORS habilitado (`Any`) — la app puede correr en cualquier origen y la auth la garantiza el token.
+
+#### 4. **Panel de administración de dispositivos**
+En **Configuración → 📱 App Móvil** ahora aparece:
+- Lista de dispositivos emparejados (activos primero, revocados después)
+- Por cada dispositivo: nombre, modelo, SO, último uso ("hace 5 min"), creado en
+- Botón **Revocar** (marca `revoked = 1`, próximo request recibe 401 → app pide login)
+- Botón **Eliminar** (borra del registro permanentemente)
+- Refresh manual
+- Datos de conexión sugeridos (IP local + puerto del servidor)
+
+#### 5. **3 comandos Tauri admin**
+- `app_listar_dispositivos()` → lista con JOIN a usuarios
+- `app_revocar_dispositivo(id)` → soft revoke
+- `app_eliminar_dispositivo(id)` → hard delete
+
+### 🛠 Backend
+
+- Nuevo módulo Rust `app_movil/` con 4 archivos: `mod.rs`, `schema.rs`, `http.rs`, `commands.rs`
+- Tabla `app_tokens(id, usuario_id, token, dispositivo_*, push_token, created_at, last_used_at, revoked)` con FK CASCADE a usuarios
+- `server/mod.rs` mergea las rutas con `.merge(app_movil::http::rutas())` y agrega `CorsLayer`
+- `lib.rs` llama `app_movil::init()` al arranque (gateado por `branding::tiene_modulo_app_movil()`)
+- 3 comandos Tauri registrados
+
+### 🎨 Frontend
+
+- `services/api.ts`: tipo `DispositivoApp` + 3 wrappers (`appListarDispositivos`, `appRevocarDispositivo`, `appEliminarDispositivo`)
+- `Configuracion.tsx`: nuevo componente `PanelAppMovil` reemplaza el placeholder de v2.4.1
+
+### 🔜 Próximas sub-fases
+
+- **v2.4.3** (Sprint 3b): endpoints completos de pedidos (`POST /pedidos`, items, cocina, cobrar, dividir, unir)
+- **v2.4.4** (Sprint 3c): mDNS broadcast + comando para generar QR de emparejamiento
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/app_movil/mod.rs` — declara submódulos + init
+- `src-tauri/src/app_movil/schema.rs` — tabla `app_tokens` (NUEVO)
+- `src-tauri/src/app_movil/http.rs` — 6 handlers + middleware (NUEVO, ~440 líneas)
+- `src-tauri/src/app_movil/commands.rs` — 3 comandos Tauri (NUEVO)
+- `src-tauri/src/server/mod.rs` — merge de rutas + CORS
+- `src-tauri/src/lib.rs` — init módulo + registro de comandos
+- `src/services/api.ts` — wrappers TS
+- `src/pages/Configuracion.tsx` — `PanelAppMovil` con lista dispositivos
+
+---
+
 ## v2.4.1 — 2026-05-07 📱 STABLE
 **Sprint 2 / 7 — Módulo `app_movil` en licencia + 4 hotfixes.**
 

@@ -10,6 +10,7 @@ use axum::{
 };
 use state::ServerState;
 use std::sync::Arc;
+use tower_http::cors::{Any, CorsLayer};
 
 /// Inicia el servidor HTTP embebido para multi-POS en red.
 /// Se ejecuta en un thread separado con su propio runtime tokio.
@@ -24,9 +25,20 @@ pub fn start_server(db: Database, sesion: SesionState, port: u16, token: String)
                 token,
             };
 
+            // CORS: la app móvil corre en otro origen (Expo Dev en :8081, app
+            // empacada en el dispositivo). Permitimos cualquier origen porque
+            // el servidor está en LAN privada y la auth la garantiza el token.
+            let cors = CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any);
+
             let app = Router::new()
                 .route("/api/v1/invoke", post(handle_invoke))
                 .route("/api/v1/ping", axum::routing::get(handle_ping))
+                // v2.4.2 — Sprint 3a: rutas de la app móvil mergeadas
+                .merge(crate::app_movil::http::rutas())
+                .layer(cors)
                 .with_state(Arc::new(state));
 
             let addr = format!("0.0.0.0:{}", port);

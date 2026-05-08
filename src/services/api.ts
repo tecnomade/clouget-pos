@@ -157,6 +157,30 @@ export async function guardarImagenProductoB64(id: number, base64: string): Prom
   return smartInvoke("guardar_imagen_producto_b64", { id, base64 });
 }
 
+// ─── v2.4.2 — App Móvil: admin de dispositivos emparejados ───────────────
+
+export interface DispositivoApp {
+  id: number;
+  usuario_id: number;
+  usuario_nombre: string;
+  dispositivo_nombre: string | null;
+  dispositivo_modelo: string | null;
+  dispositivo_so: string | null;
+  created_at: string;
+  last_used_at: string;
+  revoked: boolean;
+  minutos_inactivo: number;
+}
+
+export const appListarDispositivos = () =>
+  smartInvoke<DispositivoApp[]>("app_listar_dispositivos");
+
+export const appRevocarDispositivo = (id: number) =>
+  smartInvoke<void>("app_revocar_dispositivo", { id });
+
+export const appEliminarDispositivo = (id: number) =>
+  smartInvoke<void>("app_eliminar_dispositivo", { id });
+
 export async function eliminarProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_producto", { id });
 }

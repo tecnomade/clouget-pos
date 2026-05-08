@@ -441,20 +441,91 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
 
 // --- Imagen de producto ---
 
+/// Tamaño máximo aceptado de input (5 MB). Imágenes más grandes se rechazan.
+const MAX_BYTES_INPUT: usize = 5 * 1024 * 1024;
+/// Tamaño máximo final almacenado en DB (500 KB). Imágenes más grandes se
+/// redimensionan/recomprimen automáticamente.
+const MAX_BYTES_FINAL: usize = 500_000;
+/// Dimensión máxima en píxeles del lado mayor para resize automático.
+const MAX_LADO_PX: u32 = 1024;
+
+/// v2.4.2 — Optimiza una imagen para ajustarla al límite de 500 KB.
+///
+/// Si la imagen ya pesa <= 500 KB, la devuelve tal cual.
+/// Si pesa más:
+///   1. Decodifica con `image` crate (soporta PNG, JPG, GIF, BMP, WebP, etc.)
+///   2. Redimensiona si el lado mayor > 1024 px (Lanczos3, mantiene aspect)
+///   3. Re-encode como JPEG con calidad descendente (85→75→65→50→35) hasta entrar
+///   4. Si tras todo eso sigue > 500 KB, devuelve error
+///
+/// Formatos exóticos que `image` no decodifica (SVG, HEIC):
+///   - Si pesan <= 500 KB pasan
+///   - Si pesan más, error pidiendo al usuario que reduzca manualmente
+fn optimizar_imagen(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    if bytes.len() <= MAX_BYTES_FINAL {
+        return Ok(bytes);
+    }
+
+    // Intentar decodificar
+    let img_dyn = match image::load_from_memory(&bytes) {
+        Ok(i) => i,
+        Err(_) => {
+            // Formato no decodificable (SVG/HEIC/etc.) y > 500KB → error
+            return Err(format!(
+                "La imagen pesa {:.1} KB y no se puede optimizar automáticamente \
+                 (formato no soportado para resize). Máximo: {} KB. Reducila manualmente.",
+                bytes.len() as f64 / 1024.0,
+                MAX_BYTES_FINAL / 1024
+            ));
+        }
+    };
+
+    // Redimensionar si el lado mayor supera el límite
+    use image::GenericImageView;
+    let (w, h) = img_dyn.dimensions();
+    let img_redim = if w > MAX_LADO_PX || h > MAX_LADO_PX {
+        img_dyn.resize(MAX_LADO_PX, MAX_LADO_PX, image::imageops::FilterType::Lanczos3)
+    } else {
+        img_dyn
+    };
+
+    // Re-encode como JPEG con calidad descendente
+    for quality in &[85u8, 75, 65, 50, 35] {
+        let mut buf: Vec<u8> = Vec::new();
+        let rgb = img_redim.to_rgb8();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, *quality);
+        if encoder.encode(&rgb, rgb.width(), rgb.height(), image::ColorType::Rgb8).is_ok()
+            && buf.len() <= MAX_BYTES_FINAL
+        {
+            return Ok(buf);
+        }
+    }
+
+    Err(format!(
+        "No se pudo reducir la imagen a {} KB ni con calidad mínima. \
+         Reducila manualmente y volvé a intentar.",
+        MAX_BYTES_FINAL / 1024
+    ))
+}
+
 /// Lee y codifica una imagen en base64 SIN tocar la DB.
-/// Se usa al crear un producto nuevo (cuando todavia no existe id):
-/// la imagen queda en memoria del formulario y se persiste al invocar
-/// crear_producto/actualizar_producto (el campo `imagen` del Producto ya se guarda).
+/// v2.4.2: acepta hasta 5MB de input y redimensiona automáticamente si es
+/// necesario para ajustar a 500 KB finales en DB.
 #[tauri::command]
 pub fn leer_imagen_archivo(imagen_path: String) -> Result<String, String> {
     let bytes = std::fs::read(&imagen_path)
         .map_err(|e| format!("Error leyendo imagen: {}", e))?;
 
-    if bytes.len() > 500_000 {
-        return Err("La imagen es demasiado grande. Maximo 500KB.".to_string());
+    if bytes.len() > MAX_BYTES_INPUT {
+        return Err(format!(
+            "La imagen pesa {:.1} MB. Máximo {} MB. Reducila antes de cargar.",
+            bytes.len() as f64 / (1024.0 * 1024.0),
+            MAX_BYTES_INPUT / (1024 * 1024)
+        ));
     }
 
-    Ok(BASE64.encode(&bytes))
+    let optimizada = optimizar_imagen(bytes)?;
+    Ok(BASE64.encode(&optimizada))
 }
 
 #[tauri::command]
@@ -462,11 +533,16 @@ pub fn cargar_imagen_producto(db: State<Database>, id: i64, imagen_path: String)
     let bytes = std::fs::read(&imagen_path)
         .map_err(|e| format!("Error leyendo imagen: {}", e))?;
 
-    if bytes.len() > 500_000 {
-        return Err("La imagen es demasiado grande. Maximo 500KB.".to_string());
+    if bytes.len() > MAX_BYTES_INPUT {
+        return Err(format!(
+            "La imagen pesa {:.1} MB. Máximo {} MB. Reducila antes de cargar.",
+            bytes.len() as f64 / (1024.0 * 1024.0),
+            MAX_BYTES_INPUT / (1024 * 1024)
+        ));
     }
 
-    let b64 = BASE64.encode(&bytes);
+    let optimizada = optimizar_imagen(bytes)?;
+    let b64 = BASE64.encode(&optimizada);
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -502,28 +578,33 @@ pub fn guardar_imagen_producto_b64(
         base64.as_str()
     };
 
-    // Validar tamaño decodificado (no el b64 que es ~33% más grande)
+    // Decodificar y validar tamaño bruto (input)
     let bytes = BASE64
         .decode(limpio.as_bytes())
         .map_err(|e| format!("Base64 inválido: {}", e))?;
-    if bytes.len() > 500_000 {
-        return Err(format!(
-            "La imagen pesa {:.1} KB. Máximo permitido: 500 KB.",
-            bytes.len() as f64 / 1024.0
-        ));
-    }
     if bytes.is_empty() {
         return Err("La imagen está vacía".to_string());
     }
+    if bytes.len() > MAX_BYTES_INPUT {
+        return Err(format!(
+            "La imagen pesa {:.1} MB. Máximo {} MB. Reducila antes de cargar.",
+            bytes.len() as f64 / (1024.0 * 1024.0),
+            MAX_BYTES_INPUT / (1024 * 1024)
+        ));
+    }
+
+    // v2.4.2 — Optimizar (resize + recompress) si > 500 KB
+    let optimizada = optimizar_imagen(bytes)?;
+    let b64_final = BASE64.encode(&optimizada);
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "UPDATE productos SET imagen = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
-        rusqlite::params![limpio, id],
+        rusqlite::params![b64_final, id],
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(limpio.to_string())
+    Ok(b64_final)
 }
 
 #[tauri::command]
