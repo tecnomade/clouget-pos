@@ -6,6 +6,77 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.0 — 2026-05-07 🔐 STABLE
+**Sprint 1 / 7 — Permisos agrupados por categoría + base para app móvil.**
+
+Inicia el camino hacia la **app móvil** (clouget-pos-app, repo aparte): meseros con PIN, cocineros en tablet, vendedores de piso, inventaristas, dueño con dashboard remoto. Pero esa app necesita primero un sistema de permisos fino — eso es lo que entrega esta release.
+
+### 🔐 Lo que cambia para el usuario
+
+En **Configuración → Usuarios → Permisos**, los checkboxes ahora aparecen agrupados por categoría con un encabezado claro:
+
+```
+POS Escritorio                ← siempre visible
+  ☐ Editar precio   ☐ Editar IVA  ☐ Aplicar descuentos ...
+
+🍽 Módulo Restaurante          ← solo si licencia tiene `restaurante`
+  ☐ Atiende mesas    ☐ Ver pantalla cocina  ☐ Dividir cuenta ...
+
+📱 App Móvil                   ← solo si licencia tiene `app_movil`
+  ☐ Vendedor de piso  ☐ Inventarista  ☐ Dueño/Dashboard ...
+```
+
+Si la licencia NO tiene módulo restaurante o app_movil, esas categorías **no aparecen** (no se pueden marcar permisos inválidos). Si no tiene ninguno de los dos, aparece un tip sugiriendo activarlos.
+
+### 🆕 Permisos nuevos (categoría RESTAURANTE)
+
+- `atiende_mesas` — abre/edita pedidos en mesas
+- `ve_cocina` — pantalla de cocina + marcar items LISTOS
+- `imprime_comandas` — reimprimir comandas
+- `divide_cuenta` — dividir cuenta en sub-cuentas (v2.3.69)
+- `une_mesas` — unir mesas para grupos grandes (v2.3.68)
+- `cancela_pedido` — cancelar pedido sin cobrar (libera mesa)
+- `config_mesas` — configurar zonas y mesas
+
+### 🆕 Permisos nuevos (categoría APP_MOVIL)
+
+- `vende_piso` — vendedor de piso (toma pedidos en la app y envía a caja)
+- `inventaria` — conteo físico de inventario con la app
+- `dueno_dashboard` — dueño/admin ve dashboard remoto en la app
+- `cobra_caja` — puede cobrar desde la app (vende y cobra él mismo)
+
+> Estos permisos **ya existen en el sistema** pero solo se vuelven útiles cuando la app móvil esté disponible (Sprint 5). Hoy se pueden asignar para preparar usuarios anticipadamente.
+
+### 🔍 Por qué este orden
+
+La app móvil es el destino final (Sprints 5-7), pero antes hace falta:
+1. **Sprint 1** (esta release) — permisos finos + categorización ← **estamos aquí**
+2. **Sprint 2** — módulo `app_movil` separado en la licencia
+3. **Sprint 3** — endpoints HTTP completos del POS escritorio (hoy son stub)
+4. **Sprint 4** — admin panel con precios editables para los 4 combos de licencia
+5. **Sprint 5-7** — la app en sí (repo aparte `clouget-pos-app`)
+
+### 🛠 Backend
+
+- `models/usuario.rs`: `PERMISOS_DISPONIBLES` ahora es `&[(key, label, categoria)]` con 3 categorías canónicas (`CAT_CORE`, `CAT_RESTAURANTE`, `CAT_APP_MOVIL`)
+- 11 permisos nuevos: 7 de restaurante + 4 de app móvil
+- `obtener_permisos_disponibles` devuelve `Vec<(String, String, String)>`
+
+### 🎨 Frontend
+
+- `services/api.ts`: tipo de retorno actualizado a `[string, string, string][]`
+- `Configuracion.tsx`: render de checkboxes refactorizado para agrupar por categoría con headings y filtrar según `config.licencia_modulos`
+- Tip informativo si no tiene módulos extras
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/models/usuario.rs` — categorías + permisos nuevos
+- `src-tauri/src/commands/usuarios.rs` — firma del command
+- `src/services/api.ts` — wrapper TS
+- `src/pages/Configuracion.tsx` — UI agrupada y filtrada
+
+---
+
 ## v2.3.70 — 2026-05-07 📊 STABLE
 **Reporte de ventas detalladas filtrable con export Excel/PDF.**
 

@@ -492,12 +492,16 @@ pub fn verificar_pin_admin(db: State<Database>, pin: String) -> Result<String, S
 }
 
 /// Retorna la lista de permisos disponibles en el sistema.
+///
+/// Devuelve `Vec<(key, label, categoria)>`. La categoría (`CORE` |
+/// `RESTAURANTE` | `APP_MOVIL`) sirve al frontend para agrupar
+/// visualmente y ocultar categorías cuyo módulo no esté en la licencia.
 #[tauri::command]
-pub fn obtener_permisos_disponibles() -> Vec<(String, String)> {
+pub fn obtener_permisos_disponibles() -> Vec<(String, String, String)> {
     use crate::models::usuario::PERMISOS_DISPONIBLES;
     PERMISOS_DISPONIBLES
         .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .map(|(k, v, c)| (k.to_string(), v.to_string(), c.to_string()))
         .collect()
 }
 

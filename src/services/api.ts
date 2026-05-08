@@ -806,7 +806,13 @@ export async function actualizarUsuario(
   return smartInvoke("actualizar_usuario", { id, nombre, pin, rol, activo, permisos });
 }
 
-export const obtenerPermisosDisponibles = () => smartInvoke<[string, string][]>("obtener_permisos_disponibles");
+/**
+ * v2.4.0 — Devuelve la lista de permisos disponibles agrupados por categoría.
+ * Tupla `[key, label, categoria]` donde categoria ∈ "CORE" | "RESTAURANTE" | "APP_MOVIL".
+ * El frontend usa la categoría para agrupar visualmente y ocultar
+ * las que no aplican según los módulos de la licencia activa.
+ */
+export const obtenerPermisosDisponibles = () => smartInvoke<[string, string, string][]>("obtener_permisos_disponibles");
 
 export async function eliminarUsuario(id: number): Promise<void> {
   return smartInvoke("eliminar_usuario", { id });

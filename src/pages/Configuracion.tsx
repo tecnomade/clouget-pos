@@ -53,7 +53,8 @@ export default function Configuracion() {
   const [nuevoRol, setNuevoRol] = useState("CAJERO");
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [editPin, setEditPin] = useState("");
-  const [permisosDisponibles, setPermisosDisponibles] = useState<[string, string][]>([]);
+  // v2.4.0: cada permiso ahora trae [key, label, categoria] (CORE | RESTAURANTE | APP_MOVIL)
+  const [permisosDisponibles, setPermisosDisponibles] = useState<[string, string, string][]>([]);
   const [editandoPermisosId, setEditandoPermisosId] = useState<number | null>(null);
   const [permisosEditando, setPermisosEditando] = useState<Record<string, boolean>>({});
   const [editandoPasswordId, setEditandoPasswordId] = useState<number | null>(null);
@@ -1247,16 +1248,79 @@ export default function Configuracion() {
                         borderBottom: "1px solid var(--color-border)",
                       }}>
                         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Permisos de {u.nombre}</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                          {permisosDisponibles.map(([key, label]) => (
-                            <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
-                              <input type="checkbox"
-                                checked={permisosEditando[key] === true}
-                                onChange={(e) => setPermisosEditando(prev => ({ ...prev, [key]: e.target.checked }))} />
-                              {label}
-                            </label>
-                          ))}
-                        </div>
+                        {/* v2.4.0 — Permisos agrupados por categoría. Las categorías
+                            RESTAURANTE / APP_MOVIL solo se muestran si la licencia
+                            tiene el módulo correspondiente. */}
+                        {(() => {
+                          const modulosLic = config.licencia_modulos || "";
+                          const tieneRestaurante = modulosLic.includes("restaurante");
+                          const tieneAppMovil = modulosLic.includes("app_movil");
+
+                          const categorias: Array<{ key: string; titulo: string; visible: boolean; descripcion?: string }> = [
+                            { key: "CORE", titulo: "POS Escritorio", visible: true },
+                            {
+                              key: "RESTAURANTE", titulo: "🍽 Módulo Restaurante", visible: tieneRestaurante,
+                              descripcion: "Permisos del módulo restaurante (mesas, cocina, dividir cuenta...)",
+                            },
+                            {
+                              key: "APP_MOVIL", titulo: "📱 App Móvil", visible: tieneAppMovil,
+                              descripcion: "Permisos para la app móvil de meseros / vendedores / inventario",
+                            },
+                          ];
+
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                              {categorias.filter(c => c.visible).map(cat => {
+                                const items = permisosDisponibles.filter(([, , c]) => c === cat.key);
+                                if (items.length === 0) return null;
+                                return (
+                                  <div key={cat.key}>
+                                    <div style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      textTransform: "uppercase",
+                                      letterSpacing: 0.5,
+                                      color: cat.key === "CORE" ? "var(--color-text-secondary)" : "var(--color-primary)",
+                                      marginBottom: 6,
+                                      paddingBottom: 4,
+                                      borderBottom: "1px solid var(--color-border)",
+                                    }}>
+                                      {cat.titulo}
+                                    </div>
+                                    {cat.descripcion && (
+                                      <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6, fontStyle: "italic" }}>
+                                        {cat.descripcion}
+                                      </div>
+                                    )}
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                                      {items.map(([key, label]) => (
+                                        <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                                          <input type="checkbox"
+                                            checked={permisosEditando[key] === true}
+                                            onChange={(e) => setPermisosEditando(prev => ({ ...prev, [key]: e.target.checked }))} />
+                                          {label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {/* Tip si no tiene módulos extra */}
+                              {!tieneRestaurante && !tieneAppMovil && (
+                                <div style={{
+                                  fontSize: 11,
+                                  color: "var(--color-text-muted)",
+                                  background: "var(--color-surface-alt)",
+                                  padding: "6px 10px",
+                                  borderRadius: 6,
+                                  marginTop: 4,
+                                }}>
+                                  💡 Active los módulos <strong>Restaurante</strong> o <strong>App Móvil</strong> en su licencia para ver más permisos.
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="flex gap-2" style={{ marginTop: 10 }}>
                           <button className="btn btn-primary" style={{ padding: "4px 12px", fontSize: 12 }}
                             onClick={async () => {
