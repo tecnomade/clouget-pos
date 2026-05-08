@@ -532,20 +532,860 @@ pub async fn listar_mesas(
         return Err((StatusCode::FORBIDDEN, Json(ApiError::new(msg))));
     }
 
-    // Reusar el comando interno del POS escritorio (devuelve Vec<MesaConEstado>)
-    // Lo invocamos vía dispatch para no duplicar la query gigante.
-    let payload = crate::server::dispatch::dispatch_command(
-        &state,
-        "rest_listar_mesas_con_estado",
-        serde_json::json!({}),
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+    let conn = state.db.conn.lock().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string())))
+    })?;
+
+    let mesas = crate::restaurante::commands::listar_mesas_con_estado_internal(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
 
     Ok(Json(serde_json::json!({
         "ok": true,
-        "mesas": payload,
+        "mesas": mesas,
     })))
+}
+
+// ─── Pedidos (Sprint 3b — v2.4.3) ────────────────────────────────────────
+//
+// Helpers para convertir resultados a JSON con manejo de errores uniforme.
+
+use axum::extract::Path;
+
+fn err500(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+    (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string())))
+}
+fn err400(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+    (StatusCode::BAD_REQUEST, Json(ApiError::new(e.to_string())))
+}
+
+/// Macro helper: validar que el módulo restaurante esté en la licencia.
+/// Si no, retorna 403 con mensaje legible.
+fn requiere_restaurante(state: &Arc<ServerState>) -> Result<(), (StatusCode, Json<ApiError>)> {
+    crate::restaurante::requiere_modulo_restaurante(&state.db)
+        .map_err(|m| (StatusCode::FORBIDDEN, Json(ApiError::new(m))))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AbrirPedidoRequest {
+    pub mesa_id: i64,
+    pub comensales: Option<i32>,
+}
+
+/// `POST /api/v1/app/pedidos/abrir` — abre pedido en una mesa libre.
+/// Mesero = usuario del session.
+pub async fn pedidos_abrir(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<AbrirPedidoRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("atiende_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Validar mesa exista
+    let mesa_existe: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rest_mesas WHERE id = ?1 AND activa = 1",
+            params![req.mesa_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if mesa_existe == 0 {
+        return Err(err400("Mesa no encontrada o inactiva"));
+    }
+
+    // Validar que no haya pedido activo en esta mesa
+    let abierto: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM rest_pedidos_abiertos WHERE mesa_id = ?1 AND estado IN ('ABIERTO', 'CUENTA_PEDIDA')",
+            params![req.mesa_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if abierto > 0 {
+        return Err(err400("Ya existe un pedido abierto en esta mesa"));
+    }
+
+    conn.execute(
+        "INSERT INTO rest_pedidos_abiertos (mesa_id, mesero_id, mesero_nombre, comensales, estado)
+         VALUES (?1, ?2, ?3, ?4, 'ABIERTO')",
+        params![req.mesa_id, session.usuario_id, session.nombre, req.comensales.unwrap_or(1)],
+    )
+    .map_err(err500)?;
+
+    let pedido_id = conn.last_insert_rowid();
+    Ok(Json(serde_json::json!({ "ok": true, "pedido_id": pedido_id })))
+}
+
+/// `GET /api/v1/app/pedidos/:id` — detalle del pedido.
+pub async fn pedidos_obtener(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    if !session.tiene("atiende_mesas") && !session.tiene("ve_cocina") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso atiende_mesas o ve_cocina"))));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let detalle = crate::restaurante::commands::obtener_pedido_detalle(&conn, id)
+        .map_err(|e| (StatusCode::NOT_FOUND, Json(ApiError::new(e))))?;
+    Ok(Json(serde_json::json!({ "ok": true, "detalle": detalle })))
+}
+
+/// `GET /api/v1/app/pedidos/mesa/:mesa_id` — pedido activo en la mesa (o null).
+pub async fn pedidos_de_mesa(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(mesa_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    if !session.tiene("atiende_mesas") && !session.tiene("ve_cocina") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso"))));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let pedido_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM rest_pedidos_abiertos
+             WHERE mesa_id = ?1 AND estado IN ('ABIERTO', 'CUENTA_PEDIDA')
+             ORDER BY id DESC LIMIT 1",
+            params![mesa_id],
+            |r| r.get(0),
+        )
+        .ok();
+
+    match pedido_id {
+        Some(pid) => {
+            let detalle = crate::restaurante::commands::obtener_pedido_detalle(&conn, pid)
+                .map_err(err500)?;
+            Ok(Json(serde_json::json!({ "ok": true, "detalle": detalle })))
+        }
+        None => Ok(Json(serde_json::json!({ "ok": true, "detalle": null }))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgregarItemRequest {
+    pub producto_id: i64,
+    pub cantidad: Option<f64>,
+    pub info_adicional: Option<String>,
+}
+
+/// `POST /api/v1/app/pedidos/:id/items` — agrega item al pedido.
+pub async fn pedidos_agregar_item(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+    Json(req): Json<AgregarItemRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("atiende_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Validar pedido abierto
+    let estado: String = conn
+        .query_row(
+            "SELECT estado FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| err400("Pedido no encontrado"))?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(err400(format!("No se pueden agregar items a un pedido {}", estado)));
+    }
+
+    // Producto y destino
+    let (precio, destino): (f64, String) = conn
+        .query_row(
+            "SELECT precio_venta, COALESCE(destino_preparacion, 'COCINA')
+             FROM productos WHERE id = ?1 AND activo = 1",
+            params![req.producto_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| err400("Producto no encontrado o inactivo"))?;
+
+    let cantidad = req.cantidad.unwrap_or(1.0);
+    let es_directo = destino == "DIRECTO";
+
+    if es_directo {
+        conn.execute(
+            "INSERT INTO rest_pedido_items
+             (pedido_id, producto_id, cantidad, precio_unit, info_adicional,
+              enviado_cocina, estado_cocina, fecha_envio_cocina)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, 'ENTREGADO', datetime('now', 'localtime'))",
+            params![pedido_id, req.producto_id, cantidad, precio, req.info_adicional],
+        ).map_err(err500)?;
+    } else {
+        conn.execute(
+            "INSERT INTO rest_pedido_items (pedido_id, producto_id, cantidad, precio_unit, info_adicional)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![pedido_id, req.producto_id, cantidad, precio, req.info_adicional],
+        ).map_err(err500)?;
+    }
+
+    let item_id = conn.last_insert_rowid();
+    Ok(Json(serde_json::json!({ "ok": true, "item_id": item_id })))
+}
+
+/// `DELETE /api/v1/app/pedidos/items/:item_id` — elimina item (si no enviado a cocina).
+pub async fn pedidos_eliminar_item(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(item_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("atiende_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Validar que se pueda borrar
+    let (enviado, destino): (i32, String) = conn
+        .query_row(
+            "SELECT i.enviado_cocina, COALESCE(p.destino_preparacion, 'COCINA')
+             FROM rest_pedido_items i JOIN productos p ON i.producto_id = p.id
+             WHERE i.id = ?1",
+            params![item_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| err400("Item no encontrado"))?;
+    if enviado != 0 && destino != "DIRECTO" {
+        return Err(err400("No se puede eliminar un item ya enviado a cocina"));
+    }
+
+    conn.execute("DELETE FROM rest_pedido_items WHERE id = ?1", params![item_id])
+        .map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/v1/app/pedidos/:id/enviar-cocina` — marca items pendientes como enviados.
+/// Devuelve la lista de items recién enviados (la app los puede mostrar al mesero).
+pub async fn pedidos_enviar_cocina(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("atiende_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Items pendientes
+    let mut stmt = conn.prepare(
+        "SELECT i.id, p.nombre, i.cantidad, i.info_adicional,
+                COALESCE(p.destino_preparacion, 'COCINA') as destino
+         FROM rest_pedido_items i JOIN productos p ON i.producto_id = p.id
+         WHERE i.pedido_id = ?1 AND i.enviado_cocina = 0
+         ORDER BY i.id",
+    ).map_err(err500)?;
+    let items: Vec<serde_json::Value> = stmt.query_map(params![pedido_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "producto_nombre": r.get::<_, String>(1)?,
+            "cantidad": r.get::<_, f64>(2)?,
+            "info_adicional": r.get::<_, Option<String>>(3)?,
+            "destino_preparacion": r.get::<_, String>(4)?,
+        }))
+    }).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+
+    if items.is_empty() {
+        return Err(err400("No hay items nuevos para enviar a cocina"));
+    }
+
+    conn.execute(
+        "UPDATE rest_pedido_items
+         SET enviado_cocina = 1, fecha_envio_cocina = datetime('now', 'localtime')
+         WHERE pedido_id = ?1 AND enviado_cocina = 0",
+        params![pedido_id],
+    ).map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "items": items, "total": items.len()
+    })))
+}
+
+/// `POST /api/v1/app/pedidos/:id/pedir-cuenta` — marca CUENTA_PEDIDA.
+pub async fn pedidos_pedir_cuenta(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("atiende_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    conn.execute(
+        "UPDATE rest_pedidos_abiertos
+         SET estado = 'CUENTA_PEDIDA', fecha_cuenta = datetime('now', 'localtime')
+         WHERE id = ?1 AND estado = 'ABIERTO'",
+        params![pedido_id],
+    ).map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `POST /api/v1/app/pedidos/:id/cancelar` — cancela pedido sin cobrar.
+pub async fn pedidos_cancelar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("cancela_pedido")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    conn.execute(
+        "UPDATE rest_pedidos_abiertos
+         SET estado = 'CANCELADO', fecha_cierre = datetime('now', 'localtime')
+         WHERE id = ?1",
+        params![pedido_id],
+    ).map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CobrarPedidoRequest {
+    pub forma_pago: String,
+    pub banco_id: Option<i64>,
+    pub referencia_pago: Option<String>,
+    #[serde(default)]
+    pub es_fiado: bool,
+    pub cliente_id: Option<i64>,
+    pub tipo_documento: Option<String>,
+}
+
+/// `POST /api/v1/app/pedidos/:id/cobrar` — combo: registrar venta + cerrar pedido.
+/// Reusa `dispatch_command("registrar_venta")` y luego marca el pedido como COBRADO.
+pub async fn pedidos_cobrar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+    Json(req): Json<CobrarPedidoRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("cobra_caja")?;
+
+    // 1. Cargar items del pedido + datos de mesa para el payload de venta
+    let detalle = {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        crate::restaurante::commands::obtener_pedido_detalle(&conn, pedido_id)
+            .map_err(|e| (StatusCode::NOT_FOUND, Json(ApiError::new(e))))?
+    };
+
+    if detalle.items.is_empty() {
+        return Err(err400("El pedido no tiene items para cobrar"));
+    }
+
+    // 2. Construir payload de venta
+    let total: f64 = detalle.items.iter().map(|i| i.cantidad * i.precio_unit).sum();
+    let observacion = format!(
+        "Mesa: {}{} · Pedido #{} · App móvil ({})",
+        detalle.mesa_nombre,
+        detalle.zona_nombre.as_ref().map(|z| format!(" ({})", z)).unwrap_or_default(),
+        pedido_id,
+        session.nombre
+    );
+    let items_venta: Vec<serde_json::Value> = detalle.items.iter().map(|i| {
+        serde_json::json!({
+            "producto_id": i.producto_id,
+            "cantidad": i.cantidad,
+            "precio_unitario": i.precio_unit,
+            "descuento": 0.0,
+            "iva_porcentaje": 0.0,
+            "subtotal": i.cantidad * i.precio_unit,
+            "info_adicional": i.info_adicional,
+        })
+    }).collect();
+
+    let venta_args = serde_json::json!({
+        "venta": {
+            "items": items_venta,
+            "forma_pago": req.forma_pago,
+            "monto_recibido": if req.es_fiado { 0.0 } else { total },
+            "descuento": 0.0,
+            "tipo_documento": req.tipo_documento.unwrap_or_else(|| "NOTA_VENTA".to_string()),
+            "es_fiado": req.es_fiado,
+            "observacion": observacion,
+            "banco_id": req.banco_id,
+            "referencia_pago": req.referencia_pago,
+            "cliente_id": req.cliente_id,
+        }
+    });
+
+    // 3. Registrar venta vía dispatch (reusa toda la lógica del POS: SRI, secuencial, kardex, etc.)
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "registrar_venta", venta_args
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+
+    // Extraer venta_id de la respuesta
+    let venta_id = resultado.get("venta")
+        .and_then(|v| v.get("id"))
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| err500("Respuesta de venta sin id"))?;
+
+    // 4. Marcar pedido como COBRADO (libera la mesa principal y todas las extras automáticamente)
+    {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        conn.execute(
+            "UPDATE rest_pedidos_abiertos
+             SET estado = 'COBRADO', venta_id = ?1, fecha_cierre = datetime('now', 'localtime')
+             WHERE id = ?2",
+            params![venta_id, pedido_id],
+        ).map_err(err500)?;
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "venta_id": venta_id,
+        "venta": resultado.get("venta"),
+    })))
+}
+
+// ─── Cocina (Sprint 3b) ──────────────────────────────────────────────────
+
+/// `GET /api/v1/app/cocina/items` — lista items pendientes en cocina.
+pub async fn cocina_listar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("ve_cocina")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.pedido_id, m.nombre, z.nombre, p.mesero_nombre,
+                pr.nombre, i.cantidad, i.info_adicional, i.estado_cocina, i.fecha_envio_cocina,
+                CAST((julianday('now', 'localtime') - julianday(i.fecha_envio_cocina)) * 24 * 60 AS INTEGER) AS mins
+         FROM rest_pedido_items i
+         JOIN rest_pedidos_abiertos p ON i.pedido_id = p.id
+         JOIN rest_mesas m ON p.mesa_id = m.id
+         LEFT JOIN rest_zonas z ON m.zona_id = z.id
+         JOIN productos pr ON i.producto_id = pr.id
+         WHERE i.enviado_cocina = 1
+           AND i.estado_cocina IN ('PENDIENTE', 'EN_PREPARACION', 'LISTO')
+         ORDER BY i.fecha_envio_cocina ASC",
+    ).map_err(err500)?;
+
+    let items: Vec<serde_json::Value> = stmt.query_map([], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "pedido_id": r.get::<_, i64>(1)?,
+            "mesa_nombre": r.get::<_, String>(2)?,
+            "zona_nombre": r.get::<_, Option<String>>(3)?,
+            "mesero_nombre": r.get::<_, Option<String>>(4)?,
+            "producto_nombre": r.get::<_, String>(5)?,
+            "cantidad": r.get::<_, f64>(6)?,
+            "info_adicional": r.get::<_, Option<String>>(7)?,
+            "estado_cocina": r.get::<_, String>(8)?,
+            "fecha_envio_cocina": r.get::<_, Option<String>>(9)?,
+            "minutos_en_cocina": r.get::<_, Option<i64>>(10)?,
+        }))
+    }).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "items": items, "total": items.len() })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CocinaEstadoRequest {
+    pub estado: String,
+}
+
+/// `POST /api/v1/app/cocina/items/:id/estado` — cambia estado del item (PENDIENTE/EN_PREPARACION/LISTO/ENTREGADO).
+pub async fn cocina_marcar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(item_id): Path<i64>,
+    Json(req): Json<CocinaEstadoRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("ve_cocina")?;
+
+    let estado_valido = matches!(req.estado.as_str(), "PENDIENTE" | "EN_PREPARACION" | "LISTO" | "ENTREGADO");
+    if !estado_valido {
+        return Err(err400("Estado de cocina inválido"));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    conn.execute(
+        "UPDATE rest_pedido_items SET estado_cocina = ?1 WHERE id = ?2",
+        params![req.estado, item_id],
+    ).map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ─── Unir mesas + dividir cuenta (Sprint 3b) ─────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct UnirMesasRequest { pub mesas_ids: Vec<i64> }
+
+pub async fn pedidos_unir_mesas(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+    Json(req): Json<UnirMesasRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("une_mesas")?;
+
+    if req.mesas_ids.is_empty() {
+        return Err(err400("Debe seleccionar al menos una mesa"));
+    }
+
+    let mut conn = state.db.conn.lock().map_err(err500)?;
+    let (mesa_principal, estado): (i64, String) = conn
+        .query_row(
+            "SELECT mesa_id, estado FROM rest_pedidos_abiertos WHERE id = ?1",
+            params![pedido_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| err400("Pedido no encontrado"))?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(err400(format!("No se pueden unir mesas a un pedido {}", estado)));
+    }
+
+    let tx = conn.transaction().map_err(err500)?;
+    for mesa_id in &req.mesas_ids {
+        if *mesa_id == mesa_principal { return Err(err400("No se puede unir la mesa principal a sí misma")); }
+        let activa: i64 = tx.query_row("SELECT COUNT(*) FROM rest_mesas WHERE id = ?1 AND activa = 1", params![mesa_id], |r| r.get(0)).unwrap_or(0);
+        if activa == 0 { return Err(err400(format!("Mesa {} no encontrada", mesa_id))); }
+        let propio: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM rest_pedidos_abiertos WHERE mesa_id = ?1 AND estado IN ('ABIERTO', 'CUENTA_PEDIDA')",
+            params![mesa_id], |r| r.get(0)
+        ).unwrap_or(0);
+        if propio > 0 { return Err(err400(format!("Mesa {} ya tiene pedido propio", mesa_id))); }
+        let unida: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM rest_pedido_mesas_extra pe
+             JOIN rest_pedidos_abiertos p ON pe.pedido_id = p.id
+             WHERE pe.mesa_id = ?1 AND pe.pedido_id != ?2 AND p.estado IN ('ABIERTO', 'CUENTA_PEDIDA')",
+            params![mesa_id, pedido_id], |r| r.get(0)
+        ).unwrap_or(0);
+        if unida > 0 { return Err(err400(format!("Mesa {} ya unida a otro pedido", mesa_id))); }
+        tx.execute(
+            "INSERT OR IGNORE INTO rest_pedido_mesas_extra (pedido_id, mesa_id) VALUES (?1, ?2)",
+            params![pedido_id, mesa_id]
+        ).map_err(err500)?;
+    }
+    tx.commit().map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `DELETE /api/v1/app/pedidos/:pedido_id/mesas-extra/:mesa_id`
+pub async fn pedidos_desunir_mesa(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path((pedido_id, mesa_id)): Path<(i64, i64)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("une_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let filas = conn.execute(
+        "DELETE FROM rest_pedido_mesas_extra WHERE pedido_id = ?1 AND mesa_id = ?2",
+        params![pedido_id, mesa_id]
+    ).map_err(err500)?;
+    if filas == 0 { return Err(err400("Esa mesa no estaba unida")); }
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DividirCuentaRequest { pub n_partes: i32 }
+
+pub async fn pedidos_dividir(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+    Json(req): Json<DividirCuentaRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("divide_cuenta")?;
+
+    if !(2..=20).contains(&req.n_partes) {
+        return Err(err400("n_partes debe ser entre 2 y 20"));
+    }
+    let mut conn = state.db.conn.lock().map_err(err500)?;
+    let estado: String = conn.query_row(
+        "SELECT estado FROM rest_pedidos_abiertos WHERE id = ?1",
+        params![pedido_id], |r| r.get(0)
+    ).map_err(|_| err400("Pedido no encontrado"))?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err(err400(format!("No se puede dividir un pedido {}", estado)));
+    }
+    let existentes: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1",
+        params![pedido_id], |r| r.get(0)
+    ).unwrap_or(0);
+    if existentes > 0 { return Err(err400("Pedido ya dividido")); }
+
+    let total: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(cantidad * precio_unit), 0) FROM rest_pedido_items WHERE pedido_id = ?1",
+        params![pedido_id], |r| r.get(0)
+    ).unwrap_or(0.0);
+    if total <= 0.0 { return Err(err400("Pedido sin items para dividir")); }
+
+    let total_centavos: i64 = (total * 100.0).round() as i64;
+    let parte_centavos: i64 = total_centavos / (req.n_partes as i64);
+    let residuo: i64 = total_centavos - parte_centavos * (req.n_partes as i64);
+
+    let tx = conn.transaction().map_err(err500)?;
+    for i in 1..=req.n_partes {
+        let centavos = if i == req.n_partes { parte_centavos + residuo } else { parte_centavos };
+        let monto = (centavos as f64) / 100.0;
+        tx.execute(
+            "INSERT INTO rest_subcuentas (pedido_id, numero, total) VALUES (?1, ?2, ?3)",
+            params![pedido_id, i, monto]
+        ).map_err(err500)?;
+    }
+    tx.commit().map_err(err500)?;
+
+    let subs = crate::restaurante::commands::listar_subcuentas_internal(&conn, pedido_id)
+        .map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "subcuentas": subs })))
+}
+
+pub async fn pedidos_listar_subcuentas(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let subs = crate::restaurante::commands::listar_subcuentas_internal(&conn, pedido_id)
+        .map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "subcuentas": subs })))
+}
+
+pub async fn pedidos_cancelar_division(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("divide_cuenta")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let cobradas: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1 AND estado = 'COBRADA'",
+        params![pedido_id], |r| r.get(0)
+    ).unwrap_or(0);
+    if cobradas > 0 { return Err(err400(format!("Hay {} sub-cuenta(s) ya cobradas", cobradas))); }
+    conn.execute("DELETE FROM rest_subcuentas WHERE pedido_id = ?1", params![pedido_id])
+        .map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CobrarSubcuentaRequest {
+    pub forma_pago: String,
+    pub banco_id: Option<i64>,
+    pub referencia_pago: Option<String>,
+}
+
+/// `POST /api/v1/app/subcuentas/:id/cobrar` — combo: registrar venta del producto especial + marcar cobrada.
+pub async fn subcuentas_cobrar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(subcuenta_id): Path<i64>,
+    Json(req): Json<CobrarSubcuentaRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("cobra_caja")?;
+
+    // 1. Cargar datos sub-cuenta + pedido
+    let (pedido_id, monto, estado, total_subs): (i64, f64, String, i64) = {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        let row: (i64, f64, String) = conn.query_row(
+            "SELECT pedido_id, total, estado FROM rest_subcuentas WHERE id = ?1",
+            params![subcuenta_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        ).map_err(|_| err400("Sub-cuenta no encontrada"))?;
+        let total_subs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1",
+            params![row.0], |r| r.get(0)
+        ).unwrap_or(0);
+        (row.0, row.1, row.2, total_subs)
+    };
+    if estado == "COBRADA" { return Err(err400("Esta sub-cuenta ya fue cobrada")); }
+
+    // 2. Producto especial
+    let prod_id: i64 = {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        conn.query_row(
+            "SELECT id FROM productos WHERE codigo = '_DIVISION_CUENTA_'",
+            [], |r| r.get(0)
+        ).map_err(|_| err500("Producto _DIVISION_CUENTA_ no existe"))?
+    };
+
+    // 3. Detalle pedido para observación
+    let detalle = {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        crate::restaurante::commands::obtener_pedido_detalle(&conn, pedido_id)
+            .map_err(err500)?
+    };
+    let numero_sub = detalle.items.len(); // placeholder, lo corregimos abajo
+    let _ = numero_sub;
+
+    // 4. Registrar venta del producto especial
+    let observacion = format!(
+        "Mesa: {}{} · Pedido #{} · Sub-cuenta de {} · App móvil",
+        detalle.mesa_nombre,
+        detalle.zona_nombre.as_ref().map(|z| format!(" ({})", z)).unwrap_or_default(),
+        pedido_id, total_subs
+    );
+    let venta_args = serde_json::json!({
+        "venta": {
+            "items": [{
+                "producto_id": prod_id,
+                "cantidad": 1.0,
+                "precio_unitario": monto,
+                "descuento": 0.0,
+                "iva_porcentaje": 0.0,
+                "subtotal": monto,
+                "info_adicional": format!("Items consumidos: {}",
+                    detalle.items.iter().map(|i|
+                        format!("{}x {}", i.cantidad, i.producto_nombre.clone().unwrap_or_default())
+                    ).collect::<Vec<_>>().join(", ")
+                ),
+            }],
+            "forma_pago": req.forma_pago.clone(),
+            "monto_recibido": monto,
+            "descuento": 0.0,
+            "tipo_documento": "NOTA_VENTA",
+            "es_fiado": false,
+            "observacion": observacion,
+            "banco_id": req.banco_id,
+            "referencia_pago": req.referencia_pago,
+        }
+    });
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "registrar_venta", venta_args
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+
+    let venta_id = resultado.get("venta")
+        .and_then(|v| v.get("id")).and_then(|v| v.as_i64())
+        .ok_or_else(|| err500("Respuesta de venta sin id"))?;
+
+    // 5. Marcar sub-cuenta cobrada + ¿todas pagas? → cerrar pedido
+    let (todas_cobradas, pendientes) = {
+        let conn = state.db.conn.lock().map_err(err500)?;
+        conn.execute(
+            "UPDATE rest_subcuentas
+             SET estado = 'COBRADA', forma_pago = ?1, banco_id = ?2, referencia_pago = ?3,
+                 venta_id = ?4, fecha_cobro = datetime('now', 'localtime')
+             WHERE id = ?5",
+            params![req.forma_pago, req.banco_id, req.referencia_pago, venta_id, subcuenta_id]
+        ).map_err(err500)?;
+        let pend: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM rest_subcuentas WHERE pedido_id = ?1 AND estado = 'PENDIENTE'",
+            params![pedido_id], |r| r.get(0)
+        ).unwrap_or(0);
+        let todas = pend == 0;
+        if todas {
+            let primera_venta_id: i64 = conn.query_row(
+                "SELECT venta_id FROM rest_subcuentas WHERE pedido_id = ?1 AND venta_id IS NOT NULL ORDER BY numero LIMIT 1",
+                params![pedido_id], |r| r.get(0)
+            ).unwrap_or(venta_id);
+            conn.execute(
+                "UPDATE rest_pedidos_abiertos
+                 SET estado = 'COBRADO', venta_id = ?1, fecha_cierre = datetime('now', 'localtime')
+                 WHERE id = ?2",
+                params![primera_venta_id, pedido_id]
+            ).map_err(err500)?;
+        }
+        (todas, pend)
+    };
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "venta_id": venta_id,
+        "todas_cobradas": todas_cobradas,
+        "pendientes": pendientes,
+    })))
+}
+
+// ─── Vendedor de piso: venta directa (Sprint 3b) ─────────────────────────
+
+/// `POST /api/v1/app/ventas` — registra una venta directa (vendedor de piso o cobro
+/// fuera de mesa). El payload es el mismo que `registrar_venta` desktop.
+/// Requiere permiso `vende_piso` o `cobra_caja`.
+pub async fn ventas_registrar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(venta): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("vende_piso") && !session.tiene("cobra_caja") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso vende_piso o cobra_caja"))));
+    }
+
+    // Delegar al dispatcher (reusa toda la lógica del POS: SRI, kardex, secuenciales)
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "registrar_venta", serde_json::json!({ "venta": venta })
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "resultado": resultado })))
+}
+
+/// `GET /api/v1/app/pedidos/:id/mesas-libres-para-unir` — lista mesas LIBRES
+/// disponibles para unir al pedido.
+pub async fn pedidos_mesas_libres(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("une_mesas")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mesa_principal: i64 = conn.query_row(
+        "SELECT mesa_id FROM rest_pedidos_abiertos WHERE id = ?1",
+        params![pedido_id], |r| r.get(0)
+    ).map_err(|_| err400("Pedido no encontrado"))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT m.id, m.nombre, m.capacidad, z.nombre
+         FROM rest_mesas m
+         LEFT JOIN rest_zonas z ON m.zona_id = z.id
+         WHERE m.activa = 1 AND m.id != ?1
+           AND NOT EXISTS (SELECT 1 FROM rest_pedidos_abiertos p
+                           WHERE p.mesa_id = m.id AND p.estado IN ('ABIERTO', 'CUENTA_PEDIDA'))
+           AND NOT EXISTS (SELECT 1 FROM rest_pedido_mesas_extra pe
+                           JOIN rest_pedidos_abiertos p2 ON pe.pedido_id = p2.id
+                           WHERE pe.mesa_id = m.id AND p2.estado IN ('ABIERTO', 'CUENTA_PEDIDA'))
+         ORDER BY z.orden NULLS LAST, m.orden, m.nombre"
+    ).map_err(err500)?;
+    let mesas: Vec<serde_json::Value> = stmt.query_map(params![mesa_principal], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "nombre": r.get::<_, String>(1)?,
+            "capacidad": r.get::<_, i32>(2)?,
+            "zona_nombre": r.get::<_, Option<String>>(3)?,
+        }))
+    }).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "mesas": mesas })))
 }
 
 // ─── Router builder ──────────────────────────────────────────────────────
@@ -553,13 +1393,39 @@ pub async fn listar_mesas(
 /// Devuelve el router con todas las rutas del módulo, listo para `merge` en
 /// el server principal.
 pub fn rutas() -> Router<Arc<ServerState>> {
+    use axum::routing::delete;
     Router::new()
-        // Sin auth
+        // ── Sin auth ────────────────────────────────────────────────────
         .route("/api/v1/app/ping", get(ping))
         .route("/api/v1/app/auth/pin", post(auth_pin))
         .route("/api/v1/app/auth/logout", post(auth_logout))
-        // Con auth
+        // ── Datos del usuario / catálogo ────────────────────────────────
         .route("/api/v1/app/me", get(me))
         .route("/api/v1/app/productos", get(listar_productos))
+        // ── Mesas (restaurante) ─────────────────────────────────────────
         .route("/api/v1/app/mesas", get(listar_mesas))
+        // ── Pedidos (Sprint 3b) ─────────────────────────────────────────
+        .route("/api/v1/app/pedidos/abrir", post(pedidos_abrir))
+        .route("/api/v1/app/pedidos/:id", get(pedidos_obtener))
+        .route("/api/v1/app/pedidos/mesa/:mesa_id", get(pedidos_de_mesa))
+        .route("/api/v1/app/pedidos/:id/items", post(pedidos_agregar_item))
+        .route("/api/v1/app/pedidos/items/:item_id", delete(pedidos_eliminar_item))
+        .route("/api/v1/app/pedidos/:id/enviar-cocina", post(pedidos_enviar_cocina))
+        .route("/api/v1/app/pedidos/:id/pedir-cuenta", post(pedidos_pedir_cuenta))
+        .route("/api/v1/app/pedidos/:id/cancelar", post(pedidos_cancelar))
+        .route("/api/v1/app/pedidos/:id/cobrar", post(pedidos_cobrar))
+        // ── Unir mesas (Sprint 3b) ──────────────────────────────────────
+        .route("/api/v1/app/pedidos/:id/unir-mesas", post(pedidos_unir_mesas))
+        .route("/api/v1/app/pedidos/:pedido_id/mesas-extra/:mesa_id", delete(pedidos_desunir_mesa))
+        .route("/api/v1/app/pedidos/:id/mesas-libres-para-unir", get(pedidos_mesas_libres))
+        // ── Dividir cuenta (Sprint 3b) ──────────────────────────────────
+        .route("/api/v1/app/pedidos/:id/dividir", post(pedidos_dividir))
+        .route("/api/v1/app/pedidos/:id/subcuentas", get(pedidos_listar_subcuentas))
+        .route("/api/v1/app/pedidos/:id/cancelar-division", post(pedidos_cancelar_division))
+        .route("/api/v1/app/subcuentas/:id/cobrar", post(subcuentas_cobrar))
+        // ── Cocina (Sprint 3b) ──────────────────────────────────────────
+        .route("/api/v1/app/cocina/items", get(cocina_listar))
+        .route("/api/v1/app/cocina/items/:id/estado", post(cocina_marcar))
+        // ── Vendedor de piso (Sprint 3b) ────────────────────────────────
+        .route("/api/v1/app/ventas", post(ventas_registrar))
 }

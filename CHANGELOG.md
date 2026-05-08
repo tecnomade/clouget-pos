@@ -6,6 +6,86 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.3 — 2026-05-07 🍽 STABLE
+**Sprint 3b / 7 — Endpoints HTTP completos: pedidos, cocina, cobrar, dividir, unir mesas, vendedor piso.**
+
+Esta release agrega los **19 endpoints HTTP que faltaban** para que la app móvil (próximo Sprint 5) pueda operar todo el flujo de mesero, cocinero, vendedor de piso y dividir/unir mesas. Junto con v2.4.2, el backend HTTP queda **funcionalmente completo** para la app v0.1.
+
+### 🆕 Endpoints agregados (19 nuevos)
+
+#### Pedidos (mesero)
+| Método | Ruta | Permiso |
+|---|---|---|
+| POST | `/pedidos/abrir` | atiende_mesas |
+| GET | `/pedidos/:id` | atiende_mesas o ve_cocina |
+| GET | `/pedidos/mesa/:mesa_id` | atiende_mesas o ve_cocina |
+| POST | `/pedidos/:id/items` | atiende_mesas |
+| DELETE | `/pedidos/items/:item_id` | atiende_mesas |
+| POST | `/pedidos/:id/enviar-cocina` | atiende_mesas |
+| POST | `/pedidos/:id/pedir-cuenta` | atiende_mesas |
+| POST | `/pedidos/:id/cancelar` | cancela_pedido |
+| POST | `/pedidos/:id/cobrar` | cobra_caja |
+
+El endpoint `cobrar` es un **combo atómico**: orquesta `registrar_venta` (vía dispatcher, reusando toda la lógica del POS desktop incluyendo SRI, secuenciales, kardex, banco/referencia) + `UPDATE rest_pedidos_abiertos SET estado='COBRADO'` que libera la mesa principal y todas las mesas extra automáticamente.
+
+#### Unir mesas (grupos grandes)
+| Método | Ruta | Permiso |
+|---|---|---|
+| POST | `/pedidos/:id/unir-mesas` | une_mesas |
+| DELETE | `/pedidos/:pedido_id/mesas-extra/:mesa_id` | une_mesas |
+| GET | `/pedidos/:id/mesas-libres-para-unir` | une_mesas |
+
+Validación transaccional: si alguna mesa del lote falla, ninguna se une (mismo comportamiento que v2.3.68 desktop).
+
+#### Dividir cuenta
+| Método | Ruta | Permiso |
+|---|---|---|
+| POST | `/pedidos/:id/dividir` | divide_cuenta |
+| GET | `/pedidos/:id/subcuentas` | (token) |
+| POST | `/pedidos/:id/cancelar-division` | divide_cuenta |
+| POST | `/subcuentas/:id/cobrar` | cobra_caja |
+
+`/subcuentas/:id/cobrar` registra una venta al producto especial `_DIVISION_CUENTA_` por el monto de la sub-cuenta, marca la sub-cuenta como COBRADA, y si todas quedaron pagas cierra el pedido y libera mesas. Idéntico flujo a v2.3.69 desktop.
+
+#### Cocina (cocinero)
+| Método | Ruta | Permiso |
+|---|---|---|
+| GET | `/cocina/items` | ve_cocina |
+| POST | `/cocina/items/:id/estado` | ve_cocina |
+
+Body de `estado`: `{ estado: "PENDIENTE" \| "EN_PREPARACION" \| "LISTO" \| "ENTREGADO" }`. Con esto el cocinero en tablet/teléfono ve la lista en tiempo real (con minutos transcurridos) y marca cuando está listo.
+
+#### Vendedor de piso (POS sin mesa)
+| Método | Ruta | Permiso |
+|---|---|---|
+| POST | `/ventas` | vende_piso o cobra_caja |
+
+Acepta el mismo payload que `registrar_venta` desktop. Útil para vendedor caminando con tablet o cobro inalámbrico — el item se vende desde el catálogo y la venta entra a la caja activa del POS.
+
+### 🛠 Cambios técnicos
+
+- 3 helpers internos del módulo restaurante refactorizados a `pub(crate)` para reuso desde HTTP:
+  - `obtener_pedido_detalle(conn, pedido_id)`
+  - `listar_mesas_con_estado_internal(conn)`
+  - `listar_subcuentas_internal(conn, pedido_id)`
+- `app_movil/http.rs` crece de ~440 a ~1100 líneas con los 19 handlers nuevos
+- Cada handler valida en orden: licencia `app_movil` → token → permiso específico → módulo `restaurante` cuando aplica
+- Para registrar venta (cobrar pedido / cobrar sub-cuenta / venta vendedor piso), reusa `dispatch_command("registrar_venta")` para no duplicar la lógica gigante (SRI, secuenciales, kardex, multi-almacén)
+- Reparto de centavos en `dividir` mantiene precisión exacta (residuo a la última parte)
+
+### 🔜 Próximas sub-fases
+
+- **v2.4.4** (Sprint 3c): mDNS broadcast (`_clouget-pos._tcp.local.`) + comando para generar **QR de emparejamiento** que la app puede escanear para auto-configurar el servidor
+- **Sprint 4**: Admin panel — precios editables para los 4 combos de licencia
+- **Sprint 5**: `clouget-pos-app` v0.1 (repo nuevo) consume todo este backend
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/restaurante/commands.rs` — 3 helpers a `pub(crate)`
+- `src-tauri/src/app_movil/http.rs` — 19 handlers nuevos + 22 rutas registradas (~660 líneas agregadas)
+
+---
+
 ## v2.4.2 — 2026-05-07 🌐 STABLE
 **Sprint 3a / 7 — Backend HTTP completo para la app móvil + 2 hotfixes imagen.**
 

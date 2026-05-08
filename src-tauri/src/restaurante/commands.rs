@@ -159,7 +159,7 @@ pub fn rest_listar_mesas_con_estado(
     listar_mesas_con_estado_internal(&conn)
 }
 
-fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEstado>, String> {
+pub(crate) fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEstado>, String> {
     // v2.3.63 FIX: usar subquery con MAX(id) para garantizar UN SOLO pedido
     // por mesa. Si por algun bug/race condition hay multiples pedidos abiertos
     // para la misma mesa, agarramos el MÁS RECIENTE (que probablemente es el
@@ -1362,7 +1362,7 @@ pub fn rest_producto_division_id(db: State<'_, Database>) -> Result<i64, String>
 
 // ─── Helpers internos ────────────────────────────────────────────────────
 
-fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {
+pub(crate) fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDetalle, String> {
     let pedido: PedidoAbierto = conn
         .query_row(
             "SELECT id, mesa_id, mesero_id, mesero_nombre, comensales, estado, observacion,
@@ -1485,7 +1485,7 @@ fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Result<PedidoDet
 /// v2.3.69 — Lista las sub-cuentas del pedido con datos enriquecidos
 /// (nombre del banco, número de venta) — usado por `rest_listar_subcuentas`
 /// y por `rest_dividir_cuenta` (devuelve las recién creadas).
-fn listar_subcuentas_internal(conn: &Connection, pedido_id: i64) -> Result<Vec<Subcuenta>, String> {
+pub(crate) fn listar_subcuentas_internal(conn: &Connection, pedido_id: i64) -> Result<Vec<Subcuenta>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT s.id, s.pedido_id, s.numero, s.total, s.estado,
