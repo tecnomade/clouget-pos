@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import NumericInput from "../components/NumericInput";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, guardarImagenProductoB64, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
@@ -629,67 +629,16 @@ function FormProducto({
         )}
       </div>
 
-      {/* Imagen del producto */}
-      <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
-        <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
-          Imagen del producto
-        </label>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {form.imagen ? (
-            <img
-              src={`data:image/png;base64,${form.imagen}`}
-              alt={form.nombre}
-              style={{ width: 80, height: 80, objectFit: "cover", border: "1px solid var(--color-border)", borderRadius: "var(--radius)" }}
-            />
-          ) : (
-            <div style={{ width: 80, height: 80, border: "2px dashed var(--color-border)", borderRadius: "var(--radius)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-text-secondary)", fontSize: 11 }}>
-              Sin imagen
-            </div>
-          )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
-              onClick={async () => {
-                try {
-                  const path = await open({
-                    filters: [{ name: "Imagenes", extensions: ["png", "jpg", "jpeg"] }],
-                    multiple: false,
-                  });
-                  if (!path) return;
-                  // Para producto nuevo (sin id): leer en memoria, se persiste al guardar.
-                  // Para producto existente: actualiza DB de inmediato.
-                  if (form.id) {
-                    const b64 = await cargarImagenProducto(form.id, path as string);
-                    setForm({ ...form, imagen: b64 });
-                  } else {
-                    const b64 = await leerImagenArchivo(path as string);
-                    setForm({ ...form, imagen: b64 });
-                  }
-                } catch (err) {
-                  toastError("Error: " + err);
-                }
-              }}>
-              {form.imagen ? "Cambiar" : "Cargar imagen"}
-            </button>
-            {form.imagen && (
-              <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)" }}
-                onClick={async () => {
-                  try {
-                    // Si ya existe en DB, eliminar de DB. Si es nuevo, solo limpiar form.
-                    if (form.id) await eliminarImagenProducto(form.id);
-                    setForm({ ...form, imagen: undefined });
-                  } catch (err) {
-                    toastError("Error: " + err);
-                  }
-                }}>
-                Quitar
-              </button>
-            )}
-          </div>
-        </div>
-        <span className="text-secondary" style={{ fontSize: 10, marginTop: 4, display: "block" }}>
-          PNG o JPG, max 500KB. Se muestra en modo tactil del POS.
-        </span>
-      </div>
+      {/* Imagen del producto — v2.4.1: soporta pegar (Ctrl+V), drag & drop,
+          y formatos PNG/JPG/WebP/GIF/BMP/AVIF/SVG. */}
+      <ImagenProductoPicker
+        imagen={form.imagen}
+        nombre={form.nombre}
+        productoId={form.id}
+        onChange={(b64) => setForm({ ...form, imagen: b64 })}
+        onError={(msg) => toastError(msg)}
+      />
+
       {/* Requiere número de serie */}
       <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
@@ -1123,6 +1072,226 @@ function FormProducto({
         </button>
       </div>
     </form>
+  );
+}
+
+// ─── v2.4.1 — Componente reutilizable para imagen de producto ────────────
+//
+// Soporta:
+//   1. Click "Cargar imagen" → file picker (Tauri dialog) con formatos extras
+//   2. Pegar (Ctrl+V) cuando el cursor está sobre el cuadro de imagen
+//   3. Drag & drop arrastrando un archivo desde el explorador o navegador
+//
+// Acepta: PNG, JPG, JPEG, WebP, GIF, BMP, AVIF, SVG, ICO, HEIC
+// Límite: 500 KB (validado en backend al persistir).
+//
+// Si el producto YA existe (form.id != null), persiste a DB inmediatamente.
+// Si es producto nuevo, mantiene el b64 en memoria (se guarda al crear).
+
+const FORMATOS_ACEPTADOS = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg", "ico", "heic"];
+const MIME_ACEPTADOS = "image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif,image/svg+xml,image/x-icon,image/heic,image/*";
+
+interface ImagenProductoPickerProps {
+  imagen?: string;
+  nombre?: string;
+  productoId?: number;
+  onChange: (b64: string | undefined) => void;
+  onError: (msg: string) => void;
+}
+
+function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }: ImagenProductoPickerProps) {
+  const [dragOver, setDragOver] = useState(false);
+  const [cargando, setCargando] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Detecta el mime correcto del b64 (los primeros bytes lo identifican)
+  // para mostrarlo bien con `data:image/...;base64,...`
+  const detectarMime = (b64: string): string => {
+    if (!b64 || b64.length < 8) return "image/png";
+    // PNG: iVBORw0KGgo
+    if (b64.startsWith("iVBORw0KGgo")) return "image/png";
+    // JPEG: /9j/
+    if (b64.startsWith("/9j/")) return "image/jpeg";
+    // GIF: R0lGOD
+    if (b64.startsWith("R0lGOD")) return "image/gif";
+    // WebP: UklGR + WEBP en bytes
+    if (b64.startsWith("UklGR")) return "image/webp";
+    // BMP: Qk
+    if (b64.startsWith("Qk")) return "image/bmp";
+    // SVG: empieza con PHN2 (=base64 de "<svg") o PD94 (XML decl)
+    if (b64.startsWith("PHN2") || b64.startsWith("PD94")) return "image/svg+xml";
+    return "image/png";
+  };
+
+  // Procesa un Blob/File → b64, valida tamaño, persiste si hay productoId
+  const procesarArchivo = async (file: File | Blob, sourceName: string) => {
+    if (file.size > 500_000) {
+      onError(`La imagen pesa ${(file.size / 1024).toFixed(1)} KB. Máximo 500 KB.`);
+      return;
+    }
+    setCargando(true);
+    try {
+      const b64Full = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      // b64Full es "data:image/xxx;base64,..." — extraemos solo el contenido base64
+      const limpio = b64Full.includes(",") ? b64Full.split(",")[1] : b64Full;
+
+      if (productoId) {
+        // Producto existente → persistir a DB inmediatamente
+        const guardado = await guardarImagenProductoB64(productoId, limpio);
+        onChange(guardado);
+      } else {
+        // Producto nuevo → solo memoria, se persiste al crear
+        onChange(limpio);
+      }
+    } catch (err: any) {
+      onError(`No se pudo cargar la imagen ${sourceName ? `(${sourceName})` : ""}: ${err?.message || err}`);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // Handler PEGAR — onPaste en el container (cuando el usuario hace foco/click ahí)
+  // O global cuando el container está montado, suscribiéndose a window
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      // Si el foco está en un input/textarea normal, NO interceptar el paste
+      // (el usuario podría querer pegar texto, no la imagen del producto)
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob) {
+            e.preventDefault();
+            procesarArchivo(blob, "portapapeles");
+            return;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productoId]);
+
+  // Handler drag & drop sobre el container
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      onError("Solo se permiten archivos de imagen");
+      return;
+    }
+    procesarArchivo(file, file.name);
+  };
+
+  const mime = imagen ? detectarMime(imagen) : "image/png";
+
+  return (
+    <div
+      ref={containerRef}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        marginTop: 16,
+        padding: 12,
+        background: dragOver ? "rgba(59,130,246,0.08)" : "var(--color-surface-alt, rgba(255,255,255,0.03))",
+        borderRadius: "var(--radius)",
+        border: dragOver ? "2px dashed var(--color-primary)" : "1px solid var(--color-border)",
+        transition: "background 0.1s, border-color 0.1s",
+      }}
+    >
+      <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 8, fontWeight: 600 }}>
+        Imagen del producto
+      </label>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {imagen ? (
+          <img
+            src={`data:${mime};base64,${imagen}`}
+            alt={nombre || "Producto"}
+            style={{ width: 80, height: 80, objectFit: "cover", border: "1px solid var(--color-border)", borderRadius: "var(--radius)" }}
+          />
+        ) : (
+          <div style={{
+            width: 80, height: 80,
+            border: "2px dashed var(--color-border)",
+            borderRadius: "var(--radius)",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            color: "var(--color-text-secondary)", fontSize: 11, textAlign: "center", padding: 4,
+          }}>
+            {cargando ? "..." : (dragOver ? "📥 Suelta aquí" : "Sin imagen")}
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <button type="button" className="btn btn-outline" disabled={cargando} style={{ fontSize: 11, padding: "4px 10px" }}
+            onClick={async () => {
+              try {
+                const path = await open({
+                  filters: [{ name: "Imágenes", extensions: FORMATOS_ACEPTADOS }],
+                  multiple: false,
+                });
+                if (!path) return;
+                setCargando(true);
+                if (productoId) {
+                  const b64 = await cargarImagenProducto(productoId, path as string);
+                  onChange(b64);
+                } else {
+                  const b64 = await leerImagenArchivo(path as string);
+                  onChange(b64);
+                }
+              } catch (err: any) {
+                onError("Error: " + (err?.message || err));
+              } finally {
+                setCargando(false);
+              }
+            }}>
+            {cargando ? "..." : (imagen ? "Cambiar" : "Cargar imagen")}
+          </button>
+          {imagen && (
+            <button type="button" className="btn btn-outline" disabled={cargando} style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)" }}
+              onClick={async () => {
+                try {
+                  if (productoId) await eliminarImagenProducto(productoId);
+                  onChange(undefined);
+                } catch (err: any) {
+                  onError("Error: " + (err?.message || err));
+                }
+              }}>
+              Quitar
+            </button>
+          )}
+        </div>
+      </div>
+      <span className="text-secondary" style={{ fontSize: 10, marginTop: 6, display: "block", lineHeight: 1.4 }}>
+        💡 Puede <strong>cargar archivo</strong>, <strong>arrastrar</strong> o <strong>pegar (Ctrl+V)</strong> una imagen.<br/>
+        Formatos: PNG, JPG, WebP, GIF, BMP, AVIF, SVG. Máx 500 KB. Se muestra en modo táctil del POS.
+      </span>
+      {/* Hidden input only used for accept hint — el real picker es Tauri open() */}
+      <input type="file" accept={MIME_ACEPTADOS} style={{ display: "none" }} />
+    </div>
   );
 }
 

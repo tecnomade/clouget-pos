@@ -2129,6 +2129,95 @@ export default function Configuracion() {
           </div>
           )}
 
+          {/* v2.4.1 — App Móvil — solo si tiene módulo app_movil */}
+          {(config.licencia_modulos || "").includes("app_movil") && (
+          <div className="card">
+            <div className="card-header">📱 App Móvil (clouget-pos-app)</div>
+            <div className="card-body">
+              <p style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: 12 }}>
+                App para tablets y teléfonos: meseros toman pedidos, cocineros ven comandas,
+                vendedores de piso atienden caminando, inventaristas hacen conteos, dueño
+                consulta dashboard remoto. Cada usuario ve solo lo que sus permisos le habilitan.
+              </p>
+
+              {/* Resumen de usuarios con permisos relevantes */}
+              {(() => {
+                const meseros = usuarios.filter(u => {
+                  if (u.rol === "ADMIN") return true;
+                  try {
+                    const p = JSON.parse(u.permisos || "{}");
+                    return p.atiende_mesas || p.ve_cocina || p.vende_piso || p.inventaria || p.dueno_dashboard;
+                  } catch { return false; }
+                });
+                return (
+                  <div style={{
+                    background: "var(--color-surface-alt)",
+                    padding: 10,
+                    borderRadius: 6,
+                    marginBottom: 12,
+                  }}>
+                    <div style={{ fontSize: 12, marginBottom: 6 }}>
+                      <strong>{meseros.length}</strong> usuario(s) con acceso a la app
+                      {meseros.length === 0 && (
+                        <span style={{ color: "var(--color-warning)" }}> — asigne permisos arriba para que puedan loguearse</span>
+                      )}
+                    </div>
+                    {meseros.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {meseros.map(u => (
+                          <span key={u.id} style={{
+                            fontSize: 11,
+                            padding: "2px 8px",
+                            borderRadius: 10,
+                            background: "var(--color-surface)",
+                            border: "1px solid var(--color-border)",
+                          }}>
+                            👤 {u.nombre}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Estado de servidor + emparejamiento */}
+              <div style={{
+                background: "rgba(245, 158, 11, 0.08)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                padding: "10px 12px",
+                borderRadius: 6,
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}>
+                <strong>🚧 Endpoints HTTP en construcción (Sprint 3)</strong>
+                <div style={{ marginTop: 4, color: "var(--color-text-secondary)" }}>
+                  La app móvil <code>clouget-pos-app</code> está en desarrollo. Esta sección
+                  mostrará próximamente: lista de dispositivos emparejados, código QR para emparejar
+                  un dispositivo nuevo, y discovery automático por mDNS.
+                </div>
+                <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 20, fontSize: 11 }}>
+                  <li>✅ Permisos por categoría (v2.4.0)</li>
+                  <li>✅ Módulo <code>app_movil</code> en licencia (v2.4.1 — esta release)</li>
+                  <li>⏳ Endpoints HTTP <code>/api/v1/app/*</code> + auth PIN (próximo)</li>
+                  <li>⏳ Descubrimiento mDNS (próximo)</li>
+                  <li>⏳ App móvil v0.1: login + mesas + pedido (próximo)</li>
+                </ul>
+              </div>
+
+              {(config.licencia_modulos || "").includes("restaurante") ? (
+                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 8, fontStyle: "italic" }}>
+                  ✓ Tu licencia tiene <strong>Restaurante + App Móvil</strong> — la app soportará el flujo completo de mesero/cocinero.
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 8, fontStyle: "italic" }}>
+                  ✓ Tu licencia tiene <strong>App Móvil</strong> sin restaurante — la app será para vendedor de piso, inventarista y dashboard.
+                </div>
+              )}
+            </div>
+          </div>
+          )}
+
           {/* Backup Cloud — solo si tiene módulo backup_cloud */}
           {(config.licencia_modulos || "").includes("backup_cloud") && (
           <div className="card">

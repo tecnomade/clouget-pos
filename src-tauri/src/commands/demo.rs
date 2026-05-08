@@ -28,10 +28,12 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
     // y con el branch demo de obtener_estado_licencia). Se persiste en config para que la UI active
     // las secciones condicionales (Backup Cloud, Multi-POS, Multi-Almacen, etc).
     // En builds Clouget se incluye "restaurante"; en DigitalServer no.
+    // v2.4.1: incluido `app_movil` (transversal a ambas marcas — para meseros con
+    // restaurante o para vendedores de piso / inventaristas / dueños sin restaurante).
     let modulos_demo_json = if crate::branding::BRAND.tiene_modulo_restaurante() {
-        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\",\"restaurante\"]"
+        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\",\"restaurante\",\"app_movil\"]"
     } else {
-        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\"]"
+        "[\"multi_pos\",\"multi_almacen\",\"backup_cloud\",\"backup_premium\",\"servicio_tecnico\",\"sri_ilimitado\",\"app_movil\"]"
     };
     let configs = [
         ("nombre_negocio", "Tienda El Bosque"),
@@ -820,14 +822,23 @@ pub fn activar_demo(db: State<Database>) -> Result<LicenciaInfo, String> {
         emitida: chrono::Local::now().format("%Y-%m-%d").to_string(),
         machine_id,
         activa: true,
-        modulos: vec![
-            "multi_pos".to_string(),
-            "multi_almacen".to_string(),
-            "backup_cloud".to_string(),
-            "backup_premium".to_string(),
-            "servicio_tecnico".to_string(),
-            "sri_ilimitado".to_string(),
-        ],
+        modulos: {
+            // v2.4.1: incluir `app_movil` (transversal a ambas marcas).
+            // Restaurante solo en builds Clouget.
+            let mut m = vec![
+                "multi_pos".to_string(),
+                "multi_almacen".to_string(),
+                "backup_cloud".to_string(),
+                "backup_premium".to_string(),
+                "servicio_tecnico".to_string(),
+                "sri_ilimitado".to_string(),
+                "app_movil".to_string(),
+            ];
+            if crate::branding::BRAND.tiene_modulo_restaurante() {
+                m.push("restaurante".to_string());
+            }
+            m
+        },
     })
 }
 

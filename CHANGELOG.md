@@ -6,6 +6,89 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.1 — 2026-05-07 📱 STABLE
+**Sprint 2 / 7 — Módulo `app_movil` en licencia + 4 hotfixes.**
+
+### 🆕 Sprint 2: Módulo `app_movil` separado de `restaurante`
+
+Hoy hay 8 módulos de licencia: `multi_pos`, `multi_almacen`, `backup_cloud`, `backup_premium`, `servicio_tecnico`, `sri_ilimitado`, `restaurante` y ahora **`app_movil`** (transversal — disponible en marcas Clouget y DigitalServer).
+
+Esto habilita los 4 combos de licencia que se vienen comercializando:
+
+| Módulos | Caso | Próximo precio sugerido |
+|---|---|---|
+| `[]` | POS básico (perpetua) | $80-120 |
+| `["restaurante"]` | Restaurante sin app | actual + $5/mo |
+| `["app_movil"]` | POS + app (vendedor piso, inventarista, dueño dashboard) | $5-8/mo |
+| `["restaurante", "app_movil"]` | Caso completo (meseros + cocineros + admin) | $10-12/mo |
+
+**Cambios visibles:**
+- Nueva sección **📱 App Móvil** en Configuración (visible solo si licencia tiene `app_movil`)
+- Lista cuántos usuarios tienen permisos relevantes (atiende_mesas, ve_cocina, vende_piso, inventaria, dueno_dashboard)
+- Avisa el estado de la app (en construcción — Sprint 3 entrega los endpoints HTTP, Sprint 5 entrega la app)
+- Modo **demo** ahora incluye `app_movil` (todos los módulos activos)
+
+**Backend:**
+- `branding::tiene_modulo_app_movil()` (transversal a Clouget y DigitalServer)
+- Nuevo módulo Rust `app_movil/mod.rs` con `requiere_modulo_app_movil()` (helper de validación de licencia, base para Sprint 3)
+- `commands/demo.rs` y `commands/licencia.rs` agregan `app_movil` a la lista de módulos del demo
+
+### 🛠 Hotfixes incluidos
+
+#### 1. Dashboard "Sin ventas hoy" falso por UTC
+**Síntoma**: A partir de las ~7-8pm en Ecuador (UTC-5), el widget "Últimas ventas del día" decía "Sin ventas hoy" aunque la gráfica de 7 días Y el "Top 10 productos del día" mostraran ventas hechas hoy.
+
+**Causa**: `date('now')` en SQLite devuelve UTC, pero las ventas se guardan con `datetime('now', 'localtime')`. Por la noche UTC ya es del día siguiente → no matchea.
+
+**Fix**: usar `date('now', 'localtime')` en `ultimas_ventas_dia` y `resumen_diario_ayer`.
+
+#### 2. Restaurante: auto-limpieza de pedidos vacíos abandonados con desfase horario
+**Síntoma menor**: la auto-limpieza diaria de pedidos abandonados (>24h, sin items) en restaurante usaba `julianday('now')` sin localtime → desfase de 5h en Ecuador (no rompía nada visible pero técnicamente incorrecto).
+
+**Fix**: `julianday('now', 'localtime')` para que coincida con `julianday(fecha_apertura)` ya en localtime.
+
+#### 3. Productos: imagen ahora se puede pegar (Ctrl+V), arrastrar (drag&drop) y soporta más formatos
+**Antes**: solo PNG/JPG por archivo.
+
+**Ahora**:
+- 📋 **Ctrl+V** para pegar imagen del portapapeles (de captura de pantalla, navegador, etc.)
+- 🖱️ **Drag & drop** arrastrando archivo desde explorador o navegador
+- 🎨 Formatos extra: **WebP, GIF, BMP, AVIF, SVG, ICO, HEIC** además de PNG/JPG
+- Detección automática del mime type para mostrar correctamente
+- Indicador visual claro: el cuadro se ilumina al arrastrar encima ("📥 Suelta aquí")
+
+**Backend nuevo**: `guardar_imagen_producto_b64(id, base64)` acepta el b64 directo (con o sin prefijo `data:image/xxx;base64,`), valida tamaño 500 KB y persiste.
+
+**Frontend**: extraído a componente reutilizable `ImagenProductoPicker` que centraliza los 3 modos de carga (file picker, paste, drag&drop).
+
+#### 4. Productos: "Eliminar categoría completa" / "Eliminar seleccionados" fallaba con FOREIGN KEY constraint failed
+**Síntoma**: al intentar eliminar productos que tenían historial (compras, kardex, combos, series, lotes, multi-precios, multi-almacén, multi-unidad) el DELETE físico fallaba con `FOREIGN KEY constraint failed`. Como el botón hacía un loop, el primer error detenía toda la operación → "ni uno solo se eliminaba".
+
+**Causa**: `eliminar_producto` solo chequeaba referencias en `venta_detalles`. Si no había ventas pero SÍ había compras o kardex, intentaba DELETE directo y se rompía.
+
+**Fix**:
+- `eliminar_producto`: cambia a estrategia "intenta DELETE; si falla con FK → soft delete (`activo=0`) liberando códigos para que puedan reusarse"
+- `eliminar_categoria` con acción "eliminar productos": ya no usa DELETE masivo, ahora itera con el helper que cae a soft delete cuando es necesario
+- `eliminar_categoria`: si la categoría tiene productos soft-deleted que aún apuntan a ella, libera referencias (`SET categoria_id = NULL`) y reintenta el DELETE
+
+### 📦 Archivos tocados
+
+**Sprint 2:**
+- `src-tauri/src/branding.rs` — `tiene_modulo_app_movil()`
+- `src-tauri/src/app_movil/mod.rs` — módulo nuevo con helper de licencia
+- `src-tauri/src/lib.rs` — declaración del módulo
+- `src-tauri/src/commands/demo.rs` y `commands/licencia.rs` — `app_movil` en demo
+- `src/pages/Configuracion.tsx` — nueva sección "📱 App Móvil"
+
+**Hotfixes:**
+- `src-tauri/src/commands/reportes.rs` — fix UTC `ultimas_ventas_dia`, `resumen_diario_ayer`
+- `src-tauri/src/restaurante/commands.rs` — fix UTC auto-limpieza
+- `src-tauri/src/commands/productos.rs` — `guardar_imagen_producto_b64`, refactor `eliminar_producto` + `eliminar_categoria`
+- `src/services/api.ts` — wrapper `guardarImagenProductoB64`
+- `src/pages/Productos.tsx` — componente `ImagenProductoPicker` con paste/drag&drop
+
+---
+
 ## v2.4.0 — 2026-05-07 🔐 STABLE
 **Sprint 1 / 7 — Permisos agrupados por categoría + base para app móvil.**
 

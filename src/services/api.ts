@@ -147,6 +147,16 @@ export async function eliminarImagenProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_imagen_producto", { id });
 }
 
+/**
+ * v2.4.1 — Guarda imagen recibiendo el base64 directamente (sin pasar por
+ * archivo del disco). Usado para soportar PEGAR (Ctrl+V) o DRAG & DROP.
+ * Acepta el b64 con o sin prefijo `data:image/xxx;base64,`. Backend valida
+ * tamaño máximo 500 KB.
+ */
+export async function guardarImagenProductoB64(id: number, base64: string): Promise<string> {
+  return smartInvoke("guardar_imagen_producto_b64", { id, base64 });
+}
+
 export async function eliminarProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_producto", { id });
 }

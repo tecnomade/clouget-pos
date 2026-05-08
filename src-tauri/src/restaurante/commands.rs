@@ -169,11 +169,15 @@ fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<MesaConEsta
     //
     // Ademas: AUTO-LIMPIEZA al pasada — cierra pedidos abiertos VACIOS de mas
     // de 24h (sin items, claramente abandonados). Idempotente y safe.
+    // FIX v2.4.1: usar 'localtime' en julianday('now') para que coincida con
+    // fecha_apertura que se guarda con datetime('now','localtime'). Sin esto
+    // hay un desfase de la zona horaria (en Ecuador UTC-5 son 5h menos), lo
+    // que vuelve el threshold de 24h efectivamente más permisivo.
     let _ = conn.execute(
         "UPDATE rest_pedidos_abiertos
          SET estado = 'CANCELADO', fecha_cierre = datetime('now', 'localtime')
          WHERE estado IN ('ABIERTO', 'CUENTA_PEDIDA')
-           AND julianday('now') - julianday(fecha_apertura) > 1.0
+           AND julianday('now', 'localtime') - julianday(fecha_apertura) > 1.0
            AND id NOT IN (SELECT DISTINCT pedido_id FROM rest_pedido_items)",
         [],
     );

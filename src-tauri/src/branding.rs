@@ -45,15 +45,22 @@ impl Brand {
         }
     }
 
-    /// Si esta marca incluye el módulo Restaurante (mesas, comandas, app móvil meseros).
+    /// Si esta marca incluye el módulo Restaurante (mesas, comandas, dividir cuenta, etc.).
     /// Solo Clouget — DigitalServer NO lo lleva.
     pub const fn tiene_modulo_restaurante(&self) -> bool {
         matches!(self, Brand::Clouget)
     }
 
-    /// Si esta marca expone los endpoints HTTP para la app móvil de meseros.
-    pub const fn tiene_app_movil_meseros(&self) -> bool {
-        matches!(self, Brand::Clouget)
+    /// Si esta marca incluye el módulo App Móvil (clouget-pos-app).
+    /// Es **transversal** a ambas marcas: tanto Clouget como DigitalServer pueden
+    /// vender la app — para meseros (con restaurante) o para vendedores de piso /
+    /// inventaristas / dueños (sin restaurante).
+    ///
+    /// El módulo se activa por licencia (`app_movil` en `licencia.modulos`) y los
+    /// endpoints HTTP los habilita en runtime el helper `requiere_modulo_app_movil`.
+    pub const fn tiene_modulo_app_movil(&self) -> bool {
+        // Disponible en ambas marcas — la diferenciación final la hace la licencia
+        true
     }
 }
 

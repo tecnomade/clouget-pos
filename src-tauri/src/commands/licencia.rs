@@ -286,6 +286,8 @@ pub async fn obtener_estado_licencia(
                 "backup_premium".to_string(),
                 "servicio_tecnico".to_string(),
                 "sri_ilimitado".to_string(),
+                // v2.4.1: app_movil es transversal — disponible en demo de ambas marcas
+                "app_movil".to_string(),
             ];
             // Modulo restaurante: solo en builds Clouget (compile-time gate).
             // En DigitalServer no agregamos para que la UI ni siquiera lo muestre.

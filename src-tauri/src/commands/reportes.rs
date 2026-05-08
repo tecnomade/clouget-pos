@@ -434,8 +434,11 @@ pub fn listar_ventas_periodo(
 #[tauri::command]
 pub fn resumen_diario_ayer(db: State<Database>) -> Result<ResumenDiario, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // FIX v2.4.1: usar 'localtime' — sin él, en zonas UTC negativas (ej. Ecuador UTC-5)
+    // por la noche `date('now')` devuelve el día siguiente UTC, pero los datos
+    // se guardan con `datetime('now','localtime')`, causando "Sin ventas hoy" falso.
     let ayer = conn
-        .query_row("SELECT date('now', '-1 day')", [], |row| row.get::<_, String>(0))
+        .query_row("SELECT date('now', 'localtime', '-1 day')", [], |row| row.get::<_, String>(0))
         .map_err(|e| e.to_string())?;
     drop(conn);
     resumen_diario(db, ayer)
@@ -459,13 +462,16 @@ pub fn ultimas_ventas_dia(db: State<Database>, limite: i64) -> Result<Vec<Ultima
 
     let mut stmt = conn
         .prepare(
+            // FIX v2.4.1: 'localtime' — sin él, en zonas UTC negativas (Ecuador
+            // UTC-5) por la noche `date('now')` ya es del día siguiente UTC y
+            // no matchea con ventas guardadas en hora local.
             "SELECT v.id, v.numero,
                     COALESCE(strftime('%H:%M', v.fecha), '') as hora,
                     COALESCE(c.nombre, 'Consumidor Final') as cliente_nombre,
                     v.total, v.forma_pago
              FROM ventas v
              LEFT JOIN clientes c ON v.cliente_id = c.id
-             WHERE date(v.fecha) = date('now') AND v.anulada = 0
+             WHERE date(v.fecha) = date('now', 'localtime') AND v.anulada = 0
              ORDER BY v.fecha DESC
              LIMIT ?1",
         )

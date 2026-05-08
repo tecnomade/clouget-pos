@@ -478,6 +478,54 @@ pub fn cargar_imagen_producto(db: State<Database>, id: i64, imagen_path: String)
     Ok(b64)
 }
 
+/// v2.4.1 — Guarda imagen para un producto existente recibiendo el base64
+/// directamente (en vez de leer un archivo del disco). Útil para soportar
+/// **pegar imagen** desde el portapapeles o **drag & drop** desde el navegador.
+///
+/// El base64 puede venir con o sin el prefijo `data:image/xxx;base64,`. El
+/// comando lo limpia automáticamente. Valida que el tamaño decodificado no
+/// supere 500 KB.
+#[tauri::command]
+pub fn guardar_imagen_producto_b64(
+    db: State<Database>,
+    id: i64,
+    base64: String,
+) -> Result<String, String> {
+    // Limpiar prefijo data URL si vino: "data:image/png;base64,iVBORw..."
+    let limpio = if let Some(idx) = base64.find(",") {
+        if base64[..idx].contains("base64") {
+            &base64[idx + 1..]
+        } else {
+            base64.as_str()
+        }
+    } else {
+        base64.as_str()
+    };
+
+    // Validar tamaño decodificado (no el b64 que es ~33% más grande)
+    let bytes = BASE64
+        .decode(limpio.as_bytes())
+        .map_err(|e| format!("Base64 inválido: {}", e))?;
+    if bytes.len() > 500_000 {
+        return Err(format!(
+            "La imagen pesa {:.1} KB. Máximo permitido: 500 KB.",
+            bytes.len() as f64 / 1024.0
+        ));
+    }
+    if bytes.is_empty() {
+        return Err("La imagen está vacía".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE productos SET imagen = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+        rusqlite::params![limpio, id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(limpio.to_string())
+}
+
 #[tauri::command]
 pub fn eliminar_imagen_producto(db: State<Database>, id: i64) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -613,9 +661,21 @@ pub fn eliminar_categoria(db: State<Database>, id: i64, accion: Option<String>, 
                     .map_err(|e| e.to_string())?;
             }
             Some("eliminar_productos") => {
-                // Eliminar todos los productos de esta categoría
-                conn.execute("DELETE FROM productos WHERE categoria_id = ?1", rusqlite::params![id])
+                // v2.4.1: Eliminar producto por producto usando el helper que cae
+                // a soft delete si hay referencias (venta_detalles, compras, etc.)
+                // El DELETE masivo viejo fallaba con FK al primer producto referenciado.
+                let mut ids_stmt = conn
+                    .prepare("SELECT id FROM productos WHERE categoria_id = ?1")
                     .map_err(|e| e.to_string())?;
+                let ids: Vec<i64> = ids_stmt
+                    .query_map(rusqlite::params![id], |r| r.get::<_, i64>(0))
+                    .map_err(|e| e.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                drop(ids_stmt);
+                for pid in ids {
+                    eliminar_producto_interno(&conn, pid)?;
+                }
             }
             _ => {
                 // Sin acción: retornar conteo para que el frontend pregunte
@@ -624,7 +684,20 @@ pub fn eliminar_categoria(db: State<Database>, id: i64, accion: Option<String>, 
         }
     }
 
-    conn.execute("DELETE FROM categorias WHERE id = ?1", rusqlite::params![id]).map_err(|e| e.to_string())?;
+    // v2.4.1: intentar DELETE; si falla por FK (productos soft-deleted que siguen
+    // apuntando a esta categoria_id), hacer SET categoria_id = NULL en sus filas
+    // y reintentar. Así la categoría queda eliminada limpiamente.
+    let resultado = conn.execute("DELETE FROM categorias WHERE id = ?1", rusqlite::params![id]);
+    if resultado.is_err() {
+        // Liberar referencias y reintentar
+        conn.execute(
+            "UPDATE productos SET categoria_id = NULL WHERE categoria_id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| format!("No se pudo liberar referencias de categoría: {}", e))?;
+        conn.execute("DELETE FROM categorias WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| format!("No se pudo eliminar categoría: {}", e))?;
+    }
     Ok(serde_json::json!({ "eliminada": true, "productos_afectados": count }))
 }
 
@@ -697,25 +770,56 @@ pub fn eliminar_tipo_unidad(db: State<Database>, id: i64) -> Result<(), String> 
 
 // --- Eliminar producto ---
 
+/// Elimina un producto. Estrategia v2.4.1:
+///
+/// SIEMPRE intenta soft delete (`activo = 0`) primero. Esto es lo correcto
+/// porque los productos pueden estar referenciados desde MUCHAS tablas:
+/// `venta_detalles`, `compra_detalles`, `kardex_movimientos`, `combo_componentes`,
+/// `series_producto`, `lotes_producto`, `precios_producto`, `producto_warehouse_stock`,
+/// `unidades_producto`, etc. Cualquiera de esas FK rompería el DELETE físico.
+///
+/// Solo si el producto está completamente "huérfano" (sin referencias en
+/// ninguna tabla) intentamos DELETE físico para mantener la DB limpia.
+///
+/// El soft delete:
+///   - marca `activo = 0`
+///   - "libera" el `codigo` y `codigo_barras` apendiéndoles `_DEL{id}` para
+///     que el usuario pueda crear otro producto con el mismo código
 #[tauri::command]
 pub fn eliminar_producto(db: State<Database>, id: i64) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
-    // Check if product has been used in sales
-    let ventas: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM venta_detalles WHERE producto_id = ?1",
-        rusqlite::params![id], |r| r.get(0)
-    ).unwrap_or(0);
-    if ventas > 0 {
-        // Soft delete - mark as inactive y liberar códigos para que puedan reutilizarse
-        conn.execute(
-            "UPDATE productos SET activo = 0, codigo = codigo || '_DEL' || id, codigo_barras = NULL WHERE id = ?1",
-            rusqlite::params![id]
-        ).map_err(|e| e.to_string())?;
-    } else {
-        // Hard delete - no sales reference
-        conn.execute("DELETE FROM productos WHERE id = ?1", rusqlite::params![id])
-            .map_err(|e| e.to_string())?;
+    eliminar_producto_interno(&conn, id)
+}
+
+/// Helper interno reutilizable por `eliminar_producto` y por `eliminar_categoria`
+/// cuando el usuario elige "eliminar todos los productos de la categoría".
+///
+/// Estrategia: intenta DELETE físico primero. Si falla por FK constraint
+/// (porque hay venta_detalles, compra_detalles, kardex, combos, series, etc.
+/// que apuntan al producto), automáticamente hace soft delete liberando
+/// `codigo` y `codigo_barras` para que puedan reusarse en un producto nuevo.
+fn eliminar_producto_interno(conn: &rusqlite::Connection, id: i64) -> Result<(), String> {
+    // Intento 1: DELETE físico (limpia DB si el producto está huérfano)
+    let resultado_delete = conn.execute(
+        "DELETE FROM productos WHERE id = ?1",
+        rusqlite::params![id],
+    );
+
+    if resultado_delete.is_ok() {
+        return Ok(());
     }
+
+    // Falló DELETE → tiene referencias → soft delete liberando códigos
+    conn.execute(
+        "UPDATE productos
+         SET activo = 0,
+             codigo = COALESCE(codigo, '') || '_DEL' || id,
+             codigo_barras = NULL
+         WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("No se pudo eliminar producto: {}", e))?;
+
     Ok(())
 }
 

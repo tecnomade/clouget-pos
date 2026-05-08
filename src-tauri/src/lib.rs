@@ -6,6 +6,7 @@ mod models;
 mod offline;
 mod printing;
 mod restaurante;
+mod app_movil;
 mod server;
 mod sri;
 pub mod utils;
@@ -138,6 +139,7 @@ pub fn run() {
             commands::productos::eliminar_tipo_unidad,
             commands::productos::cargar_imagen_producto,
             commands::productos::leer_imagen_archivo,
+            commands::productos::guardar_imagen_producto_b64, // v2.4.1 — paste/drag&drop
             commands::productos::eliminar_imagen_producto,
             commands::productos::listar_productos_tactil,
             commands::productos::exportar_plantilla_productos,
