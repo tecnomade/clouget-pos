@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos, appListarDispositivos, appRevocarDispositivo, appEliminarDispositivo } from "../services/api";
-import type { DispositivoApp } from "../services/api";
+import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial, listarCategorias, listarImpresorasCached, refrescarImpresoras, obtenerRutaDb, crearRespaldo, restaurarRespaldo, obtenerEstadoLicencia, listarUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario, obtenerPermisosDisponibles, cambiarPassword, consultarEstadoSri, cargarCertificadoSri, cambiarAmbienteSri, validarSuscripcionSri, obtenerPlanesSri, crearPedidoSri, cargarLogoNegocio, eliminarLogoNegocio, listarListasPrecios, crearListaPrecio, actualizarListaPrecio, establecerListaDefault, listarCuentasBanco, crearCuentaBanco, actualizarCuentaBanco, desactivarCuentaBanco, esDemo as checkEsDemo, generarTokenServidor, probarConexionServidor, listarEstablecimientos, listarPuntosEmision, configurarModoRed, ejecutarBackupCloud, estadoBackupCloud, desconectarGdrive, conectarGdrive, resetearBaseDatos, appListarDispositivos, appRevocarDispositivo, appEliminarDispositivo, appGenerarQrEmparejamiento } from "../services/api";
+import type { DispositivoApp, QrEmparejamiento } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useToast } from "../components/Toast";
@@ -2374,7 +2374,10 @@ function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }:
   const { toastExito, toastError } = useToast();
   const [dispositivos, setDispositivos] = useState<DispositivoApp[]>([]);
   const [cargando, setCargando] = useState(true);
-  const [ipLocal, setIpLocal] = useState<string>("");
+  // v2.4.4 — QR de emparejamiento
+  const [qr, setQr] = useState<QrEmparejamiento | null>(null);
+  const [generandoQr, setGenerandoQr] = useState(false);
+  const [mostrarQr, setMostrarQr] = useState(false);
 
   const tieneRestaurante = licenciaModulos.includes("restaurante");
 
@@ -2390,10 +2393,21 @@ function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }:
     }
   };
 
+  const generarQr = async () => {
+    setGenerandoQr(true);
+    try {
+      const data = await appGenerarQrEmparejamiento();
+      setQr(data);
+      setMostrarQr(true);
+    } catch (err: any) {
+      toastError("No se pudo generar QR: " + (err?.message || err));
+    } finally {
+      setGenerandoQr(false);
+    }
+  };
+
   useEffect(() => {
     cargar();
-    // Detectar IP local probable (placeholder hasta Sprint 3c con mDNS)
-    setIpLocal(window.location.hostname || "192.168.x.x");
   }, []);
 
   const formatHora = (iso: string): string => {
@@ -2471,26 +2485,43 @@ function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }:
           )}
         </div>
 
-        {/* Datos de conexión */}
+        {/* v2.4.4 — Conexión + Generar QR + mDNS */}
         <div style={{
           background: "rgba(59, 130, 246, 0.06)",
           border: "1px solid rgba(59, 130, 246, 0.25)",
-          padding: "10px 12px",
+          padding: "12px",
           borderRadius: 6,
           fontSize: 12,
           marginBottom: 12,
-          lineHeight: 1.6,
+          lineHeight: 1.5,
         }}>
-          <strong>🌐 Conexión para la app móvil</strong>
-          <div style={{ marginTop: 4, color: "var(--color-text-secondary)" }}>
-            En la app, configurá el servidor con:<br/>
-            <code>http://{ipLocal}:{servidorPuerto}</code>
-            <span style={{ marginLeft: 6, fontStyle: "italic", fontSize: 11 }}>
-              (reemplazá <code>{ipLocal}</code> por la IP real de esta PC en la red local)
-            </span>
-            <br/>
-            <span style={{ fontSize: 11 }}>
-              📝 En Sprint 3c agregaremos descubrimiento automático (mDNS) y código QR.
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <strong>🌐 Emparejar dispositivo móvil</strong>
+            <button
+              onClick={generarQr}
+              disabled={generandoQr}
+              style={{
+                padding: "6px 14px",
+                background: "var(--color-primary)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: generandoQr ? "wait" : "pointer",
+              }}
+            >
+              {generandoQr ? "..." : "📷 Generar código QR"}
+            </button>
+          </div>
+          <div style={{ color: "var(--color-text-secondary)" }}>
+            La app móvil escanea el QR con la cámara y se autoconfigura sola
+            (sin escribir IP/puerto).<br/>
+            Adicionalmente: el servidor se anuncia automáticamente en la red
+            local vía <strong>mDNS</strong> (<code>_clouget-pos._tcp.local.</code>),
+            así la app también puede encontrarlo escaneando la red.<br/>
+            <span style={{ fontSize: 11, fontStyle: "italic" }}>
+              Configuración manual (alternativa): <code>http://&lt;IP-de-esta-PC&gt;:{servidorPuerto}</code>
             </span>
           </div>
         </div>
@@ -2614,6 +2645,79 @@ function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }:
           }
         </div>
       </div>
+
+      {/* v2.4.4 — Modal QR de emparejamiento */}
+      {mostrarQr && qr && (
+        <div
+          className="modal-overlay"
+          onClick={() => setMostrarQr(false)}
+          style={{ zIndex: 1000 }}
+        >
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 460, width: "100%" }}
+          >
+            <div className="modal-header" style={{ borderBottom: "1px solid var(--color-border)", padding: "14px 18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0, fontSize: 17 }}>📷 Escanear con la app móvil</h3>
+                <button onClick={() => setMostrarQr(false)} style={{
+                  background: "transparent", border: "none", fontSize: 22,
+                  cursor: "pointer", color: "var(--color-text-muted)", padding: 0,
+                }}>×</button>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+                {qr.negocio}
+              </div>
+            </div>
+            <div className="modal-body" style={{ padding: 18, textAlign: "center" }}>
+              <div style={{
+                background: "#fff",
+                padding: 12,
+                borderRadius: 8,
+                display: "inline-block",
+                marginBottom: 12,
+              }}>
+                <img
+                  src={`data:image/png;base64,${qr.qr_png_b64}`}
+                  alt="QR de emparejamiento"
+                  style={{ width: 280, height: 280, display: "block" }}
+                />
+              </div>
+              <div style={{
+                background: "var(--color-surface-alt)",
+                padding: "10px 12px",
+                borderRadius: 6,
+                fontSize: 12,
+                textAlign: "left",
+                lineHeight: 1.6,
+              }}>
+                <div><strong>Servidor:</strong> <code>http://{qr.ip}:{qr.port}</code></div>
+                <div><strong>Negocio:</strong> {qr.negocio}</div>
+                <div><strong>Restaurante:</strong> {qr.tiene_restaurante ? "✓ activo" : "—"}</div>
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  📱 En la app: tocá <strong>"Buscar sucursal"</strong> → <strong>"Escanear QR"</strong>.
+                  La app guarda los datos y luego te pedirá el PIN.
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer" style={{
+              borderTop: "1px solid var(--color-border)",
+              padding: "12px 18px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}>
+              <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                ℹ️ El QR no contiene credenciales — es seguro compartirlo.
+              </span>
+              <button onClick={() => setMostrarQr(false)} className="btn btn-outline">
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

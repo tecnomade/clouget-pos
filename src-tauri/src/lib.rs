@@ -87,14 +87,54 @@ pub fn run() {
         )
     };
 
-    // Iniciar servidor HTTP si está en modo servidor con token configurado
-    if modo_red == "servidor" && !servidor_token.is_empty() {
+    // v2.4.4 — Iniciar servidor HTTP si:
+    //   (a) modo Multi-POS server con token configurado, O
+    //   (b) la licencia tiene el módulo `app_movil`
+    // El server hospeda ambas APIs (`/api/v1/invoke` para Multi-POS y
+    // `/api/v1/app/*` para la app móvil), pero `/invoke` solo se monta si
+    // `servidor_token` tiene valor (sino sería un endpoint sin auth).
+    let modulos_actuales: String = {
+        let conn = database.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT value FROM config WHERE key = 'licencia_modulos'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default()
+    };
+    let licencia_tiene_app_movil = modulos_actuales.contains("app_movil");
+    let server_modo_multipos = modo_red == "servidor" && !servidor_token.is_empty();
+    let arrancar_server = server_modo_multipos || licencia_tiene_app_movil;
+
+    if arrancar_server {
         server::start_server(
             database.clone(),
             sesion_state.clone(),
             servidor_puerto,
-            servidor_token,
+            servidor_token.clone(),
         );
+
+        // mDNS broadcast: solo si tiene app_movil (no tiene sentido para
+        // Multi-POS porque el cliente Tauri ya conoce la IP por config)
+        if licencia_tiene_app_movil {
+            let nombre_negocio: String = {
+                let conn = database.conn.lock().unwrap();
+                conn.query_row(
+                    "SELECT value FROM config WHERE key = 'nombre_negocio'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "Clouget POS".to_string())
+            };
+            let tiene_restaurante = modulos_actuales.contains("restaurante");
+            app_movil::discovery::start_broadcast(
+                &nombre_negocio,
+                servidor_puerto,
+                &nombre_negocio,
+                tiene_restaurante,
+                true,
+            );
+        }
     }
 
     // Inicializar BD offline en modo cliente (para cache y cola)
@@ -468,6 +508,8 @@ pub fn run() {
             app_movil::commands::app_listar_dispositivos,
             app_movil::commands::app_revocar_dispositivo,
             app_movil::commands::app_eliminar_dispositivo,
+            // v2.4.4 — Sprint 3c: QR de emparejamiento
+            app_movil::commands::app_generar_qr_emparejamiento,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

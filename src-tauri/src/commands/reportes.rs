@@ -1486,7 +1486,7 @@ pub fn reporte_ventas_filtrable(
 
     let sql = format!(
         "SELECT v.id, v.numero, v.fecha, v.cliente_id,
-                COALESCE(c.razon_social, c.nombres, '') as cliente_nombre,
+                COALESCE(c.nombre, '') as cliente_nombre,
                 COALESCE(c.identificacion, '') as cliente_identificacion,
                 COALESCE(v.usuario, '(sin usuario)') as cajero,
                 v.forma_pago, v.tipo_documento, v.subtotal_sin_iva, v.subtotal_con_iva,

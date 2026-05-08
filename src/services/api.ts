@@ -181,6 +181,19 @@ export const appRevocarDispositivo = (id: number) =>
 export const appEliminarDispositivo = (id: number) =>
   smartInvoke<void>("app_eliminar_dispositivo", { id });
 
+// v2.4.4 — Sprint 3c: QR de emparejamiento
+export interface QrEmparejamiento {
+  qr_png_b64: string;
+  payload: string;
+  ip: string;
+  port: number;
+  negocio: string;
+  tiene_restaurante: boolean;
+}
+
+export const appGenerarQrEmparejamiento = () =>
+  smartInvoke<QrEmparejamiento>("app_generar_qr_emparejamiento");
+
 export async function eliminarProducto(id: number): Promise<void> {
   return smartInvoke("eliminar_producto", { id });
 }

@@ -49,6 +49,9 @@ uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
 aes-gcm = "0.10"
 tauri-plugin-single-instance = "2.4.0"
+# v2.4.4 — Sprint 3c: discovery automático de servidor + obtener IP local
+mdns-sd = "0.11"
+local-ip-address = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

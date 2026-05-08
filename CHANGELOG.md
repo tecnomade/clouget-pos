@@ -6,6 +6,65 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.4 — 2026-05-08 📷 STABLE
+**Sprint 3c / 7 — mDNS broadcast + QR de emparejamiento + hotfix reporte ventas.**
+
+Cierra la **Fase 3 del backend HTTP**. Con esta release, la app móvil (Sprint 5) puede encontrar el servidor de 3 maneras:
+
+1. 🔍 **Auto-descubrimiento mDNS**: la app escanea la red y aparecen los POS de Clouget instantáneamente (servicio `_clouget-pos._tcp.local.`)
+2. 📷 **Código QR**: el admin genera un QR desde Configuración → 📱 App Móvil, la app lo escanea con la cámara y queda configurada en 1 segundo
+3. ⌨️ **Configuración manual** (alternativa): IP + puerto a mano
+
+### 🆕 Sprint 3c
+
+**Discovery mDNS automático** (`app_movil/discovery.rs`):
+- El servidor se anuncia como `_clouget-pos._tcp.local.` con propiedades TXT (`negocio`, `version`, `restaurante`, `app_movil`, `api`)
+- Hostname mDNS estable: `clouget-pos-<nombre-negocio>.local.`
+- Se inicia automáticamente al arrancar el server HTTP (solo si la licencia tiene `app_movil`)
+- Si la red no soporta mDNS (multicast bloqueado), no falla — la app cae al QR/manual
+
+**QR de emparejamiento** (`app_generar_qr_emparejamiento`):
+- Botón "📷 Generar código QR" en Configuración → App Móvil
+- Modal muestra el QR (280×280 PNG) + datos visibles: IP, puerto, negocio, módulo restaurante
+- El QR contiene JSON: `{ service, ip, port, negocio, restaurante, version }`
+- **No incluye credenciales** (el PIN se pide después): si alguien fotografía el QR no puede loguearse
+- El QR se puede regenerar las veces que quiera, no expira
+
+**Auto-arranque del servidor HTTP**:
+- Antes: el server solo arrancaba si `modo_red == "servidor"` (Multi-POS) y había token configurado
+- Ahora: arranca también si la licencia tiene `app_movil` (sin token Multi-POS)
+- En este caso `/api/v1/invoke` (Multi-POS) NO se monta — solo `/api/v1/app/*` (app móvil)
+- Backward-compatible al 100% con instalaciones Multi-POS existentes
+
+### 🛠 Hotfix incluido
+
+**Reporte "Ventas detalladas" fallaba con `no such column: c.razon_social`**
+
+La query usaba `COALESCE(c.razon_social, c.nombres, '')` pero la tabla `clientes` real solo tiene la columna `nombre` (singular). Era código heredado de una refactorización en clientes que nunca se aplicó.
+
+Fix: `COALESCE(c.nombre, '') as cliente_nombre`. Sin esto el reporte fallaba al hacer click en "Aplicar" (apareció en producción).
+
+### 🔜 Próximas fases
+
+- **Sprint 4**: Admin panel — precios editables para los 4 combos de licencia
+- **Sprint 5**: `clouget-pos-app` v0.1 (repo nuevo, Expo/React Native) — login PIN + mesas + pedido
+- **Sprint 6**: App v0.2 — cocina responsive + push notifications + dividir/unir mesas
+- **Sprint 7**: App v0.3 — vendedor de piso + inventarista + dashboard remoto
+
+### 📦 Archivos tocados
+
+- `src-tauri/Cargo.toml` — deps `mdns-sd = "0.11"`, `local-ip-address = "0.6"`
+- `src-tauri/src/app_movil/discovery.rs` — mDNS broadcaster + helper IP local (NUEVO)
+- `src-tauri/src/app_movil/commands.rs` — `app_generar_qr_emparejamiento` con `QrCode::to_colors()` + bitmap manual
+- `src-tauri/src/app_movil/mod.rs` — declara submódulo discovery
+- `src-tauri/src/lib.rs` — server arranca también con `app_movil`, lanza mDNS broadcast
+- `src-tauri/src/server/mod.rs` — `/api/v1/invoke` solo se monta con token configurado
+- `src-tauri/src/commands/reportes.rs` — fix columna `c.nombre` (era `razon_social/nombres`)
+- `src/services/api.ts` — wrapper `appGenerarQrEmparejamiento` + tipo `QrEmparejamiento`
+- `src/pages/Configuracion.tsx` — botón "📷 Generar código QR" + modal con la imagen
+
+---
+
 ## v2.4.3 — 2026-05-07 🍽 STABLE
 **Sprint 3b / 7 — Endpoints HTTP completos: pedidos, cocina, cobrar, dividir, unir mesas, vendedor piso.**
 

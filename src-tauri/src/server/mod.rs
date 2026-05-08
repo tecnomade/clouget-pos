@@ -33,13 +33,20 @@ pub fn start_server(db: Database, sesion: SesionState, port: u16, token: String)
                 .allow_methods(Any)
                 .allow_headers(Any);
 
-            let app = Router::new()
-                .route("/api/v1/invoke", post(handle_invoke))
+            // v2.4.4: solo monta /api/v1/invoke (Multi-POS) si hay token. Si
+            // no hay token, expondría comandos sin auth — riesgo de seguridad.
+            let token_multipos_activo = !state.token.is_empty();
+
+            let mut app = Router::new()
                 .route("/api/v1/ping", axum::routing::get(handle_ping))
                 // v2.4.2 — Sprint 3a: rutas de la app móvil mergeadas
-                .merge(crate::app_movil::http::rutas())
-                .layer(cors)
-                .with_state(Arc::new(state));
+                .merge(crate::app_movil::http::rutas());
+
+            if token_multipos_activo {
+                app = app.route("/api/v1/invoke", post(handle_invoke));
+            }
+
+            let app = app.layer(cors).with_state(Arc::new(state));
 
             let addr = format!("0.0.0.0:{}", port);
             eprintln!("[Clouget Server] Iniciando servidor en {}", addr);
