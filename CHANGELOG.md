@@ -6,6 +6,42 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.6 — 2026-05-08 📲 STABLE
+**Endpoint `/auth/usuarios-disponibles` para selector de login en la app móvil.**
+
+Esta release acompaña el lanzamiento de **`clouget-pos-app` v0.1** (repo aparte) — app Expo/React Native que ya consume todos los endpoints HTTP que veníamos construyendo (Sprints 3a/3b/3c).
+
+### 🆕 Nuevo endpoint
+
+`GET /api/v1/app/auth/usuarios-disponibles` (sin auth) — devuelve la lista de usuarios activos con permisos de app, para que la pantalla de login muestre **avatares con nombre** (UX mucho mejor que escribir un ID a ciegas).
+
+Filtra a:
+- Usuarios `ADMIN`, o
+- Usuarios con al menos uno de: `atiende_mesas`, `ve_cocina`, `vende_piso`, `inventaria`, `dueno_dashboard`, `cobra_caja`
+
+Solo expone `{ id, nombre, rol, es_admin }` — NO devuelve permisos (la app los recibe al hacer login con PIN).
+
+### 📲 App móvil v0.1 publicada
+
+Repo: `C:\proyectos\clouget-pos-app` (Expo + React Native + TypeScript). Soporta:
+
+- ✅ **Buscar sucursal**: escanear QR o IP/puerto manual con ping de validación
+- ✅ **Login PIN**: lista usuarios disponibles con avatares iniciales coloreados, teclado numérico de 6 dígitos custom
+- ✅ **Tabs adaptables** según permisos: Inicio, Mesas (atiende_mesas), Cocina (ve_cocina), Vender (placeholder), Más
+- ✅ **Mesas**: grid colorido con filtro por zona, estados (libre/ocupada/cuenta/unida), modal abrir pedido
+- ✅ **Pedido detalle**: items agrupados, agregar via selector con búsqueda en vivo, enviar cocina, pedir cuenta, cobrar (modal forma de pago: efectivo/transfer/crédito), cancelar
+- ✅ **Cocina**: comandas agrupadas por mesa con timer, marcar EN_PREPARACION → LISTO → ENTREGADO
+
+Próximas versiones:
+- v0.2 (Sprint 6): cocina responsive tablet, push notifications, dividir cuenta + unir mesas
+- v0.3 (Sprint 7): vendedor de piso completo, inventarista, dashboard remoto
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/app_movil/http.rs` — handler `auth_usuarios_disponibles` + ruta registrada
+
+---
+
 ## v2.4.5 — 2026-05-08 🍳 STABLE
 **Hotfix: Comanda de cocina ahora hereda configuración de impresión (PDF si virtual, ESC/POS si térmica).**
 

@@ -240,6 +240,66 @@ pub async fn ping(
     }))
 }
 
+/// `GET /api/v1/app/auth/usuarios-disponibles` — lista usuarios activos
+/// (id + nombre) para mostrar en el selector de login. SIN AUTH (es la
+/// puerta de entrada — el user no tiene token aún). NO devuelve hashes ni
+/// permisos — solo lo mínimo para presentar avatares y nombres.
+///
+/// Filtra a usuarios con al menos un permiso de app (atiende_mesas, ve_cocina,
+/// vende_piso, inventaria, dueno_dashboard, cobra_caja) o ADMIN. Así no
+/// aparecen usuarios "solo desktop" que no podrían usar la app.
+pub async fn auth_usuarios_disponibles(
+    AxumState(state): AxumState<Arc<ServerState>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    if let Err(msg) = super::requiere_modulo_app_movil(&state.db) {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new(msg))));
+    }
+    let conn = state.db.conn.lock().map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string())))
+    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, nombre, rol, COALESCE(permisos, '{}') FROM usuarios WHERE activo = 1 ORDER BY nombre",
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string()))))?;
+
+    let permisos_app = ["atiende_mesas", "ve_cocina", "vende_piso", "inventaria", "dueno_dashboard", "cobra_caja"];
+    let usuarios: Vec<serde_json::Value> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string()))))?
+        .filter_map(|res| res.ok())
+        .filter_map(|(id, nombre, rol, permisos_json)| {
+            // Filtrar: solo ADMIN o usuarios con al menos un permiso de app
+            let es_admin = rol == "ADMIN";
+            let permisos: Vec<String> = serde_json::from_str::<serde_json::Value>(&permisos_json)
+                .ok()
+                .and_then(|v| {
+                    v.as_object().map(|map| {
+                        map.iter()
+                            .filter(|(_, v)| v.as_bool().unwrap_or(false))
+                            .map(|(k, _)| k.clone())
+                            .collect()
+                    })
+                })
+                .unwrap_or_default();
+            let tiene_app = es_admin || permisos.iter().any(|p| permisos_app.contains(&p.as_str()));
+            if !tiene_app {
+                return None;
+            }
+            Some(serde_json::json!({ "id": id, "nombre": nombre, "rol": rol, "es_admin": es_admin }))
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({ "ok": true, "usuarios": usuarios })))
+}
+
 /// `POST /api/v1/app/auth/pin` — login con PIN, devuelve token.
 pub async fn auth_pin(
     AxumState(state): AxumState<Arc<ServerState>>,
@@ -1399,6 +1459,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/ping", get(ping))
         .route("/api/v1/app/auth/pin", post(auth_pin))
         .route("/api/v1/app/auth/logout", post(auth_logout))
+        .route("/api/v1/app/auth/usuarios-disponibles", get(auth_usuarios_disponibles))
         // ── Datos del usuario / catálogo ────────────────────────────────
         .route("/api/v1/app/me", get(me))
         .route("/api/v1/app/productos", get(listar_productos))
