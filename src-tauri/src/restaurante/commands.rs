@@ -866,75 +866,87 @@ pub fn rest_imprimir_comanda_cocina(
         .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let impresora_principal = config.get("impresora")
         .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-    let impresora_cocina_efectiva = impresora_cocina.clone().or_else(|| impresora_principal.clone());
+    let impresora_cocina_efectiva = impresora_cocina.clone().or_else(|| impresora_principal.clone())
+        .unwrap_or_default(); // vacío = caerá a PDF
 
     // Impresora separada para barra (opcional, si config `comanda_modo_separado=1`)
     let modo_separado = config.get("comanda_modo_separado").map(|s| s.as_str()) == Some("1");
     let impresora_barra = config.get("impresora_barra")
         .map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-        .or_else(|| impresora_cocina_efectiva.clone()); // fallback a cocina si no hay separada
-
-    // Si no hay NINGUNA impresora configurada, error claro
-    if impresora_cocina_efectiva.is_none() {
-        return Err("No hay impresora configurada (ni 'impresora_cocina' ni 'impresora' principal). Vaya a Configuración.".to_string());
-    }
+        .unwrap_or_else(|| impresora_cocina_efectiva.clone()); // fallback a cocina si no hay separada
 
     let mut mensajes: Vec<String> = Vec::new();
 
-    if modo_separado {
-        // 2 tickets separados: COCINA + BARRA
-        let ticket_cocina = super::printing::generar_comanda_cocina(
-            pedido_id,
-            &detalle.mesa_nombre,
-            detalle.zona_nombre.as_deref(),
-            detalle.pedido.mesero_nombre.as_deref(),
-            &items_objetivo,
-            super::printing::DestinoComanda::Cocina,
-            &config,
-        );
-        let ticket_barra = super::printing::generar_comanda_cocina(
-            pedido_id,
-            &detalle.mesa_nombre,
-            detalle.zona_nombre.as_deref(),
-            detalle.pedido.mesero_nombre.as_deref(),
-            &items_objetivo,
-            super::printing::DestinoComanda::Barra,
-            &config,
-        );
-
-        if let Some(t) = ticket_cocina {
-            if let Some(ref imp) = impresora_cocina_efectiva {
-                crate::printing::imprimir_raw_windows(imp, &t)?;
-                mensajes.push("🍳 Cocina impresa".to_string());
+    // v2.4.5 — Helper: decide ESC/POS vs PDF según si la impresora es térmica
+    // o virtual/vacía. Sigue el mismo patrón que `rest_imprimir_pre_cuenta`:
+    //   - Térmica real → bytes ESC/POS directos
+    //   - Virtual (Microsoft Print to PDF, OneNote, XPS, Fax) o vacía → PDF
+    //     nativo legible y se abre con visor del sistema
+    let imprimir_o_pdf = |impresora: &str, destino: super::printing::DestinoComanda, etiqueta: &str| -> Result<Option<String>, String> {
+        if impresora_es_virtual(impresora) {
+            // Generar PDF
+            match super::printing::generar_comanda_cocina_pdf(
+                pedido_id, &detalle.mesa_nombre, detalle.zona_nombre.as_deref(),
+                detalle.pedido.mesero_nombre.as_deref(), &items_objetivo, destino, &config,
+            )? {
+                None => Ok(None), // sin items para este destino → silencio
+                Some(pdf_bytes) => {
+                    let temp_dir = std::env::temp_dir();
+                    let filename = format!(
+                        "Comanda-{}-Mesa{}-Ped{}.pdf",
+                        etiqueta,
+                        detalle.mesa_nombre.replace(['/', '\\', ':', ' '], "_"),
+                        pedido_id
+                    );
+                    let pdf_path = temp_dir.join(&filename);
+                    std::fs::write(&pdf_path, &pdf_bytes)
+                        .map_err(|e| format!("Error guardando comanda PDF: {}", e))?;
+                    #[cfg(target_os = "windows")]
+                    {
+                        crate::utils::silent_command("cmd")
+                            .args(["/C", "start", "", &pdf_path.to_string_lossy()])
+                            .spawn()
+                            .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        std::process::Command::new("xdg-open")
+                            .arg(&pdf_path.to_string_lossy().to_string())
+                            .spawn()
+                            .map_err(|e| format!("Error abriendo PDF: {}", e))?;
+                    }
+                    Ok(Some(format!("📄 {} PDF abierto", etiqueta)))
+                }
+            }
+        } else {
+            // Impresora térmica real → ESC/POS
+            match super::printing::generar_comanda_cocina(
+                pedido_id, &detalle.mesa_nombre, detalle.zona_nombre.as_deref(),
+                detalle.pedido.mesero_nombre.as_deref(), &items_objetivo, destino, &config,
+            ) {
+                None => Ok(None),
+                Some(t) => {
+                    crate::printing::imprimir_raw_windows(impresora, &t)?;
+                    Ok(Some(format!("{} impresa", etiqueta)))
+                }
             }
         }
-        if let Some(t) = ticket_barra {
-            if let Some(ref imp) = impresora_barra {
-                crate::printing::imprimir_raw_windows(imp, &t)?;
-                mensajes.push("🍷 Barra impresa".to_string());
-            }
+    };
+
+    if modo_separado {
+        if let Some(m) = imprimir_o_pdf(&impresora_cocina_efectiva, super::printing::DestinoComanda::Cocina, "🍳 Cocina")? {
+            mensajes.push(m);
+        }
+        if let Some(m) = imprimir_o_pdf(&impresora_barra, super::printing::DestinoComanda::Barra, "🍷 Barra")? {
+            mensajes.push(m);
         }
     } else {
-        // 1 ticket combinado (default)
-        let ticket = super::printing::generar_comanda_cocina(
-            pedido_id,
-            &detalle.mesa_nombre,
-            detalle.zona_nombre.as_deref(),
-            detalle.pedido.mesero_nombre.as_deref(),
-            &items_objetivo,
-            super::printing::DestinoComanda::Ambos,
-            &config,
-        );
-        if let Some(t) = ticket {
-            if let Some(ref imp) = impresora_cocina_efectiva {
-                crate::printing::imprimir_raw_windows(imp, &t)?;
-                mensajes.push("🍽 Comanda impresa".to_string());
-            }
+        if let Some(m) = imprimir_o_pdf(&impresora_cocina_efectiva, super::printing::DestinoComanda::Ambos, "🍽 Comanda")? {
+            mensajes.push(m);
         }
     }
 
     if mensajes.is_empty() {
-        // No había items COCINA/BARRA (todos eran DIRECTO) — no es error, solo informativo
         Ok("Sin items para cocina (todos despacho directo)".to_string())
     } else {
         Ok(mensajes.join(" + "))

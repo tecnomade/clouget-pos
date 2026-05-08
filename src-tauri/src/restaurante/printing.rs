@@ -481,6 +481,140 @@ pub enum DestinoComanda {
     Ambos,
 }
 
+/// v2.4.5 — Genera la comanda de cocina como PDF (formato 80mm) usando genpdf.
+/// Equivalente PDF de `generar_comanda_cocina` (que genera ESC/POS).
+/// Se usa cuando la "impresora de cocina" configurada es virtual
+/// (Microsoft Print to PDF, OneNote, etc.) o no hay impresora.
+///
+/// Retorna `Ok(None)` si el filtro deja la lista vacía (todos DIRECTO o
+/// destino opuesto) — caller debe omitir la generación silenciosamente.
+pub fn generar_comanda_cocina_pdf(
+    pedido_id: i64,
+    mesa_nombre: &str,
+    zona_nombre: Option<&str>,
+    mesero: Option<&str>,
+    items: &[PedidoItem],
+    filtro: DestinoComanda,
+    config: &HashMap<String, String>,
+) -> Result<Option<Vec<u8>>, String> {
+    let items_filtrados: Vec<&PedidoItem> = items.iter().filter(|i| match filtro {
+        DestinoComanda::Cocina => i.destino_preparacion == "COCINA",
+        DestinoComanda::Barra  => i.destino_preparacion == "BARRA",
+        DestinoComanda::Ambos  => i.destino_preparacion != "DIRECTO",
+    }).collect();
+
+    if items_filtrados.is_empty() {
+        return Ok(None);
+    }
+
+    let fonts_dir = crate::utils::obtener_ruta_fuentes();
+    let font_family = genpdf::fonts::from_files(
+        fonts_dir.to_str().unwrap_or("fonts"),
+        "LiberationSans",
+        None,
+    )
+    .map_err(|e| format!("Error cargando fuentes: {}", e))?;
+
+    let mut doc = Document::new(font_family);
+    let titulo_doc = format!("Comanda Mesa {} (Ped #{})", mesa_nombre, pedido_id);
+    doc.set_title(titulo_doc);
+    // 80mm width, 250mm alto generoso
+    doc.set_paper_size(genpdf::Size::new(80, 250));
+
+    let mut decorator = SimplePageDecorator::new();
+    decorator.set_margins(Margins::trbl(3, 3, 3, 3));
+    doc.set_page_decorator(decorator);
+
+    let s_titulo_destino = Style::new().with_font_size(14).bold();
+    let s_mesa_grande   = Style::new().with_font_size(18).bold();
+    let s_normal = Style::new().with_font_size(8);
+    let s_bold   = Style::new().with_font_size(8).bold();
+    let s_item   = Style::new().with_font_size(11).bold();
+    let s_obs    = Style::new().with_font_size(9).bold();
+    let s_small  = Style::new().with_font_size(7);
+    let s_barra  = Style::new().with_font_size(8).bold();
+
+    // ── Título según destino ──
+    let titulo = match filtro {
+        DestinoComanda::Cocina => "COCINA",
+        DestinoComanda::Barra  => "BARRA",
+        DestinoComanda::Ambos  => "COMANDA",
+    };
+    doc.push(p_aligned_pdf(titulo, s_titulo_destino, Alignment::Center));
+    doc.push(p_aligned_pdf("================", s_normal, Alignment::Center));
+
+    // ── Mesa cabecera GRANDE para lectura desde lejos ──
+    let mesa_full = if let Some(z) = zona_nombre {
+        format!("MESA: {} ({})", mesa_nombre, z)
+    } else {
+        format!("MESA: {}", mesa_nombre)
+    };
+    doc.push(p_aligned_pdf(&mesa_full, s_mesa_grande, Alignment::Center));
+    doc.push(p_aligned_pdf("================", s_normal, Alignment::Center));
+
+    // ── Datos pedido ──
+    if let Some(m) = mesero {
+        if !m.is_empty() {
+            doc.push(p_aligned_pdf(&format!("Mesero: {}", m), s_normal, Alignment::Left));
+        }
+    }
+    let hora = chrono::Local::now().format("%H:%M:%S").to_string();
+    doc.push(p_aligned_pdf(
+        &format!("Hora: {} · Pedido #{}", hora, pedido_id),
+        s_normal,
+        Alignment::Left,
+    ));
+    if let Some(neg) = config.get("nombre_negocio") {
+        if !neg.is_empty() {
+            doc.push(p_aligned_pdf(&format!("({})", neg), s_small, Alignment::Left));
+        }
+    }
+    doc.push(p_aligned_pdf("----------------", s_normal, Alignment::Center));
+
+    // ── Items: cantidad x nombre + obs/info_adicional + tag [BARRA] si Ambos ──
+    for it in &items_filtrados {
+        let nombre = it.producto_nombre.as_deref().unwrap_or("(sin nombre)");
+        let cant = if it.cantidad.fract() == 0.0 {
+            format!("{}", it.cantidad as i64)
+        } else {
+            format!("{:.2}", it.cantidad)
+        };
+
+        // En modo Ambos, marcar items de BARRA con tag visible
+        let tag_barra = if matches!(filtro, DestinoComanda::Ambos) && it.destino_preparacion == "BARRA" {
+            doc.push(p_aligned_pdf("[BARRA]", s_barra, Alignment::Left));
+            true
+        } else {
+            false
+        };
+        let _ = tag_barra; // placeholder (visual ya añadido)
+
+        doc.push(p_aligned_pdf(
+            &format!("{}x  {}", cant, nombre),
+            s_item,
+            Alignment::Left,
+        ));
+
+        if let Some(info) = it.info_adicional.as_deref() {
+            if !info.is_empty() {
+                doc.push(p_aligned_pdf(&format!("  -> {}", info), s_obs, Alignment::Left));
+            }
+        }
+        doc.push(Break::new(0.3));
+    }
+
+    doc.push(p_aligned_pdf("================", s_normal, Alignment::Center));
+    doc.push(p_aligned_pdf(
+        &format!("Total items: {}", items_filtrados.len()),
+        s_bold,
+        Alignment::Center,
+    ));
+
+    let mut buf: Vec<u8> = Vec::new();
+    doc.render(&mut buf).map_err(|e| format!("Error generando PDF comanda: {}", e))?;
+    Ok(Some(buf))
+}
+
 /// Genera el ticket ESC/POS de comanda de cocina.
 /// Recibe los items YA enviados a cocina (después de UPDATE enviado_cocina=1).
 ///

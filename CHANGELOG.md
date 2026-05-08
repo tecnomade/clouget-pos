@@ -6,6 +6,33 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.5 — 2026-05-08 🍳 STABLE
+**Hotfix: Comanda de cocina ahora hereda configuración de impresión (PDF si virtual, ESC/POS si térmica).**
+
+### 🛠 Bug fix
+
+**Síntoma**: La comanda de cocina (al enviar pedido a cocina o al re-imprimir) siempre intentaba mandar bytes ESC/POS directos a la impresora `impresora_cocina` o `impresora` configurada. Si esa impresora era una **virtual** (Microsoft Print to PDF, OneNote, XPS, Fax) los bytes ESC/POS salían como basura ilegible. Si NO había impresora configurada, daba error en lugar de generar PDF.
+
+**Causa**: el handler `rest_imprimir_comanda_cocina` no usaba el helper `impresora_es_virtual()` que la pre-cuenta sí usa. Faltaba paridad de comportamiento entre los 2 tickets de restaurante.
+
+**Fix**: ahora la comanda sigue **exactamente** el mismo flujo que la pre-cuenta:
+- 🖨 **Impresora térmica real** (POS-58, Epson TM, etc.) → bytes ESC/POS directos (formato 80mm con doble alto y emojis)
+- 📄 **Impresora virtual** (Microsoft Print to PDF, OneNote, XPS, Fax) → genera PDF nativo legible y lo abre con el visor del sistema
+- 📄 **Sin impresora configurada** → genera PDF y lo abre (antes: error)
+
+### Implementación
+
+- Nueva función `generar_comanda_cocina_pdf()` en `restaurante/printing.rs` (180 líneas) — equivalente PDF de `generar_comanda_cocina()` (que genera ESC/POS). Usa el mismo `genpdf` que la pre-cuenta, formato 80mm, fonts mesa GRANDE para leer desde lejos.
+- `rest_imprimir_comanda_cocina` refactorizado: helper closure interno `imprimir_o_pdf` que decide ESC/POS vs PDF según la impresora. Aplica a los 3 caminos (modo separado cocina, modo separado barra, modo combinado ambos).
+- Nombres de archivo PDF generado: `Comanda-🍳 Cocina-Mesa{X}-Ped{ID}.pdf` / `Comanda-🍷 Barra-...` / `Comanda-🍽 Comanda-...`
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/restaurante/printing.rs` — nueva `generar_comanda_cocina_pdf` (~180 líneas)
+- `src-tauri/src/restaurante/commands.rs` — refactor `rest_imprimir_comanda_cocina` con helper `imprimir_o_pdf`
+
+---
+
 ## v2.4.4 — 2026-05-08 📷 STABLE
 **Sprint 3c / 7 — mDNS broadcast + QR de emparejamiento + hotfix reporte ventas.**
 
