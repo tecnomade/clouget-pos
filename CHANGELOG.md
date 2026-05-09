@@ -6,6 +6,69 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.10 — 2026-05-09 🌲 STABLE
+**ST-2.5 / 5 — Cascada tipo→marca→modelo en form de orden con + agregar inline.**
+
+Completa la integración del catálogo en el flujo de creación/edición de órdenes. Sin necesidad de salir del form para configurar el catálogo.
+
+### 🆕 Lo que entrega
+
+#### Form de orden con selectores cascada inteligentes
+
+3 nuevos campos que reemplazan los inputs de texto libre:
+
+- **Tipo de equipo** — autocomplete del catálogo (`st_tipos_equipo`). Si hay tipos, los muestra con su emoji (`🚗 Vehículo`, `💻 Computadora`)
+- **Marca** — autocomplete filtrado por el tipo seleccionado. Vacío si no se eligió tipo
+- **Modelo** — autocomplete filtrado por la marca. Muestra años si están definidos: `Hilux (2018–2022)`
+
+Cada uno con un botón **"+ Agregar al catálogo"** que aparece automáticamente cuando lo que escribiste no existe — crea la entrada inline y refresca el dropdown sin abrir Configuración.
+
+#### Texto libre sigue funcionando
+
+Si el catálogo está vacío o el user prefiere escribir libre, todo sigue funcionando como antes. Los campos `equipo_marca`, `equipo_modelo`, `tipo_equipo` se siguen guardando como TEXT. Cuando se elige del catálogo, además se guarda el ID (`tipo_equipo_id`, `marca_id`, `modelo_id`) — eso permite filtros del catálogo en el historial.
+
+#### Validación dinámica de campos requeridos
+
+Los campos **Placa**, **Kilometraje**, **Próximo recomendado**, **Serie** ahora se muestran/marcan como requeridos según los flags del tipo seleccionado en el catálogo:
+
+```
+Vehículo  → requiere_placa = true   → mostrar placa con *
+Vehículo  → requiere_kilometraje = true → mostrar km
+Computadora → requiere_serie = true → marcar serie con *
+```
+
+Antes era hardcoded a `tipo_equipo === "AUTOMOTRIZ"`. Ahora el admin define las reglas desde Configuración.
+
+#### Indicador visual
+
+El campo muestra un badge `✓ catálogo` verde cuando lo que tenés seleccionado es del catálogo (vs texto libre). Útil para auditoría rápida.
+
+### 🛠 Backend
+
+- `models/orden_servicio.rs` — 3 campos `Option<i64>` nuevos: `tipo_equipo_id`, `marca_id`, `modelo_id`
+- `commands/servicio_tecnico.rs` — INSERT y UPDATE actualizados para guardar los 3 IDs
+- 3 funciones de lectura (obtener/listar/buscar) actualizadas para devolverlos
+
+### 🎨 Frontend
+
+- `components/ComboCatalogoEquipo.tsx` (NUEVO, ~140 líneas) — combo input genérico con dropdown de sugerencias + botón "+" inline
+- `services/api.ts` — tipo `OrdenServicio` con los 3 nuevos campos
+- `pages/ServicioTecnicoPage.tsx`:
+  - Reemplaza inputs marca/modelo por `<ComboCatalogoEquipo>`
+  - Carga `stTipos`, `stMarcas`, `stModelos` en cascada
+  - Bloque condicional placa/km basado en flags del tipo (no hardcoded)
+  - Botones legacy de tipo solo se muestran como fallback si el catálogo está vacío
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/models/orden_servicio.rs` — 3 campos opcionales
+- `src-tauri/src/commands/servicio_tecnico.rs` — INSERT/UPDATE/SELECT actualizados
+- `src/services/api.ts` — tipo extendido
+- `src/components/ComboCatalogoEquipo.tsx` (NUEVO)
+- `src/pages/ServicioTecnicoPage.tsx` — integración cascada + flags dinámicos
+
+---
+
 ## v2.4.9 — 2026-05-09 🌳 STABLE
 **ST-2 / 5 — Servicio Técnico: catálogo jerárquico equipos→marcas→modelos + historial filtrable.**
 

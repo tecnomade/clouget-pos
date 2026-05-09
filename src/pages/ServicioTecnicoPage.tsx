@@ -6,12 +6,16 @@ import {
   agregarImagenOrden, listarImagenesOrden, eliminarImagenOrden,
   cobrarOrdenServicio, imprimirOrdenServicioPdf,
   buscarClientes, listarUsuarios, buscarProductos, obtenerConfig,
+  // v2.4.10 ST-2.5: catálogo
+  stListarTiposEquipo, stListarMarcas, stListarModelos,
+  stCrearTipoEquipo, stCrearMarca, stCrearModelo,
 } from "../services/api";
-import type { OrdenServicio } from "../services/api";
+import type { OrdenServicio, StTipoEquipo, StMarca, StModelo } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import ModalConfigServicioTecnico from "../components/ModalConfigServicioTecnico";
 import ModalHistorialServicioTecnico from "../components/ModalHistorialServicioTecnico";
+import ComboCatalogoEquipo from "../components/ComboCatalogoEquipo";
 
 const ESTADOS = ["RECIBIDO", "DIAGNOSTICANDO", "EN_REPARACION", "ESPERANDO_REPUESTOS", "LISTO", "ENTREGADO"];
 const ESTADOS_COLORS: Record<string, string> = {
@@ -99,6 +103,10 @@ export default function ServicioTecnicoPage() {
   // v2.4.9 — ST-2: modales de configuración + historial
   const [mostrarConfig, setMostrarConfig] = useState(false);
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
+  // v2.4.10 — ST-2.5: catálogo cargado dinámicamente
+  const [stTipos, setStTipos] = useState<StTipoEquipo[]>([]);
+  const [stMarcas, setStMarcas] = useState<StMarca[]>([]);
+  const [stModelos, setStModelos] = useState<StModelo[]>([]);
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -132,7 +140,30 @@ export default function ServicioTecnicoPage() {
       const t = (cfg.tipo_taller || "MIXTO").toUpperCase();
       setTipoTaller(TALLER_LABELS[t] ? t : "MIXTO");
     }).catch(() => {});
+    // v2.4.10 ST-2.5: cargar catálogo de tipos al montar
+    stListarTiposEquipo().then(setStTipos).catch(() => {});
   }, []);
+
+  // Cuando cambia tipo_equipo_id en form → cargar marcas
+  useEffect(() => {
+    if (form.tipo_equipo_id) {
+      stListarMarcas(form.tipo_equipo_id).then(setStMarcas).catch(() => setStMarcas([]));
+    } else {
+      setStMarcas([]);
+    }
+  }, [form.tipo_equipo_id]);
+
+  // Cuando cambia marca_id → cargar modelos
+  useEffect(() => {
+    if (form.marca_id) {
+      stListarModelos(form.marca_id).then(setStModelos).catch(() => setStModelos([]));
+    } else {
+      setStModelos([]);
+    }
+  }, [form.marca_id]);
+
+  // Tipo seleccionado del catálogo (para flags requiere_*)
+  const tipoSeleccionado = useMemo(() => stTipos.find(t => t.id === form.tipo_equipo_id), [stTipos, form.tipo_equipo_id]);
 
   const ordenesPorEstado = useMemo(() => {
     const grupos: Record<string, OrdenServicio[]> = {};
@@ -399,8 +430,9 @@ export default function ServicioTecnicoPage() {
                 )}
               </div>
 
-              {/* Tipo de Equipo - solo visible en modo MIXTO */}
-              {tallerEsMixto && (
+              {/* Tipo de Equipo (botones legacy) - solo si NO hay catálogo (fallback)
+                  v2.4.10 ST-2.5: cuando el catálogo tiene tipos, se usa ComboCatalogoEquipo abajo */}
+              {tallerEsMixto && stTipos.length === 0 && (
                 <div style={{ marginBottom: 12 }}>
                   <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de {labels.equipoSingular}</label>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -416,51 +448,126 @@ export default function ServicioTecnicoPage() {
                 </div>
               )}
 
+              {/* v2.4.10 ST-2.5: si hay catálogo, usar selector tipo del catálogo en lugar de botones hardcoded */}
+              {stTipos.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <ComboCatalogoEquipo
+                    label={`Tipo de ${labels.equipoSingular.toLowerCase()}`}
+                    valorTexto={form.tipo_equipo || ""}
+                    valorId={form.tipo_equipo_id || null}
+                    opciones={stTipos.filter(t => t.id != null).map(t => ({ id: t.id!, nombre: `${t.icono} ${t.nombre}` }))}
+                    onChange={(id, nombre) => {
+                      // Limpiamos marca/modelo al cambiar tipo
+                      const tipoFromId = stTipos.find(t => t.id === id);
+                      setForm({
+                        ...form,
+                        tipo_equipo_id: id,
+                        tipo_equipo: tipoFromId?.nombre || nombre.replace(/^[^\s]+\s/, ''), // sin emoji
+                        marca_id: null, equipo_marca: "",
+                        modelo_id: null, equipo_modelo: "",
+                      });
+                    }}
+                    onCrearNuevo={async (nombre) => {
+                      const id = await stCrearTipoEquipo({
+                        nombre, icono: "🔧", requiere_placa: false, requiere_kilometraje: false,
+                        requiere_serie: false, orden: 99, activo: true,
+                      });
+                      const fresh = await stListarTiposEquipo();
+                      setStTipos(fresh);
+                      return id;
+                    }}
+                    placeholder="Elegí o escribí un tipo (Vehículo, Computadora...)"
+                    required
+                  />
+                </div>
+              )}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600 }}>Descripción del {labels.equipoSingular.toLowerCase()} *</label>
                   <input className="input" placeholder={
-                      form.tipo_equipo === "AUTOMOTRIZ" ? "Ej: Toyota Hilux 2020" :
-                      form.tipo_equipo === "ELECTRODOMESTICO" ? "Ej: Refrigeradora LG 250L" :
+                      tipoSeleccionado?.nombre.toLowerCase().includes("veh") ? "Ej: Toyota Hilux 2020" :
+                      tipoSeleccionado?.nombre.toLowerCase().includes("electr") ? "Ej: Refrigeradora LG 250L" :
                       "Ej: Laptop HP Pavilion 15"
                     }
                     value={form.equipo_descripcion}
                     onChange={(e) => setForm({ ...form, equipo_descripcion: e.target.value })} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Marca</label>
-                  <input className="input" value={form.equipo_marca || ""}
-                    onChange={(e) => setForm({ ...form, equipo_marca: e.target.value })} />
+                  {/* v2.4.10 ST-2.5: Marca con autocomplete del catálogo */}
+                  <ComboCatalogoEquipo
+                    label="Marca"
+                    valorTexto={form.equipo_marca || ""}
+                    valorId={form.marca_id || null}
+                    opciones={stMarcas.filter(m => m.id != null).map(m => ({ id: m.id!, nombre: m.nombre }))}
+                    onChange={(id, nombre) => {
+                      setForm({ ...form, marca_id: id, equipo_marca: nombre, modelo_id: null, equipo_modelo: "" });
+                    }}
+                    onCrearNuevo={form.tipo_equipo_id ? async (nombre) => {
+                      const id = await stCrearMarca({ tipo_equipo_id: form.tipo_equipo_id!, nombre, activo: true });
+                      const fresh = await stListarMarcas(form.tipo_equipo_id!);
+                      setStMarcas(fresh);
+                      return id;
+                    } : undefined}
+                    placeholder={form.tipo_equipo_id ? "Elegí o escribí una marca" : "Elegí un tipo primero (o escribí libre)"}
+                  />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Modelo</label>
-                  <input className="input" value={form.equipo_modelo || ""}
-                    onChange={(e) => setForm({ ...form, equipo_modelo: e.target.value })} />
+                  {/* v2.4.10 ST-2.5: Modelo con autocomplete del catálogo */}
+                  <ComboCatalogoEquipo
+                    label="Modelo"
+                    valorTexto={form.equipo_modelo || ""}
+                    valorId={form.modelo_id || null}
+                    opciones={stModelos.filter(m => m.id != null).map(m => ({
+                      id: m.id!,
+                      nombre: m.nombre + (m.anio_desde ? ` (${m.anio_desde}${m.anio_hasta ? `–${m.anio_hasta}` : ''})` : ''),
+                    }))}
+                    onChange={(id, nombre) => {
+                      setForm({ ...form, modelo_id: id, equipo_modelo: nombre.replace(/\s*\(\d{4}.*\)$/, '') });
+                    }}
+                    onCrearNuevo={form.marca_id ? async (nombre) => {
+                      const id = await stCrearModelo({ marca_id: form.marca_id!, nombre, anio_desde: null, anio_hasta: null, activo: true });
+                      const fresh = await stListarModelos(form.marca_id!);
+                      setStModelos(fresh);
+                      return id;
+                    } : undefined}
+                    placeholder={form.marca_id ? "Elegí o escribí un modelo" : "Elegí una marca primero (o escribí libre)"}
+                  />
                 </div>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>{form.tipo_equipo === "AUTOMOTRIZ" ? "Chasis / VIN" : "Serie"}</label>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>
+                    {tipoSeleccionado?.nombre.toLowerCase().includes("veh") ? "Chasis / VIN" : "Serie"}
+                    {tipoSeleccionado?.requiere_serie && <span style={{ color: "var(--color-danger)" }}> *</span>}
+                  </label>
                   <input className="input" value={form.equipo_serie || ""}
                     onChange={(e) => setForm({ ...form, equipo_serie: e.target.value })} />
                 </div>
               </div>
 
-              {form.tipo_equipo === "AUTOMOTRIZ" && (
+              {/* v2.4.10 ST-2.5: campos placa/km solo si el tipo del catálogo los requiere */}
+              {(tipoSeleccionado?.requiere_placa || tipoSeleccionado?.requiere_kilometraje) && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12, padding: 8, background: "rgba(245, 158, 11, 0.1)", borderRadius: 6 }}>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600 }}>Placa</label>
-                    <input className="input" value={form.equipo_placa || ""}
-                      onChange={(e) => setForm({ ...form, equipo_placa: e.target.value.toUpperCase() })} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600 }}>Kilometraje</label>
-                    <input className="input" type="number" value={form.equipo_kilometraje || ""}
-                      onChange={(e) => setForm({ ...form, equipo_kilometraje: parseInt(e.target.value) || undefined })} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 12, fontWeight: 600 }}>Próximo recomendado</label>
-                    <input className="input" type="number" value={form.equipo_kilometraje_proximo || ""}
-                      onChange={(e) => setForm({ ...form, equipo_kilometraje_proximo: parseInt(e.target.value) || undefined })} />
-                  </div>
+                  {tipoSeleccionado.requiere_placa && (
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 600 }}>Placa <span style={{ color: "var(--color-danger)" }}>*</span></label>
+                      <input className="input" value={form.equipo_placa || ""}
+                        onChange={(e) => setForm({ ...form, equipo_placa: e.target.value.toUpperCase() })} />
+                    </div>
+                  )}
+                  {tipoSeleccionado.requiere_kilometraje && (
+                    <>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>Kilometraje</label>
+                        <input className="input" type="number" value={form.equipo_kilometraje || ""}
+                          onChange={(e) => setForm({ ...form, equipo_kilometraje: parseInt(e.target.value) || undefined })} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>Próximo recomendado</label>
+                        <input className="input" type="number" value={form.equipo_kilometraje_proximo || ""}
+                          onChange={(e) => setForm({ ...form, equipo_kilometraje_proximo: parseInt(e.target.value) || undefined })} />
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

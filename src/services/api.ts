@@ -1450,6 +1450,10 @@ export interface OrdenServicio {
   garantia_dias?: number;
   venta_id?: number | null;
   usuario_creador?: string;
+  // v2.4.10 — ST-2.5: FKs opcionales al catálogo jerárquico
+  tipo_equipo_id?: number | null;
+  marca_id?: number | null;
+  modelo_id?: number | null;
 }
 
 export const crearOrdenServicio = (orden: OrdenServicio) =>

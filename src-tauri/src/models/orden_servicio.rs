@@ -36,6 +36,16 @@ pub struct OrdenServicio {
     pub garantia_dias: i64,
     pub venta_id: Option<i64>,
     pub usuario_creador: Option<String>,
+    // v2.4.10 — ST-2.5: FKs opcionales al catálogo jerárquico (st_tipos_equipo,
+    // st_marcas, st_modelos). Si el user elige del catálogo, los IDs se llenan;
+    // si escribe libre, quedan NULL pero los TEXT (equipo_marca, equipo_modelo,
+    // tipo_equipo) se siguen guardando.
+    #[serde(default)]
+    pub tipo_equipo_id: Option<i64>,
+    #[serde(default)]
+    pub marca_id: Option<i64>,
+    #[serde(default)]
+    pub modelo_id: Option<i64>,
 }
 
 fn default_tipo_equipo() -> String { "GENERAL".to_string() }

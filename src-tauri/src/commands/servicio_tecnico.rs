@@ -53,8 +53,9 @@ pub fn crear_orden_servicio(
          tipo_equipo, equipo_descripcion, equipo_marca, equipo_modelo, equipo_serie, equipo_placa,
          equipo_kilometraje, equipo_kilometraje_proximo, accesorios, problema_reportado,
          diagnostico, trabajo_realizado, observaciones, tecnico_id, tecnico_nombre,
-         estado, fecha_promesa, presupuesto, garantia_dias, usuario_creador)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+         estado, fecha_promesa, presupuesto, garantia_dias, usuario_creador,
+         tipo_equipo_id, marca_id, modelo_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         rusqlite::params![
             numero, orden.cliente_id, orden.cliente_nombre, orden.cliente_telefono,
             orden.tipo_equipo, orden.equipo_descripcion, orden.equipo_marca, orden.equipo_modelo,
@@ -62,6 +63,7 @@ pub fn crear_orden_servicio(
             orden.accesorios, orden.problema_reportado, orden.diagnostico, orden.trabajo_realizado,
             orden.observaciones, orden.tecnico_id, orden.tecnico_nombre,
             orden.estado, orden.fecha_promesa, orden.presupuesto, orden.garantia_dias, usuario.clone(),
+            orden.tipo_equipo_id, orden.marca_id, orden.modelo_id,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -91,14 +93,15 @@ pub fn actualizar_orden_servicio(
          equipo_placa=?9, equipo_kilometraje=?10, equipo_kilometraje_proximo=?11, accesorios=?12,
          problema_reportado=?13, diagnostico=?14, trabajo_realizado=?15, observaciones=?16,
          tecnico_id=?17, tecnico_nombre=?18, fecha_promesa=?19, presupuesto=?20, monto_final=?21,
-         garantia_dias=?22 WHERE id=?23",
+         garantia_dias=?22, tipo_equipo_id=?23, marca_id=?24, modelo_id=?25 WHERE id=?26",
         rusqlite::params![
             orden.cliente_id, orden.cliente_nombre, orden.cliente_telefono,
             orden.tipo_equipo, orden.equipo_descripcion, orden.equipo_marca, orden.equipo_modelo,
             orden.equipo_serie, orden.equipo_placa, orden.equipo_kilometraje, orden.equipo_kilometraje_proximo,
             orden.accesorios, orden.problema_reportado, orden.diagnostico, orden.trabajo_realizado,
             orden.observaciones, orden.tecnico_id, orden.tecnico_nombre, orden.fecha_promesa,
-            orden.presupuesto, orden.monto_final, orden.garantia_dias, id,
+            orden.presupuesto, orden.monto_final, orden.garantia_dias,
+            orden.tipo_equipo_id, orden.marca_id, orden.modelo_id, id,
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -153,7 +156,7 @@ pub fn obtener_orden_servicio(db: State<Database>, id: i64) -> Result<OrdenServi
          equipo_kilometraje, equipo_kilometraje_proximo, accesorios, problema_reportado,
          diagnostico, trabajo_realizado, observaciones, tecnico_id, tecnico_nombre,
          estado, fecha_ingreso, fecha_promesa, fecha_entrega, presupuesto, monto_final,
-         garantia_dias, venta_id, usuario_creador FROM ordenes_servicio WHERE id = ?1",
+         garantia_dias, venta_id, usuario_creador, tipo_equipo_id, marca_id, modelo_id FROM ordenes_servicio WHERE id = ?1",
         rusqlite::params![id], |row| Ok(OrdenServicio {
             id: row.get(0)?, numero: row.get(1)?, cliente_id: row.get(2)?,
             cliente_nombre: row.get(3)?, cliente_telefono: row.get(4)?,
@@ -167,7 +170,7 @@ pub fn obtener_orden_servicio(db: State<Database>, id: i64) -> Result<OrdenServi
             tecnico_nombre: row.get(19)?, estado: row.get(20)?,
             fecha_ingreso: row.get(21)?, fecha_promesa: row.get(22)?, fecha_entrega: row.get(23)?,
             presupuesto: row.get(24)?, monto_final: row.get(25)?, garantia_dias: row.get(26)?,
-            venta_id: row.get(27)?, usuario_creador: row.get(28)?,
+            venta_id: row.get(27)?, usuario_creador: row.get(28)?, tipo_equipo_id: row.get(29)?, marca_id: row.get(30)?, modelo_id: row.get(31)?,
         })
     ).map_err(|e| e.to_string())
 }
@@ -187,7 +190,7 @@ pub fn listar_ordenes_servicio(
          equipo_kilometraje, equipo_kilometraje_proximo, accesorios, problema_reportado,
          diagnostico, trabajo_realizado, observaciones, tecnico_id, tecnico_nombre,
          estado, fecha_ingreso, fecha_promesa, fecha_entrega, presupuesto, monto_final,
-         garantia_dias, venta_id, usuario_creador FROM ordenes_servicio WHERE 1=1"
+         garantia_dias, venta_id, usuario_creador, tipo_equipo_id, marca_id, modelo_id FROM ordenes_servicio WHERE 1=1"
     );
     if filtro_estado.is_some() { sql.push_str(" AND estado = ?1"); }
     if fecha_desde.is_some() { sql.push_str(" AND date(fecha_ingreso) >= date(?2)"); }
@@ -210,7 +213,7 @@ pub fn listar_ordenes_servicio(
             tecnico_nombre: row.get(19)?, estado: row.get(20)?,
             fecha_ingreso: row.get(21)?, fecha_promesa: row.get(22)?, fecha_entrega: row.get(23)?,
             presupuesto: row.get(24)?, monto_final: row.get(25)?, garantia_dias: row.get(26)?,
-            venta_id: row.get(27)?, usuario_creador: row.get(28)?,
+            venta_id: row.get(27)?, usuario_creador: row.get(28)?, tipo_equipo_id: row.get(29)?, marca_id: row.get(30)?, modelo_id: row.get(31)?,
         })
     };
     let rows: Vec<OrdenServicio> = match (filtro_estado, fecha_desde, fecha_hasta, tecnico_id) {
@@ -234,7 +237,7 @@ pub fn buscar_ordenes_por_equipo(db: State<Database>, query: String) -> Result<V
          os.equipo_kilometraje, os.equipo_kilometraje_proximo, os.accesorios, os.problema_reportado,
          os.diagnostico, os.trabajo_realizado, os.observaciones, os.tecnico_id, os.tecnico_nombre,
          os.estado, os.fecha_ingreso, os.fecha_promesa, os.fecha_entrega, os.presupuesto, os.monto_final,
-         os.garantia_dias, os.venta_id, os.usuario_creador
+         os.garantia_dias, os.venta_id, os.usuario_creador, os.tipo_equipo_id, os.marca_id, os.modelo_id
          FROM ordenes_servicio os
          LEFT JOIN clientes c ON os.cliente_id = c.id
          WHERE os.equipo_serie LIKE ?1 OR os.equipo_placa LIKE ?1 OR os.equipo_descripcion LIKE ?1
@@ -255,7 +258,7 @@ pub fn buscar_ordenes_por_equipo(db: State<Database>, query: String) -> Result<V
             tecnico_nombre: row.get(19)?, estado: row.get(20)?,
             fecha_ingreso: row.get(21)?, fecha_promesa: row.get(22)?, fecha_entrega: row.get(23)?,
             presupuesto: row.get(24)?, monto_final: row.get(25)?, garantia_dias: row.get(26)?,
-            venta_id: row.get(27)?, usuario_creador: row.get(28)?,
+            venta_id: row.get(27)?, usuario_creador: row.get(28)?, tipo_equipo_id: row.get(29)?, marca_id: row.get(30)?, modelo_id: row.get(31)?,
         })
     }).map_err(|e| e.to_string())?
       .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
