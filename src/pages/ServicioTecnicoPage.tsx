@@ -9,6 +9,8 @@ import {
   // v2.4.10 ST-2.5: catálogo
   stListarTiposEquipo, stListarMarcas, stListarModelos,
   stCrearTipoEquipo, stCrearMarca, stCrearModelo,
+  // v2.4.11 ST-3: SRI lookup
+  consultarIdentificacion,
 } from "../services/api";
 import type { OrdenServicio, StTipoEquipo, StMarca, StModelo } from "../services/api";
 import { useToast } from "../components/Toast";
@@ -107,6 +109,9 @@ export default function ServicioTecnicoPage() {
   const [stTipos, setStTipos] = useState<StTipoEquipo[]>([]);
   const [stMarcas, setStMarcas] = useState<StMarca[]>([]);
   const [stModelos, setStModelos] = useState<StModelo[]>([]);
+  // v2.4.11 — ST-3: búsqueda cliente por ced/RUC + SRI lookup
+  const [busquedaIdentif, setBusquedaIdentif] = useState("");
+  const [consultandoSri, setConsultandoSri] = useState(false);
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -174,6 +179,30 @@ export default function ServicioTecnicoPage() {
     });
     return grupos;
   }, [ordenes]);
+
+  /** v2.4.11 ST-3: Consulta cédula/RUC en el SRI y crea/vincula cliente al form. */
+  const consultarSriHandler = async () => {
+    if (busquedaIdentif.length < 8) {
+      toastError("Ingresá una cédula (10 dígitos) o RUC (13 dígitos) válido");
+      return;
+    }
+    setConsultandoSri(true);
+    try {
+      const cliente = await consultarIdentificacion(busquedaIdentif);
+      setForm({
+        ...form,
+        cliente_id: cliente.id ?? null,
+        cliente_nombre: cliente.nombre,
+        cliente_telefono: cliente.telefono || "",
+      });
+      setClientesResultados([]);
+      toastExito(`Cliente cargado del SRI: ${cliente.nombre}`);
+    } catch (err: any) {
+      toastError(err?.toString() || "No se encontró información en el SRI");
+    } finally {
+      setConsultandoSri(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!form.equipo_descripcion || !form.problema_reportado) {
@@ -400,30 +429,69 @@ export default function ServicioTecnicoPage() {
                 title="Cerrar (Esc)">×</button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-              {/* Cliente */}
+              {/* Cliente — v2.4.11 ST-3: búsqueda por ced/RUC + lookup SRI */}
               <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Cliente</label>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input className="input" placeholder="Nombre del cliente" style={{ flex: 1 }}
+                <label style={{ fontSize: 12, fontWeight: 600 }}>
+                  Cliente
+                  {form.cliente_id && (
+                    <span style={{ marginLeft: 8, fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--color-success)", color: "#fff", fontWeight: 700 }}>
+                      ✓ vinculado al cliente #{form.cliente_id}
+                    </span>
+                  )}
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr auto", gap: 6 }}>
+                  <input className="input" placeholder="Nombre del cliente"
                     value={form.cliente_nombre || ""}
                     onChange={(e) => {
-                      setForm({ ...form, cliente_nombre: e.target.value });
+                      setForm({ ...form, cliente_nombre: e.target.value, cliente_id: null });
                       setBusquedaCliente(e.target.value);
                       if (e.target.value.length >= 2) buscarClientes(e.target.value).then(setClientesResultados).catch(() => {});
                     }} />
-                  <input className="input" placeholder="Teléfono" style={{ width: 140 }}
+                  <input className="input" placeholder="Cédula / RUC"
+                    value={busquedaIdentif}
+                    onChange={async (e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, "");
+                      setBusquedaIdentif(v);
+                      // Auto-lookup local cuando llega a 10 (ced) o 13 (RUC)
+                      if (v.length === 10 || v.length === 13) {
+                        try {
+                          const r = await buscarClientes(v);
+                          const exacto = r.find((c: any) => c.identificacion === v);
+                          if (exacto) {
+                            setForm({ ...form, cliente_id: exacto.id, cliente_nombre: exacto.nombre, cliente_telefono: exacto.telefono || "" });
+                            setClientesResultados([]);
+                            toastExito(`Cliente cargado: ${exacto.nombre}`);
+                          }
+                        } catch {}
+                      }
+                    }}
+                    onKeyDown={async (e) => {
+                      if (e.key === "Enter" && busquedaIdentif.length >= 8) {
+                        await consultarSriHandler();
+                      }
+                    }} />
+                  <input className="input" placeholder="Teléfono"
                     value={form.cliente_telefono || ""}
                     onChange={(e) => setForm({ ...form, cliente_telefono: e.target.value })} />
+                  <button type="button"
+                    className="btn btn-outline"
+                    style={{ fontSize: 11, padding: "0 12px", whiteSpace: "nowrap" }}
+                    onClick={consultarSriHandler}
+                    disabled={consultandoSri || busquedaIdentif.length < 8}
+                    title="Consulta los datos del contribuyente en el SRI (Ecuador) y crea/vincula el cliente automáticamente">
+                    {consultandoSri ? "⏳" : "🔍 SRI"}
+                  </button>
                 </div>
                 {clientesResultados.length > 0 && busquedaCliente.length >= 2 && form.cliente_id == null && (
-                  <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 4, marginTop: 4, maxHeight: 100, overflow: "auto" }}>
+                  <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 4, marginTop: 4, maxHeight: 120, overflow: "auto" }}>
                     {clientesResultados.slice(0, 5).map(c => (
                       <div key={c.id} style={{ padding: "4px 8px", cursor: "pointer", fontSize: 12 }}
                         onClick={() => {
                           setForm({ ...form, cliente_id: c.id, cliente_nombre: c.nombre, cliente_telefono: c.telefono || "" });
+                          setBusquedaIdentif(c.identificacion || "");
                           setClientesResultados([]);
                         }}>
-                        {c.nombre} {c.identificacion && `(${c.identificacion})`}
+                        {c.nombre} {c.identificacion && <span style={{ color: "var(--color-text-muted)" }}>({c.identificacion})</span>}
                       </div>
                     ))}
                   </div>

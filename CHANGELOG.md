@@ -6,6 +6,42 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.11 — 2026-05-09 🆔 STABLE
+**ST-3 / 5 — Búsqueda de cliente con SRI desde form de orden de servicio.**
+
+### 🆕 Lo que entrega
+
+El form de orden de servicio ahora tiene **3 inputs en lugar de 2** para identificar al cliente:
+
+```
+┌──────────────────────┬──────────────┬──────────┬─────────┐
+│ Nombre del cliente   │ Cédula / RUC │ Teléfono │ 🔍 SRI  │
+└──────────────────────┴──────────────┴──────────┴─────────┘
+```
+
+Y la lógica:
+
+1. **Buscar local automático**: al escribir cédula/RUC y completar 10 dígitos (cédula) o 13 (RUC), busca en clientes locales. Si encuentra exacto → autocompleta nombre/teléfono y vincula al cliente existente.
+2. **Botón 🔍 SRI**: si no encontró local, click consulta SRI Ecuador (mismo `consultar_identificacion` que usa el POS). El SRI devuelve el nombre del contribuyente, lo crea localmente como cliente nuevo, y queda vinculado al form. Toast confirma "Cliente cargado del SRI: ...".
+3. **Enter en el campo cédula/RUC** dispara la consulta al SRI directamente (atajo).
+4. **Búsqueda por nombre** sigue funcionando como antes (autocomplete en el campo nombre).
+
+Badge verde **"✓ vinculado al cliente #X"** indica cuando el form está vinculado a un cliente real (vs solo nombre suelto).
+
+### Reuso
+
+Reusa `consultar_identificacion` (servicio del SRI Ecuador ya implementado para el POS desktop). Ningún backend nuevo.
+
+### 📦 Archivos tocados
+
+- `src/pages/ServicioTecnicoPage.tsx`:
+  - Import `consultarIdentificacion`
+  - 2 estados nuevos: `busquedaIdentif`, `consultandoSri`
+  - Handler `consultarSriHandler`
+  - Bloque cliente refactorizado con grid 4 columnas
+
+---
+
 ## v2.4.10 — 2026-05-09 🌲 STABLE
 **ST-2.5 / 5 — Cascada tipo→marca→modelo en form de orden con + agregar inline.**
 
