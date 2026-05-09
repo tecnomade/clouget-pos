@@ -1516,3 +1516,89 @@ export const obtenerDetalleMovimientoBancario = (tipo: string, origenId: number)
 // Permite a otros módulos invocar comandos sin replicar la lógica de modo red.
 export { smartInvoke };
 
+// ═══════════════════════════════════════════════════════════════════════
+// v2.4.9 — ST-2: Catálogo jerárquico de Servicio Técnico
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface StTipoEquipo {
+  id?: number;
+  nombre: string;
+  icono: string;
+  requiere_placa: boolean;
+  requiere_kilometraje: boolean;
+  requiere_serie: boolean;
+  orden: number;
+  activo: boolean;
+}
+
+export interface StMarca {
+  id?: number;
+  tipo_equipo_id: number;
+  nombre: string;
+  activo: boolean;
+}
+
+export interface StModelo {
+  id?: number;
+  marca_id: number;
+  nombre: string;
+  anio_desde?: number | null;
+  anio_hasta?: number | null;
+  activo: boolean;
+}
+
+// Tipos de equipo
+export const stListarTiposEquipo = () =>
+  smartInvoke<StTipoEquipo[]>("st_listar_tipos_equipo");
+export const stCrearTipoEquipo = (tipo: Omit<StTipoEquipo, "id">) =>
+  smartInvoke<number>("st_crear_tipo_equipo", { tipo });
+export const stActualizarTipoEquipo = (tipo: StTipoEquipo) =>
+  smartInvoke<void>("st_actualizar_tipo_equipo", { tipo });
+export const stEliminarTipoEquipo = (id: number) =>
+  smartInvoke<void>("st_eliminar_tipo_equipo", { id });
+
+// Marcas
+export const stListarMarcas = (tipoEquipoId: number) =>
+  smartInvoke<StMarca[]>("st_listar_marcas", { tipoEquipoId });
+export const stCrearMarca = (marca: Omit<StMarca, "id">) =>
+  smartInvoke<number>("st_crear_marca", { marca });
+export const stActualizarMarca = (marca: StMarca) =>
+  smartInvoke<void>("st_actualizar_marca", { marca });
+export const stEliminarMarca = (id: number) =>
+  smartInvoke<void>("st_eliminar_marca", { id });
+
+// Modelos
+export const stListarModelos = (marcaId: number) =>
+  smartInvoke<StModelo[]>("st_listar_modelos", { marcaId });
+export const stCrearModelo = (modelo: Omit<StModelo, "id">) =>
+  smartInvoke<number>("st_crear_modelo", { modelo });
+export const stActualizarModelo = (modelo: StModelo) =>
+  smartInvoke<void>("st_actualizar_modelo", { modelo });
+export const stEliminarModelo = (id: number) =>
+  smartInvoke<void>("st_eliminar_modelo", { id });
+
+// Árbol completo
+export const stListarArbolCompleto = () =>
+  smartInvoke<any[]>("st_listar_arbol_completo");
+
+// Historial filtrable
+export interface StFiltrosHistorial {
+  cliente_id?: number | null;
+  busqueda_cliente?: string | null;
+  placa?: string | null;
+  serie?: string | null;
+  tipo_equipo_id?: number | null;
+  marca_id?: number | null;
+  modelo_id?: number | null;
+  estado?: string | null;
+  fecha_desde?: string | null;
+  fecha_hasta?: string | null;
+  limite?: number | null;
+}
+
+export const stHistorialFiltrable = (filtros: StFiltrosHistorial) =>
+  smartInvoke<{ ok: boolean; ordenes: any[]; total: number; total_monto: number }>(
+    "st_historial_filtrable",
+    { filtros },
+  );
+

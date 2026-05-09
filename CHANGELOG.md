@@ -6,6 +6,103 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.9 — 2026-05-09 🌳 STABLE
+**ST-2 / 5 — Servicio Técnico: catálogo jerárquico equipos→marcas→modelos + historial filtrable.**
+
+### 🆕 Lo que entrega
+
+#### Catálogo jerárquico (botón "⚙ Configuración" en la página de Servicio Técnico)
+
+Vista en árbol expandible de 3 niveles:
+
+```
+🚗 Vehículos          (15 órdenes)
+   ├ Toyota           (8 órdenes)
+   │  ├ Hilux 2020   (3 órd)
+   │  ├ Corolla       (5 órd)
+   │  └ + Modelo
+   ├ Honda            (7 órdenes)
+   │  └ ...
+   └ + Marca
+🏍 Motocicletas       (4 órdenes)
+   └ ...
++ Nuevo tipo de equipo
+```
+
+- **3 tablas nuevas**: `st_tipos_equipo`, `st_marcas`, `st_modelos`
+- Soft-delete (`activo=0`) — preserva referencias en órdenes históricas
+- Cada tipo tiene flags: `requiere_placa`, `requiere_kilometraje`, `requiere_serie` (para validar campos del form de orden según el tipo)
+- **Seed inicial** automático: Vehículo, Motocicleta, Computadora, Celular, Electrodoméstico, General
+- Contador de órdenes asociadas en cada nodo
+- Modal anidado para crear/editar tipo con flags de campos requeridos
+
+#### Historial filtrable (botón "📜 Historial")
+
+Modal full-screen con filtros multi-criterio:
+
+| Filtro | Opciones |
+|---|---|
+| Cliente | búsqueda por nombre o cédula |
+| Placa | match parcial |
+| Serie | match parcial |
+| Tipo / Marca / Modelo | cascada (la marca depende del tipo, el modelo de la marca) |
+| Estado | RECIBIDO / DIAGNOSTICO / EN_REPARACION / LISTO / ENTREGADO / CANCELADA |
+| Rango de fecha | desde / hasta |
+
+Tabla de resultados con: número, fecha, cliente, equipo (marca/modelo), placa/serie, estado (badge color), monto. Click en fila → abre detalle de la orden directamente.
+
+KPI superior: cantidad de órdenes + suma total $ filtrada.
+
+#### Vinculación con órdenes existentes
+
+Migración automática: agrega columnas opcionales `tipo_equipo_id`, `marca_id`, `modelo_id` a `ordenes_servicio`. Cuando el user use el catálogo en lugar de texto libre (ST-2.5 próximo), se guardan los IDs para mejor filtrado/historial.
+
+### 🆕 14 comandos Tauri nuevos
+
+```
+st_listar_tipos_equipo / st_crear / st_actualizar / st_eliminar
+st_listar_marcas / st_crear / st_actualizar / st_eliminar
+st_listar_modelos / st_crear / st_actualizar / st_eliminar
+st_listar_arbol_completo
+st_historial_filtrable
+```
+
+Todos validan licencia con `requiere_modulo_servicio_tecnico` antes de ejecutar.
+
+### 🛠 Backend
+
+- `db/schema.rs` — 3 tablas + seed + ALTER `ordenes_servicio` con FKs opcionales
+- `commands/servicio_tecnico_catalogo.rs` (NUEVO, ~430 líneas) — 14 comandos
+- `commands/mod.rs` — registra el módulo
+- `lib.rs` — registra los 14 comandos en invoke_handler
+
+### 🎨 Frontend
+
+- `components/ModalConfigServicioTecnico.tsx` (NUEVO) — vista en árbol expandible con CRUD inline
+- `components/ModalHistorialServicioTecnico.tsx` (NUEVO) — filtros + tabla con resumen
+- `services/api.ts` — wrappers TS de los 14 comandos + tipos `StTipoEquipo` / `StMarca` / `StModelo` / `StFiltrosHistorial`
+- `pages/ServicioTecnicoPage.tsx` — 2 botones nuevos en barra superior: "📜 Historial" + "⚙ Configuración"
+
+### 🔜 Próximos sub-sprints
+
+- **ST-2.5** (próximo, v2.4.10): cascada tipo→marca→modelo en el form de orden con botón "+" para agregar inline sin abrir Configuración
+- **ST-3** (v2.4.11): consultar SRI por ced/RUC desde el form de orden (mismo `consultar_identificacion` del POS)
+- **ST-4** (v2.4.12): PDF A4 + Ticket 80mm con detección virtual/térmica
+- **ST-5** (v2.4.13): abonos con holding en caja + botón cancelar orden + devolución + reportes
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/db/schema.rs` — 3 tablas + seed + ALTER
+- `src-tauri/src/commands/servicio_tecnico_catalogo.rs` (NUEVO)
+- `src-tauri/src/commands/mod.rs` — declara módulo
+- `src-tauri/src/lib.rs` — 14 comandos en invoke_handler
+- `src/services/api.ts` — wrappers + tipos
+- `src/components/ModalConfigServicioTecnico.tsx` (NUEVO, ~280 líneas)
+- `src/components/ModalHistorialServicioTecnico.tsx` (NUEVO, ~200 líneas)
+- `src/pages/ServicioTecnicoPage.tsx` — 2 botones + 2 modales
+
+---
+
 ## v2.4.8 — 2026-05-09 🔧 STABLE
 **ST-1 / 5 — Servicio Técnico ahora es módulo de licencia separado.**
 

@@ -10,6 +10,8 @@ import {
 import type { OrdenServicio } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import ModalConfigServicioTecnico from "../components/ModalConfigServicioTecnico";
+import ModalHistorialServicioTecnico from "../components/ModalHistorialServicioTecnico";
 
 const ESTADOS = ["RECIBIDO", "DIAGNOSTICANDO", "EN_REPARACION", "ESPERANDO_REPUESTOS", "LISTO", "ENTREGADO"];
 const ESTADOS_COLORS: Record<string, string> = {
@@ -94,6 +96,9 @@ export default function ServicioTecnicoPage() {
   const [cobroRepuestos, setCobroRepuestos] = useState<any[]>([]);
   const [busquedaProducto, setBusquedaProducto] = useState("");
   const [productosResultados, setProductosResultados] = useState<any[]>([]);
+  // v2.4.9 — ST-2: modales de configuración + historial
+  const [mostrarConfig, setMostrarConfig] = useState(false);
+  const [mostrarHistorial, setMostrarHistorial] = useState(false);
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -239,6 +244,9 @@ export default function ServicioTecnicoPage() {
             onChange={(e) => setBusqueda(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") cargar(); }} />
           <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={cargar}>Buscar</button>
+          {/* v2.4.9 ST-2: nuevos botones */}
+          <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => setMostrarHistorial(true)}>📜 Historial</button>
+          <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => setMostrarConfig(true)}>⚙ Configuración</button>
           <button className="btn btn-primary" onClick={() => { setForm(formNuevo(labels.defaultTipoEquipo)); setMostrarForm(true); }}>{labels.nuevaOrden}</button>
         </div>
       </div>
@@ -752,6 +760,17 @@ export default function ServicioTecnicoPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* v2.4.9 ST-2: modales nuevos */}
+      {mostrarConfig && (
+        <ModalConfigServicioTecnico onCerrar={() => setMostrarConfig(false)} />
+      )}
+      {mostrarHistorial && (
+        <ModalHistorialServicioTecnico
+          onCerrar={() => setMostrarHistorial(false)}
+          onAbrirOrden={(id) => { setMostrarHistorial(false); setDetalleId(id); }}
+        />
       )}
     </>
   );

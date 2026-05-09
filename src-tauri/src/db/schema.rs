@@ -1089,6 +1089,73 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_imagenes_orden ON ordenes_servicio_imagenes(orden_id);
     ");
 
+    // ─── ST-2 (v2.4.9): Catálogo jerárquico tipos→marcas→modelos ──────────
+    // Permite estructurar equipos/vehículos para autocompletar en la orden y
+    // facilitar búsquedas/historial filtrable. Soft-delete (activo=0) para
+    // preservar referencias históricas en órdenes ya creadas.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS st_tipos_equipo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            icono TEXT DEFAULT '🔧',
+            requiere_placa INTEGER NOT NULL DEFAULT 0,
+            requiere_kilometraje INTEGER NOT NULL DEFAULT 0,
+            requiere_serie INTEGER NOT NULL DEFAULT 0,
+            orden INTEGER NOT NULL DEFAULT 0,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS st_marcas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tipo_equipo_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(tipo_equipo_id, nombre),
+            FOREIGN KEY (tipo_equipo_id) REFERENCES st_tipos_equipo(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_st_marcas_tipo ON st_marcas(tipo_equipo_id);
+
+        CREATE TABLE IF NOT EXISTS st_modelos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            marca_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            anio_desde INTEGER,
+            anio_hasta INTEGER,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            UNIQUE(marca_id, nombre),
+            FOREIGN KEY (marca_id) REFERENCES st_marcas(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_st_modelos_marca ON st_modelos(marca_id);
+    ");
+
+    // Seed inicial de tipos comunes (se inserta solo si la tabla está vacía).
+    // El admin puede borrar/agregar libremente desde Configuración → Servicio Técnico.
+    let count_tipos: i64 = conn.query_row("SELECT COUNT(*) FROM st_tipos_equipo", [], |r| r.get(0)).unwrap_or(0);
+    if count_tipos == 0 {
+        let _ = conn.execute_batch("
+            INSERT INTO st_tipos_equipo (nombre, icono, requiere_placa, requiere_kilometraje, requiere_serie, orden) VALUES
+              ('Vehículo',         '🚗', 1, 1, 0, 1),
+              ('Motocicleta',      '🏍️', 1, 1, 0, 2),
+              ('Computadora',      '💻', 0, 0, 1, 3),
+              ('Celular',          '📱', 0, 0, 1, 4),
+              ('Electrodoméstico', '🔌', 0, 0, 1, 5),
+              ('General',          '🔧', 0, 0, 0, 99);
+        ");
+    }
+
+    // Migración v2.4.9: agregar FKs opcionales al catálogo en ordenes_servicio.
+    // Si el user elige del catálogo, guardamos los IDs (mejor filtrado/historial).
+    // Si escribe libre, los IDs quedan NULL pero los TEXT (equipo_marca, etc) se mantienen.
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN tipo_equipo_id INTEGER REFERENCES st_tipos_equipo(id)", []);
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN marca_id INTEGER REFERENCES st_marcas(id)", []);
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN modelo_id INTEGER REFERENCES st_modelos(id)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ordenes_tipo ON ordenes_servicio(tipo_equipo_id)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ordenes_marca ON ordenes_servicio(marca_id)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ordenes_modelo ON ordenes_servicio(modelo_id)", []);
+
     // --- Migracion: Pagos multiples por venta (pago mixto) ---
     // Una venta puede tener varios pagos: ej $100 EFECTIVO + $20 TRANSFER + $30 CREDITO
     let _ = conn.execute_batch("
