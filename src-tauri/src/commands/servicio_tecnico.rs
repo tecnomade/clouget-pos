@@ -349,6 +349,8 @@ pub fn eliminar_imagen_orden(db: State<Database>, imagen_id: i64) -> Result<(), 
 // --- Cobrar orden -> crear venta ---
 
 #[tauri::command]
+/// v2.4.12: el parámetro `garantia_dias` es opcional — si viene, se actualiza
+/// el campo `ordenes_servicio.garantia_dias` antes de generar la venta.
 pub fn cobrar_orden_servicio(
     db: State<Database>,
     sesion: State<SesionState>,
@@ -356,8 +358,6 @@ pub fn cobrar_orden_servicio(
     forma_pago: String,
     monto_recibido: f64,
     items_repuestos: Vec<serde_json::Value>,
-    /// v2.4.12: días de garantía aplicables a esta orden — si viene, se actualiza
-    /// el campo `garantia_dias` de la orden antes de generar la venta
     garantia_dias: Option<i64>,
 ) -> Result<i64, String> {
     requiere_modulo_servicio_tecnico(&db)?;

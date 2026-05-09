@@ -47,12 +47,15 @@ type TallerLabels = {
   buscarPh: string;
   defaultTipoEquipo: string;
 };
+// v2.4.13: defaultTipoEquipo vacío — el user elige del catálogo (st_tipos_equipo)
+// al crear nueva orden. Antes esto pre-cargaba strings hardcoded como "TECNOLOGIA"
+// que terminaban duplicándose en el catálogo si el user clickeaba "+ Agregar".
 const TALLER_LABELS: Record<string, TallerLabels> = {
-  MIXTO:           { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar placa, serie, cliente...", defaultTipoEquipo: "GENERAL" },
-  GENERAL:         { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar serie, cliente...",        defaultTipoEquipo: "GENERAL" },
-  TECNOLOGIA:      { titulo: "Taller de Tecnología",        ordenLabel: "Orden de Reparación", nuevaOrden: "+ Nueva Reparación",   equipoSingular: "Equipo",    buscarPh: "Buscar modelo, serie, cliente...", defaultTipoEquipo: "TECNOLOGIA" },
-  AUTOMOTRIZ:      { titulo: "Taller Mecánico",             ordenLabel: "Orden de Trabajo",    nuevaOrden: "+ Nueva Orden de Trabajo", equipoSingular: "Vehículo", buscarPh: "Buscar placa, marca, cliente...", defaultTipoEquipo: "AUTOMOTRIZ" },
-  ELECTRODOMESTICO:{ titulo: "Servicio de Electrodomésticos", ordenLabel: "Orden de Servicio", nuevaOrden: "+ Nueva Orden",        equipoSingular: "Aparato",   buscarPh: "Buscar marca, serie, cliente...", defaultTipoEquipo: "ELECTRODOMESTICO" },
+  MIXTO:           { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar placa, serie, cliente...", defaultTipoEquipo: "" },
+  GENERAL:         { titulo: "Servicio Técnico",            ordenLabel: "Orden de Servicio",   nuevaOrden: "+ Nueva Orden",        equipoSingular: "Equipo",    buscarPh: "Buscar serie, cliente...",        defaultTipoEquipo: "" },
+  TECNOLOGIA:      { titulo: "Taller de Tecnología",        ordenLabel: "Orden de Reparación", nuevaOrden: "+ Nueva Reparación",   equipoSingular: "Equipo",    buscarPh: "Buscar modelo, serie, cliente...", defaultTipoEquipo: "" },
+  AUTOMOTRIZ:      { titulo: "Taller Mecánico",             ordenLabel: "Orden de Trabajo",    nuevaOrden: "+ Nueva Orden de Trabajo", equipoSingular: "Vehículo", buscarPh: "Buscar placa, marca, cliente...", defaultTipoEquipo: "" },
+  ELECTRODOMESTICO:{ titulo: "Servicio de Electrodomésticos", ordenLabel: "Orden de Servicio", nuevaOrden: "+ Nueva Orden",        equipoSingular: "Aparato",   buscarPh: "Buscar marca, serie, cliente...", defaultTipoEquipo: "" },
 };
 
 const formNuevo = (defaultTipoEquipo: string = "GENERAL"): OrdenServicio => ({
