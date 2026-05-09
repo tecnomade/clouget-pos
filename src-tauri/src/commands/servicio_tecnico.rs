@@ -356,8 +356,23 @@ pub fn cobrar_orden_servicio(
     forma_pago: String,
     monto_recibido: f64,
     items_repuestos: Vec<serde_json::Value>,
+    /// v2.4.12: días de garantía aplicables a esta orden — si viene, se actualiza
+    /// el campo `garantia_dias` de la orden antes de generar la venta
+    garantia_dias: Option<i64>,
 ) -> Result<i64, String> {
     requiere_modulo_servicio_tecnico(&db)?;
+
+    // Si vino garantia_dias, actualizar antes de leer datos
+    if let Some(g) = garantia_dias {
+        if g >= 0 {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            let _ = conn.execute(
+                "UPDATE ordenes_servicio SET garantia_dias = ?1 WHERE id = ?2",
+                rusqlite::params![g, orden_id],
+            );
+        }
+    }
+
     let (cliente_id, monto_final, numero_orden, equipo_descripcion): (Option<i64>, f64, String, String) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -467,9 +482,18 @@ pub fn cobrar_orden_servicio(
 // --- PDF de la orden ---
 
 #[tauri::command]
-pub fn imprimir_orden_servicio_pdf(db: State<Database>, orden_id: i64) -> Result<String, String> {
+pub fn imprimir_orden_servicio_pdf(
+    db: State<Database>,
+    orden_id: i64,
+    formato: Option<String>,
+) -> Result<String, String> {
     requiere_modulo_servicio_tecnico(&db)?;
     use genpdf::{elements::*, fonts, style::*, Alignment, Margins, Document, Element, SimplePageDecorator};
+
+    // v2.4.12 ST-4: formato configurable. Default A4 (compatibilidad con clientes
+    // que no actualicen el frontend). Opciones: "A4" | "TICKET_80"
+    let formato_efectivo = formato.unwrap_or_else(|| "A4".to_string()).to_uppercase();
+    let es_ticket = formato_efectivo == "TICKET_80";
 
     let (
         nombre_negocio, ruc, direccion, telefono,
@@ -522,13 +546,24 @@ pub fn imprimir_orden_servicio_pdf(db: State<Database>, orden_id: i64) -> Result
     let mut doc = Document::new(font_family);
     doc.set_title("Orden de Servicio");
     let mut decorator = SimplePageDecorator::new();
-    decorator.set_margins(Margins::trbl(15, 15, 15, 15));
+
+    // v2.4.12 ST-4: layout distinto según formato
+    let (font_titulo, font_header, font_label, font_normal) = if es_ticket {
+        // 80mm — todo más chico, márgenes mínimos
+        doc.set_paper_size(genpdf::Size::new(80, 297));
+        decorator.set_margins(Margins::trbl(3, 3, 3, 3));
+        (12u8, 9u8, 8u8, 8u8)
+    } else {
+        // A4 — default 210×297
+        decorator.set_margins(Margins::trbl(15, 15, 15, 15));
+        (16u8, 12u8, 10u8, 10u8)
+    };
     doc.set_page_decorator(decorator);
 
-    let title_st = Style::new().bold().with_font_size(16);
-    let header_st = Style::new().bold().with_font_size(12);
-    let label_st = Style::new().bold().with_font_size(10);
-    let normal_st = Style::new().with_font_size(10);
+    let title_st = Style::new().bold().with_font_size(font_titulo);
+    let header_st = Style::new().bold().with_font_size(font_header);
+    let label_st = Style::new().bold().with_font_size(font_label);
+    let normal_st = Style::new().with_font_size(font_normal);
 
     doc.push(Paragraph::new(&nombre_negocio).aligned(Alignment::Center).styled(title_st));
     if !ruc.is_empty() { doc.push(Paragraph::new(&format!("RUC: {}", ruc)).aligned(Alignment::Center).styled(normal_st)); }

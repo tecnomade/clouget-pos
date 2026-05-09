@@ -112,6 +112,9 @@ export default function ServicioTecnicoPage() {
   // v2.4.11 — ST-3: búsqueda cliente por ced/RUC + SRI lookup
   const [busquedaIdentif, setBusquedaIdentif] = useState("");
   const [consultandoSri, setConsultandoSri] = useState(false);
+  // v2.4.12 — ST-4/garantía: días de garantía a aplicar al cobrar + formato impresión
+  const [cobroGarantiaDias, setCobroGarantiaDias] = useState("0");
+  const [formatoImpresion, setFormatoImpresion] = useState<"A4" | "TICKET_80">("A4");
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -278,9 +281,12 @@ export default function ServicioTecnicoPage() {
   const handleCobrar = async () => {
     if (!detalleId) return;
     const monto = parseFloat(cobroMontoRecibido) || 0;
+    // v2.4.12: garantía opcional
+    const garantia = parseInt(cobroGarantiaDias) || 0;
     try {
-      await cobrarOrdenServicio(detalleId, cobroFormaPago, monto, cobroRepuestos);
-      toastExito("Cobrado y entregado");
+      await cobrarOrdenServicio(detalleId, cobroFormaPago, monto, cobroRepuestos, garantia);
+      const msgGarantia = garantia > 0 ? ` · 🛡 Garantía ${garantia} días` : "";
+      toastExito(`Cobrado y entregado${msgGarantia}`);
       setMostrarCobrar(false);
       setDetalleId(null);
       setDetalle(null);
@@ -843,10 +849,39 @@ export default function ServicioTecnicoPage() {
                     catch (err) { toastError("" + err); }
                   }}>Eliminar</button>
               )}
-              <button className="btn btn-outline"
-                onClick={() => imprimirOrdenServicioPdf(detalleId!).catch(err => toastError("" + err))}>📄 Imprimir PDF</button>
+              {/* v2.4.12 ST-4: selector de formato (A4 vs Ticket 80mm) */}
+              <div style={{ display: "inline-flex", border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
+                <button className="btn"
+                  style={{
+                    fontSize: 12, padding: "6px 12px", borderRadius: 0, border: "none",
+                    background: formatoImpresion === "A4" ? "var(--color-primary)" : "transparent",
+                    color: formatoImpresion === "A4" ? "#fff" : "var(--color-text)",
+                  }}
+                  onClick={() => setFormatoImpresion("A4")}
+                  title="Hoja A4 (impresora normal)">A4</button>
+                <button className="btn"
+                  style={{
+                    fontSize: 12, padding: "6px 12px", borderRadius: 0, border: "none",
+                    borderLeft: "1px solid var(--color-border)",
+                    background: formatoImpresion === "TICKET_80" ? "var(--color-primary)" : "transparent",
+                    color: formatoImpresion === "TICKET_80" ? "#fff" : "var(--color-text)",
+                  }}
+                  onClick={() => setFormatoImpresion("TICKET_80")}
+                  title="Térmica 80mm">80mm</button>
+                <button className="btn"
+                  style={{ fontSize: 12, padding: "6px 14px", borderRadius: 0, border: "none", borderLeft: "1px solid var(--color-border)" }}
+                  onClick={() => imprimirOrdenServicioPdf(detalleId!, formatoImpresion).catch(err => toastError("" + err))}>
+                  📄 Imprimir
+                </button>
+              </div>
               {detalle.estado !== "ENTREGADO" && detalle.estado !== "CANCELADO" && (
-                <button className="btn btn-success" onClick={() => { setMostrarCobrar(true); setCobroMontoRecibido(""); setCobroRepuestos([]); }}>💰 Cobrar</button>
+                <button className="btn btn-success" onClick={() => {
+                  setMostrarCobrar(true);
+                  setCobroMontoRecibido("");
+                  setCobroRepuestos([]);
+                  // v2.4.12: precargar garantía con el valor actual de la orden
+                  setCobroGarantiaDias(String(detalle?.garantia_dias ?? 0));
+                }}>💰 Cobrar</button>
               )}
             </div>
           </div>
@@ -920,6 +955,38 @@ export default function ServicioTecnicoPage() {
                 <label style={{ fontSize: 12, fontWeight: 600 }}>Monto recibido</label>
                 <input className="input" type="number" step="0.01" value={cobroMontoRecibido}
                   onChange={(e) => setCobroMontoRecibido(e.target.value)} />
+              </div>
+
+              {/* v2.4.12: garantía aplicada al cobrar (queda registrada en la orden) */}
+              <div style={{ marginBottom: 12, padding: 10, background: "rgba(59, 130, 246, 0.08)", borderRadius: 6, border: "1px solid rgba(59, 130, 246, 0.3)" }}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>
+                  🛡 Garantía del trabajo (días)
+                </label>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                  <input className="input" type="number" min="0" max="365"
+                    style={{ width: 100 }}
+                    value={cobroGarantiaDias}
+                    onChange={(e) => setCobroGarantiaDias(e.target.value)} />
+                  <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>días</span>
+                  {/* Atajos rápidos */}
+                  <div style={{ display: "flex", gap: 4, marginLeft: 12 }}>
+                    {[0, 7, 15, 30, 60, 90, 180].map(d => (
+                      <button key={d} type="button"
+                        onClick={() => setCobroGarantiaDias(String(d))}
+                        style={{
+                          padding: "2px 8px", fontSize: 10, cursor: "pointer",
+                          background: cobroGarantiaDias === String(d) ? "var(--color-primary)" : "transparent",
+                          color: cobroGarantiaDias === String(d) ? "#fff" : "var(--color-text)",
+                          border: "1px solid var(--color-border)", borderRadius: 4,
+                        }}>
+                        {d === 0 ? "Sin" : `${d}d`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 4 }}>
+                  Quedará registrada en la orden y aparecerá en el comprobante.
+                </div>
               </div>
 
               <div style={{ padding: 12, background: "rgba(34, 197, 94, 0.1)", borderRadius: 6, fontSize: 16, fontWeight: 700 }}>

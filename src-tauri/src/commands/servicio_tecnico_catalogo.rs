@@ -355,6 +355,9 @@ pub fn st_listar_arbol_completo(db: State<'_, Database>) -> Result<Vec<serde_jso
 pub struct FiltrosHistorial {
     pub cliente_id: Option<i64>,
     pub busqueda_cliente: Option<String>,        // busca por nombre/identificación parcial
+    /// v2.4.12: campo unificado — busca en `equipo_placa`, `equipo_serie` y `equipo_descripcion`.
+    /// Reemplaza los filtros separados `placa` y `serie` (que se mantienen por backward-compat).
+    pub identificador_equipo: Option<String>,
     pub placa: Option<String>,
     pub serie: Option<String>,
     pub tipo_equipo_id: Option<i64>,
@@ -390,6 +393,21 @@ pub fn st_historial_filtrable(
         let p2 = params_dyn.len();
         wheres.push(format!("(o.cliente_nombre LIKE ?{} OR c.identificacion LIKE ?{})", p1, p2));
     }
+    // v2.4.12: filtro unificado — busca en placa, serie y descripción
+    if let Some(q) = filtros.identificador_equipo.as_ref().filter(|s| !s.trim().is_empty()) {
+        let pat = format!("%{}%", q.trim());
+        params_dyn.push(Box::new(pat.clone()));
+        let p1 = params_dyn.len();
+        params_dyn.push(Box::new(pat.clone()));
+        let p2 = params_dyn.len();
+        params_dyn.push(Box::new(pat));
+        let p3 = params_dyn.len();
+        wheres.push(format!(
+            "(COALESCE(o.equipo_placa,'') LIKE ?{} OR COALESCE(o.equipo_serie,'') LIKE ?{} OR o.equipo_descripcion LIKE ?{})",
+            p1, p2, p3
+        ));
+    }
+    // Backward-compat: filtros separados (no se usan más en UI nueva pero por si acaso)
     if let Some(p) = filtros.placa.as_ref().filter(|s| !s.trim().is_empty()) {
         params_dyn.push(Box::new(format!("%{}%", p.trim())));
         wheres.push(format!("o.equipo_placa LIKE ?{}", params_dyn.len()));

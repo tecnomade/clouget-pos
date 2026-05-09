@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import {
   stHistorialFiltrable, stListarTiposEquipo, stListarMarcas, stListarModelos,
+  obtenerConfig,
   type StTipoEquipo, type StMarca, type StModelo, type StFiltrosHistorial,
 } from "../services/api";
 
@@ -17,14 +18,22 @@ interface Props {
   onAbrirOrden: (id: number) => void;
 }
 
+// v2.4.12: label adaptable según tipo de negocio
+function labelIdentificador(tipoTaller: string): { titulo: string; placeholder: string } {
+  const t = (tipoTaller || "").toUpperCase();
+  if (t === "AUTOMOTRIZ") return { titulo: "Placa / Chasis", placeholder: "Buscar por placa o chasis" };
+  if (t === "ELECTRODOMESTICO" || t === "ELECTRONICO" || t === "COMPUTADORAS")
+    return { titulo: "Serie / IMEI", placeholder: "Buscar por número de serie o IMEI" };
+  return { titulo: "Placa / Serie", placeholder: "Buscar por placa, serie o descripción" };
+}
+
 const ESTADOS = ["", "RECIBIDO", "DIAGNOSTICO", "EN_REPARACION", "LISTO", "ENTREGADO", "CANCELADA"];
 
 export default function ModalHistorialServicioTecnico({ onCerrar, onAbrirOrden }: Props) {
   const { toastError } = useToast();
   const [filtros, setFiltros] = useState<StFiltrosHistorial>({
     busqueda_cliente: "",
-    placa: "",
-    serie: "",
+    identificador_equipo: "",
     estado: "",
     fecha_desde: "",
     fecha_hasta: "",
@@ -35,12 +44,27 @@ export default function ModalHistorialServicioTecnico({ onCerrar, onAbrirOrden }
   const [modelos, setModelos] = useState<StModelo[]>([]);
   const [resultado, setResultado] = useState<{ ordenes: any[]; total: number; total_monto: number } | null>(null);
   const [cargando, setCargando] = useState(false);
+  // v2.4.12: tipo de taller para adaptar labels
+  const [tipoTaller, setTipoTaller] = useState("MIXTO");
+  // v2.4.12: filas expandidas (set de ids)
+  const [expandidas, setExpandidas] = useState<Set<number>>(new Set());
+
+  const toggleExpandida = (id: number) => {
+    setExpandidas(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     stListarTiposEquipo().then(setTipos).catch(() => {});
+    obtenerConfig().then((cfg: any) => setTipoTaller((cfg.tipo_taller || "MIXTO").toUpperCase())).catch(() => {});
     aplicar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const labelId = labelIdentificador(tipoTaller);
 
   // Cuando cambia tipo, cargar marcas
   useEffect(() => {
@@ -75,7 +99,7 @@ export default function ModalHistorialServicioTecnico({ onCerrar, onAbrirOrden }
   };
 
   const limpiar = () => {
-    setFiltros({ busqueda_cliente: "", placa: "", serie: "", estado: "", fecha_desde: "", fecha_hasta: "", limite: 200 });
+    setFiltros({ busqueda_cliente: "", identificador_equipo: "", estado: "", fecha_desde: "", fecha_hasta: "", limite: 200 });
     setTimeout(aplicar, 0);
   };
 
@@ -110,15 +134,14 @@ export default function ModalHistorialServicioTecnico({ onCerrar, onAbrirOrden }
                 onChange={e => setFiltros({ ...filtros, busqueda_cliente: e.target.value })}
                 style={{ fontSize: 12 }} />
             </div>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)" }}>Placa</label>
-              <input className="input" value={filtros.placa || ""}
-                onChange={e => setFiltros({ ...filtros, placa: e.target.value })} style={{ fontSize: 12 }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)" }}>Serie</label>
-              <input className="input" value={filtros.serie || ""}
-                onChange={e => setFiltros({ ...filtros, serie: e.target.value })} style={{ fontSize: 12 }} />
+            {/* v2.4.12: campo unificado Placa/Serie con label adaptable según tipo de taller */}
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)" }}>{labelId.titulo}</label>
+              <input className="input" value={filtros.identificador_equipo || ""}
+                placeholder={labelId.placeholder}
+                onChange={e => setFiltros({ ...filtros, identificador_equipo: e.target.value })}
+                onKeyDown={e => { if (e.key === "Enter") aplicar(); }}
+                style={{ fontSize: 12 }} />
             </div>
             <div>
               <label style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)" }}>Tipo</label>
@@ -183,56 +206,88 @@ export default function ModalHistorialServicioTecnico({ onCerrar, onAbrirOrden }
             </div>
           )}
 
-          {/* Tabla */}
+          {/* Tabla — v2.4.12: filas expandibles + columna Venta relacionada */}
           <div style={{ overflowX: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ background: "var(--color-surface-alt)" }}>
+                  <th style={{ ...th, width: 30 }}></th>
                   <th style={th}>Número</th>
                   <th style={th}>Fecha</th>
                   <th style={th}>Cliente</th>
                   <th style={th}>Equipo</th>
-                  <th style={th}>Placa/Serie</th>
+                  <th style={th}>{labelId.titulo}</th>
                   <th style={th}>Estado</th>
+                  <th style={th}>Venta</th>
                   <th style={{ ...th, textAlign: "right" }}>Monto</th>
                 </tr>
               </thead>
               <tbody>
                 {!resultado ? (
-                  <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)" }}>Aplicá filtros para buscar</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)" }}>Aplicá filtros para buscar</td></tr>
                 ) : resultado.ordenes.length === 0 ? (
-                  <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)" }}>Sin resultados</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: "var(--color-text-muted)" }}>Sin resultados</td></tr>
                 ) : (
-                  resultado.ordenes.map(o => (
-                    <tr key={o.id} onClick={() => onAbrirOrden(o.id)}
-                        style={{ borderTop: "1px solid var(--color-border)", cursor: "pointer" }}>
-                      <td style={td}><strong>{o.numero}</strong></td>
-                      <td style={td}>{(o.fecha_ingreso || "").slice(0, 10)}</td>
-                      <td style={td}>
-                        {o.cliente_nombre || "—"}
-                        {o.cliente_identificacion && <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>{o.cliente_identificacion}</div>}
-                      </td>
-                      <td style={td}>
-                        {o.equipo_descripcion}
-                        {(o.equipo_marca || o.equipo_modelo) && (
-                          <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
-                            {[o.equipo_marca, o.equipo_modelo].filter(Boolean).join(" / ")}
-                          </div>
-                        )}
-                      </td>
-                      <td style={td}>
-                        {o.equipo_placa && <div>🚗 {o.equipo_placa}</div>}
-                        {o.equipo_serie && <div style={{ fontSize: 10 }}>S/N: {o.equipo_serie}</div>}
-                      </td>
-                      <td style={td}>
-                        <span style={{
-                          padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700,
-                          background: badgeColor(o.estado), color: "#fff",
-                        }}>{o.estado}</span>
-                      </td>
-                      <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>${(o.monto_final || 0).toFixed(2)}</td>
-                    </tr>
-                  ))
+                  resultado.ordenes.map(o => {
+                    const expandido = expandidas.has(o.id);
+                    return [
+                      <tr key={o.id}
+                          style={{ borderTop: "1px solid var(--color-border)", cursor: "pointer" }}>
+                        <td style={{ ...td, textAlign: "center" }}
+                            onClick={(e) => { e.stopPropagation(); toggleExpandida(o.id); }}>
+                          <span style={{
+                            display: "inline-block", width: 22, height: 22, borderRadius: 4,
+                            background: "var(--color-surface-alt)", border: "1px solid var(--color-border)",
+                            fontWeight: 700, fontSize: 11,
+                          }}>{expandido ? "▼" : "▶"}</span>
+                        </td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}><strong>{o.numero}</strong></td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>{(o.fecha_ingreso || "").slice(0, 10)}</td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>
+                          {o.cliente_nombre || "—"}
+                          {o.cliente_identificacion && <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>{o.cliente_identificacion}</div>}
+                        </td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>
+                          {o.equipo_descripcion}
+                          {(o.equipo_marca || o.equipo_modelo) && (
+                            <div style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
+                              {[o.equipo_marca, o.equipo_modelo].filter(Boolean).join(" / ")}
+                            </div>
+                          )}
+                        </td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>
+                          {o.equipo_placa && <div>🚗 {o.equipo_placa}</div>}
+                          {o.equipo_serie && <div style={{ fontSize: 10 }}>S/N: {o.equipo_serie}</div>}
+                        </td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>
+                          <span style={{
+                            padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700,
+                            background: badgeColor(o.estado), color: "#fff",
+                          }}>{o.estado}</span>
+                        </td>
+                        <td style={td} onClick={() => onAbrirOrden(o.id)}>
+                          {o.venta_id ? (
+                            <span style={{
+                              padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
+                              background: "var(--color-success)", color: "#fff",
+                            }} title={`Venta vinculada #${o.venta_id}`}>📄 #{o.venta_id}</span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: "var(--color-text-muted)" }}>—</span>
+                          )}
+                        </td>
+                        <td style={{ ...td, textAlign: "right", fontWeight: 600 }} onClick={() => onAbrirOrden(o.id)}>
+                          ${(o.monto_final || 0).toFixed(2)}
+                        </td>
+                      </tr>,
+                      expandido ? (
+                        <tr key={`${o.id}-exp`} style={{ background: "var(--color-surface-alt)" }}>
+                          <td colSpan={9} style={{ padding: "12px 16px" }}>
+                            <FilaExpandida orden={o} onAbrir={() => onAbrirOrden(o.id)} />
+                          </td>
+                        </tr>
+                      ) : null,
+                    ].filter(Boolean);
+                  }).flat()
                 )}
               </tbody>
             </table>
@@ -256,4 +311,62 @@ function badgeColor(estado: string): string {
     case "CANCELADA": return "#ef4444";
     default: return "#94a3b8";
   }
+}
+
+// v2.4.12: vista compacta dentro de fila expandida — muestra problema, diagnóstico,
+// trabajo y botón "abrir orden completa". Si tiene venta vinculada, también un
+// link visible.
+function FilaExpandida({ orden, onAbrir }: { orden: any; onAbrir: () => void }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 12 }}>
+      {orden.problema_reportado && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 4 }}>
+            Problema reportado
+          </div>
+          <div>{orden.problema_reportado}</div>
+        </div>
+      )}
+      {orden.diagnostico && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 4 }}>
+            Diagnóstico
+          </div>
+          <div>{orden.diagnostico}</div>
+        </div>
+      )}
+      {orden.trabajo_realizado && (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 4 }}>
+            Trabajo realizado
+          </div>
+          <div>{orden.trabajo_realizado}</div>
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+        <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+          {orden.fecha_entrega && <>Entregado: {orden.fecha_entrega.slice(0, 16).replace("T", " ")}</>}
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onAbrir(); }}
+          style={{
+            padding: "6px 14px", fontSize: 12, fontWeight: 600,
+            background: "var(--color-primary)", color: "#fff",
+            border: "none", borderRadius: 6, cursor: "pointer",
+          }}
+        >
+          📋 Abrir orden completa
+        </button>
+        {orden.venta_id && (
+          <div style={{ fontSize: 11, color: "var(--color-success)" }}>
+            ✓ Esta orden generó la venta <strong>#{orden.venta_id}</strong>
+            <br/>
+            <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
+              Andá a Ventas → buscá ese número para ver detalles, imprimir o anular.
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

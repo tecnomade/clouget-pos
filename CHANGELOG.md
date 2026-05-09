@@ -6,6 +6,54 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.12 — 2026-05-09 🛠 STABLE
+**ST-4 / 5 — PDF A4 + Ticket 80mm + hotfix historial + garantía al cobrar.**
+
+### 🐞 Hotfix Historial — feedback usuario
+
+**Bugs reportados:**
+1. Filtros separados de "Placa" y "Serie" → si buscabas "3432" en Placa pero el equipo era PC con `serie="3432222"`, no aparecían resultados (el filtro era exclusivo).
+2. Labels fijos "Placa/Serie" sin importar tipo de negocio (taller mecánico vs taller electrónico).
+
+**Fixes:**
+- **Campo unificado `Placa / Serie`** en filtros del historial — busca en `equipo_placa` + `equipo_serie` + `equipo_descripcion` con un solo input.
+- **Labels adaptables según `tipo_taller`** (config):
+  - `AUTOMOTRIZ` → "Placa / Chasis"
+  - `ELECTRODOMESTICO` / `ELECTRONICO` / `COMPUTADORAS` → "Serie / IMEI"
+  - `MIXTO` (default) → "Placa / Serie"
+- Backend: nuevo filtro `identificador_equipo` (los antiguos `placa` y `serie` se mantienen por backward-compat)
+- **Filas expandibles** en el historial — click en ▶ muestra problema reportado, diagnóstico, trabajo realizado y botón "📋 Abrir orden completa" + indicador de venta vinculada
+- **Columna "Venta"** con badge `📄 #X` cuando la orden generó una venta
+
+### 🆕 ST-4 — Imprimir orden en A4 o Ticket 80mm
+
+Antes: solo PDF tamaño grande (mezcla de A4/A5 sin claridad).
+
+**Ahora**: en el detalle de orden, **selector de formato** (A4 / 80mm) + botón Imprimir. Al cambiar de formato:
+- **A4** (default): paper 210×297, márgenes 15mm, fonts 10-16pt — para impresora normal
+- **TICKET_80**: paper 80×297mm, márgenes 3mm, fonts 8-12pt — para térmica 80mm
+
+El parámetro `formato` se pasa al backend (`imprimir_orden_servicio_pdf`). Si una versión vieja del frontend no lo manda, default es A4 (backward-compat).
+
+### 🆕 Garantía al cobrar
+
+Al click en **💰 Cobrar** ahora aparece un campo **🛡 Garantía del trabajo (días)** con:
+- Input numérico
+- Atajos rápidos: `Sin / 7d / 15d / 30d / 60d / 90d / 180d`
+- Default = el valor que ya tiene la orden (precarga al abrir el modal)
+
+Backend: `cobrar_orden_servicio` ahora acepta parámetro `garantia_dias` opcional. Si viene, actualiza `ordenes_servicio.garantia_dias` antes de generar la venta. Toast confirma "Cobrado y entregado · 🛡 Garantía X días".
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/commands/servicio_tecnico.rs` — `cobrar_orden_servicio` con garantía + `imprimir_orden_servicio_pdf` con formato A4/Ticket
+- `src-tauri/src/commands/servicio_tecnico_catalogo.rs` — filtro `identificador_equipo` unificado
+- `src/services/api.ts` — wrappers actualizados (garantía + formato)
+- `src/components/ModalHistorialServicioTecnico.tsx` — campo único + labels adaptables + filas expandibles + columna Venta + componente FilaExpandida
+- `src/pages/ServicioTecnicoPage.tsx` — selector formato + selector garantía + handlers
+
+---
+
 ## v2.4.11 — 2026-05-09 🆔 STABLE
 **ST-3 / 5 — Búsqueda de cliente con SRI desde form de orden de servicio.**
 

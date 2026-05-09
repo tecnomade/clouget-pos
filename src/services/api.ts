@@ -1478,10 +1478,11 @@ export const listarImagenesOrden = (ordenId: number) =>
   smartInvoke<any[]>("listar_imagenes_orden", { ordenId });
 export const eliminarImagenOrden = (imagenId: number) =>
   smartInvoke<void>("eliminar_imagen_orden", { imagenId });
-export const cobrarOrdenServicio = (ordenId: number, formaPago: string, montoRecibido: number, itemsRepuestos: any[]) =>
-  smartInvoke<number>("cobrar_orden_servicio", { ordenId, formaPago, montoRecibido, itemsRepuestos });
-export const imprimirOrdenServicioPdf = (ordenId: number) =>
-  smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId });
+// v2.4.12 ST-4+: garantiaDias opcional al cobrar; formato ("A4" | "TICKET_80") al imprimir
+export const cobrarOrdenServicio = (ordenId: number, formaPago: string, montoRecibido: number, itemsRepuestos: any[], garantiaDias?: number | null) =>
+  smartInvoke<number>("cobrar_orden_servicio", { ordenId, formaPago, montoRecibido, itemsRepuestos, garantiaDias: garantiaDias ?? null });
+export const imprimirOrdenServicioPdf = (ordenId: number, formato: "A4" | "TICKET_80" = "A4") =>
+  smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId, formato });
 
 // === Resumen detallado de caja (abierta o cerrada) ===
 // Retorna ResumenCajaReporte con desglose por forma de pago, lista de gastos,
@@ -1589,6 +1590,8 @@ export const stListarArbolCompleto = () =>
 export interface StFiltrosHistorial {
   cliente_id?: number | null;
   busqueda_cliente?: string | null;
+  /** v2.4.12: filtro unificado — busca en placa + serie + descripción del equipo */
+  identificador_equipo?: string | null;
   placa?: string | null;
   serie?: string | null;
   tipo_equipo_id?: number | null;
