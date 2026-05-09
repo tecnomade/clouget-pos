@@ -6,6 +6,71 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.7 — 2026-05-08 🔧 STABLE
+**Hotfix crítico: cobro de orden de servicio técnico con items con IVA — total mal calculado, ticket mostraba "solo el IVA".**
+
+### 🐞 Síntoma reportado
+
+Flujo: orden de servicio técnico → click "Cobrar" → agregar 2 items con IVA → cobrar con monto > total → imprimir desde Ventas. **El ticket impreso mostraba solo el IVA en el detalle**, sin la base de los items.
+
+### 🔍 Causa raíz
+
+En `cobrar_orden_servicio` (commands/servicio_tecnico.rs):
+
+1. **Bug de cálculo**: cuando un item tenía IVA > 0%, **solo se sumaba el IVA al total** — la base del item NUNCA se acumulaba en ningún subtotal:
+
+```rust
+// ❌ ANTES
+if iva_porc > 0.0 {
+    iva_total += sub * (iva_porc / 100.0);   // ← solo agrega EL IVA
+} else {
+    subtotal_sin_iva += sub;
+}
+// La BASE del item con IVA se perdía → total = (servicio + items 0%) + IVA
+```
+
+2. **Bug de persistencia**: el `INSERT INTO ventas` guardaba `subtotal_con_iva = 0` hardcoded — perdiendo la base de los items con IVA en la DB.
+
+Por eso el ticket impreso mostraba `Subtotal IVA: 0.00` y solo aparecía la línea del IVA — porque ESO era lo único que se había acumulado correctamente.
+
+> ¿Por qué solo aparecía en algunos PCs y no en otros? Porque depende del flujo: si cobrás orden sin items o con items SIN IVA, el bug no aparece. Solo se manifiesta con items que tengan `iva_porcentaje > 0`.
+
+### ✅ Fix
+
+```rust
+// ✅ AHORA
+let mut subtotal_sin_iva: f64 = 0.0;   // base 0% + monto del servicio
+let mut subtotal_con_iva: f64 = 0.0;   // base de items con IVA
+let mut iva_total: f64 = 0.0;          // IVA acumulado
+
+if monto_final > 0.0 {
+    subtotal_sin_iva += monto_final;
+}
+for item in &items_repuestos {
+    let sub = cant * precio;
+    if iva_porc > 0.0 {
+        subtotal_con_iva += sub;       // ← antes faltaba esta línea
+        iva_total += sub * (iva_porc / 100.0);
+    } else {
+        subtotal_sin_iva += sub;
+    }
+}
+let total = subtotal_sin_iva + subtotal_con_iva + iva_total;
+```
+
+Y el INSERT ahora guarda los 3 valores correctamente.
+
+### Impacto
+
+- **Ventas anteriores ya guardadas con el bug NO se corrigen automáticamente** — quedan en la DB con `subtotal_con_iva = 0` y total potencialmente erróneo. Si afectó a contabilidad, hay que corregirlas manualmente o anular y re-cobrar.
+- **Cobros desde el POS normal NO están afectados** — el bug es exclusivo de `cobrar_orden_servicio`, que usa una lógica de cálculo propia distinta del flujo principal.
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/commands/servicio_tecnico.rs` — fix `cobrar_orden_servicio` (~30 líneas refactor)
+
+---
+
 ## v2.4.6 — 2026-05-08 📲 STABLE
 **Endpoint `/auth/usuarios-disponibles` para selector de login en la app móvil.**
 

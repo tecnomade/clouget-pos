@@ -351,8 +351,19 @@ pub fn cobrar_orden_servicio(
     ).unwrap_or(1);
     let numero = format!("NV-{:09}", next_seq);
 
-    let mut subtotal_sin_iva = monto_final;
-    let mut iva_total = 0.0_f64;
+    // v2.4.7 FIX: separar bases por tasa de IVA y calcular total correctamente.
+    // Antes:
+    //   - Items con IVA: SOLO se sumaba el IVA al total (la BASE se perdía)
+    //   - subtotal_con_iva guardado hardcoded como 0
+    //   → ticket mostraba "solo el IVA", total mal calculado, contabilidad rota.
+    let mut subtotal_sin_iva: f64 = 0.0;   // base de items 0% + monto_final del servicio (sin IVA)
+    let mut subtotal_con_iva: f64 = 0.0;   // base de items con IVA
+    let mut iva_total: f64 = 0.0;          // IVA acumulado de items con IVA
+
+    // monto_final del servicio: sin IVA (es mano de obra, no un producto físico)
+    if monto_final > 0.0 {
+        subtotal_sin_iva += monto_final;
+    }
 
     let mut productos_data: Vec<(i64, f64, f64, f64, f64)> = Vec::new();
     for item in &items_repuestos {
@@ -366,6 +377,7 @@ pub fn cobrar_orden_servicio(
         ).unwrap_or(0.0);
         let sub = cant * precio;
         if iva_porc > 0.0 {
+            subtotal_con_iva += sub;
             iva_total += sub * (iva_porc / 100.0);
         } else {
             subtotal_sin_iva += sub;
@@ -373,13 +385,13 @@ pub fn cobrar_orden_servicio(
         productos_data.push((pid, cant, precio, iva_porc, sub));
     }
 
-    let total = subtotal_sin_iva + iva_total;
+    let total = subtotal_sin_iva + subtotal_con_iva + iva_total;
     let cambio = if monto_recibido > total { monto_recibido - total } else { 0.0 };
     let observacion = format!("Servicio Técnico {} - {}", numero_orden, equipo_descripcion);
 
     tx.execute(
-        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, descuento, iva, total, forma_pago, monto_recibido, cambio, estado, tipo_documento, estado_sri, observacion, usuario, usuario_id, tipo_estado) VALUES (?1, ?2, ?3, 0, 0, ?4, ?5, ?6, ?7, ?8, 'COMPLETADA', 'NOTA_VENTA', 'NO_APLICA', ?9, ?10, ?11, 'COMPLETADA')",
-        rusqlite::params![numero, cliente_id, subtotal_sin_iva, iva_total, total, forma_pago, monto_recibido, cambio, observacion, usuario, usuario_id],
+        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, descuento, iva, total, forma_pago, monto_recibido, cambio, estado, tipo_documento, estado_sri, observacion, usuario, usuario_id, tipo_estado) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, 'COMPLETADA', 'NOTA_VENTA', 'NO_APLICA', ?10, ?11, ?12, 'COMPLETADA')",
+        rusqlite::params![numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva_total, total, forma_pago, monto_recibido, cambio, observacion, usuario, usuario_id],
     ).map_err(|e| e.to_string())?;
     let venta_id = tx.last_insert_rowid();
 
