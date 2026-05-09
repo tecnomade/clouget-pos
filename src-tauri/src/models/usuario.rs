@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub const CAT_CORE: &str = "CORE";
 pub const CAT_RESTAURANTE: &str = "RESTAURANTE";
 pub const CAT_APP_MOVIL: &str = "APP_MOVIL";
+pub const CAT_SERVICIO_TECNICO: &str = "SERVICIO_TECNICO";
 
 /// Permisos disponibles en el sistema (clave, descripción, categoría).
 ///
@@ -31,8 +32,7 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str, &str)] = &[
     ("ver_movimientos_bancarios",   "Ver movimientos bancarios",                                CAT_CORE),
     ("crear_nota_credito",          "Crear notas de crédito",                                   CAT_CORE),
     ("gestionar_compras",           "Gestionar compras y proveedores",                          CAT_CORE),
-    ("gestionar_servicio_tecnico",  "Gestionar Servicio Técnico",                               CAT_CORE),
-    ("ver_servicio_tecnico",        "Ver Servicio Técnico (sólo asignadas)",                    CAT_CORE),
+    // (gestionar_servicio_tecnico y ver_servicio_tecnico movidos a CAT_SERVICIO_TECNICO abajo, v2.4.8)
     ("cerrar_caja",                 "Cerrar caja (sin requerir supervisor)",                    CAT_CORE),
     ("aprobar_descuadre",           "Aprobar cierre con descuadre alto",                        CAT_CORE),
     ("cambiar_lista_precio",        "Cambiar la lista de precios en el POS",                    CAT_CORE),
@@ -57,6 +57,16 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str, &str)] = &[
     ("inventaria",                  "Inventarista (conteo físico con la app)",                  CAT_APP_MOVIL),
     ("dueno_dashboard",             "Dueño/Admin (ve dashboard remoto en la app)",              CAT_APP_MOVIL),
     ("cobra_caja",                  "Puede cobrar en la app (vende piso → cobra él mismo)",     CAT_APP_MOVIL),
+
+    // ─── SERVICIO_TECNICO (módulo servicio técnico — v2.4.8) ──────────────
+    // Antes estos 2 permisos estaban en CAT_CORE. Movidos a su propia categoría
+    // para que solo se muestren si la licencia tiene `servicio_tecnico` activo.
+    ("gestionar_servicio_tecnico",  "Gestionar Servicio Técnico (todas las órdenes)",           CAT_SERVICIO_TECNICO),
+    ("ver_servicio_tecnico",        "Ver Servicio Técnico (sólo órdenes asignadas)",            CAT_SERVICIO_TECNICO),
+    ("config_servicio_tecnico",     "Configurar tipos de equipo, marcas y modelos",             CAT_SERVICIO_TECNICO),
+    ("recibir_abonos_st",           "Recibir abonos en órdenes de servicio (holding en caja)",  CAT_SERVICIO_TECNICO),
+    ("retirar_holdings_caja",       "Retirar dinero de holdings (anticipos no cobrados)",       CAT_SERVICIO_TECNICO),
+    ("cancelar_orden_servicio",     "Cancelar órdenes de servicio (devuelve abonos)",           CAT_SERVICIO_TECNICO),
 ];
 
 /// Info de usuario para enviar al frontend (sin hash/salt)

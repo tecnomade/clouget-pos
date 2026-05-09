@@ -6,6 +6,71 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.8 — 2026-05-09 🔧 STABLE
+**ST-1 / 5 — Servicio Técnico ahora es módulo de licencia separado.**
+
+Inicia el plan de mejora del módulo Servicio Técnico (5 sub-releases). Esta release lo separa de la licencia base como un **módulo opcional con costo adicional** (sugerido $150 setup + $5/mo).
+
+### 🔄 Lo que cambia
+
+- **Antes**: Servicio Técnico venía incluido en la licencia base
+- **Ahora**: requiere `servicio_tecnico` en `licencia.modulos` para verse y usarse
+
+### ✨ Auto-migración para clientes existentes
+
+Si el cliente ya tiene órdenes de servicio creadas (`COUNT(*) FROM ordenes_servicio > 0`), al actualizar a v2.4.8 el POS **agrega automáticamente** `servicio_tecnico` a la licencia local. Así no se rompe a nadie. Idempotente.
+
+```rust
+[Migration v2.4.8] Modulo 'servicio_tecnico' agregado automaticamente a la licencia local (X ordenes preexistentes detectadas)
+```
+
+### 🛠 Backend
+
+- `branding::tiene_modulo_servicio_tecnico()` (transversal Clouget+DigitalServer)
+- `requiere_modulo_servicio_tecnico(&db)` agregado al inicio de **los 13 comandos** del módulo
+- Auto-migración local en `lib.rs::run()`
+- Demo ya incluía `servicio_tecnico` (no requirió cambio)
+
+### 🎨 Frontend
+
+- Sidebar oculta link "Servicio Técnico" si licencia no lo incluye (mismo patrón que Restaurante/App Móvil)
+- Acepta tanto `licencia.modulos.includes('servicio_tecnico')` como el flag legacy `config.modulo_servicio_tecnico = "1"` para compatibilidad
+
+### 🔐 Permisos reorganizados
+
+Categoría nueva **`SERVICIO_TECNICO`** en Configuración → Usuarios → Permisos:
+
+- `gestionar_servicio_tecnico` (movido de CORE) — todas las órdenes
+- `ver_servicio_tecnico` (movido de CORE) — sólo asignadas
+- `config_servicio_tecnico` (NUEVO) — configurar tipos/marcas/modelos (ST-2)
+- `recibir_abonos_st` (NUEVO) — abonos en órdenes (ST-5)
+- `retirar_holdings_caja` (NUEVO) — retirar dinero de holdings (ST-5)
+- `cancelar_orden_servicio` (NUEVO) — cancelar órdenes (ST-5)
+
+Los permisos sólo aparecen si la licencia tiene el módulo (filtrado automático por categoría).
+
+### 🛍 Admin: checkbox "🔧 Servicio Técnico"
+
+En crear/editar licencia (`admin.clouget.com`), nuevo checkbox al lado de los de Restaurante y App Móvil. Marcar/desmarcar para activar/desactivar el módulo.
+
+### 🔜 Próximos sub-sprints
+
+- **v2.4.9 — ST-2**: árbol jerárquico tipos→marcas→modelos + historial filtrable + agregar rápido
+- **v2.4.10 — ST-3**: búsqueda cliente con SRI por ced/RUC desde la orden
+- **v2.4.11 — ST-4**: PDF orden formato A4 + Ticket 80mm (con detección virtual/térmica)
+- **v2.4.12 — ST-5**: abonos con holding en caja + botón cancelar orden + devolución + reportes
+
+### 📦 Archivos tocados
+
+- `src-tauri/src/branding.rs` — `tiene_modulo_servicio_tecnico()`
+- `src-tauri/src/commands/servicio_tecnico.rs` — helper + 13 funciones validan licencia
+- `src-tauri/src/lib.rs` — auto-migración para clientes con órdenes preexistentes
+- `src-tauri/src/models/usuario.rs` — categoría `CAT_SERVICIO_TECNICO` + 4 permisos nuevos, 2 movidos
+- `src/components/Layout.tsx` — sidebar lee `licencia_modulos.includes('servicio_tecnico')`
+- `clouget-admin/src/index.html` — checkbox en crear/editar licencia
+
+---
+
 ## v2.4.7 — 2026-05-08 🔧 STABLE
 **Hotfix crítico: cobro de orden de servicio técnico con items con IVA — total mal calculado, ticket mostraba "solo el IVA".**
 

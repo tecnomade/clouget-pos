@@ -2,12 +2,39 @@ use crate::db::{Database, SesionState};
 use crate::models::{OrdenServicio, MovimientoOrden};
 use tauri::State;
 
+/// v2.4.8 — Verifica que la licencia activa tenga el módulo `servicio_tecnico`.
+/// Devuelve `Ok(())` si está activo, `Err` con mensaje listo para propagar al
+/// frontend si no. Mismo patrón que `restaurante::requiere_modulo_restaurante`
+/// y `app_movil::requiere_modulo_app_movil`.
+pub fn requiere_modulo_servicio_tecnico(db: &Database) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let modulos_json: String = conn
+        .query_row(
+            "SELECT value FROM config WHERE key = 'licencia_modulos'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+    if modulos_json.is_empty() {
+        return Err("Módulo Servicio Técnico no incluido en su licencia".to_string());
+    }
+    let modulos: Vec<String> = serde_json::from_str(&modulos_json).unwrap_or_default();
+    if !modulos.iter().any(|m| m == "servicio_tecnico") {
+        return Err(
+            "Módulo Servicio Técnico no incluido en su licencia. Contacte a soporte para activarlo."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn crear_orden_servicio(
     db: State<Database>,
     sesion: State<SesionState>,
     orden: OrdenServicio,
 ) -> Result<i64, String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let usuario = {
         let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
         s.as_ref().map(|s| s.nombre.clone()).unwrap_or_else(|| "Sistema".to_string())
@@ -54,6 +81,7 @@ pub fn actualizar_orden_servicio(
     db: State<Database>,
     orden: OrdenServicio,
 ) -> Result<(), String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let id = orden.id.ok_or("ID requerido")?;
 
@@ -84,6 +112,7 @@ pub fn cambiar_estado_orden(
     nuevo_estado: String,
     observacion: Option<String>,
 ) -> Result<(), String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let usuario = {
         let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
         s.as_ref().map(|s| s.nombre.clone()).unwrap_or_else(|| "Sistema".to_string())
@@ -116,6 +145,7 @@ pub fn cambiar_estado_orden(
 
 #[tauri::command]
 pub fn obtener_orden_servicio(db: State<Database>, id: i64) -> Result<OrdenServicio, String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.query_row(
         "SELECT id, numero, cliente_id, cliente_nombre, cliente_telefono, tipo_equipo,
@@ -251,6 +281,7 @@ pub fn historial_movimientos_orden(db: State<Database>, orden_id: i64) -> Result
 
 #[tauri::command]
 pub fn eliminar_orden_servicio(db: State<Database>, id: i64) -> Result<(), String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let venta_id: Option<i64> = conn.query_row(
         "SELECT venta_id FROM ordenes_servicio WHERE id = ?1",
@@ -276,6 +307,7 @@ pub fn agregar_imagen_orden(
     imagen_base64: String,
     descripcion: Option<String>,
 ) -> Result<i64, String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO ordenes_servicio_imagenes (orden_id, tipo, imagen_base64, descripcion) VALUES (?1, ?2, ?3, ?4)",
@@ -304,6 +336,7 @@ pub fn listar_imagenes_orden(db: State<Database>, orden_id: i64) -> Result<Vec<s
 
 #[tauri::command]
 pub fn eliminar_imagen_orden(db: State<Database>, imagen_id: i64) -> Result<(), String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM ordenes_servicio_imagenes WHERE id = ?1", rusqlite::params![imagen_id])
         .map_err(|e| e.to_string())?;
@@ -321,6 +354,7 @@ pub fn cobrar_orden_servicio(
     monto_recibido: f64,
     items_repuestos: Vec<serde_json::Value>,
 ) -> Result<i64, String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     let (cliente_id, monto_final, numero_orden, equipo_descripcion): (Option<i64>, f64, String, String) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
@@ -431,6 +465,7 @@ pub fn cobrar_orden_servicio(
 
 #[tauri::command]
 pub fn imprimir_orden_servicio_pdf(db: State<Database>, orden_id: i64) -> Result<String, String> {
+    requiere_modulo_servicio_tecnico(&db)?;
     use genpdf::{elements::*, fonts, style::*, Alignment, Margins, Document, Element, SimplePageDecorator};
 
     let (

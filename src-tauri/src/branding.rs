@@ -62,6 +62,14 @@ impl Brand {
         // Disponible en ambas marcas — la diferenciación final la hace la licencia
         true
     }
+
+    /// Si esta marca incluye el módulo Servicio Técnico (órdenes de trabajo,
+    /// reparaciones, control de equipos/marcas/modelos, abonos, garantías).
+    /// Transversal a ambas marcas (Clouget y DigitalServer) — la activación
+    /// final la hace la licencia (`servicio_tecnico` en `licencia.modulos`).
+    pub const fn tiene_modulo_servicio_tecnico(&self) -> bool {
+        true
+    }
 }
 
 /// Helper: ¿corre este binario como Clouget?

@@ -97,15 +97,20 @@ export default function Layout() {
       obtenerConfig().then(cfg => {
         setModuloSeriesActivo(cfg.modulo_series_activo === "1");
         setModuloCaducidadActivo(cfg.modulo_caducidad === "1");
-        setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
         setNombreNegocio((cfg.nombre_negocio || "").trim());
-        // Modulo Restaurante: activo si licencia.modulos incluye 'restaurante'
-        // (la licencia se persiste como JSON en config.licencia_modulos).
+        // v2.4.8: Servicio Técnico ahora es módulo de licencia (antes era flag config).
+        // Mantenemos el flag legacy `modulo_servicio_tecnico` como fallback para
+        // instalaciones viejas — pero la fuente de verdad es licencia_modulos.
         try {
           const mods: string[] = JSON.parse(cfg.licencia_modulos || "[]");
           setModuloRestauranteActivo(FEATURES.restaurante && mods.includes("restaurante"));
+          // ST activo si licencia lo incluye O si está el flag legacy (compat)
+          setModuloServicioTecnicoActivo(
+            mods.includes("servicio_tecnico") || cfg.modulo_servicio_tecnico === "1"
+          );
         } catch {
           setModuloRestauranteActivo(false);
+          setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
         }
       }).catch(() => {});
     });

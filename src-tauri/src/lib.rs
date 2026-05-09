@@ -65,6 +65,41 @@ pub fn run() {
         }
     }
 
+    // v2.4.8 — Auto-migración de licencia para clientes con órdenes preexistentes.
+    // Si la base de datos tiene órdenes de servicio Y la licencia local NO incluye
+    // `servicio_tecnico` (porque antes de v2.4.8 era parte de la licencia base),
+    // agregarlo automáticamente para no romper a clientes existentes. Idempotente:
+    // si ya está incluido, no hace nada.
+    {
+        let conn = database.conn.lock().unwrap();
+        let modulos_actuales: String = conn
+            .query_row(
+                "SELECT value FROM config WHERE key = 'licencia_modulos'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        let mut modulos: Vec<String> =
+            serde_json::from_str(&modulos_actuales).unwrap_or_default();
+        if !modulos.iter().any(|m| m == "servicio_tecnico") {
+            let count_ordenes: i64 = conn
+                .query_row("SELECT COUNT(*) FROM ordenes_servicio", [], |row| row.get(0))
+                .unwrap_or(0);
+            if count_ordenes > 0 {
+                modulos.push("servicio_tecnico".to_string());
+                let nuevo_json = serde_json::to_string(&modulos).unwrap_or_else(|_| "[]".to_string());
+                let _ = conn.execute(
+                    "INSERT OR REPLACE INTO config (key, value) VALUES ('licencia_modulos', ?1)",
+                    rusqlite::params![&nuevo_json],
+                );
+                eprintln!(
+                    "[Migration v2.4.8] Modulo 'servicio_tecnico' agregado automaticamente a la licencia local ({} ordenes preexistentes detectadas)",
+                    count_ordenes
+                );
+            }
+        }
+    }
+
     let sesion_state = SesionState {
         sesion: Arc::new(Mutex::new(None)),
     };
