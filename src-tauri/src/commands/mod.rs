@@ -27,5 +27,6 @@ pub mod servicio_tecnico;
 pub mod servicio_tecnico_catalogo;
 pub mod servicio_tecnico_abonos;
 pub mod servicio_tecnico_items;
+pub mod servicio_tecnico_reportes;
 pub mod combos;
 pub mod verificacion;

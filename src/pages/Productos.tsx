@@ -1227,7 +1227,7 @@ function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }:
             // Verificar extensión
             const ext = String(path).toLowerCase().split(".").pop() || "";
             if (!FORMATOS_ACEPTADOS.includes(ext)) {
-              onError(`Formato no soportado: .${ext}. Usá: ${FORMATOS_ACEPTADOS.join(", ")}`);
+              onError(`Formato no soportado: .${ext}. Usa: ${FORMATOS_ACEPTADOS.join(", ")}`);
               return;
             }
 

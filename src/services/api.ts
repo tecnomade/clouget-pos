@@ -1617,6 +1617,34 @@ export const stCancelarOrden = (ordenId: number, observacion?: string | null) =>
 export const stListarHoldingsCaja = (cajaId?: number | null) =>
   smartInvoke<HoldingCaja[]>("st_listar_holdings_caja", { cajaId: cajaId ?? null });
 
+// === ST: Reporte de cancelaciones (v2.4.14) ===
+export interface OrdenCancelada {
+  orden_id: number;
+  numero: string;
+  fecha_ingreso: string;
+  fecha_cancelacion?: string | null;
+  cliente_nombre?: string | null;
+  cliente_telefono?: string | null;
+  equipo_descripcion: string;
+  equipo_marca?: string | null;
+  equipo_modelo?: string | null;
+  usuario_cancelacion?: string | null;
+  observacion?: string | null;
+  abonos_devueltos: number;
+  monto_devuelto: number;
+}
+export interface ResumenCancelaciones {
+  total_canceladas: number;
+  total_abonos_devueltos: number;
+  monto_total_devuelto: number;
+  ordenes: OrdenCancelada[];
+}
+export const stReporteCancelaciones = (fechaDesde?: string | null, fechaHasta?: string | null) =>
+  smartInvoke<ResumenCancelaciones>("st_reporte_cancelaciones", {
+    fechaDesde: fechaDesde ?? null,
+    fechaHasta: fechaHasta ?? null,
+  });
+
 // === Resumen detallado de caja (abierta o cerrada) ===
 // Retorna ResumenCajaReporte con desglose por forma de pago, lista de gastos,
 // retiros con motivo, ventas detalladas. Usado en CajaPage para que el cajero

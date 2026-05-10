@@ -947,7 +947,7 @@ export default function Configuracion() {
                   )}
                 </select>
                 <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
-                  Si dejás "misma del POS", la comanda se imprime en la misma impresora que los tickets de venta. Si tenés una térmica dedicada en cocina, seleccionala aquí.
+                  Si dejas "misma del POS", la comanda se imprime en la misma impresora que los tickets de venta. Si tienes una térmica dedicada en cocina, selecciónala aquí.
                 </span>
               </div>
 

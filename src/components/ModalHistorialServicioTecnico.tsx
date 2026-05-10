@@ -362,7 +362,7 @@ function FilaExpandida({ orden, onAbrir }: { orden: any; onAbrir: () => void }) 
             ✓ Esta orden generó la venta <strong>#{orden.venta_id}</strong>
             <br/>
             <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>
-              Andá a Ventas → buscá ese número para ver detalles, imprimir o anular.
+              Ve a Ventas → busca ese número para ver detalles, imprimir o anular.
             </span>
           </div>
         )}

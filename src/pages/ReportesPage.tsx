@@ -4,8 +4,10 @@ import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteI
   reporteCxcPorCliente, reporteCxcDetalleCliente, reporteCxpPorProveedor, reporteCxpDetalleProveedor,
   reporteInventarioValorizado, reporteKardexProducto, reporteKardexMulti, listarCategoriasSimple,
   exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf, reporteVentasPorCajero,
-  reporteVentasFiltrable, reporteVentasFiltrosDisponibles } from "../services/api";
-import type { ReporteVentasResultado, VentaReporteRow } from "../services/api";
+  reporteVentasFiltrable, reporteVentasFiltrosDisponibles,
+  // v2.4.14: reporte de cancelaciones de servicio tecnico
+  stReporteCancelaciones } from "../services/api";
+import type { ReporteVentasResultado, VentaReporteRow, ResumenCancelaciones } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -33,7 +35,9 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros" | "ventas">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros" | "ventas" | "cancelaciones_st">("utilidad");
+  // v2.4.14: cancelaciones de Servicio Tecnico
+  const [cancelacionesST, setCancelacionesST] = useState<ResumenCancelaciones | null>(null);
   const [cajerosData, setCajerosData] = useState<any>(null);
   // v2.3.70 — Reporte de ventas individuales filtrable
   const [ventasReporte, setVentasReporte] = useState<ReporteVentasResultado | null>(null);
@@ -106,6 +110,16 @@ export default function ReportesPage() {
       else if (tab === "cajeros") {
         const data = await reporteVentasPorCajero(desde, hasta);
         setCajerosData(data);
+      }
+      else if (tab === "cancelaciones_st") {
+        try {
+          const data = await stReporteCancelaciones(desde, hasta);
+          setCancelacionesST(data);
+        } catch (e: any) {
+          // Modulo no habilitado u otro error: marcar vacio para que la UI lo muestre
+          setCancelacionesST({ total_canceladas: 0, total_abonos_devueltos: 0, monto_total_devuelto: 0, ordenes: [] });
+          if (!String(e).includes("modulo")) toastError("" + e);
+        }
       }
       else if (tab === "ventas") {
         // Cargar opciones de filtro + datos en paralelo
@@ -577,6 +591,7 @@ export default function ReportesPage() {
             ["inventario", "Inventario"],
             ["kardex", "Kardex Multi"],
             ["cajeros", "Cajeros"],
+            ["cancelaciones_st", "🚫 Cancelaciones ST"],
           ] as const).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
               style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
@@ -1578,6 +1593,91 @@ export default function ReportesPage() {
               }
             }}
           />
+        )}
+
+        {/* v2.4.14: Cancelaciones de Servicio Tecnico */}
+        {!cargando && tab === "cancelaciones_st" && cancelacionesST && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* KPIs */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <KpiCard label="Órdenes canceladas" valor={String(cancelacionesST.total_canceladas)}
+                color="var(--color-danger)" />
+              <KpiCard label="Abonos devueltos" valor={String(cancelacionesST.total_abonos_devueltos)}
+                sub={`$${cancelacionesST.monto_total_devuelto.toFixed(2)} en total`}
+                color="var(--color-warning)" />
+              <KpiCard label="Período" valor={`${desde}`} sub={`hasta ${hasta}`} />
+            </div>
+
+            {/* Tabla */}
+            <div style={{ overflowX: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--color-surface-alt)" }}>
+                    <th style={thStyle}>Fecha cancelación</th>
+                    <th style={thStyle}>Orden</th>
+                    <th style={thStyle}>Cliente</th>
+                    <th style={thStyle}>Equipo</th>
+                    <th style={thStyle}>Canceló</th>
+                    <th style={thStyle}>Motivo</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>Abonos dev.</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>Monto dev.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cancelacionesST.ordenes.length === 0 ? (
+                    <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "var(--color-text-secondary)" }}>
+                      No hay órdenes canceladas en este período
+                    </td></tr>
+                  ) : (
+                    cancelacionesST.ordenes.map(o => (
+                      <tr key={o.orden_id} style={{ borderTop: "1px solid var(--color-border)" }}>
+                        <td style={tdStyle}>{(o.fecha_cancelacion || o.fecha_ingreso).slice(0, 16).replace("T", " ")}</td>
+                        <td style={tdStyle}><strong>{o.numero}</strong></td>
+                        <td style={tdStyle}>
+                          {o.cliente_nombre || "—"}
+                          {o.cliente_telefono && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>📞 {o.cliente_telefono}</div>}
+                        </td>
+                        <td style={tdStyle}>
+                          {o.equipo_descripcion}
+                          {(o.equipo_marca || o.equipo_modelo) && (
+                            <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                              {[o.equipo_marca, o.equipo_modelo].filter(Boolean).join(" · ")}
+                            </div>
+                          )}
+                        </td>
+                        <td style={tdStyle}>{o.usuario_cancelacion || "—"}</td>
+                        <td style={tdStyle}>
+                          {o.observacion || <span style={{ color: "var(--color-text-secondary)", fontStyle: "italic" }}>sin motivo</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                          {o.abonos_devueltos > 0
+                            ? <span style={{ color: "var(--color-warning)", fontWeight: 600 }}>{o.abonos_devueltos}</span>
+                            : "—"}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: o.monto_devuelto > 0 ? "var(--color-warning)" : "var(--color-text-secondary)" }}>
+                          ${o.monto_devuelto.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+                {cancelacionesST.ordenes.length > 0 && (
+                  <tfoot>
+                    <tr style={{ background: "var(--color-surface-alt)", fontWeight: 700 }}>
+                      <td style={tdStyle} colSpan={6}>TOTAL ({cancelacionesST.total_canceladas} canceladas)</td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>{cancelacionesST.total_abonos_devueltos}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "var(--color-warning)" }}>${cancelacionesST.monto_total_devuelto.toFixed(2)}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 6 }}>
+              💡 Las órdenes canceladas conservan su historial. Los abonos en holding al momento de cancelar
+              se devuelven automáticamente al cliente. Si se canceló por error, contacta al admin.
+            </div>
+          </div>
         )}
       </div>
     </>

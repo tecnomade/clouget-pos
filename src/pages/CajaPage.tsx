@@ -74,7 +74,9 @@ export default function CajaPage() {
   // pero el dinero esta fisicamente en caja. Se devuelven si se cancela la orden,
   // o se aplican a la venta cuando se cobra. Avisar al cierre para que el cajero
   // sepa que ese dinero NO debe salir como sobrante.
+  // v2.4.14: solo se carga si el modulo Servicio Tecnico esta habilitado en config.
   const [holdingsCaja, setHoldingsCaja] = useState<HoldingCaja[]>([]);
+  const [moduloServicioTecnicoActivo, setModuloServicioTecnicoActivo] = useState(false);
   const totalHoldingsCaja = holdingsCaja.reduce((s, h) => s + h.monto, 0);
 
   const cargar = async () => {
@@ -92,12 +94,14 @@ export default function CajaPage() {
           }
         } catch { /* ignore */ }
         setHoldingsCaja([]);
-      } else {
-        // v2.4.13 ST-5: cargar abonos en HOLDING de la caja activa
+      } else if (moduloServicioTecnicoActivo) {
+        // v2.4.13 ST-5 / v2.4.14: solo cargar holdings si el modulo ST esta habilitado
         try {
           const hs = await stListarHoldingsCaja(caja.id);
           setHoldingsCaja(hs);
         } catch { setHoldingsCaja([]); }
+      } else {
+        setHoldingsCaja([]);
       }
     } catch (err) {
       // Cualquier error al cargar no debe romper la pagina
@@ -107,7 +111,9 @@ export default function CajaPage() {
     setCargando(false);
   };
 
-  useEffect(() => { cargar(); }, []);
+  // Recargar al montar y cuando cambie el flag del modulo ST (asi los holdings
+  // se cargan una vez que sabemos si el modulo esta activo).
+  useEffect(() => { cargar(); }, [moduloServicioTecnicoActivo]);
 
   // Auto-refresh: recargar caja cuando la ventana recupera el foco o vuelve a ser visible.
   // Evita que el usuario tenga que navegar afuera y volver para ver el monto_esperado
@@ -148,6 +154,8 @@ export default function CajaPage() {
     obtenerConfig().then((cfg) => {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setOcultarMontoEsperado(cfg.ocultar_monto_esperado_caja === "1");
+      // v2.4.14: gating del panel de holdings
+      setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
     }).catch(() => {});
   }, []);
   useEffect(() => {
