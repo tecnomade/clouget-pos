@@ -330,6 +330,28 @@ export default function Configuracion() {
                     </span>
                   </div>
                 )}
+                {config.modulo_servicio_tecnico === "1" && (
+                  <div style={{ padding: "10px 12px", marginLeft: 24, background: "var(--color-surface-alt)", borderRadius: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
+                      📜 Leyenda / términos en orden de servicio
+                    </label>
+                    <textarea
+                      className="input"
+                      rows={5}
+                      placeholder={"Ejemplo:\n• El equipo no retirado en 30 días será considerado abandonado.\n• Los precios incluyen IVA.\n• Garantía por 30 días sobre el trabajo realizado."}
+                      value={config.leyenda_orden_servicio || ""}
+                      onChange={(e) => setConfig({ ...config, leyenda_orden_servicio: e.target.value })}
+                      onBlur={() => {
+                        guardarConfig({ leyenda_orden_servicio: config.leyenda_orden_servicio || "" });
+                        toastExito("Leyenda guardada");
+                      }}
+                      style={{ width: "100%", fontSize: 12, fontFamily: "inherit", resize: "vertical" }}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                      Este texto aparecerá impreso al final de cada orden de servicio (sobre la firma del cliente). Útil para términos, plazos de retiro, garantías, etc.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

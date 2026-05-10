@@ -115,13 +115,15 @@ export default function ComboCatalogoEquipo({
         value={valorTexto}
         placeholder={placeholder}
         disabled={disabled}
-        onFocus={() => setFoco(true)}
+        onFocus={() => { if (!disabled) setFoco(true); }}
         onChange={(e) => {
+          if (disabled) return;
           // Al editar texto, limpiamos el id (el valor ya no corresponde al item seleccionado)
           onChange(null, e.target.value);
           setFoco(true);
         }}
         autoComplete="off"
+        style={disabled ? { opacity: 0.55, cursor: "not-allowed", background: "var(--color-surface-alt)" } : undefined}
       />
       {foco && opciones.length > 0 && (
         <div style={{

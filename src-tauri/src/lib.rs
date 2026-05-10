@@ -499,6 +499,18 @@ pub fn run() {
             commands::servicio_tecnico_catalogo::st_eliminar_modelo,
             commands::servicio_tecnico_catalogo::st_listar_arbol_completo,
             commands::servicio_tecnico_catalogo::st_historial_filtrable,
+            // Servicio Tecnico - Abonos / Holding / Cancelacion (ST-5)
+            commands::servicio_tecnico_abonos::st_listar_abonos,
+            commands::servicio_tecnico_abonos::st_recibir_abono,
+            commands::servicio_tecnico_abonos::st_total_abonos_orden,
+            commands::servicio_tecnico_abonos::st_cancelar_orden,
+            commands::servicio_tecnico_abonos::st_listar_holdings_caja,
+            // Servicio Tecnico - Items presupuestados (ST-5)
+            commands::servicio_tecnico_items::st_listar_items_orden,
+            commands::servicio_tecnico_items::st_agregar_item_orden,
+            commands::servicio_tecnico_items::st_actualizar_item_orden,
+            commands::servicio_tecnico_items::st_eliminar_item_orden,
+            commands::servicio_tecnico_items::st_total_orden,
             // Offline (cola y cache para modo cliente)
             offline::cache::encolar_operacion,
             offline::cache::listar_cola_offline,

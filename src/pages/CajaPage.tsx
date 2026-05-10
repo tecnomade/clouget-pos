@@ -1,6 +1,7 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja, stListarHoldingsCaja } from "../services/api";
+import type { HoldingCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -69,6 +70,12 @@ export default function CajaPage() {
     return d.toISOString().slice(0, 10);
   });
   const [historialHasta, setHistorialHasta] = useState(() => new Date().toISOString().slice(0, 10));
+  // v2.4.13 ST-5: Anticipos (HOLDING) en la caja activa. NO son ventas todavia,
+  // pero el dinero esta fisicamente en caja. Se devuelven si se cancela la orden,
+  // o se aplican a la venta cuando se cobra. Avisar al cierre para que el cajero
+  // sepa que ese dinero NO debe salir como sobrante.
+  const [holdingsCaja, setHoldingsCaja] = useState<HoldingCaja[]>([]);
+  const totalHoldingsCaja = holdingsCaja.reduce((s, h) => s + h.monto, 0);
 
   const cargar = async () => {
     setCargando(true);
@@ -84,6 +91,13 @@ export default function CajaPage() {
             setMontoInicial(uc.monto_real.toString());
           }
         } catch { /* ignore */ }
+        setHoldingsCaja([]);
+      } else {
+        // v2.4.13 ST-5: cargar abonos en HOLDING de la caja activa
+        try {
+          const hs = await stListarHoldingsCaja(caja.id);
+          setHoldingsCaja(hs);
+        } catch { setHoldingsCaja([]); }
       }
     } catch (err) {
       // Cualquier error al cargar no debe romper la pagina
@@ -795,6 +809,49 @@ export default function CajaPage() {
                 })()}
               </div>
               )}
+
+              {/* v2.4.13 ST-5: Holdings de servicio tecnico en esta caja.
+                  Aviso al cierre: este dinero esta en la caja pero NO es venta;
+                  pertenece a anticipos pendientes de aplicarse o devolverse. */}
+              {holdingsCaja.length > 0 && (
+                <div style={{
+                  marginTop: 12, padding: "10px 12px",
+                  background: "rgba(245, 158, 11, 0.12)",
+                  border: "1px solid rgba(245, 158, 11, 0.4)",
+                  borderRadius: 6, fontSize: 12,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, color: "var(--color-warning)" }}>
+                      ⚠ Anticipos en holding ({holdingsCaja.length})
+                    </span>
+                    <span style={{ fontWeight: 700, color: "var(--color-warning)" }}>
+                      ${totalHoldingsCaja.toFixed(2)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                    Este dinero está físicamente en la caja pero pertenece a órdenes de servicio
+                    aún no entregadas. Si se cancelan las órdenes, debe devolverse al cliente.
+                    No lo retires al cierre.
+                  </div>
+                  <div style={{ maxHeight: 140, overflowY: "auto", fontSize: 11 }}>
+                    {holdingsCaja.map(h => (
+                      <div key={h.abono_id}
+                        style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed rgba(245,158,11,0.2)" }}>
+                        <span>
+                          <strong>{h.orden_numero}</strong>
+                          {h.cliente_nombre && <span style={{ color: "var(--color-text-secondary)" }}> · {h.cliente_nombre}</span>}
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{h.equipo_descripcion}</div>
+                        </span>
+                        <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <strong>${h.monto.toFixed(2)}</strong>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{h.forma_pago}</div>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="text-secondary" style={{ fontSize: 12 }}>Monto real contado en caja</label>
                 <input
@@ -1109,9 +1166,13 @@ export default function CajaPage() {
       <Modal
         abierto={confirmarCierre}
         titulo="Cerrar Caja"
-        mensaje="Esta seguro que desea cerrar la caja? Se cerrara su sesion automaticamente."
+        mensaje={
+          holdingsCaja.length > 0
+            ? `⚠ Hay ${holdingsCaja.length} anticipo(s) en holding por $${totalHoldingsCaja.toFixed(2)} (órdenes de servicio aún no entregadas). Ese dinero debe permanecer en la caja para devolverlo o aplicarlo cuando se entregue. ¿Confirmas cerrar la caja? Se cerrará tu sesión automáticamente.`
+            : "¿Estás seguro que deseas cerrar la caja? Se cerrará tu sesión automáticamente."
+        }
         tipo="peligro"
-        textoConfirmar="Si, cerrar caja"
+        textoConfirmar="Sí, cerrar caja"
         onConfirmar={handleCerrar}
         onCancelar={() => setConfirmarCierre(false)}
       />

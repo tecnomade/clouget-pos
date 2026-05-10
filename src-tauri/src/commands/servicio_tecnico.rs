@@ -349,15 +349,22 @@ pub fn eliminar_imagen_orden(db: State<Database>, imagen_id: i64) -> Result<(), 
 // --- Cobrar orden -> crear venta ---
 
 #[tauri::command]
-/// v2.4.12: el parámetro `garantia_dias` es opcional — si viene, se actualiza
-/// el campo `ordenes_servicio.garantia_dias` antes de generar la venta.
+/// v2.4.13: refactor — los items se leen de `orden_servicio_items` (no del frontend),
+/// soporta pago mixto (`pagos: Vec<{forma, monto, banco_id?, referencia?}>`) y aplica
+/// abonos HOLDING como descuento. Mantiene compat: si vienen los parametros viejos
+/// (`forma_pago` + `items_repuestos`), funciona como antes para no romper clientes.
+///
+/// `garantia_dias` (opcional): actualiza la garantia antes de generar la venta.
 pub fn cobrar_orden_servicio(
     db: State<Database>,
     sesion: State<SesionState>,
     orden_id: i64,
-    forma_pago: String,
-    monto_recibido: f64,
-    items_repuestos: Vec<serde_json::Value>,
+    // Compat con firma vieja
+    forma_pago: Option<String>,
+    monto_recibido: Option<f64>,
+    items_repuestos: Option<Vec<serde_json::Value>>,
+    // Nuevo: pago mixto
+    pagos: Option<Vec<serde_json::Value>>,
     garantia_dias: Option<i64>,
 ) -> Result<i64, String> {
     requiere_modulo_servicio_tecnico(&db)?;
@@ -373,7 +380,7 @@ pub fn cobrar_orden_servicio(
         }
     }
 
-    let (cliente_id, monto_final, numero_orden, equipo_descripcion): (Option<i64>, f64, String, String) = {
+    let (cliente_id, monto_final_legacy, numero_orden, equipo_descripcion): (Option<i64>, f64, String, String) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         conn.query_row(
             "SELECT cliente_id, monto_final, numero, equipo_descripcion FROM ordenes_servicio WHERE id = ?1",
@@ -381,10 +388,6 @@ pub fn cobrar_orden_servicio(
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).map_err(|e| e.to_string())?
     };
-
-    if monto_final <= 0.0 && items_repuestos.is_empty() {
-        return Err("La orden no tiene monto ni repuestos para cobrar".to_string());
-    }
 
     let (usuario, usuario_id) = {
         let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
@@ -395,6 +398,150 @@ pub fn cobrar_orden_servicio(
     };
 
     let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // ─── Cargar items: nueva tabla > legacy (monto_final + items_repuestos) ───
+    #[derive(Clone)]
+    struct ItemCobro {
+        producto_id: Option<i64>,
+        descripcion: String,
+        cantidad: f64,
+        precio: f64,
+        iva_porc: f64,
+        es_servicio: bool,
+    }
+
+    let mut items: Vec<ItemCobro> = {
+        let mut stmt = conn.prepare(
+            "SELECT producto_id, descripcion, cantidad, precio_unitario, iva_porcentaje, es_servicio
+             FROM orden_servicio_items WHERE orden_id = ?1 ORDER BY id ASC"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![orden_id], |r| Ok(ItemCobro {
+            producto_id: r.get(0)?,
+            descripcion: r.get(1)?,
+            cantidad: r.get(2)?,
+            precio: r.get(3)?,
+            iva_porc: r.get(4)?,
+            es_servicio: r.get::<_, i64>(5)? != 0,
+        })).map_err(|e| e.to_string())?
+          .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        rows
+    };
+
+    // Si la orden no tiene items en la nueva tabla, usar legacy: monto_final + items_repuestos
+    if items.is_empty() {
+        if monto_final_legacy > 0.0 {
+            items.push(ItemCobro {
+                producto_id: None,
+                descripcion: format!("Servicio: {} - {}", numero_orden, equipo_descripcion),
+                cantidad: 1.0,
+                precio: monto_final_legacy,
+                iva_porc: 0.0,
+                es_servicio: true,
+            });
+        }
+        if let Some(reps) = items_repuestos.as_ref() {
+            for item in reps {
+                let pid = item["producto_id"].as_i64().unwrap_or(0);
+                let cant = item["cantidad"].as_f64().unwrap_or(0.0);
+                let precio = item["precio_unitario"].as_f64().unwrap_or(0.0);
+                let iva_porc: f64 = conn.query_row(
+                    "SELECT iva_porcentaje FROM productos WHERE id = ?1",
+                    rusqlite::params![pid], |r| r.get(0),
+                ).unwrap_or(0.0);
+                let descripcion: String = conn.query_row(
+                    "SELECT nombre FROM productos WHERE id = ?1",
+                    rusqlite::params![pid], |r| r.get(0),
+                ).unwrap_or_else(|_| "Repuesto".to_string());
+                items.push(ItemCobro {
+                    producto_id: Some(pid),
+                    descripcion,
+                    cantidad: cant,
+                    precio,
+                    iva_porc,
+                    es_servicio: false,
+                });
+            }
+        }
+    }
+
+    if items.is_empty() {
+        return Err("La orden no tiene items para cobrar. Agrega productos o servicios primero.".to_string());
+    }
+
+    // ─── Calcular totales ────────────────────────────────────────────────
+    let mut subtotal_sin_iva: f64 = 0.0;
+    let mut subtotal_con_iva: f64 = 0.0;
+    let mut iva_total: f64 = 0.0;
+    for it in &items {
+        let sub = it.cantidad * it.precio;
+        if it.iva_porc > 0.0 {
+            subtotal_con_iva += sub;
+            iva_total += sub * (it.iva_porc / 100.0);
+        } else {
+            subtotal_sin_iva += sub;
+        }
+    }
+    let total = subtotal_sin_iva + subtotal_con_iva + iva_total;
+
+    // ─── Abonos HOLDING (descuento del total) ────────────────────────────
+    let total_holdings: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(monto), 0) FROM st_abonos WHERE orden_id = ?1 AND estado = 'HOLDING'",
+        rusqlite::params![orden_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let saldo = (total - total_holdings).max(0.0);
+
+    // ─── Pagos: nuevo (mixto) o legacy (forma_pago + monto_recibido) ─────
+    #[derive(Clone)]
+    struct PagoCobro {
+        forma: String,
+        monto: f64,
+        banco_id: Option<i64>,
+        referencia: Option<String>,
+    }
+    let pagos_norm: Vec<PagoCobro> = if let Some(ps) = pagos {
+        ps.into_iter().map(|p| PagoCobro {
+            forma: p["forma_pago"].as_str().or_else(|| p["forma"].as_str()).unwrap_or("EFECTIVO").to_string(),
+            monto: p["monto"].as_f64().unwrap_or(0.0),
+            banco_id: p["banco_id"].as_i64(),
+            referencia: p["referencia"].as_str().or_else(|| p["referencia_pago"].as_str()).map(|s| s.to_string()),
+        }).filter(|p| p.monto > 0.0).collect()
+    } else {
+        let f = forma_pago.unwrap_or_else(|| "EFECTIVO".to_string());
+        vec![PagoCobro {
+            forma: f,
+            monto: monto_recibido.unwrap_or(saldo),
+            banco_id: None,
+            referencia: None,
+        }]
+    };
+
+    let total_pagado_efectivo: f64 = pagos_norm.iter().filter(|p| p.forma == "EFECTIVO").map(|p| p.monto).sum();
+    let total_pagado_no_efectivo: f64 = pagos_norm.iter().filter(|p| p.forma != "EFECTIVO").map(|p| p.monto).sum();
+    let monto_recibido_total = total_pagado_efectivo + total_pagado_no_efectivo;
+
+    // El cambio solo se da si pagaron MAS efectivo del que faltaba
+    let cambio = if total_pagado_efectivo > 0.0 && monto_recibido_total > saldo {
+        (monto_recibido_total - saldo).max(0.0).min(total_pagado_efectivo)
+    } else {
+        0.0
+    };
+
+    // Validar que pagaron al menos el saldo (si saldo = 0, todo cubierto por abonos)
+    if saldo > 0.001 && monto_recibido_total + 0.001 < saldo {
+        return Err(format!(
+            "El monto pagado (${:.2}) no cubre el saldo (${:.2}) despues de abonos (${:.2})",
+            monto_recibido_total, saldo, total_holdings
+        ));
+    }
+
+    // forma_pago_principal en ventas: la de mayor monto (o MIXTO si hay varias)
+    let forma_pago_principal = if pagos_norm.len() > 1 {
+        "MIXTO".to_string()
+    } else {
+        pagos_norm.first().map(|p| p.forma.clone()).unwrap_or_else(|| "EFECTIVO".to_string())
+    };
+
+    // ─── Insertar venta ──────────────────────────────────────────────────
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     let next_seq: i64 = tx.query_row(
@@ -403,71 +550,60 @@ pub fn cobrar_orden_servicio(
     ).unwrap_or(1);
     let numero = format!("NV-{:09}", next_seq);
 
-    // v2.4.7 FIX: separar bases por tasa de IVA y calcular total correctamente.
-    // Antes:
-    //   - Items con IVA: SOLO se sumaba el IVA al total (la BASE se perdía)
-    //   - subtotal_con_iva guardado hardcoded como 0
-    //   → ticket mostraba "solo el IVA", total mal calculado, contabilidad rota.
-    let mut subtotal_sin_iva: f64 = 0.0;   // base de items 0% + monto_final del servicio (sin IVA)
-    let mut subtotal_con_iva: f64 = 0.0;   // base de items con IVA
-    let mut iva_total: f64 = 0.0;          // IVA acumulado de items con IVA
-
-    // monto_final del servicio: sin IVA (es mano de obra, no un producto físico)
-    if monto_final > 0.0 {
-        subtotal_sin_iva += monto_final;
-    }
-
-    let mut productos_data: Vec<(i64, f64, f64, f64, f64)> = Vec::new();
-    for item in &items_repuestos {
-        let pid = item["producto_id"].as_i64().unwrap_or(0);
-        let cant = item["cantidad"].as_f64().unwrap_or(0.0);
-        let precio = item["precio_unitario"].as_f64().unwrap_or(0.0);
-        let iva_porc: f64 = tx.query_row(
-            "SELECT iva_porcentaje FROM productos WHERE id = ?1",
-            rusqlite::params![pid],
-            |r| r.get(0),
-        ).unwrap_or(0.0);
-        let sub = cant * precio;
-        if iva_porc > 0.0 {
-            subtotal_con_iva += sub;
-            iva_total += sub * (iva_porc / 100.0);
-        } else {
-            subtotal_sin_iva += sub;
-        }
-        productos_data.push((pid, cant, precio, iva_porc, sub));
-    }
-
-    let total = subtotal_sin_iva + subtotal_con_iva + iva_total;
-    let cambio = if monto_recibido > total { monto_recibido - total } else { 0.0 };
-    let observacion = format!("Servicio Técnico {} - {}", numero_orden, equipo_descripcion);
+    let observacion = if total_holdings > 0.0 {
+        format!("Servicio Tecnico {} - {} (Abonos aplicados: ${:.2})", numero_orden, equipo_descripcion, total_holdings)
+    } else {
+        format!("Servicio Tecnico {} - {}", numero_orden, equipo_descripcion)
+    };
 
     tx.execute(
         "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, descuento, iva, total, forma_pago, monto_recibido, cambio, estado, tipo_documento, estado_sri, observacion, usuario, usuario_id, tipo_estado) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, 'COMPLETADA', 'NOTA_VENTA', 'NO_APLICA', ?10, ?11, ?12, 'COMPLETADA')",
-        rusqlite::params![numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva_total, total, forma_pago, monto_recibido, cambio, observacion, usuario, usuario_id],
+        rusqlite::params![numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, iva_total, total, forma_pago_principal, monto_recibido_total, cambio, observacion, usuario, usuario_id],
     ).map_err(|e| e.to_string())?;
     let venta_id = tx.last_insert_rowid();
 
-    if monto_final > 0.0 {
+    // ─── Insertar detalles ───────────────────────────────────────────────
+    for it in &items {
+        let sub = it.cantidad * it.precio;
+        let info_adicional = if it.producto_id.is_none() {
+            Some(it.descripcion.clone())
+        } else { None };
         tx.execute(
-            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional) VALUES (?1, NULL, 1, ?2, 0, 0, ?2, ?3)",
-            rusqlite::params![venta_id, monto_final, format!("Servicio: {} - {}", numero_orden, equipo_descripcion)],
+            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7)",
+            rusqlite::params![venta_id, it.producto_id, it.cantidad, it.precio, it.iva_porc, sub, info_adicional],
+        ).ok();
+        if let Some(pid) = it.producto_id {
+            if !it.es_servicio {
+                tx.execute(
+                    "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2 AND es_servicio = 0 AND no_controla_stock = 0",
+                    rusqlite::params![it.cantidad, pid],
+                ).ok();
+            }
+        }
+    }
+
+    // ─── Insertar pagos en pagos_venta ───────────────────────────────────
+    for p in &pagos_norm {
+        tx.execute(
+            "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![venta_id, p.forma, p.monto, p.banco_id, p.referencia],
         ).ok();
     }
 
-    for (pid, cant, precio, iva_porc, sub) in &productos_data {
+    // ─── Aplicar abonos HOLDING → APLICADO ──────────────────────────────
+    if total_holdings > 0.0 {
         tx.execute(
-            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal) VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6)",
-            rusqlite::params![venta_id, pid, cant, precio, iva_porc, sub],
-        ).ok();
-        tx.execute(
-            "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2 AND es_servicio = 0 AND no_controla_stock = 0",
-            rusqlite::params![cant, pid],
+            "UPDATE st_abonos
+             SET estado = 'APLICADO', venta_id_aplicado = ?1,
+                 fecha_aplicado = datetime('now','localtime')
+             WHERE orden_id = ?2 AND estado = 'HOLDING'",
+            rusqlite::params![venta_id, orden_id],
         ).ok();
     }
 
     tx.execute(
-        "UPDATE ordenes_servicio SET venta_id = ?1, estado = 'ENTREGADO', fecha_entrega = datetime('now','localtime') WHERE id = ?2",
-        rusqlite::params![venta_id, orden_id],
+        "UPDATE ordenes_servicio SET venta_id = ?1, monto_final = ?2, estado = 'ENTREGADO', fecha_entrega = datetime('now','localtime') WHERE id = ?3",
+        rusqlite::params![venta_id, total, orden_id],
     ).ok();
 
     tx.execute(
@@ -496,13 +632,13 @@ pub fn imprimir_orden_servicio_pdf(
     let es_ticket = formato_efectivo == "TICKET_80";
 
     let (
-        nombre_negocio, ruc, direccion, telefono,
+        nombre_negocio, ruc, direccion, telefono, leyenda_orden,
         numero, cliente_nombre, cliente_telefono, tipo_equipo, equipo_descripcion,
         equipo_marca, equipo_modelo, equipo_serie, equipo_placa, accesorios,
         diagnostico, problema_reportado, trabajo_realizado, observaciones,
         estado, fecha_ingreso, presupuesto, monto_final,
     ): (
-        String, String, String, String,
+        String, String, String, String, String,
         String, Option<String>, Option<String>, String, String,
         String, Option<String>, Option<String>, Option<String>, Option<String>,
         String, String, Option<String>, Option<String>,
@@ -530,9 +666,10 @@ pub fn imprimir_orden_servicio_pdf(
         let ruc: String = conn.query_row("SELECT value FROM config WHERE key = 'ruc'", [], |r| r.get(0)).unwrap_or_default();
         let direccion: String = conn.query_row("SELECT value FROM config WHERE key = 'direccion'", [], |r| r.get(0)).unwrap_or_default();
         let telefono: String = conn.query_row("SELECT value FROM config WHERE key = 'telefono'", [], |r| r.get(0)).unwrap_or_default();
+        let leyenda_orden: String = conn.query_row("SELECT value FROM config WHERE key = 'leyenda_orden_servicio'", [], |r| r.get(0)).unwrap_or_default();
 
         (
-            nombre_negocio, ruc, direccion, telefono,
+            nombre_negocio, ruc, direccion, telefono, leyenda_orden,
             orden.0, orden.1, orden.2, orden.3, orden.4,
             orden.5, orden.6, orden.7, orden.8, orden.9,
             orden.10, orden.11, orden.12, orden.13,
@@ -617,9 +754,23 @@ pub fn imprimir_orden_servicio_pdf(
         if monto_final > 0.0 { doc.push(Paragraph::new(&format!("Total: ${:.2}", monto_final)).styled(header_st)); }
     }
 
+    // Leyenda / términos configurables (Configuración → Servicio Técnico)
+    if !leyenda_orden.trim().is_empty() {
+        doc.push(Break::new(1.5));
+        doc.push(Paragraph::new("TÉRMINOS Y CONDICIONES").styled(label_st));
+        for linea in leyenda_orden.split('\n') {
+            let linea = linea.trim_end();
+            if linea.is_empty() {
+                doc.push(Break::new(0.5));
+            } else {
+                doc.push(Paragraph::new(linea).styled(normal_st));
+            }
+        }
+    }
+
     doc.push(Break::new(3));
-    doc.push(Paragraph::new("___________________________            ___________________________").aligned(Alignment::Center).styled(normal_st));
-    doc.push(Paragraph::new("Firma del Cliente                                       Firma del Técnico").aligned(Alignment::Center).styled(normal_st));
+    doc.push(Paragraph::new("___________________________").aligned(Alignment::Center).styled(normal_st));
+    doc.push(Paragraph::new("Firma del Cliente").aligned(Alignment::Center).styled(normal_st));
 
     let temp_dir = std::env::temp_dir();
     let filename = format!("OrdenServicio-{}.pdf", numero.replace("/", "-"));

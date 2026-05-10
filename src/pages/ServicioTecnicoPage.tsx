@@ -5,7 +5,7 @@ import {
   historialMovimientosOrden, eliminarOrdenServicio,
   agregarImagenOrden, listarImagenesOrden, eliminarImagenOrden,
   cobrarOrdenServicio, imprimirOrdenServicioPdf,
-  buscarClientes, listarUsuarios, buscarProductos, obtenerConfig,
+  buscarClientes, listarUsuarios, obtenerConfig,
   // v2.4.10 ST-2.5: catálogo
   stListarTiposEquipo, stListarMarcas, stListarModelos,
   stCrearTipoEquipo, stCrearMarca, stCrearModelo,
@@ -18,6 +18,11 @@ import { useSesion } from "../contexts/SesionContext";
 import ModalConfigServicioTecnico from "../components/ModalConfigServicioTecnico";
 import ModalHistorialServicioTecnico from "../components/ModalHistorialServicioTecnico";
 import ComboCatalogoEquipo from "../components/ComboCatalogoEquipo";
+import SeccionItemsAbonosOrden from "../components/SeccionItemsAbonosOrden";
+// v2.4.13 ST-5: cancelar orden + nuevo cobro mixto
+import { stCancelarOrden, listarCuentasBanco } from "../services/api";
+import type { TotalOrden, AbonoServicio, PagoOrden } from "../services/api";
+import type { CuentaBanco } from "../types";
 
 const ESTADOS = ["RECIBIDO", "DIAGNOSTICANDO", "EN_REPARACION", "ESPERANDO_REPUESTOS", "LISTO", "ENTREGADO"];
 const ESTADOS_COLORS: Record<string, string> = {
@@ -98,13 +103,12 @@ export default function ServicioTecnicoPage() {
   const [clientesResultados, setClientesResultados] = useState<any[]>([]);
   const [obsCambioEstado, setObsCambioEstado] = useState("");
   const [tipoImagen, setTipoImagen] = useState<"ANTES" | "DESPUES" | "GENERAL">("GENERAL");
-  // Cobrar
+  // Cobrar (legacy: cobroFormaPago/cobroMontoRecibido/cobroRepuestos siguen existiendo
+  // como fallback si la orden no tiene items en la nueva tabla orden_servicio_items)
   const [mostrarCobrar, setMostrarCobrar] = useState(false);
-  const [cobroFormaPago, setCobroFormaPago] = useState("EFECTIVO");
+  const [cobroFormaPago] = useState("EFECTIVO");
   const [cobroMontoRecibido, setCobroMontoRecibido] = useState("");
   const [cobroRepuestos, setCobroRepuestos] = useState<any[]>([]);
-  const [busquedaProducto, setBusquedaProducto] = useState("");
-  const [productosResultados, setProductosResultados] = useState<any[]>([]);
   // v2.4.9 — ST-2: modales de configuración + historial
   const [mostrarConfig, setMostrarConfig] = useState(false);
   const [mostrarHistorial, setMostrarHistorial] = useState(false);
@@ -118,6 +122,14 @@ export default function ServicioTecnicoPage() {
   // v2.4.12 — ST-4/garantía: días de garantía a aplicar al cobrar + formato impresión
   const [cobroGarantiaDias, setCobroGarantiaDias] = useState("0");
   const [formatoImpresion, setFormatoImpresion] = useState<"A4" | "TICKET_80">("A4");
+  // v2.4.13 — ST-5: total de items + abonos sincronizados desde el componente embebido,
+  // para usarlos en el modal de cobrar y validaciones.
+  const [totalOrdenItems, setTotalOrdenItems] = useState<TotalOrden>({ subtotal_sin_iva: 0, subtotal_con_iva: 0, iva: 0, total: 0, cantidad_items: 0 });
+  const [, setAbonosOrden] = useState<AbonoServicio[]>([]);
+  const [totalHoldingOrden, setTotalHoldingOrden] = useState(0);
+  const [bancosCobro, setBancosCobro] = useState<CuentaBanco[]>([]);
+  // Pago mixto en cobro: lista de pagos (forma + monto + banco/ref opcionales)
+  const [cobroPagos, setCobroPagos] = useState<PagoOrden[]>([{ forma_pago: "EFECTIVO", monto: 0 }]);
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -153,6 +165,8 @@ export default function ServicioTecnicoPage() {
     }).catch(() => {});
     // v2.4.10 ST-2.5: cargar catálogo de tipos al montar
     stListarTiposEquipo().then(setStTipos).catch(() => {});
+    // v2.4.13 ST-5: bancos para cobro mixto y abonos por transferencia
+    listarCuentasBanco().then(setBancosCobro).catch(() => {});
   }, []);
 
   // Cuando cambia tipo_equipo_id en form → cargar marcas
@@ -189,7 +203,7 @@ export default function ServicioTecnicoPage() {
   /** v2.4.11 ST-3: Consulta cédula/RUC en el SRI y crea/vincula cliente al form. */
   const consultarSriHandler = async () => {
     if (busquedaIdentif.length < 8) {
-      toastError("Ingresá una cédula (10 dígitos) o RUC (13 dígitos) válido");
+      toastError("Ingresa una cédula (10 dígitos) o RUC (13 dígitos) válida");
       return;
     }
     setConsultandoSri(true);
@@ -283,11 +297,21 @@ export default function ServicioTecnicoPage() {
 
   const handleCobrar = async () => {
     if (!detalleId) return;
-    const monto = parseFloat(cobroMontoRecibido) || 0;
-    // v2.4.12: garantía opcional
     const garantia = parseInt(cobroGarantiaDias) || 0;
+    // v2.4.13: pago mixto. Si no hay pagos cargados, usar legacy (forma + monto único).
+    const pagosFiltrados = cobroPagos.filter(p => p.monto > 0);
     try {
-      await cobrarOrdenServicio(detalleId, cobroFormaPago, monto, cobroRepuestos, garantia);
+      if (pagosFiltrados.length > 0) {
+        await cobrarOrdenServicio(detalleId, { pagos: pagosFiltrados, garantiaDias: garantia });
+      } else {
+        const monto = parseFloat(cobroMontoRecibido) || 0;
+        await cobrarOrdenServicio(detalleId, {
+          formaPago: cobroFormaPago,
+          montoRecibido: monto,
+          itemsRepuestos: cobroRepuestos,
+          garantiaDias: garantia,
+        });
+      }
       const msgGarantia = garantia > 0 ? ` · 🛡 Garantía ${garantia} días` : "";
       toastExito(`Cobrado y entregado${msgGarantia}`);
       setMostrarCobrar(false);
@@ -297,10 +321,32 @@ export default function ServicioTecnicoPage() {
     } catch (err) { toastError("Error: " + err); }
   };
 
-  const totalCobro = useMemo(() => {
-    const repuestos = cobroRepuestos.reduce((s, r) => s + r.cantidad * r.precio_unitario, 0);
-    return (detalle?.monto_final || 0) + repuestos;
-  }, [cobroRepuestos, detalle]);
+  // v2.4.13: total a cobrar = total de items − abonos en HOLDING
+  const saldoCobro = useMemo(() => {
+    return Math.max(totalOrdenItems.total - totalHoldingOrden, 0);
+  }, [totalOrdenItems, totalHoldingOrden]);
+
+  const totalPagosCobro = useMemo(() => cobroPagos.reduce((s, p) => s + (p.monto || 0), 0), [cobroPagos]);
+
+
+  const handleCancelarOrden = async () => {
+    if (!detalleId) return;
+    const obs = prompt("¿Por qué se cancela la orden? (opcional)");
+    // prompt regresa "" si user pulsa OK sin texto, null si cancela
+    if (obs === null) return;
+    if (!confirm("¿Cancelar esta orden? Los abonos en holding se devolverán automáticamente al cliente.")) return;
+    try {
+      const r = await stCancelarOrden(detalleId, obs.trim() || null);
+      if (r.abonos_devueltos > 0) {
+        toastExito(`Orden cancelada · ${r.abonos_devueltos} abono(s) devuelto(s) ($${r.monto_devuelto.toFixed(2)})`);
+      } else {
+        toastExito("Orden cancelada");
+      }
+      setDetalleId(null);
+      setDetalle(null);
+      cargar();
+    } catch (err) { toastError("" + err); }
+  };
 
   return (
     <>
@@ -553,7 +599,7 @@ export default function ServicioTecnicoPage() {
                       setStTipos(fresh);
                       return id;
                     }}
-                    placeholder="Elegí o escribí un tipo (Vehículo, Computadora...)"
+                    placeholder="Elige un tipo o escribe uno nuevo (Vehículo, Computadora...)"
                     required
                   />
                 </div>
@@ -571,7 +617,9 @@ export default function ServicioTecnicoPage() {
                     onChange={(e) => setForm({ ...form, equipo_descripcion: e.target.value })} />
                 </div>
                 <div>
-                  {/* v2.4.10 ST-2.5: Marca con autocomplete del catálogo */}
+                  {/* v2.4.10 ST-2.5 / v2.4.13: Marca con autocomplete del catálogo.
+                      Jerarquía estricta: requiere tipo seleccionado antes (sino se mezclarían
+                      modelos de marcas que no corresponden, ej: Latitude bajo Lenovo). */}
                   <ComboCatalogoEquipo
                     label="Marca"
                     valorTexto={form.equipo_marca || ""}
@@ -586,11 +634,14 @@ export default function ServicioTecnicoPage() {
                       setStMarcas(fresh);
                       return id;
                     } : undefined}
-                    placeholder={form.tipo_equipo_id ? "Elegí o escribí una marca" : "Elegí un tipo primero (o escribí libre)"}
+                    disabled={!form.tipo_equipo_id}
+                    placeholder={form.tipo_equipo_id
+                      ? (stMarcas.length > 0 ? "Elige una marca o escribe una nueva" : "Escribe una marca y agrégala")
+                      : "Elige primero un tipo de equipo"}
                   />
                 </div>
                 <div>
-                  {/* v2.4.10 ST-2.5: Modelo con autocomplete del catálogo */}
+                  {/* v2.4.10 ST-2.5 / v2.4.13: Modelo, requiere marca seleccionada del catálogo. */}
                   <ComboCatalogoEquipo
                     label="Modelo"
                     valorTexto={form.equipo_modelo || ""}
@@ -608,7 +659,10 @@ export default function ServicioTecnicoPage() {
                       setStModelos(fresh);
                       return id;
                     } : undefined}
-                    placeholder={form.marca_id ? "Elegí o escribí un modelo" : "Elegí una marca primero (o escribí libre)"}
+                    disabled={!form.marca_id}
+                    placeholder={form.marca_id
+                      ? (stModelos.length > 0 ? "Elige un modelo o escribe uno nuevo" : "Escribe un modelo y agrégalo")
+                      : "Elige primero una marca"}
                   />
                 </div>
                 <div>
@@ -779,21 +833,22 @@ export default function ServicioTecnicoPage() {
                   onChange={(e) => setDetalle({ ...detalle, trabajo_realizado: e.target.value })}
                   onBlur={() => actualizarOrdenServicio(detalle).then(() => toastExito("Guardado")).catch(err => toastError("" + err))} />
               </div>
-              <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Monto final</label>
-                  <input className="input" type="number" step="0.01"
-                    value={detalle.monto_final || 0}
-                    onChange={(e) => setDetalle({ ...detalle, monto_final: parseFloat(e.target.value) || 0 })}
-                    onBlur={() => actualizarOrdenServicio(detalle).then(() => toastExito("Guardado")).catch(err => toastError("" + err))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600 }}>Garantía (días)</label>
-                  <input className="input" type="number"
-                    value={detalle.garantia_dias || 0}
-                    onChange={(e) => setDetalle({ ...detalle, garantia_dias: parseInt(e.target.value) || 0 })}
-                    onBlur={() => actualizarOrdenServicio(detalle).then(() => toastExito("Guardado")).catch(err => toastError("" + err))} />
-                </div>
+              {/* v2.4.13 ST-5: Items presupuestados + abonos. El total de la orden se calcula
+                  desde aquí; reemplaza al campo "Monto final" libre que estaba antes. */}
+              {detalleId && (
+                <SeccionItemsAbonosOrden
+                  ordenId={detalleId}
+                  ordenEstado={detalle.estado || "RECIBIDO"}
+                  onTotalChange={setTotalOrdenItems}
+                  onAbonosChange={(t, abs) => { setTotalHoldingOrden(t); setAbonosOrden(abs); }}
+                />
+              )}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>Garantía (días)</label>
+                <input className="input" type="number"
+                  value={detalle.garantia_dias || 0}
+                  onChange={(e) => setDetalle({ ...detalle, garantia_dias: parseInt(e.target.value) || 0 })}
+                  onBlur={() => actualizarOrdenServicio(detalle).then(() => toastExito("Guardado")).catch(err => toastError("" + err))} />
               </div>
 
               {/* Imágenes */}
@@ -852,6 +907,15 @@ export default function ServicioTecnicoPage() {
                     catch (err) { toastError("" + err); }
                   }}>Eliminar</button>
               )}
+              {/* v2.4.13 ST-5: cancelar orden (devuelve abonos automáticamente). Cualquier cajero puede,
+                  no requiere admin (los abonos se devuelven sin autorización). */}
+              {detalle.estado !== "ENTREGADO" && detalle.estado !== "CANCELADA" && (
+                <button className="btn btn-outline" style={{ fontSize: 11, color: "var(--color-warning)" }}
+                  onClick={handleCancelarOrden}
+                  title="Cancela la orden y devuelve abonos en holding al cliente">
+                  🚫 Cancelar orden
+                </button>
+              )}
               {/* v2.4.12 ST-4: selector de formato (A4 vs Ticket 80mm) */}
               <div style={{ display: "inline-flex", border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
                 <button className="btn"
@@ -877,13 +941,16 @@ export default function ServicioTecnicoPage() {
                   📄 Imprimir
                 </button>
               </div>
-              {detalle.estado !== "ENTREGADO" && detalle.estado !== "CANCELADO" && (
+              {detalle.estado !== "ENTREGADO" && detalle.estado !== "CANCELADA" && detalle.estado !== "CANCELADO" && (
                 <button className="btn btn-success" onClick={() => {
                   setMostrarCobrar(true);
                   setCobroMontoRecibido("");
                   setCobroRepuestos([]);
                   // v2.4.12: precargar garantía con el valor actual de la orden
                   setCobroGarantiaDias(String(detalle?.garantia_dias ?? 0));
+                  // v2.4.13: precargar primer pago con el saldo (= total − abonos)
+                  const saldo = Math.max(totalOrdenItems.total - totalHoldingOrden, 0);
+                  setCobroPagos([{ forma_pago: "EFECTIVO", monto: saldo }]);
                 }}>💰 Cobrar</button>
               )}
             </div>
@@ -894,70 +961,105 @@ export default function ServicioTecnicoPage() {
       {/* Modal Cobrar */}
       {mostrarCobrar && detalle && (
         <div className="modal-overlay" onClick={() => setMostrarCobrar(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
             <div className="modal-header"><h3>Cobrar orden {detalle.numero}</h3></div>
             <div className="modal-body">
-              <div style={{ marginBottom: 12 }}>
-                <strong>Servicio: ${(detalle.monto_final || 0).toFixed(2)}</strong>
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Repuestos (opcional)</label>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <input className="input" placeholder="Buscar producto..." value={busquedaProducto}
-                    onChange={(e) => {
-                      setBusquedaProducto(e.target.value);
-                      if (e.target.value.length >= 2) buscarProductos(e.target.value).then(setProductosResultados).catch(() => {});
-                    }} />
+              {/* v2.4.13 ST-5: resumen de items + abonos descontados */}
+              <div style={{ background: "var(--color-surface-alt)", padding: 12, borderRadius: 6, marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                  <span>Total de items:</span>
+                  <strong>${totalOrdenItems.total.toFixed(2)}</strong>
                 </div>
-                {productosResultados.length > 0 && busquedaProducto.length >= 2 && (
-                  <div style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 4, marginTop: 4, maxHeight: 100, overflow: "auto" }}>
-                    {productosResultados.slice(0, 5).map((p: any) => (
-                      <div key={p.id} style={{ padding: "4px 8px", cursor: "pointer", fontSize: 11 }}
-                        onClick={() => {
-                          setCobroRepuestos([...cobroRepuestos, { producto_id: p.id, nombre: p.nombre, cantidad: 1, precio_unitario: p.precio_venta }]);
-                          setBusquedaProducto(""); setProductosResultados([]);
-                        }}>
-                        {p.nombre} - ${p.precio_venta}
-                      </div>
-                    ))}
+                {totalHoldingOrden > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--color-warning)" }}>
+                    <span>− Abonos en holding:</span>
+                    <strong>−${totalHoldingOrden.toFixed(2)}</strong>
                   </div>
                 )}
-                {cobroRepuestos.map((r, i) => (
-                  <div key={i} style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 4, fontSize: 11 }}>
-                    <span style={{ flex: 1 }}>{r.nombre}</span>
-                    <input className="input" type="number" style={{ width: 60 }} value={r.cantidad}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 700, marginTop: 4, paddingTop: 4, borderTop: "1px solid var(--color-border)" }}>
+                  <span>Saldo a cobrar:</span>
+                  <span style={{ color: "var(--color-success)" }}>${saldoCobro.toFixed(2)}</span>
+                </div>
+                {totalOrdenItems.cantidad_items === 0 && (
+                  <div style={{ fontSize: 11, color: "var(--color-danger)", marginTop: 6 }}>
+                    ⚠ Esta orden no tiene items. Cierra este modal y agrega items antes de cobrar.
+                  </div>
+                )}
+              </div>
+
+              {/* v2.4.13 ST-5: Pago mixto. Usa la misma lógica que POS: lista de pagos. */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>Pagos</label>
+                  <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                    onClick={() => setCobroPagos([...cobroPagos, { forma_pago: "EFECTIVO", monto: 0 }])}>
+                    + Agregar pago
+                  </button>
+                </div>
+                {cobroPagos.map((p, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "130px 1fr 30px", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                    <select className="input" value={p.forma_pago}
                       onChange={(e) => {
-                        const nu = [...cobroRepuestos];
-                        nu[i].cantidad = parseFloat(e.target.value) || 0;
-                        setCobroRepuestos(nu);
-                      }} />
-                    <input className="input" type="number" step="0.01" style={{ width: 80 }} value={r.precio_unitario}
-                      onChange={(e) => {
-                        const nu = [...cobroRepuestos];
-                        nu[i].precio_unitario = parseFloat(e.target.value) || 0;
-                        setCobroRepuestos(nu);
-                      }} />
-                    <span style={{ width: 60, textAlign: "right" }}>${(r.cantidad * r.precio_unitario).toFixed(2)}</span>
-                    <button className="btn btn-danger" style={{ fontSize: 10, padding: "2px 6px" }}
-                      onClick={() => setCobroRepuestos(cobroRepuestos.filter((_, j) => j !== i))}>x</button>
+                        const nu = [...cobroPagos];
+                        nu[i] = { ...nu[i], forma_pago: e.target.value, banco_id: null, referencia: null };
+                        setCobroPagos(nu);
+                      }}
+                      style={{ fontSize: 12 }}>
+                      <option value="EFECTIVO">Efectivo</option>
+                      <option value="TRANSFER">Transferencia</option>
+                      <option value="TARJETA">Tarjeta</option>
+                      <option value="CREDITO">Crédito</option>
+                    </select>
+                    <div>
+                      <input className="input" type="number" step="0.01" placeholder="Monto"
+                        value={p.monto || ""}
+                        onChange={(e) => {
+                          const nu = [...cobroPagos];
+                          nu[i] = { ...nu[i], monto: parseFloat(e.target.value) || 0 };
+                          setCobroPagos(nu);
+                        }}
+                        style={{ fontSize: 12 }} />
+                      {p.forma_pago === "TRANSFER" && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 4 }}>
+                          <select className="input" value={p.banco_id || ""}
+                            onChange={(e) => {
+                              const nu = [...cobroPagos];
+                              nu[i] = { ...nu[i], banco_id: parseInt(e.target.value) || null };
+                              setCobroPagos(nu);
+                            }}
+                            style={{ fontSize: 11 }}>
+                            <option value="">Cuenta...</option>
+                            {bancosCobro.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                          </select>
+                          <input className="input" placeholder="Referencia"
+                            value={p.referencia || ""}
+                            onChange={(e) => {
+                              const nu = [...cobroPagos];
+                              nu[i] = { ...nu[i], referencia: e.target.value };
+                              setCobroPagos(nu);
+                            }}
+                            style={{ fontSize: 11 }} />
+                        </div>
+                      )}
+                    </div>
+                    {cobroPagos.length > 1 && (
+                      <button type="button"
+                        onClick={() => setCobroPagos(cobroPagos.filter((_, j) => j !== i))}
+                        style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16 }}>×</button>
+                    )}
                   </div>
                 ))}
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Forma de pago</label>
-                <select className="input" value={cobroFormaPago} onChange={(e) => setCobroFormaPago(e.target.value)}>
-                  <option value="EFECTIVO">Efectivo</option>
-                  <option value="TRANSFER">Transferencia</option>
-                  <option value="CREDITO">Crédito</option>
-                </select>
-              </div>
-
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Monto recibido</label>
-                <input className="input" type="number" step="0.01" value={cobroMontoRecibido}
-                  onChange={(e) => setCobroMontoRecibido(e.target.value)} />
+                {/* Atajos rápidos: completa el primer pago al saldo exacto */}
+                {saldoCobro > 0 && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                      onClick={() => {
+                        const nu = [...cobroPagos];
+                        nu[0] = { ...nu[0], monto: saldoCobro };
+                        setCobroPagos(nu);
+                      }}>= Saldo (${saldoCobro.toFixed(2)})</button>
+                  </div>
+                )}
               </div>
 
               {/* v2.4.12: garantía aplicada al cobrar (queda registrada en la orden) */}
@@ -992,10 +1094,25 @@ export default function ServicioTecnicoPage() {
                 </div>
               </div>
 
-              <div style={{ padding: 12, background: "rgba(34, 197, 94, 0.1)", borderRadius: 6, fontSize: 16, fontWeight: 700 }}>
-                TOTAL: ${totalCobro.toFixed(2)}
-                {parseFloat(cobroMontoRecibido) > totalCobro && (
-                  <div style={{ fontSize: 12, fontWeight: 400 }}>Cambio: ${(parseFloat(cobroMontoRecibido) - totalCobro).toFixed(2)}</div>
+              <div style={{ padding: 12, background: "rgba(34, 197, 94, 0.1)", borderRadius: 6, fontSize: 13 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>Total pagado:</span>
+                  <strong>${totalPagosCobro.toFixed(2)}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span>Saldo:</span>
+                  <strong>${saldoCobro.toFixed(2)}</strong>
+                </div>
+                {totalPagosCobro > saldoCobro && cobroPagos.some(p => p.forma_pago === "EFECTIVO") && (
+                  <div style={{ display: "flex", justifyContent: "space-between", color: "var(--color-success)", fontWeight: 700 }}>
+                    <span>Cambio:</span>
+                    <span>${(totalPagosCobro - saldoCobro).toFixed(2)}</span>
+                  </div>
+                )}
+                {totalPagosCobro < saldoCobro && (
+                  <div style={{ color: "var(--color-danger)", fontSize: 11, marginTop: 4 }}>
+                    Falta ${(saldoCobro - totalPagosCobro).toFixed(2)} para cubrir el saldo
+                  </div>
                 )}
               </div>
             </div>

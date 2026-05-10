@@ -1479,10 +1479,143 @@ export const listarImagenesOrden = (ordenId: number) =>
 export const eliminarImagenOrden = (imagenId: number) =>
   smartInvoke<void>("eliminar_imagen_orden", { imagenId });
 // v2.4.12 ST-4+: garantiaDias opcional al cobrar; formato ("A4" | "TICKET_80") al imprimir
-export const cobrarOrdenServicio = (ordenId: number, formaPago: string, montoRecibido: number, itemsRepuestos: any[], garantiaDias?: number | null) =>
-  smartInvoke<number>("cobrar_orden_servicio", { ordenId, formaPago, montoRecibido, itemsRepuestos, garantiaDias: garantiaDias ?? null });
+// v2.4.13 ST-5: refactor — soporta pago mixto (`pagos`) y aplica abonos HOLDING como descuento.
+//                Compat: si pasas formaPago + montoRecibido + itemsRepuestos sigue funcionando.
+export interface PagoOrden {
+  forma_pago: string;       // EFECTIVO | TRANSFER | CREDITO | TARJETA
+  monto: number;
+  banco_id?: number | null;
+  referencia?: string | null;
+}
+export const cobrarOrdenServicio = (
+  ordenId: number,
+  args: {
+    pagos?: PagoOrden[];
+    formaPago?: string;
+    montoRecibido?: number;
+    itemsRepuestos?: any[];
+    garantiaDias?: number | null;
+  } = {},
+) =>
+  smartInvoke<number>("cobrar_orden_servicio", {
+    ordenId,
+    pagos: args.pagos ?? null,
+    formaPago: args.formaPago ?? null,
+    montoRecibido: args.montoRecibido ?? null,
+    itemsRepuestos: args.itemsRepuestos ?? null,
+    garantiaDias: args.garantiaDias ?? null,
+  });
 export const imprimirOrdenServicioPdf = (ordenId: number, formato: "A4" | "TICKET_80" = "A4") =>
   smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId, formato });
+
+// === ST-5: Items presupuestados de la orden ===
+export interface ItemOrden {
+  id?: number;
+  orden_id: number;
+  producto_id?: number | null;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  iva_porcentaje: number;
+  subtotal: number;
+  es_servicio: number;
+}
+export interface TotalOrden {
+  subtotal_sin_iva: number;
+  subtotal_con_iva: number;
+  iva: number;
+  total: number;
+  cantidad_items: number;
+}
+export const stListarItemsOrden = (ordenId: number) =>
+  smartInvoke<ItemOrden[]>("st_listar_items_orden", { ordenId });
+export const stAgregarItemOrden = (
+  ordenId: number,
+  descripcion: string,
+  cantidad: number,
+  precioUnitario: number,
+  productoId?: number | null,
+  ivaPorcentaje?: number | null,
+  esServicio?: boolean | null,
+) =>
+  smartInvoke<number>("st_agregar_item_orden", {
+    ordenId,
+    productoId: productoId ?? null,
+    descripcion,
+    cantidad,
+    precioUnitario,
+    ivaPorcentaje: ivaPorcentaje ?? null,
+    esServicio: esServicio ?? null,
+  });
+export const stActualizarItemOrden = (
+  itemId: number,
+  descripcion: string,
+  cantidad: number,
+  precioUnitario: number,
+  ivaPorcentaje: number,
+) =>
+  smartInvoke<void>("st_actualizar_item_orden", { itemId, descripcion, cantidad, precioUnitario, ivaPorcentaje });
+export const stEliminarItemOrden = (itemId: number) =>
+  smartInvoke<void>("st_eliminar_item_orden", { itemId });
+export const stTotalOrden = (ordenId: number) =>
+  smartInvoke<TotalOrden>("st_total_orden", { ordenId });
+
+// === ST-5: Abonos / Holding / Cancelacion ===
+export interface AbonoServicio {
+  id?: number;
+  orden_id: number;
+  monto: number;
+  forma_pago: string;
+  banco_id?: number | null;
+  banco_nombre?: string | null;
+  referencia_pago?: string | null;
+  caja_id?: number | null;
+  estado: string; // HOLDING | APLICADO | DEVUELTO
+  venta_id_aplicado?: number | null;
+  fecha?: string | null;
+  fecha_aplicado?: string | null;
+  fecha_devuelto?: string | null;
+  usuario_nombre?: string | null;
+  observacion?: string | null;
+}
+export interface HoldingCaja {
+  abono_id: number;
+  orden_id: number;
+  orden_numero: string;
+  cliente_nombre?: string | null;
+  equipo_descripcion: string;
+  monto: number;
+  forma_pago: string;
+  fecha: string;
+  usuario_nombre?: string | null;
+}
+export const stListarAbonos = (ordenId: number) =>
+  smartInvoke<AbonoServicio[]>("st_listar_abonos", { ordenId });
+export const stRecibirAbono = (
+  ordenId: number,
+  monto: number,
+  formaPago: string,
+  bancoId?: number | null,
+  referenciaPago?: string | null,
+  observacion?: string | null,
+) =>
+  smartInvoke<number>("st_recibir_abono", {
+    ordenId,
+    monto,
+    formaPago,
+    bancoId: bancoId ?? null,
+    referenciaPago: referenciaPago ?? null,
+    observacion: observacion ?? null,
+  });
+export const stTotalAbonosOrden = (ordenId: number) =>
+  smartInvoke<number>("st_total_abonos_orden", { ordenId });
+export const stCancelarOrden = (ordenId: number, observacion?: string | null) =>
+  smartInvoke<{ ok: boolean; abonos_devueltos: number; monto_devuelto: number }>(
+    "st_cancelar_orden",
+    { ordenId, observacion: observacion ?? null },
+  );
+export const stListarHoldingsCaja = (cajaId?: number | null) =>
+  smartInvoke<HoldingCaja[]>("st_listar_holdings_caja", { cajaId: cajaId ?? null });
 
 // === Resumen detallado de caja (abierta o cerrada) ===
 // Retorna ResumenCajaReporte con desglose por forma de pago, lista de gastos,

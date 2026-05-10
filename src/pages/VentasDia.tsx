@@ -1285,14 +1285,27 @@ export default function VentasDia() {
                   </tr>
                 </thead>
                 <tbody>
-                  {ventaDetalle.detalles.map((d, i) => (
-                    <tr key={i}>
-                      <td>{d.nombre_producto || `Producto #${d.producto_id}`}</td>
-                      <td className="text-right">{d.cantidad}</td>
-                      <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
-                      <td className="text-right">${d.subtotal.toFixed(2)}</td>
-                    </tr>
-                  ))}
+                  {ventaDetalle.detalles.map((d, i) => {
+                    // Si no hay producto_id pero hay info_adicional → es servicio/manual (ej: orden de servicio tecnico)
+                    const nombre = d.nombre_producto
+                      || (d.info_adicional && d.info_adicional.trim())
+                      || (d.producto_id ? `Producto #${d.producto_id}` : "Servicio");
+                    return (
+                      <tr key={i}>
+                        <td>
+                          <div>{nombre}</div>
+                          {d.nombre_producto && d.info_adicional && (
+                            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                              {d.info_adicional}
+                            </div>
+                          )}
+                        </td>
+                        <td className="text-right">{d.cantidad}</td>
+                        <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
+                        <td className="text-right">${d.subtotal.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 

@@ -6,6 +6,85 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.13 — 2026-05-09 🛠
+
+**ST-5 — Items presupuestados, abonos en holding, pago mixto, cancelar orden, jerarquía estricta de catálogo.**
+
+### 🆕 Items presupuestados en la orden
+
+Antes: solo había un campo libre "Monto final" que el técnico escribía a mano. Al cobrar, aparecían descuadres porque la línea de "servicio" no se mostraba en el detalle de la venta.
+
+**Ahora**: cada orden tiene una **lista de items** (productos del catálogo + servicios manuales) que se construye antes del cobro:
+- Tabla nueva `orden_servicio_items` (id, orden_id, producto_id?, descripción, cantidad, precio, IVA, es_servicio).
+- 5 comandos backend: `st_listar_items_orden`, `st_agregar_item_orden`, `st_actualizar_item_orden`, `st_eliminar_item_orden`, `st_total_orden`.
+- UI en el modal de detalle: tabla editable inline (cantidad/precio se guardan al blur) + buscador de productos del catálogo + botón "+ Servicio manual" (mano de obra, etc.).
+- El total se calcula automáticamente desde los items (subtotal sin IVA, subtotal con IVA, IVA, total).
+
+### 💵 Abonos / anticipos en holding
+
+El cliente puede pagar adelantado al dejar el equipo. Ese dinero entra a caja pero queda en estado **HOLDING** (no es venta) hasta que la orden se cobra (APLICADO) o se cancela (DEVUELTO).
+
+- Tabla nueva `st_abonos` con estados HOLDING / APLICADO / DEVUELTO.
+- 5 comandos backend: `st_listar_abonos`, `st_recibir_abono`, `st_total_abonos_orden`, `st_cancelar_orden`, `st_listar_holdings_caja`.
+- UI: sección "💵 Abonos / Anticipos" en el modal de orden con form para recibir abono (efectivo / transferencia / tarjeta + banco + referencia).
+- **Validación**: el monto holding total no puede exceder el total de items de la orden.
+- **Caja**: panel de "Anticipos en holding" en el cierre de caja con detalle por orden + advertencia visual (este dinero NO debe retirarse — pertenece a clientes).
+- **Confirmación al cerrar**: si hay holdings, el modal de cerrar caja avisa el monto y cantidad antes de confirmar.
+
+### 🚫 Cancelar orden + devolución automática
+
+- Nuevo botón "🚫 Cancelar orden" en el footer del modal (cualquier cajero, sin requerir admin).
+- Marca la orden como `CANCELADA`.
+- Devuelve abonos HOLDING → DEVUELTO automáticamente con monto y cantidad.
+- Registra en el historial de movimientos quién canceló y por qué.
+
+### 💳 Pago mixto en cobro de orden
+
+Antes: una sola forma de pago al cobrar. Si el cliente pagaba parte en efectivo y parte con transferencia, no se podía registrar correctamente.
+
+**Ahora**: el modal de cobrar acepta **múltiples pagos** (igual que el POS):
+- Lista de pagos (forma + monto + banco/referencia opcionales).
+- Botón "+ Agregar pago" para combinar formas.
+- Atajo "= Saldo" para autocompletar el primer pago al saldo exacto.
+- Resumen visual: Total ítems − Abonos en holding = Saldo a cobrar; total pagado vs saldo; cambio si hay sobrante en efectivo.
+- Backend `cobrar_orden_servicio` refactorizado: lee items de la tabla, acepta `pagos: Vec<{forma, monto, banco_id?, ref?}>`, aplica abonos HOLDING como descuento, marca abonos como APLICADO con `venta_id`. Compat: si vienen los parámetros viejos (`forma_pago` + `items_repuestos`), funciona como antes.
+
+### 🌳 Jerarquía estricta tipo → marca → modelo
+
+Antes: el campo Marca y Modelo eran inputs libres. Si el usuario tipeaba "Dell" sin tipo seleccionado, no quedaba vinculado al árbol del catálogo y aparecían modelos mezclados (ej: Latitude bajo Lenovo).
+
+**Ahora**:
+- **Marca**: deshabilitada hasta que se elija Tipo de equipo. Las opciones son **solo las del tipo seleccionado**.
+- **Modelo**: deshabilitado hasta que se elija Marca. Las opciones son **solo las de esa marca**.
+- Placeholders claros: "Elige primero un tipo", "Elige primero una marca".
+- ComboCatalogoEquipo respeta `disabled` (no abre dropdown, fondo gris, cursor not-allowed).
+
+### 📜 Leyenda configurable en orden de servicio
+
+- Nuevo campo en Configuración → Servicio Técnico: textarea "📜 Leyenda / términos en orden de servicio" (clave `leyenda_orden_servicio`).
+- Se imprime al final de cada orden bajo el título "TÉRMINOS Y CONDICIONES" (sobre la firma).
+- Útil para cláusulas de equipo abandonado, garantías, formas de pago aceptadas, etc.
+
+### ✏ Firma única en orden impresa
+
+- La orden ya solo muestra **Firma del Cliente** (se quitó "Firma del Técnico" que era redundante).
+
+### 🐞 Bug fix: detalle de venta con líneas sin producto_id
+
+Las líneas con `producto_id = NULL` (servicios técnicos) no se mostraban en el modal "Detalle de Venta" porque el JOIN no devolvía `nombre_producto`. Total decía $28 pero solo se veía el repuesto de $3.
+
+**Fix**: si la línea no tiene producto vinculado, se muestra el `info_adicional` como nombre. Si tiene producto + info_adicional, se muestran ambos.
+
+### 🇪🇨 Localización (parcial)
+
+Cambios de español argentino (voseo) → español neutro/ecuatoriano:
+- "Elegí o escribí" → "Elige o escribe"
+- "Ingresá una cédula" → "Ingresa una cédula"
+- "Esta seguro que desea cerrar la caja" → "¿Estás seguro que deseas cerrar la caja?"
+- (Continúa de a poco en cada release)
+
+---
+
 ## v2.4.12 — 2026-05-09 🛠 STABLE
 **ST-4 / 5 — PDF A4 + Ticket 80mm + hotfix historial + garantía al cobrar.**
 

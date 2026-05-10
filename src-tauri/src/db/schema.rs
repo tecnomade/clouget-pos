@@ -1156,6 +1156,68 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ordenes_marca ON ordenes_servicio(marca_id)", []);
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ordenes_modelo ON ordenes_servicio(modelo_id)", []);
 
+    // ─── ST-5 (v2.4.13): Abonos en órdenes con holding en caja ────────────
+    // Cuando un cliente deja un equipo y paga adelantado (anticipo), ese
+    // dinero entra físicamente a caja PERO no es venta cobrada todavía. Se
+    // mantiene en estado HOLDING hasta que la orden se cobra (APLICADO) o
+    // se cancela (DEVUELTO).
+    //
+    // Estados:
+    //   HOLDING  — anticipo recibido, en caja, no aplicado
+    //   APLICADO — la orden se cobró y este abono se descontó del total
+    //   DEVUELTO — la orden se canceló y el dinero se devolvió al cliente
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS st_abonos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            monto REAL NOT NULL,
+            forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO',
+            banco_id INTEGER,
+            referencia_pago TEXT,
+            caja_id INTEGER,                              -- a qué sesión de caja entró
+            estado TEXT NOT NULL DEFAULT 'HOLDING',       -- HOLDING | APLICADO | DEVUELTO
+            venta_id_aplicado INTEGER,                    -- venta donde se descontó (NULL hasta APLICADO)
+            fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            fecha_aplicado TEXT,
+            fecha_devuelto TEXT,
+            usuario_id INTEGER,
+            usuario_nombre TEXT,
+            observacion TEXT,
+            FOREIGN KEY (orden_id) REFERENCES ordenes_servicio(id) ON DELETE CASCADE,
+            FOREIGN KEY (banco_id) REFERENCES cuentas_banco(id),
+            FOREIGN KEY (caja_id) REFERENCES caja(id),
+            FOREIGN KEY (venta_id_aplicado) REFERENCES ventas(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_st_abonos_orden ON st_abonos(orden_id);
+        CREATE INDEX IF NOT EXISTS idx_st_abonos_estado ON st_abonos(estado);
+        CREATE INDEX IF NOT EXISTS idx_st_abonos_caja ON st_abonos(caja_id);
+    ");
+
+    // --- Migracion v2.4.13: items presupuestados/aplicados a la orden de servicio ---
+    // Permite armar el detalle (productos del catalogo + servicios manuales) ANTES de cobrar.
+    // El total de la orden se calcula desde aqui; los abonos HOLDING no pueden exceder este total.
+    // Al cobrar, estos items se copian a venta_detalles.
+    //
+    // - producto_id puede ser NULL (servicio manual / mano de obra sin codigo).
+    // - es_servicio = 1 evita descontar stock al cobrar.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS orden_servicio_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orden_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            descripcion TEXT NOT NULL,
+            cantidad REAL NOT NULL DEFAULT 1,
+            precio_unitario REAL NOT NULL DEFAULT 0,
+            iva_porcentaje REAL NOT NULL DEFAULT 0,
+            subtotal REAL NOT NULL DEFAULT 0,
+            es_servicio INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (orden_id) REFERENCES ordenes_servicio(id) ON DELETE CASCADE,
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_orden_servicio_items_orden ON orden_servicio_items(orden_id);
+    ");
+
     // --- Migracion: Pagos multiples por venta (pago mixto) ---
     // Una venta puede tener varios pagos: ej $100 EFECTIVO + $20 TRANSFER + $30 CREDITO
     let _ = conn.execute_batch("
