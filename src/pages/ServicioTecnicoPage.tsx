@@ -25,6 +25,11 @@ import type { TotalOrden, AbonoServicio, PagoOrden } from "../services/api";
 import type { CuentaBanco } from "../types";
 
 const ESTADOS = ["RECIBIDO", "DIAGNOSTICANDO", "EN_REPARACION", "ESPERANDO_REPUESTOS", "LISTO", "ENTREGADO"];
+// v2.4.22: estados "cerrados" — no permiten cambiar a otro estado porque
+// arrastran inconsistencias: ENTREGADO/ENTREGADO_PARCIAL ya tienen venta
+// generada + abonos APLICADOS; CANCELADA tiene abonos DEVUELTOS al cliente.
+// Si se necesita reabrir, hay que anular la venta primero (eso es manual).
+const ESTADOS_CERRADOS = ["ENTREGADO", "ENTREGADO_PARCIAL", "CANCELADA", "CANCELADO"];
 const ESTADOS_COLORS: Record<string, string> = {
   RECIBIDO: "#94a3b8",
   DIAGNOSTICANDO: "#f59e0b",
@@ -32,7 +37,9 @@ const ESTADOS_COLORS: Record<string, string> = {
   ESPERANDO_REPUESTOS: "#3b82f6",
   LISTO: "#86efac",
   ENTREGADO: "#22c55e",
+  ENTREGADO_PARCIAL: "#34d399",
   GARANTIA: "#a855f7",
+  CANCELADA: "#ef4444",
   CANCELADO: "#ef4444",
 };
 const TIPOS_EQUIPO = [
@@ -824,21 +831,49 @@ export default function ServicioTecnicoPage() {
                 </div>
               </div>
 
-              {/* Cambiar estado */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Cambiar estado</label>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                  {[...ESTADOS, "GARANTIA", "CANCELADO"].map(e => (
-                    <button key={e} className="btn"
-                      style={{ fontSize: 10, padding: "3px 8px", background: detalle.estado === e ? ESTADOS_COLORS[e] : "var(--color-surface)", color: detalle.estado === e ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                      onClick={() => handleCambiarEstado(e)}>
-                      {e.replace(/_/g, " ")}
-                    </button>
-                  ))}
-                </div>
-                <input className="input" placeholder="Observación del cambio (opcional)" style={{ marginTop: 4, fontSize: 12 }}
-                  value={obsCambioEstado} onChange={(e) => setObsCambioEstado(e.target.value)} />
-              </div>
+              {/* Cambiar estado — v2.4.22: bloqueado si orden está cerrada
+                  (entregada/cancelada) porque arrastraría inconsistencias con
+                  la venta generada y los abonos APLICADOS/DEVUELTOS. */}
+              {(() => {
+                const cerrada = ESTADOS_CERRADOS.includes(detalle.estado || "");
+                if (cerrada) {
+                  return (
+                    <div style={{ marginBottom: 16, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text)" }}>
+                        🔒 Estado: <span style={{ color: ESTADOS_COLORS[detalle.estado || ""] || "var(--color-text)" }}>{(detalle.estado || "").replace(/_/g, " ")}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4, lineHeight: 1.4 }}>
+                        Esta orden ya está cerrada. {detalle.estado === "CANCELADA" || detalle.estado === "CANCELADO"
+                          ? "Los abonos en holding (si había) se devolvieron al cliente."
+                          : `La venta vinculada (#${detalle.venta_id || "?"}) está registrada y los abonos pasaron a APLICADOS.`}
+                        {" "}No se puede cambiar de estado para evitar inconsistencias contables. Si necesitas reabrirla, anula la venta primero desde Ventas del Día.
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>Cambiar estado</label>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                      {ESTADOS.filter(e => e !== "ENTREGADO").map(e => (
+                        <button key={e} className="btn"
+                          style={{ fontSize: 10, padding: "3px 8px", background: detalle.estado === e ? ESTADOS_COLORS[e] : "var(--color-surface)", color: detalle.estado === e ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                          onClick={() => handleCambiarEstado(e)}>
+                          {e.replace(/_/g, " ")}
+                        </button>
+                      ))}
+                      <button className="btn"
+                        style={{ fontSize: 10, padding: "3px 8px", background: detalle.estado === "GARANTIA" ? ESTADOS_COLORS.GARANTIA : "var(--color-surface)", color: detalle.estado === "GARANTIA" ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                        onClick={() => handleCambiarEstado("GARANTIA")}>GARANTIA</button>
+                    </div>
+                    <input className="input" placeholder="Observación del cambio (opcional)" style={{ marginTop: 4, fontSize: 12 }}
+                      value={obsCambioEstado} onChange={(e) => setObsCambioEstado(e.target.value)} />
+                    <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 4 }}>
+                      Para entregar la orden usa "💰 Cobrar" abajo. Para cancelar, "🚫 Cancelar orden".
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* v2.4.20: cambiar técnico asignado en cualquier momento (post-creación) */}
               <div style={{ marginBottom: 12 }}>

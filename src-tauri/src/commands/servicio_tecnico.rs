@@ -127,6 +127,27 @@ pub fn cambiar_estado_orden(
         rusqlite::params![orden_id], |r| r.get(0)
     ).unwrap_or_default();
 
+    // v2.4.22: bloquear cambios desde estados "cerrados" (post-cobro/cancelación).
+    // Razón: la orden ENTREGADO/ENTREGADO_PARCIAL ya tiene venta generada y abonos
+    // APLICADOS; CANCELADA tiene abonos DEVUELTOS al cliente. Retroceder generaría
+    // inconsistencia (la caja no muestra holdings que la orden parecería tener).
+    // Si se necesita reabrir, hay que anular la venta primero (manualmente).
+    let cerrados = ["ENTREGADO", "ENTREGADO_PARCIAL", "CANCELADA", "CANCELADO"];
+    if cerrados.contains(&estado_anterior.as_str()) && estado_anterior != nuevo_estado {
+        return Err(format!(
+            "La orden está en estado {} y no se puede cambiar. Si necesitas reabrirla, anula la venta vinculada desde Ventas del Día.",
+            estado_anterior
+        ));
+    }
+    // También bloquear forzar a estados cerrados desde aquí — el flujo correcto
+    // para entregar es "💰 Cobrar" y para cancelar "🚫 Cancelar orden".
+    if cerrados.contains(&nuevo_estado.as_str()) {
+        return Err(format!(
+            "Para llegar al estado {} usa el flujo correspondiente (Cobrar / Cancelar orden), no el cambio manual de estado.",
+            nuevo_estado
+        ));
+    }
+
     if nuevo_estado == "ENTREGADO" {
         conn.execute(
             "UPDATE ordenes_servicio SET estado = ?1, fecha_entrega = datetime('now','localtime') WHERE id = ?2",

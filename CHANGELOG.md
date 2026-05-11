@@ -6,6 +6,29 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.22 — 2026-05-11 🔒 Integridad ST
+
+**Bloqueo de cambio de estado en órdenes ya cerradas (consistencia con abonos y ventas).**
+
+### 🐞 Bug detectado por usuario
+
+Si una orden ya estaba ENTREGADO/ENTREGADO_PARCIAL o CANCELADA, los botones de "Cambiar estado" seguían activos y permitían retroceder a RECIBIDO/DIAGNOSTICANDO/etc. Eso generaba inconsistencia grave:
+
+- **ENTREGADO/ENTREGADO_PARCIAL**: ya hay una venta generada y los abonos HOLDING pasaron a APLICADO. Si retrocedes el estado, la orden parece abierta pero los abonos APLICADOS ya no están en caja como HOLDING → caja descuadrada vs. orden.
+- **CANCELADA**: los abonos se devolvieron al cliente (estado DEVUELTO). Reabrir la orden la haría parecer abierta sin abonos.
+
+### Fix v2.4.22
+
+**Frontend**: si la orden está cerrada, en lugar del selector de estados muestra un panel informativo con el estado actual y la razón del bloqueo. Sugiere "anula la venta primero desde Ventas del Día" si se necesita reabrir.
+
+**Backend** (`cambiar_estado_orden`): doble validación:
+- Rechaza cambio si `estado_anterior` ∈ {ENTREGADO, ENTREGADO_PARCIAL, CANCELADA, CANCELADO}
+- Rechaza cambio directo *hacia* esos estados — el flujo correcto es "💰 Cobrar" y "🚫 Cancelar orden", que hacen las operaciones contables completas.
+
+Los estados abiertos (RECIBIDO ↔ DIAGNOSTICANDO ↔ EN_REPARACION ↔ ESPERANDO_REPUESTOS ↔ LISTO ↔ GARANTIA) siguen siendo intercambiables libremente.
+
+---
+
 ## v2.4.21 — 2026-05-11 🚨 SECURITY HOTFIX + UX
 
 **Mensaje de PIN duplicado revelaba el dueño + permisos implícitos por rol.**
