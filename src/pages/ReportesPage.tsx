@@ -163,9 +163,18 @@ export default function ReportesPage() {
   // Cargar maestro de categorías al montar
   useEffect(() => {
     listarCategoriasSimple().then(setCategoriasMaestro).catch(() => {});
-    // v2.4.15: chequear si el modulo ST esta activo (para mostrar tabs)
+    // v2.4.15 / v2.4.17: chequear si modulo ST esta activo (para mostrar tabs).
+    // Licencia es fuente de verdad — fallback al flag legacy si no hay licencia.
     invoke<any>("obtener_config")
-      .then((cfg: any) => setModuloSTActivo(cfg?.modulo_servicio_tecnico === "1"))
+      .then((cfg: any) => {
+        const licStr = (cfg?.licencia_modulos || "").trim();
+        const tieneLic = licStr !== "" && licStr !== "[]";
+        try {
+          const mods: string[] = tieneLic ? JSON.parse(licStr) : [];
+          if (tieneLic) setModuloSTActivo(mods.includes("servicio_tecnico"));
+          else setModuloSTActivo(cfg?.modulo_servicio_tecnico === "1");
+        } catch { setModuloSTActivo(false); }
+      })
       .catch(() => {});
   }, []);
 

@@ -6,6 +6,23 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.17 — 2026-05-11 🛠
+
+**Hotfix gating: licencia es la fuente de verdad para todos los módulos.**
+
+En v2.4.16 el toggle y la sección "Cocina" en Configuración ya respetaban la licencia, pero el **sidebar seguía mostrando el ícono** de Servicio Técnico aunque admin lo desactivara. Causa: el cálculo era OR (`licencia OR flag local`), así que el flag local "1" mantenía el módulo visible.
+
+**Fix v2.4.17**: la licencia es la fuente de verdad. Si está cargada (`licencia_modulos` no vacío), ESA decide. El flag legacy `modulo_servicio_tecnico` solo se usa como fallback en instalaciones pre-v2.4.8 sin licencia.
+
+Aplicado en 3 lugares:
+- `Layout.tsx` → ícono del sidebar
+- `CajaPage.tsx` → panel de holdings + advertencia al cerrar
+- `ReportesPage.tsx` → tabs "Cancelaciones ST" y "Garantías ST"
+
+Cuando admin desactiva el módulo desde el panel admin, la próxima vez que el cliente refresque la app desaparece TODO (sidebar, configuración, caja, reportes).
+
+---
+
 ## v2.4.16 — 2026-05-11 🛠
 
 **Servicios manuales en ticket impreso + gating por licencia.**

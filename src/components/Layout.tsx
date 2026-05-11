@@ -98,19 +98,26 @@ export default function Layout() {
         setModuloSeriesActivo(cfg.modulo_series_activo === "1");
         setModuloCaducidadActivo(cfg.modulo_caducidad === "1");
         setNombreNegocio((cfg.nombre_negocio || "").trim());
-        // v2.4.8: Servicio Técnico ahora es módulo de licencia (antes era flag config).
-        // Mantenemos el flag legacy `modulo_servicio_tecnico` como fallback para
-        // instalaciones viejas — pero la fuente de verdad es licencia_modulos.
+        // v2.4.8 / v2.4.17: Servicio Técnico es módulo de licencia. La licencia es la
+        // FUENTE DE VERDAD — si admin la desactiva desde el panel admin, el módulo
+        // desaparece del POS sin importar el flag local. El flag legacy
+        // `modulo_servicio_tecnico` solo se usa como fallback si NO hay licencia
+        // cargada todavía (instalación antes de v2.4.8).
+        const licStr = (cfg.licencia_modulos || "").trim();
+        const tieneLicenciaCargada = licStr !== "" && licStr !== "[]";
         try {
-          const mods: string[] = JSON.parse(cfg.licencia_modulos || "[]");
+          const mods: string[] = tieneLicenciaCargada ? JSON.parse(licStr) : [];
           setModuloRestauranteActivo(FEATURES.restaurante && mods.includes("restaurante"));
-          // ST activo si licencia lo incluye O si está el flag legacy (compat)
-          setModuloServicioTecnicoActivo(
-            mods.includes("servicio_tecnico") || cfg.modulo_servicio_tecnico === "1"
-          );
+          if (tieneLicenciaCargada) {
+            // Fuente de verdad: licencia
+            setModuloServicioTecnicoActivo(mods.includes("servicio_tecnico"));
+          } else {
+            // Sin licencia cargada: caer al flag legacy (instalación pre-v2.4.8)
+            setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+          }
         } catch {
           setModuloRestauranteActivo(false);
-          setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+          setModuloServicioTecnicoActivo(false);
         }
       }).catch(() => {});
     });

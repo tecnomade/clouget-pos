@@ -154,8 +154,15 @@ export default function CajaPage() {
     obtenerConfig().then((cfg) => {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setOcultarMontoEsperado(cfg.ocultar_monto_esperado_caja === "1");
-      // v2.4.14: gating del panel de holdings
-      setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+      // v2.4.14 / v2.4.17: gating del panel de holdings. Licencia es la fuente
+      // de verdad (ver Layout.tsx). Fallback al flag legacy si no hay licencia.
+      const licStr = (cfg.licencia_modulos || "").trim();
+      const tieneLic = licStr !== "" && licStr !== "[]";
+      try {
+        const mods: string[] = tieneLic ? JSON.parse(licStr) : [];
+        if (tieneLic) setModuloServicioTecnicoActivo(mods.includes("servicio_tecnico"));
+        else setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+      } catch { setModuloServicioTecnicoActivo(false); }
     }).catch(() => {});
   }, []);
   useEffect(() => {
