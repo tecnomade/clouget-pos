@@ -770,6 +770,34 @@ export default function ServicioTecnicoPage() {
                     onChange={(e) => setForm({ ...form, fecha_promesa: e.target.value })} />
                 </div>
               </div>
+
+              {/* v2.4.24: campo Garantía en el form de creación, así al cobrar
+                  ya viene precargado el valor que el usuario quiere por defecto. */}
+              <div style={{ marginTop: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>🛡 Garantía del trabajo (días)</label>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
+                  <input className="input" type="number" min="0" max="365"
+                    style={{ width: 90 }}
+                    value={form.garantia_dias || 0}
+                    onChange={(e) => setForm({ ...form, garantia_dias: parseInt(e.target.value) || 0 })} />
+                  <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>días</span>
+                  {[0, 7, 15, 30, 60, 90, 180].map(d => (
+                    <button key={d} type="button"
+                      onClick={() => setForm({ ...form, garantia_dias: d })}
+                      style={{
+                        padding: "2px 8px", fontSize: 10, cursor: "pointer",
+                        background: (form.garantia_dias || 0) === d ? "var(--color-primary)" : "transparent",
+                        color: (form.garantia_dias || 0) === d ? "#fff" : "var(--color-text)",
+                        border: "1px solid var(--color-border)", borderRadius: 4,
+                      }}>
+                      {d === 0 ? "Sin" : `${d}d`}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 2 }}>
+                  Este valor se precarga al cobrar la orden y se imprime en el comprobante.
+                </div>
+              </div>
             </div>
             <div style={{
               padding: "10px 20px", borderTop: "1px solid var(--color-border)",

@@ -6,6 +6,41 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.24 — 2026-05-11 🐞 Bug crítico Caja + UX
+
+### 🚨 Bug crítico: depósitos post-cierre no descontaban del monto sugerido
+
+Flujo del bug:
+1. Cierras caja con $282 contados → registrado `monto_real = 282`
+2. Hacés depósito a banco por $282 (clic "Registrar depósito a banco")
+3. Próxima apertura → sugiere $282 como monto inicial
+4. Pero ese efectivo ya NO está en caja (está en el banco)
+5. Apertura con $282 = inflar la caja con dinero fantasma → desfase contable
+
+**Fix v2.4.24**:
+- `obtener_ultimo_cierre` ahora devuelve también `monto_disponible` y `depositos_post_cierre`. Resta los retiros con motivo "%cierre%" en estado DEPOSITADO o EN_TRANSITO.
+- `abrir_caja` usa el mismo cálculo para validar continuidad.
+- UI banner de "Cierre anterior": ahora muestra el desglose:
+  ```
+  Monto contado: $282.14
+  − Depositado al banco: $282.14
+  = Disponible en caja: $0.00
+  ```
+- El sugerido en input "Monto inicial" ahora es el `disponible` (no el `monto_real`).
+
+### 🆕 Botón "Cerrar sesión" en lugar de "Finalizar Turno"
+
+El nombre confundía. Ahora:
+- "Cerrar Caja" → cierra la sesión de caja (registra fecha, calcula diferencia, libera)
+- Pantalla de resumen con opciones (imprimir ticket, depositar a banco)
+- Botón final renombrado a **"🔓 Cerrar sesión"** + texto explicativo claro
+
+### 🆕 Garantía en form de creación de orden ST
+
+Antes el form de Nueva Orden solo tenía Técnico / Presupuesto / Fecha promesa. La garantía solo se podía editar desde el detalle. Ahora hay un campo **🛡 Garantía del trabajo (días)** con presets rápidos (Sin / 7 / 15 / 30 / 60 / 90 / 180). El valor se precarga automáticamente al cobrar.
+
+---
+
 ## v2.4.23 — 2026-05-11 🧾 Abonos en orden impresa
 
 **El PDF de la orden de servicio ahora muestra los abonos recibidos.**

@@ -22,6 +22,10 @@ fn log_evento_caja(
 
 /// Devuelve info del ultimo cierre: monto_real, fecha_cierre, usuario_cierre, id.
 /// Se usa al abrir caja para sugerir el monto inicial y advertir si difiere.
+///
+/// v2.4.24: descuenta los depositos a banco POST-CIERRE del monto disponible.
+/// Ej: caja se cierra con $282 contado, despues se deposita $282 al banco →
+/// el monto disponible para la siguiente apertura es $0, no $282.
 #[tauri::command]
 pub fn obtener_ultimo_cierre(db: State<Database>) -> Result<Option<serde_json::Value>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -31,16 +35,37 @@ pub fn obtener_ultimo_cierre(db: State<Database>) -> Result<Option<serde_json::V
          WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
          ORDER BY id DESC LIMIT 1",
         [],
-        |r| Ok(serde_json::json!({
-            "caja_id": r.get::<_, i64>(0)?,
-            "monto_real": r.get::<_, Option<f64>>(1)?,
-            "cerrada_at": r.get::<_, Option<String>>(2)?,
-            "usuario_cierre": r.get::<_, Option<String>>(3)?.or_else(|| r.get::<_, Option<String>>(4).ok().flatten()),
-            "diferencia_cierre": r.get::<_, Option<f64>>(5)?,
-        })),
+        |r| Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, Option<f64>>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<f64>>(5)?,
+        )),
     );
     match res {
-        Ok(v) => Ok(Some(v)),
+        Ok((caja_id, monto_real, cerrada_at, usuario_cierre, usuario, diferencia)) => {
+            // Sumar depositos a banco hechos despues del cierre (estados DEPOSITADO o EN_TRANSITO)
+            // que ya sacaron el efectivo de la caja fisica.
+            let depositos_post: f64 = conn.query_row(
+                "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+                 WHERE caja_id = ?1 AND estado IN ('DEPOSITADO', 'EN_TRANSITO')
+                   AND motivo LIKE '%cierre%'",
+                rusqlite::params![caja_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            let mr = monto_real.unwrap_or(0.0);
+            let monto_disponible = (mr - depositos_post).max(0.0);
+            Ok(Some(serde_json::json!({
+                "caja_id": caja_id,
+                "monto_real": mr,
+                "monto_disponible": monto_disponible, // post-depositos
+                "depositos_post_cierre": depositos_post,
+                "cerrada_at": cerrada_at,
+                "usuario_cierre": usuario_cierre.or(usuario),
+                "diferencia_cierre": diferencia,
+            })))
+        }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -83,7 +108,9 @@ pub fn abrir_caja(
         return Err("Ya existe una caja abierta. Ciérrela primero.".to_string());
     }
 
-    // Buscar ultimo cierre para validar continuidad
+    // Buscar ultimo cierre para validar continuidad.
+    // v2.4.24: descontamos depositos a banco POST-CIERRE — esos $X ya salieron
+    // fisicamente de la caja. El monto esperado para abrir es lo que QUEDÓ.
     let ultimo: Option<(i64, f64)> = conn.query_row(
         "SELECT id, COALESCE(monto_real, 0) FROM caja
          WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
@@ -93,7 +120,15 @@ pub fn abrir_caja(
     ).ok();
 
     let (caja_anterior_id, monto_esperado_apertura) = match ultimo {
-        Some((id, m)) => (Some(id), m),
+        Some((id, m)) => {
+            let depositos_post: f64 = conn.query_row(
+                "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+                 WHERE caja_id = ?1 AND estado IN ('DEPOSITADO', 'EN_TRANSITO')
+                   AND motivo LIKE '%cierre%'",
+                rusqlite::params![id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            (Some(id), (m - depositos_post).max(0.0))
+        }
         None => (None, 0.0),
     };
 

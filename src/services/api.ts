@@ -579,6 +579,10 @@ export async function obtenerCajaAbierta(): Promise<Caja | null> {
 export async function obtenerUltimoCierre(): Promise<{
   caja_id: number;
   monto_real: number | null;
+  /** v2.4.24: monto_real - depositos a banco post-cierre */
+  monto_disponible?: number;
+  /** v2.4.24: total depositado a banco después del cierre */
+  depositos_post_cierre?: number;
   cerrada_at: string | null;
   usuario_cierre: string | null;
   diferencia_cierre: number | null;

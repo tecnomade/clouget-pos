@@ -89,8 +89,12 @@ export default function CajaPage() {
         try {
           const uc = await obtenerUltimoCierre();
           setUltimoCierre(uc);
-          if (uc?.monto_real != null) {
-            setMontoInicial(uc.monto_real.toString());
+          // v2.4.24: usar monto_disponible (= monto_real - depositos post-cierre)
+          // para sugerir el monto inicial. Si se hizo deposito a banco, ya no
+          // está fisicamente en caja.
+          const sugerido = uc?.monto_disponible ?? uc?.monto_real;
+          if (sugerido != null) {
+            setMontoInicial(sugerido.toString());
           }
         } catch { /* ignore */ }
         setHoldingsCaja([]);
@@ -572,12 +576,20 @@ export default function CajaPage() {
                 🏦 Registrar depósito a banco
               </button>
 
+              <div style={{
+                marginTop: 16, padding: "8px 12px", borderRadius: 6,
+                background: "var(--color-surface-alt)",
+                fontSize: 11, color: "var(--color-text-secondary)",
+              }}>
+                ✓ Caja cerrada. Imprimí el ticket o registrá el depósito a banco si lo necesitas.
+                Cuando estés listo, cerrá tu sesión para que el siguiente cajero pueda abrir.
+              </div>
               <button
                 className="btn btn-primary btn-lg mt-4"
                 style={{ width: "100%" }}
                 onClick={handleFinalizarTurno}
               >
-                Finalizar Turno
+                🔓 Cerrar sesión
               </button>
             </div>
           </div>
@@ -605,6 +617,17 @@ export default function CajaPage() {
                   <div>
                     Monto contado: <strong style={{ color: "var(--color-primary)" }}>${ultimoCierre.monto_real?.toFixed(2)}</strong>
                   </div>
+                  {/* v2.4.24: si hubo depositos a banco post-cierre, mostrar el descuento */}
+                  {ultimoCierre.depositos_post_cierre > 0 && (
+                    <>
+                      <div style={{ color: "var(--color-warning)" }}>
+                        − Depositado al banco: <strong>${ultimoCierre.depositos_post_cierre.toFixed(2)}</strong>
+                      </div>
+                      <div style={{ marginTop: 2 }}>
+                        = Disponible en caja: <strong style={{ color: "var(--color-success)" }}>${ultimoCierre.monto_disponible.toFixed(2)}</strong>
+                      </div>
+                    </>
+                  )}
                   {ultimoCierre.cerrada_at && (
                     <div style={{ color: "var(--color-text-secondary)" }}>
                       Fecha: {new Date(ultimoCierre.cerrada_at).toLocaleString("es-EC")}
@@ -616,7 +639,9 @@ export default function CajaPage() {
                     </div>
                   )}
                   <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-secondary)" }}>
-                    El monto inicial debería coincidir con este cierre. Si no, deberá justificar la diferencia.
+                    {ultimoCierre.depositos_post_cierre > 0
+                      ? "El monto inicial debería coincidir con el disponible en caja (post-depósitos)."
+                      : "El monto inicial debería coincidir con este cierre. Si no, deberá justificar la diferencia."}
                   </div>
                 </div>
               )}
@@ -633,16 +658,22 @@ export default function CajaPage() {
               />
 
               {/* Alerta + motivo si difiere */}
-              {ultimoCierre?.monto_real != null && montoInicial &&
-                Math.abs((parseFloat(montoInicial) || 0) - ultimoCierre.monto_real) > 0.01 && (
+              {/* v2.4.24: comparar contra monto_disponible (post-depositos) si hay depositos */}
+              {(() => {
+                if (!ultimoCierre || !montoInicial) return null;
+                const referencia = ultimoCierre.monto_disponible ?? ultimoCierre.monto_real;
+                if (referencia == null) return null;
+                const diff = (parseFloat(montoInicial) || 0) - referencia;
+                if (Math.abs(diff) <= 0.01) return null;
+                return (
                 <div style={{ marginTop: 10 }}>
                   <div style={{
                     padding: "8px 10px", borderRadius: 6,
                     background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.4)",
                     color: "var(--color-danger)", fontSize: 12, marginBottom: 6,
                   }}>
-                    ⚠ Diferencia: <strong>${((parseFloat(montoInicial) || 0) - ultimoCierre.monto_real).toFixed(2)}</strong>
-                    {" "} (cierre: ${ultimoCierre.monto_real.toFixed(2)} → apertura: ${(parseFloat(montoInicial) || 0).toFixed(2)})
+                    ⚠ Diferencia: <strong>${diff.toFixed(2)}</strong>
+                    {" "} (esperado: ${referencia.toFixed(2)} → apertura: ${(parseFloat(montoInicial) || 0).toFixed(2)})
                   </div>
                   <label className="text-secondary" style={{ fontSize: 12 }}>Motivo de la diferencia *</label>
                   <textarea
@@ -652,7 +683,8 @@ export default function CajaPage() {
                     onChange={(e) => setMotivoApertura(e.target.value)}
                     rows={2} />
                 </div>
-              )}
+                );
+              })()}
 
               <button className="btn btn-success btn-lg mt-4" style={{ width: "100%" }} onClick={handleAbrir}>
                 Abrir Caja
