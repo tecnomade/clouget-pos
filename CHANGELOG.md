@@ -6,6 +6,19 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.26 — 2026-05-11 🛠 Kilometraje en el PDF de orden ST
+
+Complementa v2.4.25: el PDF/ticket de la orden de servicio ahora incluye el bloque de kilometraje cuando aplica (vehículos, motos, maquinaria con km).
+
+En el bloque **EQUIPO** del PDF/ticket se imprimen, si están definidos:
+- `Km entrada: 45000`
+- `Km salida: 45120`
+- `Próximo mantenimiento: 50120 km (cada 5000 km)`
+
+Antes el cliente recibía el reporte impreso sin esta información, aunque sí se mostraba en pantalla — ahora ambos coinciden.
+
+---
+
 ## v2.4.25 — 2026-05-09 🛠 Servicio Técnico: Kilometraje + Imprimir desde Historial + Permisos TECNICO
 
 ### 🚗 Sistema de kilometraje con cálculo automático del próximo mantenimiento

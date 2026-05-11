@@ -710,6 +710,7 @@ pub fn imprimir_orden_servicio_pdf(
         equipo_marca, equipo_modelo, equipo_serie, equipo_placa, accesorios,
         diagnostico, problema_reportado, trabajo_realizado, observaciones,
         estado, fecha_ingreso, presupuesto, monto_final,
+        km_entrada, km_proximo, km_intervalo, km_salida,
         abonos, total_abonos,
     ): (
         String, String, String, String, String,
@@ -717,14 +718,18 @@ pub fn imprimir_orden_servicio_pdf(
         String, Option<String>, Option<String>, Option<String>, Option<String>,
         String, String, Option<String>, Option<String>,
         String, String, f64, f64,
+        Option<i64>, Option<i64>, Option<i64>, Option<i64>,
         Vec<AbonoSimple>, f64,
     ) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        // v2.4.26: incluir kilometraje (entrada, salida, intervalo, proximo) en el PDF
         let orden = conn.query_row(
             "SELECT numero, cliente_nombre, cliente_telefono, tipo_equipo, equipo_descripcion,
              COALESCE(equipo_marca,''), equipo_modelo, equipo_serie, equipo_placa, accesorios,
              COALESCE(diagnostico,''), problema_reportado, trabajo_realizado, observaciones,
-             estado, fecha_ingreso, presupuesto, monto_final
+             estado, fecha_ingreso, presupuesto, monto_final,
+             equipo_kilometraje, equipo_kilometraje_proximo,
+             equipo_kilometraje_intervalo, equipo_kilometraje_salida
              FROM ordenes_servicio WHERE id = ?1",
             rusqlite::params![orden_id],
             |r| Ok((
@@ -734,6 +739,8 @@ pub fn imprimir_orden_servicio_pdf(
                 r.get::<_, Option<String>>(9)?, r.get::<_, String>(10)?, r.get::<_, String>(11)?,
                 r.get::<_, Option<String>>(12)?, r.get::<_, Option<String>>(13)?,
                 r.get::<_, String>(14)?, r.get::<_, String>(15)?, r.get::<_, f64>(16)?, r.get::<_, f64>(17)?,
+                r.get::<_, Option<i64>>(18)?, r.get::<_, Option<i64>>(19)?,
+                r.get::<_, Option<i64>>(20).ok().flatten(), r.get::<_, Option<i64>>(21).ok().flatten(),
             )),
         ).map_err(|e| format!("Orden no encontrada: {}", e))?;
 
@@ -770,6 +777,7 @@ pub fn imprimir_orden_servicio_pdf(
             orden.5, orden.6, orden.7, orden.8, orden.9,
             orden.10, orden.11, orden.12, orden.13,
             orden.14, orden.15, orden.16, orden.17,
+            orden.18, orden.19, orden.20, orden.21,
             abonos, total_abonos,
         )
     };
@@ -822,6 +830,18 @@ pub fn imprimir_orden_servicio_pdf(
     if let Some(m) = &equipo_modelo { doc.push(Paragraph::new(&format!("Modelo: {}", m)).styled(normal_st)); }
     if let Some(s) = &equipo_serie { doc.push(Paragraph::new(&format!("Serie: {}", s)).styled(normal_st)); }
     if let Some(p) = &equipo_placa { doc.push(Paragraph::new(&format!("Placa: {}", p)).styled(normal_st)); }
+    // v2.4.26: kilometraje (entrada / salida / próximo / intervalo)
+    if km_entrada.is_some() || km_salida.is_some() || km_proximo.is_some() {
+        if let Some(k) = km_entrada { doc.push(Paragraph::new(&format!("Km entrada: {}", k)).styled(normal_st)); }
+        if let Some(k) = km_salida { doc.push(Paragraph::new(&format!("Km salida: {}", k)).styled(normal_st)); }
+        if let Some(k) = km_proximo {
+            let suffix = match km_intervalo {
+                Some(i) if i > 0 => format!(" (cada {} km)", i),
+                _ => String::new(),
+            };
+            doc.push(Paragraph::new(&format!("Próximo mantenimiento: {} km{}", k, suffix)).styled(normal_st));
+        }
+    }
     if let Some(a) = &accesorios { doc.push(Paragraph::new(&format!("Accesorios: {}", a)).styled(normal_st)); }
     doc.push(Break::new(1));
 
