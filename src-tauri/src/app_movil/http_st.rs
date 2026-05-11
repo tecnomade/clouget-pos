@@ -310,6 +310,101 @@ pub async fn st_guardar_diagnostico(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+// ─── POST /api/v1/app/st/ordenes (crear orden nueva desde el móvil) ──────
+
+#[derive(Deserialize)]
+pub struct CrearOrdenReq {
+    pub cliente_nombre: String,
+    pub cliente_telefono: Option<String>,
+    pub cliente_identificacion: Option<String>,
+    pub tipo_equipo: String,
+    pub equipo_descripcion: String,
+    pub equipo_marca: Option<String>,
+    pub equipo_modelo: Option<String>,
+    pub equipo_serie: Option<String>,
+    pub equipo_placa: Option<String>,
+    pub accesorios: Option<String>,
+    pub problema_reportado: String,
+    pub presupuesto: Option<f64>,
+}
+
+pub async fn st_crear_orden(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<CrearOrdenReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_modulo_st(&state)?;
+    session.requiere("gestionar_servicio_tecnico")?;
+
+    if req.cliente_nombre.trim().is_empty() {
+        return Err(err400("El nombre del cliente es obligatorio"));
+    }
+    if req.equipo_descripcion.trim().is_empty() {
+        return Err(err400("La descripción del equipo es obligatoria"));
+    }
+    if req.problema_reportado.trim().is_empty() {
+        return Err(err400("El problema reportado es obligatorio"));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Generar numero correlativo
+    let next_seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) + 1
+         FROM ordenes_servicio WHERE numero LIKE 'OS-%'",
+        [], |r| r.get(0),
+    ).unwrap_or(1);
+    let numero = format!("OS-{:06}", next_seq);
+
+    // Buscar/crear cliente si no existe (por identificación o teléfono)
+    let cliente_id: Option<i64> = {
+        let ident = req.cliente_identificacion.as_deref().unwrap_or("").trim();
+        let tel = req.cliente_telefono.as_deref().unwrap_or("").trim();
+        let nombre = req.cliente_nombre.trim();
+        if !ident.is_empty() {
+            conn.query_row(
+                "SELECT id FROM clientes WHERE identificacion = ?1",
+                params![ident], |r| r.get(0),
+            ).ok()
+        } else if !tel.is_empty() {
+            conn.query_row(
+                "SELECT id FROM clientes WHERE telefono = ?1",
+                params![tel], |r| r.get(0),
+            ).ok()
+        } else {
+            conn.query_row(
+                "SELECT id FROM clientes WHERE LOWER(nombre) = LOWER(?1)",
+                params![nombre], |r| r.get(0),
+            ).ok()
+        }
+    };
+
+    conn.execute(
+        "INSERT INTO ordenes_servicio (
+            numero, cliente_id, cliente_nombre, cliente_telefono,
+            tipo_equipo, equipo_descripcion, equipo_marca, equipo_modelo,
+            equipo_serie, equipo_placa, accesorios, problema_reportado,
+            presupuesto, estado, tecnico_id, tecnico_nombre, fecha_ingreso
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'RECIBIDO', ?14, ?15, datetime('now', 'localtime'))",
+        params![
+            numero, cliente_id, req.cliente_nombre.trim(), req.cliente_telefono,
+            req.tipo_equipo, req.equipo_descripcion.trim(), req.equipo_marca, req.equipo_modelo,
+            req.equipo_serie, req.equipo_placa, req.accesorios, req.problema_reportado.trim(),
+            req.presupuesto.unwrap_or(0.0), session.usuario_id, session.nombre,
+        ],
+    ).map_err(err500)?;
+    let id = conn.last_insert_rowid();
+
+    let _ = conn.execute(
+        "INSERT INTO ordenes_servicio_movimientos (orden_id, estado_anterior, estado_nuevo, observacion, usuario)
+         VALUES (?1, NULL, 'RECIBIDO', 'Creada desde app móvil', ?2)",
+        params![id, session.nombre],
+    );
+
+    Ok(Json(serde_json::json!({ "ok": true, "id": id, "numero": numero })))
+}
+
 // ─── POST /api/v1/app/st/ordenes/:id/imagen ──────────────────────────────
 
 #[derive(Deserialize)]

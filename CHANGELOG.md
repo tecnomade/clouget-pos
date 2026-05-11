@@ -6,6 +6,25 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.19 — 2026-05-11 📱
+
+**Crear órdenes de servicio desde la app móvil.**
+
+### 🆕 Nuevo endpoint: crear orden ST desde móvil
+
+`POST /api/v1/app/st/ordenes` — el técnico/coordinador con permiso `gestionar_servicio_tecnico` ahora puede crear órdenes de servicio directamente desde su celular.
+
+- Genera número correlativo automáticamente (`OS-XXXXXX`)
+- Auto-busca cliente existente por identificación, teléfono o nombre. Si no encuentra, registra el nombre/teléfono igual sin vincular a un cliente del catálogo (puede vincularse después desde el POS desktop).
+- Auto-asigna al técnico que la creó (`tecnico_id` = quien hizo el POST)
+- Estado inicial `RECIBIDO`
+- Log en historial de movimientos: "Creada desde app móvil" + nombre del usuario
+- Validación: cliente, equipo y problema son obligatorios
+
+Útil para taller con técnico itinerante: el técnico va al cliente, abre la orden desde su celular, le toma fotos, y queda registrada en el sistema central inmediatamente.
+
+---
+
 ## v2.4.18 — 2026-05-11 📱
 
 **Backend para Sprint 6 de la app móvil + fixes UX en POS desktop.**

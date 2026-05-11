@@ -1564,6 +1564,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/ventas", post(ventas_registrar))
         // ── Servicio Técnico (Sprint 6.4 — técnico móvil) ───────────────
         .route("/api/v1/app/st/mis-ordenes", get(super::http_st::st_mis_ordenes))
+        .route("/api/v1/app/st/ordenes", post(super::http_st::st_crear_orden))
         .route("/api/v1/app/st/ordenes/:id", get(super::http_st::st_obtener_orden))
         .route("/api/v1/app/st/ordenes/:id/estado", post(super::http_st::st_cambiar_estado))
         .route("/api/v1/app/st/ordenes/:id/diagnostico", post(super::http_st::st_guardar_diagnostico))
