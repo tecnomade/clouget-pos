@@ -6,6 +6,28 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.21 — 2026-05-11 🚨 SECURITY HOTFIX + UX
+
+**Mensaje de PIN duplicado revelaba el dueño + permisos implícitos por rol.**
+
+### 🚨 SECURITY: Oráculo de PINs en mensaje de error
+
+En v2.4.20 el mensaje de validación de PIN duplicado decía: *"El PIN ya está en uso por 'JUAN'"*. Eso convertía el formulario de crear/editar usuario en un **oráculo**: cualquiera con permiso de gestionar usuarios podía tantear PINs (1234, 0000, etc.) y descubrir el PIN exacto de cualquier otro usuario.
+
+**Fix**: mensaje genérico *"Este PIN ya está en uso. Elige otro."* — sin nombre. Aplicado en crear usuario y cambiar PIN. El helper `pin_duplicado()` sigue retornando el nombre internamente (para auditoría futura), pero los call-sites usan `.is_some()` y nunca propagan al cliente.
+
+### 🆕 Permisos implícitos por rol (TECNICO ↔ Servicio Técnico)
+
+Antes: el rol TECNICO se creaba con `permisos = "{}"` (vacío). El usuario TECNICO recién creado **no veía el módulo Servicio Técnico** en el sidebar hasta que un admin le asignaba manualmente los permisos `gestionar_servicio_tecnico` o `ver_servicio_tecnico`. UX horrible.
+
+**Fix**: el rol TECNICO ya implica esos permisos automáticamente:
+- Frontend (`SesionContext.tienePermiso`): si `rol === "TECNICO"` y el permiso es de ST, devuelve true sin chequear el JSON.
+- Backend app móvil (`AppSession.tiene`): mismo patrón. El técnico móvil ya puede usar la app sin pasos extra.
+
+ADMIN sigue teniendo bypass total (rol > permisos). CAJERO necesita permisos explícitos como antes.
+
+---
+
 ## v2.4.20 — 2026-05-11 🔒
 
 **Bug seguridad PIN + UX en gestión de usuarios y órdenes ST.**

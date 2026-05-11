@@ -99,8 +99,18 @@ pub struct AppSession {
 
 impl AppSession {
     /// Helper: ¿el usuario tiene este permiso? (ADMIN bypassa todo)
+    ///
+    /// v2.4.21: permisos implícitos por rol. El rol TECNICO ya implica
+    /// acceso al módulo Servicio Técnico sin necesidad de asignar permisos
+    /// manualmente (antes se creaba con permisos={} y no podía usar la app).
     pub fn tiene(&self, permiso: &str) -> bool {
-        self.rol == "ADMIN" || self.permisos.iter().any(|p| p == permiso)
+        if self.rol == "ADMIN" { return true; }
+        if self.rol == "TECNICO"
+            && (permiso == "gestionar_servicio_tecnico" || permiso == "ver_servicio_tecnico")
+        {
+            return true;
+        }
+        self.permisos.iter().any(|p| p == permiso)
     }
 
     /// Helper para handlers: rechaza con 403 si no tiene el permiso

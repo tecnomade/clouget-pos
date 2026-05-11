@@ -229,12 +229,11 @@ pub fn crear_usuario(
 
     // v2.4.20: bloquear PINs duplicados — si dos usuarios tienen el mismo PIN,
     // el login no es determinístico (devuelve el primero que encuentra) y el otro
-    // nunca puede entrar con su propio PIN. Mejor obligar a que sean únicos.
-    if let Some(otro) = pin_duplicado(&conn, &usuario.pin, None)? {
-        return Err(format!(
-            "El PIN ya está en uso por el usuario '{}'. Cada usuario debe tener un PIN único.",
-            otro,
-        ));
+    // nunca puede entrar con su propio PIN.
+    // v2.4.21 SECURITY: NO revelar QUIÉN tiene el PIN (eso lo convertía en oráculo
+    // para descubrir el PIN de otros usuarios). Mensaje genérico.
+    if pin_duplicado(&conn, &usuario.pin, None)?.is_some() {
+        return Err("Este PIN ya está en uso. Elige otro.".to_string());
     }
 
     let salt = utils::generar_salt();
@@ -364,11 +363,9 @@ pub fn actualizar_usuario(
         }
         // v2.4.20: bloquear PIN duplicado (excluyendo este mismo usuario para
         // permitir guardar sin cambios o re-poner el mismo PIN).
-        if let Some(otro) = pin_duplicado(&conn, new_pin, Some(id))? {
-            return Err(format!(
-                "El PIN ya está en uso por '{}'. Cada usuario debe tener un PIN único.",
-                otro,
-            ));
+        // v2.4.21 SECURITY: mensaje genérico sin revelar QUIÉN tiene el PIN.
+        if pin_duplicado(&conn, new_pin, Some(id))?.is_some() {
+            return Err("Este PIN ya está en uso. Elige otro.".to_string());
         }
         let salt = utils::generar_salt();
         let pin_hash = utils::hash_pin(&salt, new_pin);
@@ -595,6 +592,11 @@ pub(crate) fn verificar_admin(sesion: &State<SesionState>) -> Result<(), String>
 
 /// v2.4.20: detecta si el PIN ya está en uso por otro usuario activo.
 /// Devuelve Some(nombre) si encuentra duplicado, None si está libre.
+///
+/// **IMPORTANTE — v2.4.21 SECURITY**: el nombre devuelto NO debe propagarse
+/// al cliente (sería un oráculo: cualquiera con permiso de crear usuarios
+/// podría tantear PINs y descubrir el PIN de otros). Los call-sites deben
+/// usar `.is_some()` y mensaje genérico tipo "Este PIN ya está en uso".
 ///
 /// Cada usuario tiene su propio salt, así que no se pueden comparar hashes
 /// directamente — hay que rehashear el PIN candidato con CADA salt y comparar.

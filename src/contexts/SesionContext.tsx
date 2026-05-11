@@ -66,6 +66,15 @@ export function SesionProvider({ children }: { children: React.ReactNode }) {
   const tienePermiso = useCallback((permiso: string): boolean => {
     if (!sesion) return false;
     if (sesion.rol === "ADMIN") return true;
+    // v2.4.21: permisos implícitos por rol. Antes el rol TECNICO se creaba
+    // con permisos={} y no veía el módulo Servicio Técnico en el sidebar
+    // hasta que un admin le asignaba manualmente los permisos. Ahora el
+    // rol ya implica acceso al módulo correspondiente.
+    if (sesion.rol === "TECNICO") {
+      if (permiso === "gestionar_servicio_tecnico" || permiso === "ver_servicio_tecnico") {
+        return true;
+      }
+    }
     try {
       const permisos = JSON.parse(sesion.permisos || "{}");
       return !!permisos[permiso];
