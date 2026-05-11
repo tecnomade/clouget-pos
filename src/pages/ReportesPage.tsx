@@ -39,6 +39,11 @@ export default function ReportesPage() {
   // v2.4.14: reportes de Servicio Tecnico
   const [cancelacionesST, setCancelacionesST] = useState<ResumenCancelaciones | null>(null);
   const [garantiasST, setGarantiasST] = useState<ResumenGarantias | null>(null);
+  // v2.4.15: gating — solo mostrar tabs ST si el modulo esta activo
+  const [moduloSTActivo, setModuloSTActivo] = useState(false);
+  // v2.4.15: filtros inteligentes para reportes ST
+  const [filtroCancelaciones, setFiltroCancelaciones] = useState("");
+  const [filtroGarantias, setFiltroGarantias] = useState("");
   const [cajerosData, setCajerosData] = useState<any>(null);
   // v2.3.70 — Reporte de ventas individuales filtrable
   const [ventasReporte, setVentasReporte] = useState<ReporteVentasResultado | null>(null);
@@ -158,6 +163,10 @@ export default function ReportesPage() {
   // Cargar maestro de categorías al montar
   useEffect(() => {
     listarCategoriasSimple().then(setCategoriasMaestro).catch(() => {});
+    // v2.4.15: chequear si el modulo ST esta activo (para mostrar tabs)
+    invoke<any>("obtener_config")
+      .then((cfg: any) => setModuloSTActivo(cfg?.modulo_servicio_tecnico === "1"))
+      .catch(() => {});
   }, []);
 
   const cargarKardexMulti = async () => {
@@ -590,7 +599,8 @@ export default function ReportesPage() {
       <div className="page-body" style={{ padding: 16 }}>
         {/* Tabs */}
         <div className="flex gap-2 mb-4">
-          {([
+          {/* v2.4.15: tabs de Servicio Tecnico solo si el modulo esta activo */}
+          {(([
             ["utilidad", "Estado de Resultados"],
             ["balance", "Balance"],
             ["ventas", "Ventas detalladas"],
@@ -601,9 +611,11 @@ export default function ReportesPage() {
             ["inventario", "Inventario"],
             ["kardex", "Kardex Multi"],
             ["cajeros", "Cajeros"],
-            ["cancelaciones_st", "🚫 Cancelaciones ST"],
-            ["garantias_st", "🛡 Garantías ST"],
-          ] as const).map(([key, label]) => (
+            ...(moduloSTActivo ? [
+              ["cancelaciones_st", "🚫 Cancelaciones ST"],
+              ["garantias_st", "🛡 Garantías ST"],
+            ] : []),
+          ] as const) as ReadonlyArray<readonly [typeof tab, string]>).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
               style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
               {label}
@@ -1607,7 +1619,22 @@ export default function ReportesPage() {
         )}
 
         {/* v2.4.14: Cancelaciones de Servicio Tecnico */}
-        {!cargando && tab === "cancelaciones_st" && cancelacionesST && (
+        {!cargando && tab === "cancelaciones_st" && cancelacionesST && (() => {
+          // v2.4.15: filtro inteligente — busca en orden, cliente, equipo, motivo, usuario
+          const f = filtroCancelaciones.toLowerCase().trim();
+          const ordenesFiltradas = !f ? cancelacionesST.ordenes : cancelacionesST.ordenes.filter(o =>
+            o.numero.toLowerCase().includes(f)
+            || (o.cliente_nombre || "").toLowerCase().includes(f)
+            || (o.cliente_telefono || "").toLowerCase().includes(f)
+            || o.equipo_descripcion.toLowerCase().includes(f)
+            || (o.equipo_marca || "").toLowerCase().includes(f)
+            || (o.equipo_modelo || "").toLowerCase().includes(f)
+            || (o.usuario_cancelacion || "").toLowerCase().includes(f)
+            || (o.observacion || "").toLowerCase().includes(f)
+          );
+          const sumaFiltrada = ordenesFiltradas.reduce((s, o) => s + o.monto_devuelto, 0);
+          const abonosFiltrados = ordenesFiltradas.reduce((s, o) => s + o.abonos_devueltos, 0);
+          return (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
@@ -1617,6 +1644,24 @@ export default function ReportesPage() {
                 sub={`$${cancelacionesST.monto_total_devuelto.toFixed(2)} en total`}
                 color="var(--color-warning)" />
               <KpiCard label="Período" valor={`${desde}`} sub={`hasta ${hasta}`} />
+            </div>
+
+            {/* v2.4.15: buscador */}
+            <div style={{ position: "relative" }}>
+              <input className="input"
+                placeholder="🔎 Buscar por orden, cliente, equipo, motivo, usuario..."
+                value={filtroCancelaciones}
+                onChange={(e) => setFiltroCancelaciones(e.target.value)}
+                style={{ width: "100%", paddingRight: filtroCancelaciones ? 30 : 8 }} />
+              {filtroCancelaciones && (
+                <button onClick={() => setFiltroCancelaciones("")}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", fontSize: 16, color: "var(--color-text-secondary)" }}>×</button>
+              )}
+              {filtroCancelaciones && (
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                  {ordenesFiltradas.length} de {cancelacionesST.ordenes.length} órdenes · {abonosFiltrados} abono(s) · ${sumaFiltrada.toFixed(2)}
+                </div>
+              )}
             </div>
 
             {/* Tabla */}
@@ -1635,12 +1680,12 @@ export default function ReportesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {cancelacionesST.ordenes.length === 0 ? (
+                  {ordenesFiltradas.length === 0 ? (
                     <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "var(--color-text-secondary)" }}>
-                      No hay órdenes canceladas en este período
+                      {filtroCancelaciones ? "Sin coincidencias" : "No hay órdenes canceladas en este período"}
                     </td></tr>
                   ) : (
-                    cancelacionesST.ordenes.map(o => (
+                    ordenesFiltradas.map(o => (
                       <tr key={o.orden_id} style={{ borderTop: "1px solid var(--color-border)" }}>
                         <td style={tdStyle}>{(o.fecha_cancelacion || o.fecha_ingreso).slice(0, 16).replace("T", " ")}</td>
                         <td style={tdStyle}><strong>{o.numero}</strong></td>
@@ -1672,12 +1717,14 @@ export default function ReportesPage() {
                     ))
                   )}
                 </tbody>
-                {cancelacionesST.ordenes.length > 0 && (
+                {ordenesFiltradas.length > 0 && (
                   <tfoot>
                     <tr style={{ background: "var(--color-surface-alt)", fontWeight: 700 }}>
-                      <td style={tdStyle} colSpan={6}>TOTAL ({cancelacionesST.total_canceladas} canceladas)</td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>{cancelacionesST.total_abonos_devueltos}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", color: "var(--color-warning)" }}>${cancelacionesST.monto_total_devuelto.toFixed(2)}</td>
+                      <td style={tdStyle} colSpan={6}>
+                        TOTAL ({ordenesFiltradas.length}{filtroCancelaciones ? ` de ${cancelacionesST.total_canceladas}` : ""} canceladas)
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>{abonosFiltrados}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", color: "var(--color-warning)" }}>${sumaFiltrada.toFixed(2)}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -1689,16 +1736,46 @@ export default function ReportesPage() {
               se devuelven automáticamente al cliente. Si se canceló por error, contacta al admin.
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {/* v2.4.14: Garantías activas de Servicio Tecnico */}
-        {!cargando && tab === "garantias_st" && garantiasST && (
+        {!cargando && tab === "garantias_st" && garantiasST && (() => {
+          const f = filtroGarantias.toLowerCase().trim();
+          const ordenesFiltradas = !f ? garantiasST.ordenes : garantiasST.ordenes.filter(o =>
+            o.numero.toLowerCase().includes(f)
+            || (o.cliente_nombre || "").toLowerCase().includes(f)
+            || (o.cliente_telefono || "").toLowerCase().includes(f)
+            || o.equipo_descripcion.toLowerCase().includes(f)
+            || (o.equipo_marca || "").toLowerCase().includes(f)
+            || (o.equipo_modelo || "").toLowerCase().includes(f)
+            || (o.equipo_serie || "").toLowerCase().includes(f)
+          );
+          return (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <KpiCard label="Garantías activas" valor={String(garantiasST.total_activas)}
                 color="var(--color-primary)" />
               <KpiCard label="Por vencer (≤30 días)" valor={String(garantiasST.total_por_vencer_30d)}
                 color={garantiasST.total_por_vencer_30d > 0 ? "var(--color-warning)" : "var(--color-text-secondary)"} />
+            </div>
+
+            {/* v2.4.15: buscador */}
+            <div style={{ position: "relative" }}>
+              <input className="input"
+                placeholder="🔎 Buscar por orden, cliente, teléfono, equipo, marca, modelo, serie..."
+                value={filtroGarantias}
+                onChange={(e) => setFiltroGarantias(e.target.value)}
+                style={{ width: "100%", paddingRight: filtroGarantias ? 30 : 8 }} />
+              {filtroGarantias && (
+                <button onClick={() => setFiltroGarantias("")}
+                  style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "transparent", border: "none", cursor: "pointer", fontSize: 16, color: "var(--color-text-secondary)" }}>×</button>
+              )}
+              {filtroGarantias && (
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                  {ordenesFiltradas.length} de {garantiasST.ordenes.length} garantías
+                </div>
+              )}
             </div>
 
             <div style={{ overflowX: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
@@ -1716,12 +1793,12 @@ export default function ReportesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {garantiasST.ordenes.length === 0 ? (
+                  {ordenesFiltradas.length === 0 ? (
                     <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: "var(--color-text-secondary)" }}>
-                      No hay garantías activas en este momento
+                      {filtroGarantias ? "Sin coincidencias" : "No hay garantías activas en este momento"}
                     </td></tr>
                   ) : (
-                    garantiasST.ordenes.map(o => {
+                    ordenesFiltradas.map(o => {
                       const colorRest = o.dias_restantes <= 7 ? "var(--color-danger)"
                         : o.dias_restantes <= 30 ? "var(--color-warning)"
                         : "var(--color-success)";
@@ -1760,7 +1837,8 @@ export default function ReportesPage() {
               búscalo aquí para verificar fecha de entrega y días restantes.
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     </>
   );

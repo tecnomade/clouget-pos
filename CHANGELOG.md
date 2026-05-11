@@ -6,6 +6,50 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.15 — 2026-05-11 🚨 HOTFIX
+
+**Hotfix crítico: servicios manuales perdidos al cobrar + mejoras UI.**
+
+### 🚨 Bug crítico (root cause encontrado)
+
+En v2.4.14 reporté que el detalle de venta no mostraba servicios manuales y lo "arreglé" con `LEFT JOIN`. **Eso era solo el síntoma.** El root cause real:
+
+La tabla `venta_detalles` tenía `producto_id INTEGER NOT NULL` desde la versión inicial. Cuando `cobrar_orden_servicio` insertaba la línea de un servicio manual (con `producto_id = NULL`), el INSERT **fallaba silenciosamente** por el `.ok()` que ignora errores. Resultado: la línea NUNCA se guardaba en BD.
+
+→ El `LEFT JOIN` de v2.4.14 no servía de nada porque no había nada que traer.
+
+**Fix v2.4.15**:
+- Schema base: `producto_id INTEGER` (sin NOT NULL).
+- Migración para BDs existentes: detecta vía `pragma_table_info` si la columna sigue siendo NOT NULL y, si lo es, recrea la tabla preservando todos los datos (transaccional con `PRAGMA foreign_keys = OFF`).
+- Las nuevas ventas con servicios manuales ya guardan correctamente.
+
+⚠ **Las ventas viejas que perdieron la línea** (NV pre-v2.4.15 generadas desde órdenes con servicios manuales) **no se pueden recuperar** — la línea nunca se persistió. El total de la venta sí está correcto, solo falta la línea visual del servicio. Cuando abras esas ventas verás solo los productos del catálogo (info histórica perdida, pero contabilidad intacta).
+
+### 🆕 Form de servicio manual con labels claros + cantidad
+
+Antes: 3 inputs sin labels, con placeholders que desaparecían al tipear. El usuario veía "DIAGNOSTICO / 15 / 0" sin entender qué era el "0".
+
+**Ahora**:
+- Labels visibles arriba de cada campo: **Descripción \* / Cantidad / Precio unitario \* / IVA %**
+- Campo nuevo "Cantidad" (default 1, editable)
+- Backend ya soportaba cantidad — solo se exponía en UI
+
+### 🔒 Gating: tabs ST en Reportes
+
+Los tabs "🚫 Cancelaciones ST" y "🛡 Garantías ST" en Reportes ahora **solo aparecen si el módulo Servicio Técnico está activo** en Configuración. Antes aparecían siempre (rebotaban en backend).
+
+### 🔎 Buscador inteligente en reportes ST
+
+Ambos tabs (Cancelaciones y Garantías) ahora tienen un input de búsqueda con filtro inteligente:
+
+- **Cancelaciones**: busca en orden, cliente, teléfono, equipo, marca, modelo, motivo, usuario que canceló.
+- **Garantías**: busca en orden, cliente, teléfono, equipo, marca, modelo, serie.
+- Botón × para limpiar.
+- Contador "X de Y" cuando hay filtro activo.
+- Totales del footer se recalculan según el filtro.
+
+---
+
 ## v2.4.14 — 2026-05-10 🛠
 
 **Cierre de mejoras ST + bug fix detalle de venta + miniaturas en productos.**

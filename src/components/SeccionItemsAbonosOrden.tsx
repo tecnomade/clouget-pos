@@ -49,6 +49,7 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
   const [resultadosProducto, setResultadosProducto] = useState<ProductoBusqueda[]>([]);
   const [modoServicioManual, setModoServicioManual] = useState(false);
   const [descripcionManual, setDescripcionManual] = useState("");
+  const [cantidadManual, setCantidadManual] = useState("1");
   const [precioManual, setPrecioManual] = useState("");
   const [ivaManual, setIvaManual] = useState("0");
 
@@ -113,13 +114,16 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
 
   const handleAgregarServicioManual = async () => {
     const precio = parseFloat(precioManual) || 0;
+    const cant = parseFloat(cantidadManual) || 1;
     const iva = parseFloat(ivaManual) || 0;
     if (!descripcionManual.trim()) { toastError("Describe el servicio"); return; }
     if (precio <= 0) { toastError("Indica un precio mayor a 0"); return; }
+    if (cant <= 0) { toastError("La cantidad debe ser mayor a 0"); return; }
     try {
-      await stAgregarItemOrden(ordenId, descripcionManual.trim(), 1, precio, null, iva, true);
+      await stAgregarItemOrden(ordenId, descripcionManual.trim(), cant, precio, null, iva, true);
       toastExito("Servicio agregado");
       setDescripcionManual("");
+      setCantidadManual("1");
       setPrecioManual("");
       setIvaManual("0");
       setModoServicioManual(false);
@@ -299,21 +303,37 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                 )}
               </>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 70px auto auto", gap: 6, alignItems: "center" }}>
-                <input className="input" placeholder="Descripción del servicio (mano de obra, etc.)"
-                  value={descripcionManual}
-                  onChange={(e) => setDescripcionManual(e.target.value)}
-                  style={{ fontSize: 12 }} />
-                <input className="input" type="number" step="0.01" placeholder="Precio"
-                  value={precioManual}
-                  onChange={(e) => setPrecioManual(e.target.value)}
-                  style={{ fontSize: 12 }} />
-                <input className="input" type="number" step="1" placeholder="IVA%"
-                  value={ivaManual}
-                  onChange={(e) => setIvaManual(e.target.value)}
-                  style={{ fontSize: 12 }} />
-                <button className="btn btn-success" style={{ fontSize: 11 }} onClick={handleAgregarServicioManual}>Agregar</button>
-                <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={() => setModoServicioManual(false)}>Cancelar</button>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 90px 70px auto auto", gap: 6, alignItems: "end" }}>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, display: "block", marginBottom: 2, color: "var(--color-text-secondary)" }}>Descripción *</label>
+                  <input className="input" placeholder="Mano de obra, diagnóstico..."
+                    value={descripcionManual}
+                    onChange={(e) => setDescripcionManual(e.target.value)}
+                    style={{ fontSize: 12 }} autoFocus />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, display: "block", marginBottom: 2, color: "var(--color-text-secondary)" }}>Cantidad</label>
+                  <input className="input" type="number" step="0.01" min="0.01"
+                    value={cantidadManual}
+                    onChange={(e) => setCantidadManual(e.target.value)}
+                    style={{ fontSize: 12 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, display: "block", marginBottom: 2, color: "var(--color-text-secondary)" }}>Precio unitario *</label>
+                  <input className="input" type="number" step="0.01" placeholder="0.00"
+                    value={precioManual}
+                    onChange={(e) => setPrecioManual(e.target.value)}
+                    style={{ fontSize: 12 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, fontWeight: 600, display: "block", marginBottom: 2, color: "var(--color-text-secondary)" }}>IVA %</label>
+                  <input className="input" type="number" step="1" placeholder="0"
+                    value={ivaManual}
+                    onChange={(e) => setIvaManual(e.target.value)}
+                    style={{ fontSize: 12 }} />
+                </div>
+                <button className="btn btn-success" style={{ fontSize: 11, height: 30 }} onClick={handleAgregarServicioManual}>Agregar</button>
+                <button className="btn btn-outline" style={{ fontSize: 11, height: 30 }} onClick={() => setModoServicioManual(false)}>Cancelar</button>
               </div>
             )}
           </div>

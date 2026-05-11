@@ -94,10 +94,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_ventas_estado ON ventas(estado);
 
         -- Detalle de ventas
+        -- v2.4.15: producto_id es NULLABLE para soportar servicios manuales
+        -- (ej: mano de obra de orden de servicio tecnico). Antes era NOT NULL
+        -- y los INSERT con NULL fallaban silenciosamente.
         CREATE TABLE IF NOT EXISTS venta_detalles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             venta_id INTEGER NOT NULL,
-            producto_id INTEGER NOT NULL,
+            producto_id INTEGER,
             cantidad REAL NOT NULL,
             precio_unitario REAL NOT NULL,
             descuento REAL NOT NULL DEFAULT 0,
@@ -1284,6 +1287,64 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // unidades_producto: vincular con tipos_unidad maestros (v1.9.8)
     let _ = conn.execute("ALTER TABLE unidades_producto ADD COLUMN tipo_unidad_id INTEGER REFERENCES tipos_unidad(id)", []);
+
+    // ─── v2.4.15: producto_id NULLABLE en venta_detalles ────────────────────
+    // Bug grave: en BDs existentes, producto_id era NOT NULL. Cuando una orden
+    // de servicio tecnico se cobraba con servicios manuales (mano de obra,
+    // diagnostico, etc.) el INSERT tenia producto_id = NULL y FALLABA
+    // silenciosamente por el `.ok()` en cobrar_orden_servicio. Resultado:
+    // la linea del servicio NUNCA se insertaba — el detalle de venta solo
+    // mostraba los productos del catalogo, total no cuadraba con detalle.
+    //
+    // SQLite no permite cambiar NULL/NOT NULL via ALTER TABLE. Hay que
+    // recrear la tabla. Solo lo hacemos si producto_id sigue siendo NOT NULL.
+    let producto_id_es_not_null: bool = conn.query_row(
+        "SELECT \"notnull\" FROM pragma_table_info('venta_detalles') WHERE name = 'producto_id'",
+        [], |r| r.get::<_, i64>(0).map(|n| n != 0),
+    ).unwrap_or(false);
+    if producto_id_es_not_null {
+        let res = conn.execute_batch("
+            PRAGMA foreign_keys = OFF;
+            BEGIN;
+            CREATE TABLE venta_detalles_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                venta_id INTEGER NOT NULL,
+                producto_id INTEGER,
+                cantidad REAL NOT NULL,
+                precio_unitario REAL NOT NULL,
+                descuento REAL NOT NULL DEFAULT 0,
+                iva_porcentaje REAL NOT NULL DEFAULT 0,
+                subtotal REAL NOT NULL,
+                establecimiento_origen_id INTEGER,
+                info_adicional TEXT,
+                precio_costo REAL NOT NULL DEFAULT 0,
+                lote_id INTEGER,
+                unidad_id INTEGER,
+                unidad_nombre TEXT,
+                factor_unidad REAL DEFAULT 1,
+                FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
+                FOREIGN KEY (producto_id) REFERENCES productos(id)
+            );
+            INSERT INTO venta_detalles_new
+                (id, venta_id, producto_id, cantidad, precio_unitario, descuento,
+                 iva_porcentaje, subtotal, establecimiento_origen_id, info_adicional,
+                 precio_costo, lote_id, unidad_id, unidad_nombre, factor_unidad)
+            SELECT id, venta_id, producto_id, cantidad, precio_unitario, descuento,
+                   iva_porcentaje, subtotal, establecimiento_origen_id, info_adicional,
+                   precio_costo, lote_id, unidad_id, unidad_nombre, factor_unidad
+            FROM venta_detalles;
+            DROP TABLE venta_detalles;
+            ALTER TABLE venta_detalles_new RENAME TO venta_detalles;
+            CREATE INDEX IF NOT EXISTS idx_venta_detalles_venta ON venta_detalles(venta_id);
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+        ");
+        if let Err(e) = res {
+            eprintln!("[migracion v2.4.15] Error migrando venta_detalles a producto_id NULL: {}", e);
+        } else {
+            eprintln!("[migracion v2.4.15] venta_detalles.producto_id ahora es NULLABLE");
+        }
+    }
 
     Ok(())
 }
