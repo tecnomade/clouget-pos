@@ -28,8 +28,10 @@
 
 pub mod schema;
 pub mod http;
+pub mod http_st;
 pub mod commands;
 pub mod discovery;
+pub mod push;
 
 use crate::db::Database;
 use rusqlite::params;

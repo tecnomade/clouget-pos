@@ -1284,7 +1284,8 @@ function ImagenProductoPicker({ imagen, nombre, productoId, onChange, onError }:
           <img
             src={`data:${mime};base64,${imagen}`}
             alt={nombre || "Producto"}
-            style={{ width: 80, height: 80, objectFit: "cover", border: "1px solid var(--color-border)", borderRadius: "var(--radius)" }}
+            // v2.4.18: contain para mostrar el producto completo en la preview del editor
+            style={{ width: 80, height: 80, objectFit: "contain", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface-alt)" }}
           />
         ) : (
           <div style={{

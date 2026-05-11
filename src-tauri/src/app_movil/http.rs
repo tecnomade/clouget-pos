@@ -80,7 +80,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
-    fn new(msg: impl Into<String>) -> Self {
+    pub fn new(msg: impl Into<String>) -> Self {
         Self { ok: false, error: msg.into() }
     }
 }
@@ -93,6 +93,8 @@ pub struct AppSession {
     pub nombre: String,
     pub rol: String,
     pub permisos: Vec<String>,
+    /// ID en `app_tokens` (para actualizar push_token, etc.)
+    pub token_id: i64,
 }
 
 impl AppSession {
@@ -194,6 +196,7 @@ pub fn extract_app_session(
         nombre,
         rol,
         permisos,
+        token_id,
     })
 }
 
@@ -447,6 +450,37 @@ pub async fn auth_logout(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// `POST /api/v1/app/auth/push-token` — actualiza el Expo Push Token del dispositivo
+/// actual (la app lo registra al loguear y/o cuando el usuario acepta permiso de notifs).
+///
+/// Body: `{ "push_token": "ExponentPushToken[xxxxx]" }`
+#[derive(serde::Deserialize)]
+pub struct SetPushTokenReq {
+    pub push_token: String,
+}
+
+pub async fn auth_set_push_token(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<SetPushTokenReq>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    let pt = req.push_token.trim();
+    // Validación mínima: token de Expo empieza con ExponentPushToken[ o ExpoPushToken[
+    if !pt.starts_with("ExponentPushToken[") && !pt.starts_with("ExpoPushToken[") {
+        return Err(err400("Push token inválido (formato Expo)"));
+    }
+
+    conn.execute(
+        "UPDATE app_tokens SET push_token = ?1 WHERE id = ?2",
+        params![pt, session.token_id],
+    ).map_err(err500)?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// `GET /api/v1/app/me` — datos del usuario logueado.
 pub async fn me(
     AxumState(state): AxumState<Arc<ServerState>>,
@@ -611,10 +645,10 @@ pub async fn listar_mesas(
 
 use axum::extract::Path;
 
-fn err500(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+pub fn err500(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string())))
 }
-fn err400(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+pub fn err400(e: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     (StatusCode::BAD_REQUEST, Json(ApiError::new(e.to_string())))
 }
 
@@ -839,23 +873,27 @@ pub async fn pedidos_enviar_cocina(
 
     let conn = state.db.conn.lock().map_err(err500)?;
 
-    // Items pendientes
-    let mut stmt = conn.prepare(
-        "SELECT i.id, p.nombre, i.cantidad, i.info_adicional,
-                COALESCE(p.destino_preparacion, 'COCINA') as destino
-         FROM rest_pedido_items i JOIN productos p ON i.producto_id = p.id
-         WHERE i.pedido_id = ?1 AND i.enviado_cocina = 0
-         ORDER BY i.id",
-    ).map_err(err500)?;
-    let items: Vec<serde_json::Value> = stmt.query_map(params![pedido_id], |r| {
-        Ok(serde_json::json!({
-            "id": r.get::<_, i64>(0)?,
-            "producto_nombre": r.get::<_, String>(1)?,
-            "cantidad": r.get::<_, f64>(2)?,
-            "info_adicional": r.get::<_, Option<String>>(3)?,
-            "destino_preparacion": r.get::<_, String>(4)?,
-        }))
-    }).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+    // Items pendientes (en scope para que stmt se libere antes del execute/drop)
+    let items: Vec<serde_json::Value> = {
+        let mut stmt = conn.prepare(
+            "SELECT i.id, p.nombre, i.cantidad, i.info_adicional,
+                    COALESCE(p.destino_preparacion, 'COCINA') as destino
+             FROM rest_pedido_items i JOIN productos p ON i.producto_id = p.id
+             WHERE i.pedido_id = ?1 AND i.enviado_cocina = 0
+             ORDER BY i.id",
+        ).map_err(err500)?;
+        let rows = stmt.query_map(params![pedido_id], |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "producto_nombre": r.get::<_, String>(1)?,
+                "cantidad": r.get::<_, f64>(2)?,
+                "info_adicional": r.get::<_, Option<String>>(3)?,
+                "destino_preparacion": r.get::<_, String>(4)?,
+            }))
+        }).map_err(err500)?
+          .collect::<Result<Vec<_>, _>>().map_err(err500)?;
+        rows
+    };
 
     if items.is_empty() {
         return Err(err400("No hay items nuevos para enviar a cocina"));
@@ -867,6 +905,40 @@ pub async fn pedidos_enviar_cocina(
          WHERE pedido_id = ?1 AND enviado_cocina = 0",
         params![pedido_id],
     ).map_err(err500)?;
+
+    // Mesa nombre para mostrar en la push (opcional pero útil al cocinero)
+    let mesa_nombre: String = conn.query_row(
+        "SELECT m.nombre FROM rest_mesas m
+         JOIN rest_pedidos p ON p.mesa_id = m.id
+         WHERE p.id = ?1",
+        params![pedido_id],
+        |r| r.get(0),
+    ).unwrap_or_else(|_| format!("Pedido #{}", pedido_id));
+
+    drop(conn); // soltamos el lock antes del spawn async para evitar bloquear
+
+    // v0.2 Sprint 6.2: push notification a cocineros con permiso ve_cocina
+    if let Ok(tokens) = super::push::tokens_por_permiso(&state.db, "ve_cocina") {
+        let total_items: f64 = items.iter()
+            .filter_map(|i| i.get("cantidad").and_then(|c| c.as_f64()))
+            .sum();
+        let body = if items.len() == 1 {
+            let nombre = items[0].get("producto_nombre").and_then(|n| n.as_str()).unwrap_or("Item");
+            format!("{} · {} (x{:.0})", mesa_nombre, nombre, total_items)
+        } else {
+            format!("{} · {} items nuevos", mesa_nombre, items.len())
+        };
+        super::push::enviar_push_async(
+            tokens,
+            "🍳 Nueva comanda".to_string(),
+            body,
+            Some(serde_json::json!({
+                "tipo": "cocina_nueva",
+                "pedido_id": pedido_id,
+                "mesa": mesa_nombre,
+            })),
+        );
+    }
 
     Ok(Json(serde_json::json!({
         "ok": true, "items": items, "total": items.len()
@@ -1459,6 +1531,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/ping", get(ping))
         .route("/api/v1/app/auth/pin", post(auth_pin))
         .route("/api/v1/app/auth/logout", post(auth_logout))
+        .route("/api/v1/app/auth/push-token", post(auth_set_push_token))
         .route("/api/v1/app/auth/usuarios-disponibles", get(auth_usuarios_disponibles))
         // ── Datos del usuario / catálogo ────────────────────────────────
         .route("/api/v1/app/me", get(me))
@@ -1489,4 +1562,10 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/cocina/items/:id/estado", post(cocina_marcar))
         // ── Vendedor de piso (Sprint 3b) ────────────────────────────────
         .route("/api/v1/app/ventas", post(ventas_registrar))
+        // ── Servicio Técnico (Sprint 6.4 — técnico móvil) ───────────────
+        .route("/api/v1/app/st/mis-ordenes", get(super::http_st::st_mis_ordenes))
+        .route("/api/v1/app/st/ordenes/:id", get(super::http_st::st_obtener_orden))
+        .route("/api/v1/app/st/ordenes/:id/estado", post(super::http_st::st_cambiar_estado))
+        .route("/api/v1/app/st/ordenes/:id/diagnostico", post(super::http_st::st_guardar_diagnostico))
+        .route("/api/v1/app/st/ordenes/:id/imagen", post(super::http_st::st_subir_imagen))
 }

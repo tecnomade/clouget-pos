@@ -298,7 +298,11 @@ function CardProducto({
           <img
             src={`data:image/png;base64,${producto.imagen}`}
             alt={producto.nombre}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            // v2.4.18: contain para no cortar el producto (más importante que llenar el card)
+            style={{
+              width: "100%", height: "100%", objectFit: "contain", display: "block",
+              background: "rgba(255,255,255,0.06)",
+            }}
           />
         ) : (
           // Fallback estilo POS normal: inicial del nombre en grande con gradient

@@ -6,6 +6,38 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.18 — 2026-05-11 📱
+
+**Backend para Sprint 6 de la app móvil + fixes UX en POS desktop.**
+
+### 🆕 Backend para app móvil — push notifications a cocineros
+
+- Nuevo módulo `app_movil/push.rs` con cliente de Expo Push API.
+- Función `tokens_por_permiso(db, "ve_cocina")` busca todos los push tokens activos de usuarios con ese permiso.
+- `enviar_push_async(...)` dispara notificación en background (tokio::spawn, no bloquea la API).
+- Endpoint nuevo `POST /api/v1/app/auth/push-token` para que la app registre su Expo Push Token al login.
+- **Integración en `pedidos_enviar_cocina`**: cuando un mesero envía a cocina, dispara push automática a todos los cocineros conectados con título "🍳 Nueva comanda" y body con mesa + items.
+- `AppSession` ahora incluye `token_id` para asociar push token al dispositivo correcto.
+
+### 🆕 Backend para app móvil — Servicio Técnico
+
+5 endpoints nuevos bajo `/api/v1/app/st/*` para que el técnico use la app desde el celular:
+- `GET /mis-ordenes` — lista órdenes activas (filtradas por `tecnico_id` si no es admin/coordinador)
+- `GET /ordenes/:id` — detalle completo + galería de imágenes
+- `POST /ordenes/:id/estado` — cambia estado + log en historial
+- `POST /ordenes/:id/diagnostico` — guarda diagnóstico/trabajo/observaciones
+- `POST /ordenes/:id/imagen` — sube imagen base64 (ANTES/DESPUÉS/GENERAL)
+
+### 🐞 Fix: imágenes de productos no se ven completas
+
+`PosGridTactil`, `SelectorProductos` (restaurante) y preview en editor de Productos usaban `objectFit: cover` que recortaba el producto. Ahora `objectFit: contain` muestra el producto completo con fondo neutro semi-transparente para llenar el espacio sobrante.
+
+### 🔧 Internal
+
+- Refactor: `ApiError::new`, `err400`, `err500`, `extract_app_session` ahora son `pub` para poder reutilizarse desde `http_st.rs` (módulo nuevo de Servicio Técnico).
+
+---
+
 ## v2.4.17 — 2026-05-11 🛠
 
 **Hotfix gating: licencia es la fuente de verdad para todos los módulos.**

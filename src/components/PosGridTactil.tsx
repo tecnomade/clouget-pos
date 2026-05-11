@@ -224,14 +224,18 @@ export default function PosGridTactil({
                 onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
                 onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
               >
-                {/* Imagen ocupa todo el card */}
+                {/* Imagen ocupa todo el card.
+                    v2.4.18: objectFit "contain" en lugar de "cover" para que NUNCA
+                    se recorte el producto (mejor ver bordes blancos que cortar la mitad
+                    del envase). Background neutro para llenar el espacio sobrante. */}
                 {hayImagen ? (
                   <img
                     src={`data:image/png;base64,${p.imagen}`}
                     alt={p.nombre}
                     style={{
-                      width: "100%", height: "100%", objectFit: "cover",
+                      width: "100%", height: "100%", objectFit: "contain",
                       display: "block",
+                      background: "rgba(255,255,255,0.06)",
                     }}
                   />
                 ) : (
