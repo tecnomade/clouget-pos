@@ -6,6 +6,22 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.23 — 2026-05-11 🧾 Abonos en orden impresa
+
+**El PDF de la orden de servicio ahora muestra los abonos recibidos.**
+
+Antes: el PDF mostraba "Presupuesto: $15.00" pero si el cliente ya había abonado $5, eso no aparecía. El cliente se llevaba la orden impresa sin constancia de su pago.
+
+**Ahora**: nueva sección "ABONOS RECIBIDOS" debajo del presupuesto con:
+- Lista de cada abono: fecha, monto, forma de pago, referencia (si tiene)
+- "Total abonado: $X.XX"
+- "Saldo pendiente: $Y.YY" (calculado como `presupuesto/total - total_abonos`)
+- Si el saldo es 0: "CANCELADO TOTALMENTE"
+
+Aplica tanto a abonos en HOLDING (orden abierta, en proceso) como APLICADOS (orden ya cobrada). Funciona en formato A4 y Ticket 80mm.
+
+---
+
 ## v2.4.22 — 2026-05-11 🔒 Integridad ST
 
 **Bloqueo de cambio de estado en órdenes ya cerradas (consistencia con abonos y ventas).**

@@ -664,18 +664,29 @@ pub fn imprimir_orden_servicio_pdf(
     let formato_efectivo = formato.unwrap_or_else(|| "A4".to_string()).to_uppercase();
     let es_ticket = formato_efectivo == "TICKET_80";
 
+    // v2.4.23: incluir abonos en HOLDING para mostrar en el PDF
+    #[derive(Debug, Clone)]
+    struct AbonoSimple {
+        monto: f64,
+        forma_pago: String,
+        fecha: String,
+        referencia: Option<String>,
+    }
+
     let (
         nombre_negocio, ruc, direccion, telefono, leyenda_orden,
         numero, cliente_nombre, cliente_telefono, tipo_equipo, equipo_descripcion,
         equipo_marca, equipo_modelo, equipo_serie, equipo_placa, accesorios,
         diagnostico, problema_reportado, trabajo_realizado, observaciones,
         estado, fecha_ingreso, presupuesto, monto_final,
+        abonos, total_abonos,
     ): (
         String, String, String, String, String,
         String, Option<String>, Option<String>, String, String,
         String, Option<String>, Option<String>, Option<String>, Option<String>,
         String, String, Option<String>, Option<String>,
         String, String, f64, f64,
+        Vec<AbonoSimple>, f64,
     ) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
         let orden = conn.query_row(
@@ -701,12 +712,34 @@ pub fn imprimir_orden_servicio_pdf(
         let telefono: String = conn.query_row("SELECT value FROM config WHERE key = 'telefono'", [], |r| r.get(0)).unwrap_or_default();
         let leyenda_orden: String = conn.query_row("SELECT value FROM config WHERE key = 'leyenda_orden_servicio'", [], |r| r.get(0)).unwrap_or_default();
 
+        // v2.4.23: cargar abonos en HOLDING para mostrar en el PDF.
+        // Si la orden ya está cobrada, los abonos están en APLICADO — los mostramos
+        // igual porque son parte del registro de la orden.
+        let abonos: Vec<AbonoSimple> = {
+            let mut stmt = conn.prepare(
+                "SELECT monto, forma_pago, fecha, referencia_pago
+                 FROM st_abonos
+                 WHERE orden_id = ?1 AND estado IN ('HOLDING', 'APLICADO')
+                 ORDER BY fecha ASC"
+            ).map_err(|e| e.to_string())?;
+            let rows = stmt.query_map(rusqlite::params![orden_id], |r| Ok(AbonoSimple {
+                monto: r.get(0)?,
+                forma_pago: r.get(1)?,
+                fecha: r.get(2)?,
+                referencia: r.get(3).ok(),
+            })).map_err(|e| e.to_string())?
+              .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+            rows
+        };
+        let total_abonos: f64 = abonos.iter().map(|a| a.monto).sum();
+
         (
             nombre_negocio, ruc, direccion, telefono, leyenda_orden,
             orden.0, orden.1, orden.2, orden.3, orden.4,
             orden.5, orden.6, orden.7, orden.8, orden.9,
             orden.10, orden.11, orden.12, orden.13,
             orden.14, orden.15, orden.16, orden.17,
+            abonos, total_abonos,
         )
     };
 
@@ -785,6 +818,34 @@ pub fn imprimir_orden_servicio_pdf(
         doc.push(Break::new(1));
         if presupuesto > 0.0 { doc.push(Paragraph::new(&format!("Presupuesto: ${:.2}", presupuesto)).styled(label_st)); }
         if monto_final > 0.0 { doc.push(Paragraph::new(&format!("Total: ${:.2}", monto_final)).styled(header_st)); }
+    }
+
+    // v2.4.23: ABONOS recibidos (HOLDING o APLICADOS al cobro).
+    // Importante para que el cliente sepa cuánto ya pagó y cuánto falta.
+    if !abonos.is_empty() {
+        doc.push(Break::new(1));
+        doc.push(Paragraph::new("ABONOS RECIBIDOS").styled(header_st));
+        for a in &abonos {
+            let fecha_corta = a.fecha.split(' ').next().unwrap_or(&a.fecha);
+            let mut linea = format!("• {} · ${:.2} · {}", fecha_corta, a.monto, a.forma_pago);
+            if let Some(ref r) = a.referencia {
+                if !r.trim().is_empty() {
+                    linea.push_str(&format!(" · ref: {}", r));
+                }
+            }
+            doc.push(Paragraph::new(&linea).styled(normal_st));
+        }
+        doc.push(Paragraph::new(&format!("Total abonado: ${:.2}", total_abonos)).styled(label_st));
+        // Saldo pendiente = max(presupuesto, monto_final) - total_abonos
+        let referencia = if monto_final > 0.0 { monto_final } else { presupuesto };
+        if referencia > 0.0 {
+            let saldo = (referencia - total_abonos).max(0.0);
+            if saldo > 0.001 {
+                doc.push(Paragraph::new(&format!("Saldo pendiente: ${:.2}", saldo)).styled(header_st));
+            } else if total_abonos >= referencia - 0.001 {
+                doc.push(Paragraph::new("CANCELADO TOTALMENTE").styled(header_st));
+            }
+        }
     }
 
     // Leyenda / términos configurables (Configuración → Servicio Técnico)
