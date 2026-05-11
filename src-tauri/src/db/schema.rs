@@ -1288,6 +1288,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // unidades_producto: vincular con tipos_unidad maestros (v1.9.8)
     let _ = conn.execute("ALTER TABLE unidades_producto ADD COLUMN tipo_unidad_id INTEGER REFERENCES tipos_unidad(id)", []);
 
+    // v2.4.25: kilometraje de salida (al entregar un vehiculo) + intervalo recomendado.
+    // - intervalo: cada cuánto km se recomienda mantenimiento (ej: 5000)
+    // - salida: km que tiene el vehiculo al ser entregado (post-trabajo)
+    // Próximo mantenimiento se calcula = (salida || entrada) + intervalo.
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN equipo_kilometraje_intervalo INTEGER", []);
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN equipo_kilometraje_salida INTEGER", []);
+
     // ─── v2.4.15: producto_id NULLABLE en venta_detalles ────────────────────
     // Bug grave: en BDs existentes, producto_id era NOT NULL. Cuando una orden
     // de servicio tecnico se cobraba con servicios manuales (mano de obra,

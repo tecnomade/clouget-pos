@@ -6,6 +6,44 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.25 — 2026-05-09 🛠 Servicio Técnico: Kilometraje + Imprimir desde Historial + Permisos TECNICO
+
+### 🚗 Sistema de kilometraje con cálculo automático del próximo mantenimiento
+
+Para tipos de equipo que requieren kilometraje (motos/autos/maquinaria), el form de **Nueva orden ST** ahora pide:
+
+- **Kilometraje actual** (km de entrada del vehículo)
+- **Cada (km)** — intervalo recomendado entre mantenimientos (ej. 5000 km)
+- **Próximo (auto)** — se calcula automáticamente: `entrada + intervalo`
+
+Al **cobrar** la orden, se muestra un campo nuevo **"🚗 Kilometraje de salida"** (precargado con el de entrada). Si el técnico/cajero lo modifica:
+
+- Se guarda como `equipo_kilometraje_salida`
+- Se **recalcula** el próximo mantenimiento usando `salida + intervalo` en vez del de entrada
+- Preview en vivo dentro del modal: `✓ Próximo mantenimiento: X km`
+
+Backend:
+- 2 columnas nuevas en `ordenes_servicio`: `equipo_kilometraje_intervalo` y `equipo_kilometraje_salida`
+- Migración no destructiva (ALTER TABLE ADD COLUMN)
+- `crear_orden_servicio` y `actualizar_orden_servicio` aplican la lógica de cálculo automático cuando el campo `proximo` viene vacío
+
+### 🖨 Imprimir desde el historial de servicio técnico
+
+En el modal de **Historial por equipo**, cada orden expandida ahora muestra:
+
+- Sección **🚗 Kilometraje** con: Entrada · Salida · Próximo mant. · (cada X km)
+- Botones discretos **🖨 A4** y **🧾 80mm** para imprimir el reporte directamente sin tener que abrir la orden
+
+### 🔗 Botón "Abrir orden completa" del historial
+
+Antes el botón solo cerraba el modal. Ahora abre el detalle completo de la orden histórica en el panel principal, con toda la información cargada y todos los botones de acción disponibles (incluidos los de imprimir).
+
+### 🔓 Permisos asignables a usuarios TECNICO
+
+Antes solo los CAJEROS podían recibir permisos personalizados desde Configuración → Usuarios. Ahora los usuarios con rol **TECNICO** también pueden recibir permisos extra (ver reportes, cobros, productos, etc.), útiles para talleres donde el técnico cobra directamente al cliente.
+
+---
+
 ## v2.4.24 — 2026-05-11 🐞 Bug crítico Caja + UX
 
 ### 🚨 Bug crítico: depósitos post-cierre no descontaban del monto sugerido

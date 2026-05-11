@@ -48,22 +48,30 @@ pub fn crear_orden_servicio(
     ).unwrap_or(1);
     let numero = format!("OS-{:06}", next);
 
+    // v2.4.25: si vino intervalo y entrada pero no proximo, calcular auto.
+    let proximo_calc = match (orden.equipo_kilometraje, orden.equipo_kilometraje_intervalo, orden.equipo_kilometraje_proximo) {
+        (Some(entrada), Some(intervalo), None) if intervalo > 0 => Some(entrada + intervalo),
+        (_, _, p) => p,
+    };
+
     conn.execute(
         "INSERT INTO ordenes_servicio (numero, cliente_id, cliente_nombre, cliente_telefono,
          tipo_equipo, equipo_descripcion, equipo_marca, equipo_modelo, equipo_serie, equipo_placa,
          equipo_kilometraje, equipo_kilometraje_proximo, accesorios, problema_reportado,
          diagnostico, trabajo_realizado, observaciones, tecnico_id, tecnico_nombre,
          estado, fecha_promesa, presupuesto, garantia_dias, usuario_creador,
-         tipo_equipo_id, marca_id, modelo_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+         tipo_equipo_id, marca_id, modelo_id,
+         equipo_kilometraje_intervalo, equipo_kilometraje_salida)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
         rusqlite::params![
             numero, orden.cliente_id, orden.cliente_nombre, orden.cliente_telefono,
             orden.tipo_equipo, orden.equipo_descripcion, orden.equipo_marca, orden.equipo_modelo,
-            orden.equipo_serie, orden.equipo_placa, orden.equipo_kilometraje, orden.equipo_kilometraje_proximo,
+            orden.equipo_serie, orden.equipo_placa, orden.equipo_kilometraje, proximo_calc,
             orden.accesorios, orden.problema_reportado, orden.diagnostico, orden.trabajo_realizado,
             orden.observaciones, orden.tecnico_id, orden.tecnico_nombre,
             orden.estado, orden.fecha_promesa, orden.presupuesto, orden.garantia_dias, usuario.clone(),
             orden.tipo_equipo_id, orden.marca_id, orden.modelo_id,
+            orden.equipo_kilometraje_intervalo, orden.equipo_kilometraje_salida,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -87,21 +95,36 @@ pub fn actualizar_orden_servicio(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let id = orden.id.ok_or("ID requerido")?;
 
+    // v2.4.25: si hay km salida + intervalo → recalcular próximo desde salida.
+    // Si solo hay entrada + intervalo → desde entrada. Si vino próximo explícito, ese gana.
+    let proximo_calc = match (
+        orden.equipo_kilometraje_salida,
+        orden.equipo_kilometraje,
+        orden.equipo_kilometraje_intervalo,
+        orden.equipo_kilometraje_proximo,
+    ) {
+        (Some(salida), _, Some(intervalo), _) if intervalo > 0 => Some(salida + intervalo),
+        (_, Some(entrada), Some(intervalo), None) if intervalo > 0 => Some(entrada + intervalo),
+        (_, _, _, p) => p,
+    };
+
     conn.execute(
         "UPDATE ordenes_servicio SET cliente_id=?1, cliente_nombre=?2, cliente_telefono=?3,
          tipo_equipo=?4, equipo_descripcion=?5, equipo_marca=?6, equipo_modelo=?7, equipo_serie=?8,
          equipo_placa=?9, equipo_kilometraje=?10, equipo_kilometraje_proximo=?11, accesorios=?12,
          problema_reportado=?13, diagnostico=?14, trabajo_realizado=?15, observaciones=?16,
          tecnico_id=?17, tecnico_nombre=?18, fecha_promesa=?19, presupuesto=?20, monto_final=?21,
-         garantia_dias=?22, tipo_equipo_id=?23, marca_id=?24, modelo_id=?25 WHERE id=?26",
+         garantia_dias=?22, tipo_equipo_id=?23, marca_id=?24, modelo_id=?25,
+         equipo_kilometraje_intervalo=?26, equipo_kilometraje_salida=?27 WHERE id=?28",
         rusqlite::params![
             orden.cliente_id, orden.cliente_nombre, orden.cliente_telefono,
             orden.tipo_equipo, orden.equipo_descripcion, orden.equipo_marca, orden.equipo_modelo,
-            orden.equipo_serie, orden.equipo_placa, orden.equipo_kilometraje, orden.equipo_kilometraje_proximo,
+            orden.equipo_serie, orden.equipo_placa, orden.equipo_kilometraje, proximo_calc,
             orden.accesorios, orden.problema_reportado, orden.diagnostico, orden.trabajo_realizado,
             orden.observaciones, orden.tecnico_id, orden.tecnico_nombre, orden.fecha_promesa,
             orden.presupuesto, orden.monto_final, orden.garantia_dias,
-            orden.tipo_equipo_id, orden.marca_id, orden.modelo_id, id,
+            orden.tipo_equipo_id, orden.marca_id, orden.modelo_id,
+            orden.equipo_kilometraje_intervalo, orden.equipo_kilometraje_salida, id,
         ],
     ).map_err(|e| e.to_string())?;
     Ok(())
@@ -177,7 +200,9 @@ pub fn obtener_orden_servicio(db: State<Database>, id: i64) -> Result<OrdenServi
          equipo_kilometraje, equipo_kilometraje_proximo, accesorios, problema_reportado,
          diagnostico, trabajo_realizado, observaciones, tecnico_id, tecnico_nombre,
          estado, fecha_ingreso, fecha_promesa, fecha_entrega, presupuesto, monto_final,
-         garantia_dias, venta_id, usuario_creador, tipo_equipo_id, marca_id, modelo_id FROM ordenes_servicio WHERE id = ?1",
+         garantia_dias, venta_id, usuario_creador, tipo_equipo_id, marca_id, modelo_id,
+         equipo_kilometraje_intervalo, equipo_kilometraje_salida
+         FROM ordenes_servicio WHERE id = ?1",
         rusqlite::params![id], |row| Ok(OrdenServicio {
             id: row.get(0)?, numero: row.get(1)?, cliente_id: row.get(2)?,
             cliente_nombre: row.get(3)?, cliente_telefono: row.get(4)?,
@@ -192,6 +217,8 @@ pub fn obtener_orden_servicio(db: State<Database>, id: i64) -> Result<OrdenServi
             fecha_ingreso: row.get(21)?, fecha_promesa: row.get(22)?, fecha_entrega: row.get(23)?,
             presupuesto: row.get(24)?, monto_final: row.get(25)?, garantia_dias: row.get(26)?,
             venta_id: row.get(27)?, usuario_creador: row.get(28)?, tipo_equipo_id: row.get(29)?, marca_id: row.get(30)?, modelo_id: row.get(31)?,
+            equipo_kilometraje_intervalo: row.get(32).ok(),
+            equipo_kilometraje_salida: row.get(33).ok(),
         })
     ).map_err(|e| e.to_string())
 }
@@ -228,6 +255,8 @@ pub fn listar_ordenes_servicio(
             equipo_marca: row.get(7)?, equipo_modelo: row.get(8)?,
             equipo_serie: row.get(9)?, equipo_placa: row.get(10)?,
             equipo_kilometraje: row.get(11)?, equipo_kilometraje_proximo: row.get(12)?,
+            equipo_kilometraje_intervalo: None,
+            equipo_kilometraje_salida: None,
             accesorios: row.get(13)?, problema_reportado: row.get(14)?,
             diagnostico: row.get(15)?, trabajo_realizado: row.get(16)?,
             observaciones: row.get(17)?, tecnico_id: row.get(18)?,
@@ -273,6 +302,8 @@ pub fn buscar_ordenes_por_equipo(db: State<Database>, query: String) -> Result<V
             equipo_marca: row.get(7)?, equipo_modelo: row.get(8)?,
             equipo_serie: row.get(9)?, equipo_placa: row.get(10)?,
             equipo_kilometraje: row.get(11)?, equipo_kilometraje_proximo: row.get(12)?,
+            equipo_kilometraje_intervalo: None,
+            equipo_kilometraje_salida: None,
             accesorios: row.get(13)?, problema_reportado: row.get(14)?,
             diagnostico: row.get(15)?, trabajo_realizado: row.get(16)?,
             observaciones: row.get(17)?, tecnico_id: row.get(18)?,

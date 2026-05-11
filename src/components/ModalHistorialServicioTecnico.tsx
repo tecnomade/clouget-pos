@@ -343,20 +343,79 @@ function FilaExpandida({ orden, onAbrir }: { orden: any; onAbrir: () => void }) 
           <div>{orden.trabajo_realizado}</div>
         </div>
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+      {/* v2.4.25: kilometraje (entrada / salida / próximo) si la orden lo registra */}
+      {(orden.equipo_kilometraje != null || orden.equipo_kilometraje_salida != null || orden.equipo_kilometraje_proximo != null) && (
+        <div style={{ gridColumn: "span 2" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--color-text-muted)", marginBottom: 4 }}>
+            🚗 Kilometraje
+          </div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {orden.equipo_kilometraje != null && (
+              <span>Entrada: <strong>{orden.equipo_kilometraje} km</strong></span>
+            )}
+            {orden.equipo_kilometraje_salida != null && (
+              <span style={{ color: "var(--color-success)" }}>Salida: <strong>{orden.equipo_kilometraje_salida} km</strong></span>
+            )}
+            {orden.equipo_kilometraje_proximo != null && (
+              <span style={{ color: "var(--color-warning)" }}>Próximo mant.: <strong>{orden.equipo_kilometraje_proximo} km</strong></span>
+            )}
+            {orden.equipo_kilometraje_intervalo != null && (
+              <span style={{ color: "var(--color-text-muted)" }}>(cada {orden.equipo_kilometraje_intervalo} km)</span>
+            )}
+          </div>
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", gridColumn: "span 2", borderTop: "1px solid var(--color-border)", paddingTop: 8, marginTop: 4 }}>
         <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
           {orden.fecha_entrega && <>Entregado: {orden.fecha_entrega.slice(0, 16).replace("T", " ")}</>}
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onAbrir(); }}
-          style={{
-            padding: "6px 14px", fontSize: 12, fontWeight: 600,
-            background: "var(--color-primary)", color: "#fff",
-            border: "none", borderRadius: 6, cursor: "pointer",
-          }}
-        >
-          📋 Abrir orden completa
-        </button>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onAbrir(); }}
+            style={{
+              padding: "6px 14px", fontSize: 12, fontWeight: 600,
+              background: "var(--color-primary)", color: "#fff",
+              border: "none", borderRadius: 6, cursor: "pointer",
+            }}
+          >
+            📋 Abrir orden completa
+          </button>
+          {/* v2.4.25: imprimir directo desde el historial */}
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              try {
+                const { imprimirOrdenServicioPdf } = await import("../services/api");
+                await imprimirOrdenServicioPdf(orden.id, "A4");
+              } catch (err) { console.error(err); }
+            }}
+            style={{
+              padding: "6px 12px", fontSize: 11, fontWeight: 600,
+              background: "var(--color-surface-alt)", color: "var(--color-text)",
+              border: "1px solid var(--color-border)", borderRadius: 6, cursor: "pointer",
+            }}
+            title="Imprimir comprobante en formato A4"
+          >
+            🖨 A4
+          </button>
+          <button
+            onClick={async (e) => {
+              e.stopPropagation();
+              try {
+                const { imprimirOrdenServicioPdf } = await import("../services/api");
+                await imprimirOrdenServicioPdf(orden.id, "TICKET_80");
+              } catch (err) { console.error(err); }
+            }}
+            style={{
+              padding: "6px 12px", fontSize: 11, fontWeight: 600,
+              background: "var(--color-surface-alt)", color: "var(--color-text)",
+              border: "1px solid var(--color-border)", borderRadius: 6, cursor: "pointer",
+            }}
+            title="Imprimir comprobante en formato 80mm (térmica)"
+          >
+            🧾 80mm
+          </button>
+        </div>
         {orden.venta_id && (
           <div style={{ fontSize: 11, color: "var(--color-success)" }}>
             ✓ Esta orden generó la venta <strong>#{orden.venta_id}</strong>

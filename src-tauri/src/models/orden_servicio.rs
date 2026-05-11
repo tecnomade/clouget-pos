@@ -16,6 +16,14 @@ pub struct OrdenServicio {
     pub equipo_placa: Option<String>,
     pub equipo_kilometraje: Option<i64>,
     pub equipo_kilometraje_proximo: Option<i64>,
+    /// v2.4.25: intervalo recomendado entre mantenimientos (km).
+    /// Cuando cambia kilometraje (entrada o salida), proximo = ref + intervalo.
+    #[serde(default)]
+    pub equipo_kilometraje_intervalo: Option<i64>,
+    /// v2.4.25: km del vehiculo al ser entregado (post-trabajo).
+    /// Si está presente, sustituye al kilometraje de entrada para el cálculo.
+    #[serde(default)]
+    pub equipo_kilometraje_salida: Option<i64>,
     pub accesorios: Option<String>,
     pub problema_reportado: String,
     pub diagnostico: Option<String>,

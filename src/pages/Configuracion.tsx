@@ -1284,7 +1284,8 @@ export default function Configuracion() {
                         </div>
                       ) : (
                         <div className="flex gap-2">
-                          {u.rol === "CAJERO" && (
+                          {/* v2.4.25: editar permisos para CAJERO y TECNICO (no admin, ya bypassa) */}
+                          {(u.rol === "CAJERO" || u.rol === "TECNICO") && (
                             <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
                               onClick={() => {
                                 if (editandoPermisosId === u.id) {

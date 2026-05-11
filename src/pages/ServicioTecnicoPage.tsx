@@ -128,6 +128,8 @@ export default function ServicioTecnicoPage() {
   const [consultandoSri, setConsultandoSri] = useState(false);
   // v2.4.12 — ST-4/garantía: días de garantía a aplicar al cobrar + formato impresión
   const [cobroGarantiaDias, setCobroGarantiaDias] = useState("0");
+  // v2.4.25: km de salida del vehículo (al entregar). Si se llena, recalcula próximo mantenimiento.
+  const [cobroKmSalida, setCobroKmSalida] = useState("");
   const [formatoImpresion, setFormatoImpresion] = useState<"A4" | "TICKET_80">("A4");
   // v2.4.13 — ST-5: total de items + abonos sincronizados desde el componente embebido,
   // para usarlos en el modal de cobrar y validaciones.
@@ -311,6 +313,12 @@ export default function ServicioTecnicoPage() {
     const pagosFiltrados = cobroPagos.filter(p => p.monto > 0);
     const saldoPend = Math.max(totalOrdenItems.total - totalHoldingOrden - cobroPagos.reduce((s, p) => s + p.monto, 0), 0);
     try {
+      // v2.4.25: si se ingresó km de salida, actualizar la orden ANTES del cobro.
+      // El backend recalcula próximo = salida + intervalo automáticamente.
+      const kmSalida = parseInt(cobroKmSalida) || undefined;
+      if (kmSalida && detalle) {
+        await actualizarOrdenServicio({ ...detalle, equipo_kilometraje_salida: kmSalida });
+      }
       if (pagosFiltrados.length > 0) {
         await cobrarOrdenServicio(detalleId, {
           pagos: pagosFiltrados,
@@ -717,14 +725,35 @@ export default function ServicioTecnicoPage() {
                   {tipoSeleccionado.requiere_kilometraje && (
                     <>
                       <div>
-                        <label style={{ fontSize: 12, fontWeight: 600 }}>Kilometraje</label>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>Kilometraje actual</label>
                         <input className="input" type="number" value={form.equipo_kilometraje || ""}
-                          onChange={(e) => setForm({ ...form, equipo_kilometraje: parseInt(e.target.value) || undefined })} />
+                          onChange={(e) => {
+                            const km = parseInt(e.target.value) || undefined;
+                            const intervalo = form.equipo_kilometraje_intervalo;
+                            // Auto-calcular próximo si hay intervalo
+                            const proximo = (km && intervalo) ? km + intervalo : form.equipo_kilometraje_proximo;
+                            setForm({ ...form, equipo_kilometraje: km, equipo_kilometraje_proximo: proximo });
+                          }} />
                       </div>
                       <div>
-                        <label style={{ fontSize: 12, fontWeight: 600 }}>Próximo recomendado</label>
+                        <label style={{ fontSize: 12, fontWeight: 600 }} title="Cada cuántos km se recomienda mantenimiento">
+                          Cada (km)
+                        </label>
+                        <input className="input" type="number" value={form.equipo_kilometraje_intervalo || ""}
+                          placeholder="Ej: 5000"
+                          onChange={(e) => {
+                            const intervalo = parseInt(e.target.value) || undefined;
+                            const km = form.equipo_kilometraje;
+                            const proximo = (km && intervalo) ? km + intervalo : form.equipo_kilometraje_proximo;
+                            setForm({ ...form, equipo_kilometraje_intervalo: intervalo, equipo_kilometraje_proximo: proximo });
+                          }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 600 }}>Próximo (auto)</label>
                         <input className="input" type="number" value={form.equipo_kilometraje_proximo || ""}
-                          onChange={(e) => setForm({ ...form, equipo_kilometraje_proximo: parseInt(e.target.value) || undefined })} />
+                          onChange={(e) => setForm({ ...form, equipo_kilometraje_proximo: parseInt(e.target.value) || undefined })}
+                          style={{ background: "var(--color-surface-alt)" }}
+                          title="Calculado automáticamente. Editable si necesitas un valor distinto." />
                       </div>
                     </>
                   )}
@@ -1093,6 +1122,8 @@ export default function ServicioTecnicoPage() {
                   setCobroPagos([{ forma_pago: "EFECTIVO", monto: saldo }]);
                   // v2.4.14: reset del flag de saldo pendiente
                   setPermitirSaldoPendiente(false);
+                  // v2.4.25: precargar km salida con km de entrada (sugerencia)
+                  setCobroKmSalida(detalle?.equipo_kilometraje ? String(detalle.equipo_kilometraje) : "");
                 }}>💰 Cobrar</button>
               )}
             </div>
@@ -1204,6 +1235,30 @@ export default function ServicioTecnicoPage() {
                 )}
               </div>
 
+              {/* v2.4.25: km de salida si la orden es de vehículo. Al ingresar,
+                  el sistema recalcula el próximo mantenimiento (= salida + intervalo). */}
+              {detalle?.equipo_kilometraje != null && (
+                <div style={{ marginBottom: 12, padding: 10, background: "rgba(168, 85, 247, 0.08)", borderRadius: 6, border: "1px solid rgba(168, 85, 247, 0.3)" }}>
+                  <label style={{ fontSize: 12, fontWeight: 600 }}>🚗 Kilometraje de salida</label>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                    <input className="input" type="number"
+                      style={{ width: 140 }}
+                      placeholder={`Km al entregar`}
+                      value={cobroKmSalida}
+                      onChange={(e) => setCobroKmSalida(e.target.value)} />
+                    <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                      Entrada: {detalle.equipo_kilometraje} km
+                      {detalle.equipo_kilometraje_intervalo ? ` · Cada ${detalle.equipo_kilometraje_intervalo} km` : ""}
+                    </span>
+                  </div>
+                  {cobroKmSalida && detalle.equipo_kilometraje_intervalo && (
+                    <div style={{ fontSize: 11, color: "var(--color-success)", marginTop: 4 }}>
+                      ✓ Próximo mantenimiento: <strong>{(parseInt(cobroKmSalida) || 0) + detalle.equipo_kilometraje_intervalo} km</strong>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* v2.4.12: garantía aplicada al cobrar (queda registrada en la orden) */}
               <div style={{ marginBottom: 12, padding: 10, background: "rgba(59, 130, 246, 0.08)", borderRadius: 6, border: "1px solid rgba(59, 130, 246, 0.3)" }}>
                 <label style={{ fontSize: 12, fontWeight: 600 }}>
@@ -1293,7 +1348,8 @@ export default function ServicioTecnicoPage() {
       {mostrarHistorial && (
         <ModalHistorialServicioTecnico
           onCerrar={() => setMostrarHistorial(false)}
-          onAbrirOrden={(id) => { setMostrarHistorial(false); setDetalleId(id); }}
+          // v2.4.25: cargar el detalle completo + imágenes + movimientos al abrir
+          onAbrirOrden={(id) => { setMostrarHistorial(false); abrirDetalle(id); }}
         />
       )}
     </>

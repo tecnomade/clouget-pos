@@ -1438,6 +1438,10 @@ export interface OrdenServicio {
   equipo_placa?: string;
   equipo_kilometraje?: number;
   equipo_kilometraje_proximo?: number;
+  /** v2.4.25: intervalo recomendado entre mantenimientos (ej 5000 km) */
+  equipo_kilometraje_intervalo?: number;
+  /** v2.4.25: km del vehículo al ser entregado (post-trabajo) */
+  equipo_kilometraje_salida?: number;
   accesorios?: string;
   problema_reportado: string;
   diagnostico?: string;
