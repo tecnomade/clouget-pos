@@ -43,8 +43,10 @@ pub fn registrar_venta(
         // Acumular cantidad necesaria por producto (sumar lineas duplicadas + factor unidad)
         let mut requerido: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         for it in &venta.items {
+            // Skip lineas sin producto (servicios manuales): no afectan stock.
+            let Some(pid) = it.producto_id else { continue };
             let factor = it.factor_unidad.unwrap_or(1.0);
-            *requerido.entry(it.producto_id).or_insert(0.0) += it.cantidad * factor;
+            *requerido.entry(pid).or_insert(0.0) += it.cantidad * factor;
         }
         for (pid, cant_req) in &requerido {
             // Saltar productos sin control de stock o servicios
@@ -281,7 +283,7 @@ pub fn registrar_venta(
                 let nombre_prod: String = conn.query_row(
                     "SELECT nombre FROM productos WHERE id = ?1",
                     rusqlite::params![item.producto_id], |r| r.get(0)
-                ).unwrap_or_else(|_| format!("ID {}", item.producto_id));
+                ).unwrap_or_else(|_| format!("ID {}", item.producto_id.unwrap_or(0)));
                 return Err(format!(
                     "El lote #{} de '{}' solo tiene {:.2} unidades. Intentas vender {:.2}. Reduce la cantidad o agrega otro lote/sin lote.",
                     lid, nombre_prod, stock_lote, cantidad_base
@@ -771,12 +773,14 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
         )
         .map_err(|e| e.to_string())?;
 
+    // v2.4.14: LEFT JOIN para incluir lineas de servicio (producto_id NULL).
+    // Antes el INNER JOIN filtraba esas lineas y desaparecian del detalle.
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -787,7 +791,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 id: Some(row.get(0)?),
                 venta_id: Some(row.get(1)?),
                 producto_id: row.get(2)?,
-                nombre_producto: Some(row.get(3)?),
+                nombre_producto: row.get(3).ok(),
                 cantidad: row.get(4)?,
                 precio_unitario: row.get(5)?,
                 descuento: row.get(6)?,

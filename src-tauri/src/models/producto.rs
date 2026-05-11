@@ -124,6 +124,10 @@ pub struct ProductoBusqueda {
     pub stock_minimo: f64,
     pub categoria_nombre: Option<String>,
     pub precio_lista: Option<f64>,
+    /// v2.4.14: flag indicador (no la imagen completa) para mostrar miniatura en listado.
+    /// El frontend hace lazy-load de la imagen real solo cuando entra al viewport.
+    #[serde(default)]
+    pub tiene_imagen: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

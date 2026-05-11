@@ -63,6 +63,8 @@ export interface ProductoBusqueda {
   stock_minimo: number;
   categoria_nombre?: string;
   precio_lista?: number;
+  // v2.4.14: flag indicador para mostrar miniatura en listado (lazy-load la imagen real)
+  tiene_imagen?: boolean;
 }
 
 export interface Categoria {
@@ -181,7 +183,8 @@ export interface ProductoRentabilidad {
 export interface VentaDetalle {
   id?: number;
   venta_id?: number;
-  producto_id: number;
+  // v2.4.14: nullable — para servicios manuales (orden de servicio técnico)
+  producto_id: number | null;
   nombre_producto?: string;
   cantidad: number;
   precio_unitario: number;

@@ -238,6 +238,7 @@ pub fn buscar_productos(
                 stock_minimo: row.get(9)?,
                 categoria_nombre: row.get(10)?,
                 precio_lista: row.get(11)?,
+                tiene_imagen: false, // no aplicable en esta query
             })
         })
         .map_err(|e| e.to_string())?
@@ -298,6 +299,7 @@ fn buscar_productos_multi_almacen(
                 stock_minimo: row.get(7)?,
                 categoria_nombre: row.get(8)?,
                 precio_lista: row.get(9)?,
+                tiene_imagen: false,
             })
         })
         .map_err(|e| e.to_string())?
@@ -356,16 +358,20 @@ pub fn listar_productos(
 ) -> Result<Vec<ProductoBusqueda>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // v2.4.14: incluimos flag `tiene_imagen` (no la imagen completa) para mostrar
+    // miniatura en el listado. El frontend hace lazy-load por viewport.
     let sql = if solo_activos {
         "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
-                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras,
+                CASE WHEN p.imagen IS NOT NULL AND p.imagen != '' THEN 1 ELSE 0 END
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
          WHERE p.activo = 1 ORDER BY p.nombre"
     } else {
         "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
-                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras
+                p.stock_actual, p.stock_minimo, c.nombre, pp.precio, p.precio_costo, p.codigo_barras,
+                CASE WHEN p.imagen IS NOT NULL AND p.imagen != '' THEN 1 ELSE 0 END
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          LEFT JOIN precios_producto pp ON pp.producto_id = p.id AND pp.lista_precio_id = ?1
@@ -389,6 +395,7 @@ pub fn listar_productos(
                 stock_minimo: row.get(7)?,
                 categoria_nombre: row.get(8)?,
                 precio_lista: row.get(9)?,
+                tiene_imagen: row.get::<_, i32>(12)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -430,6 +437,7 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 stock_minimo: row.get(7)?,
                 categoria_nombre: row.get(8)?,
                 precio_lista: None,
+                tiene_imagen: false,
             })
         })
         .map_err(|e| e.to_string())?

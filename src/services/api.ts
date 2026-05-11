@@ -1495,6 +1495,8 @@ export const cobrarOrdenServicio = (
     montoRecibido?: number;
     itemsRepuestos?: any[];
     garantiaDias?: number | null;
+    // v2.4.14: si true, permite entregar con saldo pendiente (estado ENTREGADO_PARCIAL)
+    permitirSaldoPendiente?: boolean;
   } = {},
 ) =>
   smartInvoke<number>("cobrar_orden_servicio", {
@@ -1504,6 +1506,7 @@ export const cobrarOrdenServicio = (
     montoRecibido: args.montoRecibido ?? null,
     itemsRepuestos: args.itemsRepuestos ?? null,
     garantiaDias: args.garantiaDias ?? null,
+    permitirSaldoPendiente: args.permitirSaldoPendiente ?? null,
   });
 export const imprimirOrdenServicioPdf = (ordenId: number, formato: "A4" | "TICKET_80" = "A4") =>
   smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId, formato });
@@ -1644,6 +1647,30 @@ export const stReporteCancelaciones = (fechaDesde?: string | null, fechaHasta?: 
     fechaDesde: fechaDesde ?? null,
     fechaHasta: fechaHasta ?? null,
   });
+
+// === ST: Reporte de garantías activas (v2.4.14) ===
+export interface OrdenGarantia {
+  orden_id: number;
+  numero: string;
+  fecha_entrega?: string | null;
+  cliente_nombre?: string | null;
+  cliente_telefono?: string | null;
+  equipo_descripcion: string;
+  equipo_marca?: string | null;
+  equipo_modelo?: string | null;
+  equipo_serie?: string | null;
+  garantia_dias: number;
+  fecha_vence: string;
+  dias_restantes: number;
+  monto_final: number;
+}
+export interface ResumenGarantias {
+  total_activas: number;
+  total_por_vencer_30d: number;
+  ordenes: OrdenGarantia[];
+}
+export const stReporteGarantiasActivas = () =>
+  smartInvoke<ResumenGarantias>("st_reporte_garantias_activas", {});
 
 // === Resumen detallado de caja (abierta o cerrada) ===
 // Retorna ResumenCajaReporte con desglose por forma de pago, lista de gastos,

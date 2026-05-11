@@ -513,6 +513,7 @@ pub fn run() {
             commands::servicio_tecnico_items::st_total_orden,
             // Servicio Tecnico - Reportes (v2.4.14)
             commands::servicio_tecnico_reportes::st_reporte_cancelaciones,
+            commands::servicio_tecnico_reportes::st_reporte_garantias_activas,
             // Offline (cola y cache para modo cliente)
             offline::cache::encolar_operacion,
             offline::cache::listar_cola_offline,

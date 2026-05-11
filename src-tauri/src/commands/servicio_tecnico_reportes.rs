@@ -111,3 +111,118 @@ pub fn st_reporte_cancelaciones(
         ordenes: rows,
     })
 }
+
+// ─── Reporte de garantías activas ────────────────────────────────────────
+
+#[derive(Debug, Serialize, Clone)]
+pub struct OrdenGarantia {
+    pub orden_id: i64,
+    pub numero: String,
+    pub fecha_entrega: Option<String>,
+    pub cliente_nombre: Option<String>,
+    pub cliente_telefono: Option<String>,
+    pub equipo_descripcion: String,
+    pub equipo_marca: Option<String>,
+    pub equipo_modelo: Option<String>,
+    pub equipo_serie: Option<String>,
+    pub garantia_dias: i64,
+    pub fecha_vence: String,
+    pub dias_restantes: i64,
+    pub monto_final: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ResumenGarantias {
+    pub total_activas: i64,
+    pub total_por_vencer_30d: i64,
+    pub ordenes: Vec<OrdenGarantia>,
+}
+
+/// Lista órdenes ENTREGADAS con garantía activa (fecha_entrega + garantia_dias > hoy).
+/// Útil para seguimiento del taller (cliente vuelve por garantía → tenemos los datos).
+#[tauri::command]
+pub fn st_reporte_garantias_activas(
+    db: State<'_, Database>,
+) -> Result<ResumenGarantias, String> {
+    requiere_modulo(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, numero, fecha_entrega, cliente_nombre, cliente_telefono,
+                equipo_descripcion, COALESCE(equipo_marca,''), COALESCE(equipo_modelo,''), equipo_serie,
+                COALESCE(garantia_dias, 0), COALESCE(monto_final, 0)
+         FROM ordenes_servicio
+         WHERE estado IN ('ENTREGADO', 'ENTREGADO_PARCIAL', 'GARANTIA')
+           AND COALESCE(garantia_dias, 0) > 0
+           AND fecha_entrega IS NOT NULL
+           AND date(fecha_entrega, '+' || garantia_dias || ' days') >= date('now', 'localtime')
+         ORDER BY date(fecha_entrega, '+' || garantia_dias || ' days') ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let rows: Vec<OrdenGarantia> = stmt.query_map([], |r| {
+        let fecha_entrega: Option<String> = r.get(2)?;
+        let garantia_dias: i64 = r.get(9)?;
+
+        // Calcular fecha_vence + dias_restantes
+        let (fecha_vence, dias_restantes) = if let Some(fe) = fecha_entrega.as_ref() {
+            // fe formato: "YYYY-MM-DD HH:MM:SS"
+            let fecha_simple = fe.split(' ').next().unwrap_or(fe);
+            // Aproximación simple sin chrono: fecha_vence = fecha_entrega + N días
+            // Para días_restantes usamos query SQL aparte
+            (
+                format!("{} (+{} días)", fecha_simple, garantia_dias),
+                0i64, // se rellena abajo
+            )
+        } else {
+            ("—".to_string(), 0i64)
+        };
+
+        Ok(OrdenGarantia {
+            orden_id: r.get(0)?,
+            numero: r.get(1)?,
+            fecha_entrega,
+            cliente_nombre: r.get(3)?,
+            cliente_telefono: r.get(4)?,
+            equipo_descripcion: r.get(5)?,
+            equipo_marca: { let s: String = r.get(6)?; if s.is_empty() { None } else { Some(s) } },
+            equipo_modelo: { let s: String = r.get(7)?; if s.is_empty() { None } else { Some(s) } },
+            equipo_serie: r.get(8)?,
+            garantia_dias,
+            fecha_vence,
+            dias_restantes,
+            monto_final: r.get(10)?,
+        })
+    }).map_err(|e| e.to_string())?
+       .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    // Calcular días restantes con SQL helper
+    let mut rows_con_dias: Vec<OrdenGarantia> = Vec::with_capacity(rows.len());
+    for mut r in rows {
+        if let Some(ref fe) = r.fecha_entrega {
+            let dias: i64 = conn.query_row(
+                "SELECT CAST(julianday(date(?1, '+' || ?2 || ' days')) - julianday(date('now','localtime')) AS INTEGER)",
+                rusqlite::params![fe, r.garantia_dias],
+                |row| row.get(0),
+            ).unwrap_or(0);
+            r.dias_restantes = dias;
+            // Mejorar fecha_vence
+            let fecha_simple = fe.split(' ').next().unwrap_or(fe).to_string();
+            let fecha_vence_real: String = conn.query_row(
+                "SELECT date(?1, '+' || ?2 || ' days')",
+                rusqlite::params![fecha_simple, r.garantia_dias],
+                |row| row.get(0),
+            ).unwrap_or_else(|_| r.fecha_vence.clone());
+            r.fecha_vence = fecha_vence_real;
+        }
+        rows_con_dias.push(r);
+    }
+
+    let total_activas = rows_con_dias.len() as i64;
+    let total_por_vencer_30d = rows_con_dias.iter().filter(|o| o.dias_restantes <= 30).count() as i64;
+
+    Ok(ResumenGarantias {
+        total_activas,
+        total_por_vencer_30d,
+        ordenes: rows_con_dias,
+    })
+}

@@ -57,8 +57,10 @@ pub struct VentaDetalle {
     pub id: Option<i64>,
     #[serde(default)]
     pub venta_id: Option<i64>,
+    /// v2.4.14: nullable — para servicios manuales (ej: mano de obra de orden de
+    /// servicio técnico) que no están vinculados a un producto del catálogo.
     #[serde(default)]
-    pub producto_id: i64,
+    pub producto_id: Option<i64>,
     #[serde(default)]
     pub nombre_producto: Option<String>,
     #[serde(default)]

@@ -2259,7 +2259,7 @@ fn generar_guia_remision_pdf(
         } else {
             format!("{:.2}", det.cantidad)
         };
-        let codigo = format!("{}", det.producto_id);
+        let codigo = det.producto_id.map(|id| id.to_string()).unwrap_or_default();
 
         items_table
             .row()

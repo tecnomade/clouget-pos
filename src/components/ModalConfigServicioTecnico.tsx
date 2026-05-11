@@ -12,6 +12,8 @@ import {
   stCrearTipoEquipo, stActualizarTipoEquipo, stEliminarTipoEquipo,
   stCrearMarca, stEliminarMarca,
   stCrearModelo, stEliminarModelo,
+  // v2.4.14: leyenda/pie de pagina configurable desde aqui (en lugar de Configuracion general)
+  obtenerConfig, guardarConfig,
   type StTipoEquipo,
 } from "../services/api";
 
@@ -25,6 +27,9 @@ export default function ModalConfigServicioTecnico({ onCerrar }: Props) {
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [creandoTipo, setCreandoTipo] = useState(false);
   const [editandoTipo, setEditandoTipo] = useState<StTipoEquipo | null>(null);
+  // v2.4.14: leyenda / términos que se imprime al final de la orden de servicio
+  const [leyenda, setLeyenda] = useState("");
+  const [leyendaOriginal, setLeyendaOriginal] = useState("");
 
   const cargar = async () => {
     try {
@@ -35,7 +40,24 @@ export default function ModalConfigServicioTecnico({ onCerrar }: Props) {
     }
   };
 
-  useEffect(() => { cargar(); }, []);
+  const cargarLeyenda = async () => {
+    try {
+      const cfg = await obtenerConfig();
+      const v = (cfg as any).leyenda_orden_servicio || "";
+      setLeyenda(v);
+      setLeyendaOriginal(v);
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { cargar(); cargarLeyenda(); }, []);
+
+  const guardarLeyenda = async () => {
+    try {
+      await guardarConfig({ leyenda_orden_servicio: leyenda });
+      setLeyendaOriginal(leyenda);
+      toastExito("Leyenda guardada");
+    } catch (err: any) { toastError("" + err); }
+  };
 
   const toggleNodo = (key: string) => {
     setExpandidos(prev => {
@@ -107,17 +129,59 @@ export default function ModalConfigServicioTecnico({ onCerrar }: Props) {
         </div>
 
         <div className="modal-body" style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          {/* v2.4.14: Leyenda / pie de página de la orden impresa.
+              Se imprime al final del PDF/ticket, antes de la firma. Editable aquí
+              sin tener que ir a Configuración general → Servicio Técnico. */}
+          <div style={{
+            marginBottom: 16, padding: 12, borderRadius: 8,
+            background: "var(--color-surface-alt)",
+            border: "1px solid var(--color-border)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <strong style={{ fontSize: 13 }}>📜 Leyenda / pie de la orden impresa</strong>
+              {leyenda !== leyendaOriginal && (
+                <button onClick={guardarLeyenda}
+                  style={{
+                    fontSize: 11, padding: "3px 10px",
+                    background: "var(--color-success)", color: "#fff",
+                    border: "none", borderRadius: 4, cursor: "pointer",
+                  }}>Guardar cambios</button>
+              )}
+            </div>
+            <textarea
+              value={leyenda}
+              onChange={(e) => setLeyenda(e.target.value)}
+              rows={4}
+              placeholder={"Ejemplo:\n• El equipo no retirado en 30 días será considerado abandonado.\n• Garantía de 30 días sobre el trabajo realizado.\n• Precios incluyen IVA."}
+              style={{
+                width: "100%", padding: 8, fontSize: 12, fontFamily: "inherit",
+                border: "1px solid var(--color-border)", borderRadius: 6,
+                background: "var(--color-surface)", color: "var(--color-text)",
+                resize: "vertical",
+              }}
+            />
+            <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 4 }}>
+              Se imprime al final de cada orden (sobre la firma del cliente).
+              También editable desde Configuración → Servicio Técnico.
+            </div>
+          </div>
+
+          <hr style={{ border: "none", borderTop: "1px solid var(--color-border)", margin: "12px 0 16px" }} />
+
           {!arbol ? (
             <div style={{ textAlign: "center", padding: 30 }}>Cargando...</div>
           ) : (
             <>
-              <button
-                className="btn btn-primary"
-                onClick={() => { setEditandoTipo(null); setCreandoTipo(true); }}
-                style={{ marginBottom: 12, padding: "6px 14px", fontSize: 12 }}
-              >
-                + Nuevo tipo de equipo
-              </button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <strong style={{ fontSize: 13 }}>🌳 Catálogo: tipos · marcas · modelos</strong>
+                <button
+                  className="btn btn-primary"
+                  onClick={() => { setEditandoTipo(null); setCreandoTipo(true); }}
+                  style={{ padding: "6px 14px", fontSize: 12 }}
+                >
+                  + Nuevo tipo de equipo
+                </button>
+              </div>
 
               {arbol.length === 0 ? (
                 <div style={{ padding: 30, textAlign: "center", color: "var(--color-text-secondary)", border: "2px dashed var(--color-border)", borderRadius: 8 }}>

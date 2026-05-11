@@ -130,6 +130,8 @@ export default function ServicioTecnicoPage() {
   const [bancosCobro, setBancosCobro] = useState<CuentaBanco[]>([]);
   // Pago mixto en cobro: lista de pagos (forma + monto + banco/ref opcionales)
   const [cobroPagos, setCobroPagos] = useState<PagoOrden[]>([{ forma_pago: "EFECTIVO", monto: 0 }]);
+  // v2.4.14: cobranza parcial — permitir entregar el equipo aunque no se cubra todo el saldo
+  const [permitirSaldoPendiente, setPermitirSaldoPendiente] = useState(false);
 
   // Tecla Esc cierra los drawers (form / detalle)
   useEffect(() => {
@@ -300,9 +302,14 @@ export default function ServicioTecnicoPage() {
     const garantia = parseInt(cobroGarantiaDias) || 0;
     // v2.4.13: pago mixto. Si no hay pagos cargados, usar legacy (forma + monto único).
     const pagosFiltrados = cobroPagos.filter(p => p.monto > 0);
+    const saldoPend = Math.max(totalOrdenItems.total - totalHoldingOrden - cobroPagos.reduce((s, p) => s + p.monto, 0), 0);
     try {
       if (pagosFiltrados.length > 0) {
-        await cobrarOrdenServicio(detalleId, { pagos: pagosFiltrados, garantiaDias: garantia });
+        await cobrarOrdenServicio(detalleId, {
+          pagos: pagosFiltrados,
+          garantiaDias: garantia,
+          permitirSaldoPendiente: permitirSaldoPendiente,
+        });
       } else {
         const monto = parseFloat(cobroMontoRecibido) || 0;
         await cobrarOrdenServicio(detalleId, {
@@ -310,10 +317,12 @@ export default function ServicioTecnicoPage() {
           montoRecibido: monto,
           itemsRepuestos: cobroRepuestos,
           garantiaDias: garantia,
+          permitirSaldoPendiente: permitirSaldoPendiente,
         });
       }
       const msgGarantia = garantia > 0 ? ` · 🛡 Garantía ${garantia} días` : "";
-      toastExito(`Cobrado y entregado${msgGarantia}`);
+      const msgSaldo = saldoPend > 0.001 && permitirSaldoPendiente ? ` · 💰 Saldo pendiente $${saldoPend.toFixed(2)}` : "";
+      toastExito(`Entregado${msgGarantia}${msgSaldo}`);
       setMostrarCobrar(false);
       setDetalleId(null);
       setDetalle(null);
@@ -353,11 +362,24 @@ export default function ServicioTecnicoPage() {
       <div className="page-header">
         <h2>{labels.titulo}</h2>
         <div className="flex gap-2 items-center">
-          <input className="input" style={{ width: 280, fontSize: 12 }}
-            placeholder={labels.buscarPh}
-            value={busqueda}
-            onChange={(e) => setBusqueda(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") cargar(); }} />
+          {/* v2.4.14: input de busqueda con boton X para limpiar (sin tener que borrar a mano) */}
+          <div style={{ position: "relative", display: "inline-block" }}>
+            <input className="input" style={{ width: 280, fontSize: 12, paddingRight: busqueda ? 26 : 8 }}
+              placeholder={labels.buscarPh}
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") cargar(); }} />
+            {busqueda && (
+              <button type="button"
+                onClick={() => { setBusqueda(""); setTimeout(cargar, 0); }}
+                title="Limpiar búsqueda"
+                style={{
+                  position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)",
+                  background: "transparent", border: "none", cursor: "pointer",
+                  fontSize: 14, color: "var(--color-text-secondary)", padding: "0 6px",
+                }}>×</button>
+            )}
+          </div>
           <button className="btn btn-outline" style={{ fontSize: 11 }} onClick={cargar}>Buscar</button>
           {/* v2.4.9 ST-2: nuevos botones */}
           <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => setMostrarHistorial(true)}>📜 Historial</button>
@@ -916,6 +938,37 @@ export default function ServicioTecnicoPage() {
                   🚫 Cancelar orden
                 </button>
               )}
+              {/* v2.4.14: avisar al cliente por WhatsApp con el estado de la orden */}
+              {detalle.cliente_telefono && (
+                <button className="btn btn-outline" style={{ fontSize: 11, color: "#25D366" }}
+                  onClick={() => {
+                    const tel = (detalle.cliente_telefono || "").replace(/\D/g, "");
+                    if (!tel) { toastError("El cliente no tiene teléfono"); return; }
+                    // Si el número no empieza con código de país, asumir Ecuador (593)
+                    const telFmt = tel.startsWith("593") ? tel : tel.startsWith("0") ? "593" + tel.slice(1) : "593" + tel;
+                    const equipo = detalle.equipo_descripcion || "su equipo";
+                    const num = detalle.numero || "";
+                    let mensaje = "";
+                    switch (detalle.estado) {
+                      case "LISTO":
+                        mensaje = `Hola ${detalle.cliente_nombre || ""}, su ${equipo} (orden ${num}) está listo para retirar. ¡Lo esperamos!`; break;
+                      case "ENTREGADO_PARCIAL":
+                        mensaje = `Hola ${detalle.cliente_nombre || ""}, le recordamos que tiene un saldo pendiente sobre la orden ${num} (${equipo}). Saludos.`; break;
+                      case "ESPERANDO_REPUESTOS":
+                        mensaje = `Hola ${detalle.cliente_nombre || ""}, su ${equipo} (orden ${num}) está en espera de repuestos. Le avisaremos apenas llegue.`; break;
+                      case "DIAGNOSTICANDO":
+                      case "EN_REPARACION":
+                        mensaje = `Hola ${detalle.cliente_nombre || ""}, le informamos que su ${equipo} (orden ${num}) está actualmente en proceso. Le avisaremos cuando esté listo.`; break;
+                      default:
+                        mensaje = `Hola ${detalle.cliente_nombre || ""}, le escribimos sobre la orden ${num} (${equipo}).`;
+                    }
+                    const url = `https://wa.me/${telFmt}?text=${encodeURIComponent(mensaje)}`;
+                    window.open(url, "_blank");
+                  }}
+                  title={`Avisar a ${detalle.cliente_nombre || "cliente"} por WhatsApp`}>
+                  📱 Avisar al cliente
+                </button>
+              )}
               {/* v2.4.12 ST-4: selector de formato (A4 vs Ticket 80mm) */}
               <div style={{ display: "inline-flex", border: "1px solid var(--color-border)", borderRadius: 6, overflow: "hidden" }}>
                 <button className="btn"
@@ -951,6 +1004,8 @@ export default function ServicioTecnicoPage() {
                   // v2.4.13: precargar primer pago con el saldo (= total − abonos)
                   const saldo = Math.max(totalOrdenItems.total - totalHoldingOrden, 0);
                   setCobroPagos([{ forma_pago: "EFECTIVO", monto: saldo }]);
+                  // v2.4.14: reset del flag de saldo pendiente
+                  setPermitirSaldoPendiente(false);
                 }}>💰 Cobrar</button>
               )}
             </div>
@@ -1110,9 +1165,29 @@ export default function ServicioTecnicoPage() {
                   </div>
                 )}
                 {totalPagosCobro < saldoCobro && (
-                  <div style={{ color: "var(--color-danger)", fontSize: 11, marginTop: 4 }}>
-                    Falta ${(saldoCobro - totalPagosCobro).toFixed(2)} para cubrir el saldo
-                  </div>
+                  <>
+                    <div style={{ color: "var(--color-danger)", fontSize: 11, marginTop: 4 }}>
+                      Falta ${(saldoCobro - totalPagosCobro).toFixed(2)} para cubrir el saldo
+                    </div>
+                    {/* v2.4.14: cobranza parcial */}
+                    <label style={{
+                      display: "flex", alignItems: "flex-start", gap: 6,
+                      marginTop: 8, padding: 8, borderRadius: 4,
+                      background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)",
+                      cursor: "pointer",
+                    }}>
+                      <input type="checkbox" checked={permitirSaldoPendiente}
+                        onChange={(e) => setPermitirSaldoPendiente(e.target.checked)}
+                        style={{ marginTop: 2 }} />
+                      <div style={{ fontSize: 11 }}>
+                        <strong style={{ color: "var(--color-warning)" }}>Permitir saldo pendiente</strong>
+                        <div style={{ color: "var(--color-text-secondary)", marginTop: 2 }}>
+                          Entregar el equipo dejando ${(saldoCobro - totalPagosCobro).toFixed(2)} pendiente.
+                          Se marca como ENTREGADO_PARCIAL y queda registrado el saldo.
+                        </div>
+                      </div>
+                    </label>
+                  </>
                 )}
               </div>
             </div>

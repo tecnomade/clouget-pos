@@ -2143,8 +2143,9 @@ export default function PuntoVenta() {
         ticketUsarPdf={ticketUsarPdf}
         onCargarDocumento={(ventaCompleta) => {
           // Restaurar carrito desde borrador/cotización
-          setCarrito(ventaCompleta.detalles.map(d => ({
-            producto_id: d.producto_id,
+          // v2.4.14: filtramos lineas sin producto (servicios manuales de ST) — el POS no las maneja.
+          setCarrito(ventaCompleta.detalles.filter(d => d.producto_id != null).map(d => ({
+            producto_id: d.producto_id as number,
             codigo: undefined,
             nombre: d.nombre_producto || "",
             cantidad: d.cantidad,

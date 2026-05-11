@@ -1218,6 +1218,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_orden_servicio_items_orden ON orden_servicio_items(orden_id);
     ");
 
+    // --- Migracion v2.4.14: cobranza parcial / saldo pendiente en orden de servicio ---
+    // Permite entregar el equipo aunque el cliente haya pagado solo una parte.
+    // El estado pasa a ENTREGADO_PARCIAL y queda registrado el saldo pendiente.
+    let _ = conn.execute("ALTER TABLE ordenes_servicio ADD COLUMN saldo_pendiente REAL DEFAULT 0", []);
+
     // --- Migracion: Pagos multiples por venta (pago mixto) ---
     // Una venta puede tener varios pagos: ej $100 EFECTIVO + $20 TRANSFER + $30 CREDITO
     let _ = conn.execute_batch("

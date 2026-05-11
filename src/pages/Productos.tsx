@@ -6,6 +6,8 @@ import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import { FEATURES } from "../config/branding";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
+// v2.4.14: miniatura de imagen con lazy-load por viewport
+import ProductoMiniatura from "../components/ProductoMiniatura";
 
 /** Helper: ¿el módulo Restaurante está activo? Requiere brand Clouget + licencia con módulo. */
 function moduloRestauranteActivo(licenciaModulosJson?: string): boolean {
@@ -1962,6 +1964,7 @@ export default function Productos() {
                                   setSeleccionados(s);
                                 }} />
                             </th>
+                            <th style={{ width: 48 }}></th>
                             <th>CODIGO</th>
                             <th>NOMBRE</th>
                             {puedeVerCostos && <th className="text-right">COSTO</th>}
@@ -1987,6 +1990,7 @@ export default function Productos() {
                                     setSeleccionados(s);
                                   }} />
                               </td>
+                              <td><ProductoMiniatura productoId={p.id} tieneImagen={!!p.tiene_imagen} /></td>
                               <td style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>{p.codigo || "-"}</td>
                               <td><strong>{p.nombre}</strong></td>
                               {puedeVerCostos && (
@@ -2046,6 +2050,7 @@ export default function Productos() {
                             else setSeleccionados(new Set());
                           }} />
                       </th>
+                      <th style={{ width: 48 }}></th>
                       <th>Código</th>
                       <th>Nombre</th>
                       <th>Categoría</th>
@@ -2072,6 +2077,7 @@ export default function Productos() {
                               setSeleccionados(s);
                             }} />
                         </td>
+                        <td><ProductoMiniatura productoId={p.id} tieneImagen={!!p.tiene_imagen} /></td>
                         <td>{p.codigo ?? "-"}</td>
                         <td><strong>{p.nombre}</strong></td>
                         <td className="text-secondary">{p.categoria_nombre ?? "-"}</td>

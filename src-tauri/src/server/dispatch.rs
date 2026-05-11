@@ -45,6 +45,7 @@ pub async fn dispatch_command(
                         stock_minimo: row.get(7)?,
                         categoria_nombre: row.get(8)?,
                         precio_lista: None,
+                        tiene_imagen: false,
                     })
                 })
                 .map_err(|e| e.to_string())?

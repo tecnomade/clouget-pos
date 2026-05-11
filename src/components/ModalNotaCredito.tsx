@@ -82,10 +82,13 @@ export default function ModalNotaCredito({
     if (!pinVerificado) return;
     obtenerVenta(ventaId)
       .then((vc: VentaCompleta) => {
+        // v2.4.14: filtramos lineas sin producto (servicios manuales) — la NC del SRI
+        // requiere referenciar un producto del catalogo. Para devolver el dinero de
+        // un servicio manual, usar cancelacion de orden (que devuelve el abono).
         setItems(
-          vc.detalles.map((d) => ({
+          vc.detalles.filter(d => d.producto_id != null).map((d) => ({
             incluido: true,
-            producto_id: d.producto_id,
+            producto_id: d.producto_id as number,
             nombre_producto: d.nombre_producto || `Producto #${d.producto_id}`,
             cantidad_original: d.cantidad,
             cantidad: d.cantidad,

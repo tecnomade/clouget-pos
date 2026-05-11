@@ -366,6 +366,10 @@ pub fn cobrar_orden_servicio(
     // Nuevo: pago mixto
     pagos: Option<Vec<serde_json::Value>>,
     garantia_dias: Option<i64>,
+    // v2.4.14: cobranza parcial — si el cliente paga menos que el total,
+    // permitir entregar el equipo igual y dejar el saldo pendiente registrado.
+    // Estado pasa a ENTREGADO_PARCIAL en lugar de ENTREGADO.
+    permitir_saldo_pendiente: Option<bool>,
 ) -> Result<i64, String> {
     requiere_modulo_servicio_tecnico(&db)?;
 
@@ -526,10 +530,13 @@ pub fn cobrar_orden_servicio(
         0.0
     };
 
-    // Validar que pagaron al menos el saldo (si saldo = 0, todo cubierto por abonos)
-    if saldo > 0.001 && monto_recibido_total + 0.001 < saldo {
+    // v2.4.14: cobranza parcial. Si el cliente paga menos que el saldo y el caller
+    // permite saldo pendiente, registramos la diferencia y marcamos ENTREGADO_PARCIAL.
+    let permitir_parcial = permitir_saldo_pendiente.unwrap_or(false);
+    let saldo_no_cubierto = (saldo - monto_recibido_total).max(0.0);
+    if saldo > 0.001 && monto_recibido_total + 0.001 < saldo && !permitir_parcial {
         return Err(format!(
-            "El monto pagado (${:.2}) no cubre el saldo (${:.2}) despues de abonos (${:.2})",
+            "El monto pagado (${:.2}) no cubre el saldo (${:.2}) despues de abonos (${:.2}). Marca 'Permitir saldo pendiente' si quieres entregar con saldo.",
             monto_recibido_total, saldo, total_holdings
         ));
     }
@@ -601,14 +608,19 @@ pub fn cobrar_orden_servicio(
         ).ok();
     }
 
+    let estado_final = if saldo_no_cubierto > 0.001 { "ENTREGADO_PARCIAL" } else { "ENTREGADO" };
     tx.execute(
-        "UPDATE ordenes_servicio SET venta_id = ?1, monto_final = ?2, estado = 'ENTREGADO', fecha_entrega = datetime('now','localtime') WHERE id = ?3",
-        rusqlite::params![venta_id, total, orden_id],
+        "UPDATE ordenes_servicio SET venta_id = ?1, monto_final = ?2, saldo_pendiente = ?3,
+         estado = ?4, fecha_entrega = datetime('now','localtime') WHERE id = ?5",
+        rusqlite::params![venta_id, total, saldo_no_cubierto, estado_final, orden_id],
     ).ok();
 
+    let obs_mov = if saldo_no_cubierto > 0.001 {
+        format!("Cobrado parcial · saldo pendiente ${:.2}", saldo_no_cubierto)
+    } else { "Cobrado y entregado".to_string() };
     tx.execute(
-        "INSERT INTO ordenes_servicio_movimientos (orden_id, estado_anterior, estado_nuevo, observacion, usuario) VALUES (?1, 'LISTO', 'ENTREGADO', 'Cobrado y entregado', ?2)",
-        rusqlite::params![orden_id, usuario],
+        "INSERT INTO ordenes_servicio_movimientos (orden_id, estado_anterior, estado_nuevo, observacion, usuario) VALUES (?1, 'LISTO', ?2, ?3, ?4)",
+        rusqlite::params![orden_id, estado_final, obs_mov, usuario],
     ).ok();
 
     tx.commit().map_err(|e| e.to_string())?;

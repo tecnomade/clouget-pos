@@ -6,6 +6,83 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.14 — 2026-05-10 🛠
+
+**Cierre de mejoras ST + bug fix detalle de venta + miniaturas en productos.**
+
+### 🐞 Bug fix: detalle de venta no mostraba servicios manuales
+
+`obtener_venta` hacía `INNER JOIN productos`, así las líneas con `producto_id NULL` (servicios manuales de orden de servicio técnico) desaparecían del detalle. El total decía $28 pero solo se veía el repuesto de $3.
+
+**Fix**: cambio a `LEFT JOIN`, modelo `VentaDetalle.producto_id` ahora es `Option<i64>` (nullable), modal muestra `info_adicional` como nombre cuando no hay producto vinculado.
+
+### 🆕 Miniaturas en listado de Productos
+
+El listado mostraba solo texto. Ahora cada fila muestra una miniatura 36x36 de la imagen del producto si tiene una; si no, un placeholder "📦".
+
+- Backend: nuevo flag `tiene_imagen: bool` en `ProductoBusqueda` (cheap query, no carga la imagen completa).
+- Frontend: componente `<ProductoMiniatura>` con **lazy-load por IntersectionObserver** — solo pide la imagen al backend cuando la fila entra al viewport. Cachea por id en memoria de sesión. Funciona bien con 1300+ productos sin cargar 1300 base64.
+
+### 🆕 Pie de página configurable desde el modal del módulo ST
+
+Antes: la leyenda/términos solo se editaba desde Configuración → Servicio Técnico (varios clicks).
+
+**Ahora**: también editable desde el botón "⚙ Configuración" del propio módulo, en un panel arriba del catálogo de tipos/marcas/modelos. Mismo campo (`leyenda_orden_servicio`), dos puntos de acceso.
+
+### 🆕 Cobranza parcial (entrega con saldo pendiente)
+
+Caso real: el cliente quiere llevarse el equipo y deja parte del pago para después. Antes esto era imposible — el backend rechazaba si no se cubría el total.
+
+**Ahora**:
+- Schema: nueva columna `saldo_pendiente REAL` en `ordenes_servicio`.
+- Estado nuevo `ENTREGADO_PARCIAL`.
+- Modal de cobrar muestra checkbox "**Permitir saldo pendiente**" cuando el monto pagado es menor al saldo (con explicación clara).
+- Backend `cobrar_orden_servicio` acepta `permitirSaldoPendiente?: boolean`. Si es true y hay diferencia, marca la orden con saldo y estado parcial.
+- El historial registra el motivo (`Cobrado parcial · saldo pendiente $X`).
+
+### 🆕 Botón "📱 Avisar al cliente" (WhatsApp)
+
+En el footer del modal de orden, si el cliente tiene teléfono, aparece un botón verde 📱.
+
+- Click → abre `wa.me/<telefono>?text=<mensaje>` con plantilla automática según el estado de la orden:
+  - `LISTO` → "Su [equipo] (orden #X) está listo para retirar"
+  - `ENTREGADO_PARCIAL` → "Le recordamos que tiene un saldo pendiente sobre la orden..."
+  - `ESPERANDO_REPUESTOS` → "Está en espera de repuestos. Le avisaremos apenas llegue"
+  - `DIAGNOSTICANDO` / `EN_REPARACION` → "Está actualmente en proceso..."
+- Asume Ecuador (+593) si el número no tiene código de país.
+
+### 🆕 Reporte de garantías activas
+
+Nuevo tab "🛡 Garantías ST" en Reportes. Lista órdenes ENTREGADAS con garantía vigente (fecha_entrega + garantia_dias > hoy).
+
+- KPIs: total activas + por vencer en ≤30 días.
+- Tabla: orden, cliente (con tel), equipo (marca+modelo+serie), fecha entrega, días garantía, fecha vencimiento, días restantes (color: rojo ≤7d, naranja ≤30d, verde >30d), monto.
+- Útil cuando un cliente vuelve por garantía → datos a la mano.
+
+### 🆕 Reporte de cancelaciones ST
+
+Nuevo tab "🚫 Cancelaciones ST" en Reportes. Lista órdenes canceladas con motivo, usuario que canceló, abonos devueltos y monto.
+
+- KPIs: total canceladas + abonos devueltos + monto total.
+- Filtro por rango de fechas (default últimos 30 días).
+
+### 🆕 Botón limpiar búsqueda en módulo ST
+
+Input de búsqueda muestra una × cuando hay texto. Click borra y recarga.
+
+### 🔒 Gating del módulo ST en Caja
+
+El panel de "Anticipos en holding" solo aparece si `modulo_servicio_tecnico` está activo. Antes se intentaba cargar siempre (rebotaba en backend, pero ahora ni se intenta).
+
+### 🇪🇨 Localización (continuación)
+
+Más voseo argentino → español neutro:
+- `Configuracion`: dejas/tienes/seleccionala
+- `ModalHistorialServicioTecnico`: "Ve a Ventas → busca"
+- `Productos`: "Usa: ..."
+
+---
+
 ## v2.4.13 — 2026-05-09 🛠
 
 **ST-5 — Items presupuestados, abonos en holding, pago mixto, cancelar orden, jerarquía estricta de catálogo.**

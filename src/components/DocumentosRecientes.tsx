@@ -84,8 +84,10 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
       setConvertir(vc);
       setConvGuiaEstado(vc.venta.estado || "PENDIENTE");
       // Inicializar items editables con datos de la guia
-      setConvItems(vc.detalles.map(d => ({
-        producto_id: d.producto_id,
+      // v2.4.14: filtramos lineas sin producto (servicios manuales de ST) — no se
+      // pueden convertir a otra venta porque no hay producto del catalogo de origen.
+      setConvItems(vc.detalles.filter(d => d.producto_id != null).map(d => ({
+        producto_id: d.producto_id as number,
         cantidad: d.cantidad,
         precio_unitario: d.precio_unitario,
         descuento: d.descuento,
