@@ -52,13 +52,14 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
         )
         .map_err(|e| e.to_string())?;
 
+    // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -69,7 +70,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 id: Some(row.get(0)?),
                 venta_id: Some(row.get(1)?),
                 producto_id: row.get(2)?,
-                nombre_producto: Some(row.get(3)?),
+                nombre_producto: row.get(3).ok(),
                 cantidad: row.get(4)?,
                 precio_unitario: row.get(5)?,
                 descuento: row.get(6)?,
@@ -182,13 +183,14 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
         )
         .map_err(|e| e.to_string())?;
 
+    // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -199,7 +201,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 id: Some(row.get(0)?),
                 venta_id: Some(row.get(1)?),
                 producto_id: row.get(2)?,
-                nombre_producto: Some(row.get(3)?),
+                nombre_producto: row.get(3).ok(),
                 cantidad: row.get(4)?,
                 precio_unitario: row.get(5)?,
                 descuento: row.get(6)?,
@@ -1882,13 +1884,14 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
     }
 
     // Cargar detalles con nombre de producto
+    // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -1899,7 +1902,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                 id: Some(row.get(0)?),
                 venta_id: Some(row.get(1)?),
                 producto_id: row.get(2)?,
-                nombre_producto: Some(row.get(3)?),
+                nombre_producto: row.get(3).ok(),
                 cantidad: row.get(4)?,
                 precio_unitario: row.get(5)?,
                 descuento: row.get(6)?,
@@ -2253,7 +2256,10 @@ fn generar_guia_remision_pdf(
         .map_err(|e| format!("Error items header: {}", e))?;
 
     for (i, det) in detalles.iter().enumerate() {
-        let nombre = det.nombre_producto.as_deref().unwrap_or("Producto");
+        // v2.4.16: para servicios manuales (sin producto vinculado) usar info_adicional como nombre
+        let nombre: &str = det.nombre_producto.as_deref()
+            .or(det.info_adicional.as_deref())
+            .unwrap_or("Servicio");
         let cant_str = if det.cantidad == det.cantidad.floor() {
             format!("{:.0}", det.cantidad)
         } else {

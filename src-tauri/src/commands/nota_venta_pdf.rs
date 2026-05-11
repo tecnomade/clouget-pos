@@ -552,15 +552,16 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
         ));
     }
 
+    // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     // Obtener detalles con codigo de producto e info_adicional
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal,
-             COALESCE(p.codigo, CAST(d.producto_id AS TEXT)) as codigo,
+             COALESCE(p.codigo, '') as codigo,
              d.info_adicional
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -571,7 +572,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
                 id: Some(row.get(0)?),
                 venta_id: Some(row.get(1)?),
                 producto_id: row.get(2)?,
-                nombre_producto: Some(row.get(3)?),
+                nombre_producto: row.get(3).ok(),
                 cantidad: row.get(4)?,
                 precio_unitario: row.get(5)?,
                 descuento: row.get(6)?,

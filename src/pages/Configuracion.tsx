@@ -90,6 +90,17 @@ export default function Configuracion() {
     const [cfg, cats, imps, ruta, lic, usrs, sri, listas, bancos] = await Promise.all([
       obtenerConfig(), listarCategorias(), listarImpresorasCached(), obtenerRutaDb(), obtenerEstadoLicencia(), listarUsuarios().catch(() => []), consultarEstadoSri().catch(() => null), listarListasPrecios().catch(() => []), listarCuentasBanco().catch(() => [] as CuentaBanco[])
     ]);
+    // v2.4.16: si la licencia ya no incluye un modulo (ej: admin lo desactivo desde el panel),
+    // bajar el flag local para que los campos relacionados desaparezcan automaticamente.
+    try {
+      const mods: string[] = JSON.parse(cfg.licencia_modulos || "[]");
+      const tieneST = mods.includes("servicio_tecnico");
+      // Si licencia no tiene ST pero el flag local sigue activo, desactivarlo
+      if (!tieneST && cfg.modulo_servicio_tecnico === "1") {
+        cfg.modulo_servicio_tecnico = "0";
+        await guardarConfig({ modulo_servicio_tecnico: "0" });
+      }
+    } catch { /* ignore */ }
     setConfig(cfg);
     setCategorias(cats);
     setImpresoras(imps);
@@ -229,19 +240,28 @@ export default function Configuracion() {
                       onBlur={(e) => guardarConfig({ caducidad_dias_alerta: e.target.value })} />
                   </div>
                 )}
-                <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
-                  <input type="checkbox" checked={config.modulo_servicio_tecnico === "1"}
-                    onChange={(e) => {
-                      const val = e.target.checked ? "1" : "0";
-                      setConfig({ ...config, modulo_servicio_tecnico: val });
-                      guardarConfig({ modulo_servicio_tecnico: val });
-                      toastExito(e.target.checked ? "Módulo de servicio técnico activado" : "Módulo desactivado");
-                    }} />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>Servicio Técnico</div>
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Órdenes de servicio (talleres electrónicos, automotrices)</div>
-                  </div>
-                </label>
+                {/* v2.4.16: el toggle solo aparece si la licencia incluye el modulo. Si admin
+                    desactiva el modulo desde el panel admin, el cliente lo pierde aqui tambien. */}
+                {(() => {
+                  let licTieneST = false;
+                  try { licTieneST = (JSON.parse(config.licencia_modulos || "[]") as string[]).includes("servicio_tecnico"); } catch {}
+                  if (!licTieneST) return null;
+                  return (
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                      <input type="checkbox" checked={config.modulo_servicio_tecnico === "1"}
+                        onChange={(e) => {
+                          const val = e.target.checked ? "1" : "0";
+                          setConfig({ ...config, modulo_servicio_tecnico: val });
+                          guardarConfig({ modulo_servicio_tecnico: val });
+                          toastExito(e.target.checked ? "Módulo de servicio técnico activado" : "Módulo desactivado");
+                        }} />
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>Servicio Técnico</div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Órdenes de servicio (talleres electrónicos, automotrices)</div>
+                      </div>
+                    </label>
+                  );
+                })()}
                 {/* Sesion persistente entre reinicios */}
                 <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
                   <input type="checkbox" checked={config.sesion_persistente === "1"}
@@ -911,9 +931,13 @@ export default function Configuracion() {
 
           {/* Categorías de Productos: gestionarlo en pagina Productos (eliminado de aqui) */}
 
-          {/* v2.3.67: Cocina del Restaurante (impresora separada + comandas).
-              Solo aplica si tienes el módulo Restaurante activo, pero la sección
-              se muestra siempre porque el toggle/info no afecta al POS normal. */}
+          {/* v2.3.67 / v2.4.16: Cocina del Restaurante. Solo aparece si la licencia
+              incluye el modulo Restaurante (admin lo activa desde el panel admin). */}
+          {(() => {
+            let licTieneRest = false;
+            try { licTieneRest = (JSON.parse(config.licencia_modulos || "[]") as string[]).includes("restaurante"); } catch {}
+            if (!licTieneRest) return null;
+            return (
           <div className="card">
             <div className="card-header">🍳 Cocina (Restaurante)</div>
             <div className="card-body">
@@ -1002,6 +1026,8 @@ export default function Configuracion() {
               )}
             </div>
           </div>
+            );
+          })()}
 
           {/* Listas de Precios */}
           <div className="card">

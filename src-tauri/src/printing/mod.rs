@@ -117,7 +117,11 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
 
     // Detalles
     for det in &venta.detalles {
-        let nombre_base = det.nombre_producto.as_deref().unwrap_or("?");
+        // v2.4.16: si no hay producto vinculado (servicio manual de orden de servicio
+        // técnico), usar info_adicional como nombre. Antes mostraba "?".
+        let nombre_base: &str = det.nombre_producto.as_deref()
+            .or(det.info_adicional.as_deref())
+            .unwrap_or("Servicio");
         // Si vendio en presentacion (SIXPACK, JABA), agregar al nombre
         let nombre_prod: String = match (det.unidad_nombre.as_deref(), det.factor_unidad) {
             (Some(u), Some(f)) if !u.is_empty() && f > 1.0 => format!("{} ({})", nombre_base, u),

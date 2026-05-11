@@ -6,6 +6,34 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.16 — 2026-05-11 🛠
+
+**Servicios manuales en ticket impreso + gating por licencia.**
+
+### 🐞 Servicios manuales no aparecían en ticket impreso
+
+Después del fix de v2.4.15 (la línea ya se guarda en BD), aún faltaba arreglar la **lectura** en los endpoints de impresión:
+
+- `imprimir_ticket` (ESC/POS) — INNER JOIN filtraba la línea
+- `imprimir_ticket_pdf` (PDF térmico) — mismo
+- `imprimir_guia_remision_pdf` — mismo
+- `nota_venta_pdf` — mismo
+- `printing/mod.rs` (renderizado) — mostraba "?" en vez del nombre del servicio
+
+**Fix v2.4.16**: todos los queries cambian a `LEFT JOIN`, y el renderizador usa `info_adicional` como nombre cuando no hay producto vinculado. Ahora el servicio manual aparece en TODOS los formatos de impresión.
+
+### 🔒 Gating por licencia en Configuración
+
+Si admin desactiva un módulo desde el panel admin, los **campos relacionados en Configuración del POS también desaparecen**:
+
+- Toggle "Servicio Técnico" en "Módulos del Negocio" → solo aparece si `licencia_modulos` incluye `servicio_tecnico`.
+- Sección "🍳 Cocina (Restaurante)" → solo aparece si licencia incluye `restaurante`.
+- Auto-clean del flag local: si la licencia ya no incluye un módulo pero el flag local seguía activo (instalación vieja), se desactiva automáticamente al cargar Configuración. Eso cascadea: tabs en Reportes, panel de holdings en Caja, sección leyenda, etc., también desaparecen.
+
+Esto cierra el caso "admin desactiva el módulo desde admin pero el cliente seguía viendo los campos".
+
+---
+
 ## v2.4.15 — 2026-05-11 🚨 HOTFIX
 
 **Hotfix crítico: servicios manuales perdidos al cobrar + mejoras UI.**
