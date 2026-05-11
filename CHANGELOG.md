@@ -6,6 +6,32 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.27 — 2026-05-11 🛠 ST: prefijo OT, recibo completo, accesorios rápidos + 🐞 caja
+
+### 🚨 Bug crítico Caja: retiros post-cierre con motivo libre no se descontaban
+
+Continuación del fix v2.4.24. El filtro anterior solo restaba retiros con `motivo LIKE '%cierre%'` Y `estado IN ('DEPOSITADO', 'EN_TRANSITO')`. Eso dejaba afuera **cualquier retiro normal** post-cierre (estado `SIN_DEPOSITO`, motivos como "para gastos", "vuelto al dueño", etc.).
+
+**Fix v2.4.27**: ahora se descuentan **TODOS** los retiros hechos después del cierre (cualquier motivo, cualquier estado), filtrando por `fecha > cerrada_at`. Si retiraste $100 después de cerrar, el monto sugerido para abrir la próxima caja se reduce en $100, indistintamente de cómo se haya etiquetado el retiro.
+
+### 🆕 Recibo de cobro: ahora muestra los pagos reales + garantía + saldo correcto
+
+Antes el PDF/ticket solo mostraba abonos, dejando "Saldo pendiente: $40" aunque el cliente ya hubiese pagado al cobrar. Ahora:
+
+- Sección nueva **"PAGO AL COBRO"** con cada forma de pago usada (efectivo, tarjeta, transfer, etc.) y referencias.
+- Saldo se recalcula con: `Total - (Abonos + Pagos al cobro)` → si todo está pagado, sale **"CANCELADO TOTALMENTE"**.
+- Línea **"🛡 Garantía del trabajo: N días"** + fecha de vencimiento calculada desde la fecha de entrega.
+
+### 🆕 Prefijo OT (Orden de Trabajo) en lugar de OS
+
+En Ecuador es más común llamar a estas órdenes "OT" (orden de trabajo) que "OS" (orden de servicio). Las órdenes nuevas usan `OT-NNNNNN`; las viejas siguen como `OS-NNNNNN` y la numeración continúa unbroken (no hay colisión ni saltos).
+
+### 🆕 Accesorios pre-seleccionables al crear orden ST
+
+En Configuración → Servicio Técnico hay un nuevo campo **"🎒 Accesorios comunes"** (lista separada por comas, ej: `Cargador, Mochila, Llaves, Manual`). Al crear una orden, esos accesorios aparecen como chips toggleables sobre el campo de texto, evitando tipear los más frecuentes.
+
+---
+
 ## v2.4.26 — 2026-05-11 🛠 Kilometraje en el PDF de orden ST
 
 Complementa v2.4.25: el PDF/ticket de la orden de servicio ahora incluye el bloque de kilometraje cuando aplica (vehículos, motos, maquinaria con km).

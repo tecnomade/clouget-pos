@@ -41,12 +41,13 @@ pub fn crear_orden_servicio(
     };
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Generar numero secuencial OS-NNNNNN
+    // v2.4.27: prefijo OT (Orden de Trabajo) — terminologia local en EC.
+    // El secuencial continua desde el max de OS- + OT- (compatibilidad con datos viejos).
     let next: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) + 1 FROM ordenes_servicio WHERE numero LIKE 'OS-%'",
+        "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) + 1 FROM ordenes_servicio WHERE numero LIKE 'OS-%' OR numero LIKE 'OT-%'",
         [], |r| r.get(0)
     ).unwrap_or(1);
-    let numero = format!("OS-{:06}", next);
+    let numero = format!("OT-{:06}", next);
 
     // v2.4.25: si vino intervalo y entrada pero no proximo, calcular auto.
     let proximo_calc = match (orden.equipo_kilometraje, orden.equipo_kilometraje_intervalo, orden.equipo_kilometraje_proximo) {
@@ -703,6 +704,13 @@ pub fn imprimir_orden_servicio_pdf(
         fecha: String,
         referencia: Option<String>,
     }
+    // v2.4.27: pagos hechos AL COBRO (de pagos_venta).
+    #[derive(Debug, Clone)]
+    struct PagoCobroSimple {
+        monto: f64,
+        forma_pago: String,
+        referencia: Option<String>,
+    }
 
     let (
         nombre_negocio, ruc, direccion, telefono, leyenda_orden,
@@ -711,7 +719,9 @@ pub fn imprimir_orden_servicio_pdf(
         diagnostico, problema_reportado, trabajo_realizado, observaciones,
         estado, fecha_ingreso, presupuesto, monto_final,
         km_entrada, km_proximo, km_intervalo, km_salida,
+        garantia_dias, venta_id_opt, fecha_entrega_opt,
         abonos, total_abonos,
+        pagos_cobro, total_pagos_cobro,
     ): (
         String, String, String, String, String,
         String, Option<String>, Option<String>, String, String,
@@ -719,17 +729,20 @@ pub fn imprimir_orden_servicio_pdf(
         String, String, Option<String>, Option<String>,
         String, String, f64, f64,
         Option<i64>, Option<i64>, Option<i64>, Option<i64>,
+        i64, Option<i64>, Option<String>,
         Vec<AbonoSimple>, f64,
+        Vec<PagoCobroSimple>, f64,
     ) = {
         let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        // v2.4.26: incluir kilometraje (entrada, salida, intervalo, proximo) en el PDF
+        // v2.4.26: incluir kilometraje. v2.4.27: tambien garantia + venta_id + fecha_entrega.
         let orden = conn.query_row(
             "SELECT numero, cliente_nombre, cliente_telefono, tipo_equipo, equipo_descripcion,
              COALESCE(equipo_marca,''), equipo_modelo, equipo_serie, equipo_placa, accesorios,
              COALESCE(diagnostico,''), problema_reportado, trabajo_realizado, observaciones,
              estado, fecha_ingreso, presupuesto, monto_final,
              equipo_kilometraje, equipo_kilometraje_proximo,
-             equipo_kilometraje_intervalo, equipo_kilometraje_salida
+             equipo_kilometraje_intervalo, equipo_kilometraje_salida,
+             COALESCE(garantia_dias, 0), venta_id, fecha_entrega
              FROM ordenes_servicio WHERE id = ?1",
             rusqlite::params![orden_id],
             |r| Ok((
@@ -741,6 +754,7 @@ pub fn imprimir_orden_servicio_pdf(
                 r.get::<_, String>(14)?, r.get::<_, String>(15)?, r.get::<_, f64>(16)?, r.get::<_, f64>(17)?,
                 r.get::<_, Option<i64>>(18)?, r.get::<_, Option<i64>>(19)?,
                 r.get::<_, Option<i64>>(20).ok().flatten(), r.get::<_, Option<i64>>(21).ok().flatten(),
+                r.get::<_, i64>(22)?, r.get::<_, Option<i64>>(23)?, r.get::<_, Option<String>>(24)?,
             )),
         ).map_err(|e| format!("Orden no encontrada: {}", e))?;
 
@@ -771,6 +785,43 @@ pub fn imprimir_orden_servicio_pdf(
         };
         let total_abonos: f64 = abonos.iter().map(|a| a.monto).sum();
 
+        // v2.4.27: pagos hechos al cobrar la orden (de pagos_venta).
+        // Si la orden tiene venta_id, traemos el desglose. Si la venta usa pago mixto,
+        // habrá varias filas. Si fue legacy (forma_pago única en `ventas`), construimos
+        // una entrada sintética desde la tabla `ventas`.
+        let (pagos_cobro, total_pagos_cobro): (Vec<PagoCobroSimple>, f64) = {
+            if let Some(vid) = orden.23 {
+                let mut stmt_res = conn.prepare(
+                    "SELECT monto, forma_pago, referencia FROM pagos_venta WHERE venta_id = ?1 ORDER BY id ASC"
+                );
+                let pagos: Vec<PagoCobroSimple> = if let Ok(mut stmt) = stmt_res.as_mut() {
+                    let rows = stmt.query_map(rusqlite::params![vid], |r| Ok(PagoCobroSimple {
+                        monto: r.get(0)?,
+                        forma_pago: r.get(1)?,
+                        referencia: r.get(2).ok(),
+                    })).map(|it| it.collect::<Result<Vec<_>, _>>().unwrap_or_default())
+                    .unwrap_or_default();
+                    rows
+                } else { Vec::new() };
+                let pagos = if pagos.is_empty() {
+                    // Fallback a `ventas.total + forma_pago` (caso legacy o sin pagos_venta).
+                    conn.query_row(
+                        "SELECT total, forma_pago FROM ventas WHERE id = ?1",
+                        rusqlite::params![vid],
+                        |r| Ok(PagoCobroSimple {
+                            monto: r.get(0)?,
+                            forma_pago: r.get(1)?,
+                            referencia: None,
+                        }),
+                    ).ok().map(|p| vec![p]).unwrap_or_default()
+                } else { pagos };
+                let total: f64 = pagos.iter().map(|p| p.monto).sum();
+                (pagos, total)
+            } else {
+                (Vec::new(), 0.0)
+            }
+        };
+
         (
             nombre_negocio, ruc, direccion, telefono, leyenda_orden,
             orden.0, orden.1, orden.2, orden.3, orden.4,
@@ -778,7 +829,9 @@ pub fn imprimir_orden_servicio_pdf(
             orden.10, orden.11, orden.12, orden.13,
             orden.14, orden.15, orden.16, orden.17,
             orden.18, orden.19, orden.20, orden.21,
+            orden.22, orden.23, orden.24,
             abonos, total_abonos,
+            pagos_cobro, total_pagos_cobro,
         )
     };
 
@@ -872,7 +925,6 @@ pub fn imprimir_orden_servicio_pdf(
     }
 
     // v2.4.23: ABONOS recibidos (HOLDING o APLICADOS al cobro).
-    // Importante para que el cliente sepa cuánto ya pagó y cuánto falta.
     if !abonos.is_empty() {
         doc.push(Break::new(1));
         doc.push(Paragraph::new("ABONOS RECIBIDOS").styled(header_st));
@@ -887,17 +939,62 @@ pub fn imprimir_orden_servicio_pdf(
             doc.push(Paragraph::new(&linea).styled(normal_st));
         }
         doc.push(Paragraph::new(&format!("Total abonado: ${:.2}", total_abonos)).styled(label_st));
-        // Saldo pendiente = max(presupuesto, monto_final) - total_abonos
-        let referencia = if monto_final > 0.0 { monto_final } else { presupuesto };
-        if referencia > 0.0 {
-            let saldo = (referencia - total_abonos).max(0.0);
-            if saldo > 0.001 {
-                doc.push(Paragraph::new(&format!("Saldo pendiente: ${:.2}", saldo)).styled(header_st));
-            } else if total_abonos >= referencia - 0.001 {
-                doc.push(Paragraph::new("CANCELADO TOTALMENTE").styled(header_st));
+    }
+
+    // v2.4.27: PAGOS HECHOS AL COBRO (de pagos_venta).
+    // Antes el PDF solo mostraba abonos y dejaba "saldo pendiente" aún cuando ya
+    // se había cobrado el remanente al entregar. Ahora reflejamos ambos.
+    if !pagos_cobro.is_empty() {
+        doc.push(Break::new(1));
+        let titulo_pagos = if abonos.is_empty() { "PAGO RECIBIDO" } else { "PAGO AL COBRO" };
+        doc.push(Paragraph::new(titulo_pagos).styled(header_st));
+        let fecha_pago = fecha_entrega_opt.as_deref().unwrap_or("").split(' ').next().unwrap_or("").to_string();
+        for p in &pagos_cobro {
+            let mut linea = if !fecha_pago.is_empty() {
+                format!("• {} · ${:.2} · {}", fecha_pago, p.monto, p.forma_pago)
+            } else {
+                format!("• ${:.2} · {}", p.monto, p.forma_pago)
+            };
+            if let Some(ref r) = p.referencia {
+                if !r.trim().is_empty() {
+                    linea.push_str(&format!(" · ref: {}", r));
+                }
+            }
+            doc.push(Paragraph::new(&linea).styled(normal_st));
+        }
+        if pagos_cobro.len() > 1 {
+            doc.push(Paragraph::new(&format!("Total pagado al cobro: ${:.2}", total_pagos_cobro)).styled(label_st));
+        }
+    }
+
+    // v2.4.27: SALDO REAL = max(monto_final, presupuesto) - (abonos + pagos_cobro)
+    let referencia = if monto_final > 0.0 { monto_final } else { presupuesto };
+    let total_recibido = total_abonos + total_pagos_cobro;
+    if referencia > 0.0 && total_recibido > 0.0 {
+        let saldo = (referencia - total_recibido).max(0.0);
+        doc.push(Break::new(0.5));
+        if saldo > 0.001 {
+            doc.push(Paragraph::new(&format!("Saldo pendiente: ${:.2}", saldo)).styled(header_st));
+        } else if total_recibido >= referencia - 0.001 {
+            doc.push(Paragraph::new("CANCELADO TOTALMENTE").styled(header_st));
+        }
+    }
+
+    // v2.4.27: GARANTÍA del trabajo (si aplica).
+    if garantia_dias > 0 {
+        doc.push(Break::new(0.8));
+        doc.push(Paragraph::new(&format!("🛡 Garantía del trabajo: {} día{}",
+            garantia_dias, if garantia_dias == 1 { "" } else { "s" })).styled(label_st));
+        // Si tenemos fecha de entrega, calcular fecha de vencimiento de la garantía.
+        if let Some(ref fe) = fecha_entrega_opt {
+            let fecha_part = fe.split(' ').next().unwrap_or("");
+            if let Ok(parsed) = chrono::NaiveDate::parse_from_str(fecha_part, "%Y-%m-%d") {
+                let venc = parsed + chrono::Duration::days(garantia_dias);
+                doc.push(Paragraph::new(&format!("Válida hasta: {}", venc.format("%d/%m/%Y"))).styled(normal_st));
             }
         }
     }
+    let _ = venta_id_opt; // por ahora solo lo usamos para query de pagos
 
     // Leyenda / términos configurables (Configuración → Servicio Técnico)
     if !leyenda_orden.trim().is_empty() {

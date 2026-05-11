@@ -46,20 +46,27 @@ pub fn obtener_ultimo_cierre(db: State<Database>) -> Result<Option<serde_json::V
     );
     match res {
         Ok((caja_id, monto_real, cerrada_at, usuario_cierre, usuario, diferencia)) => {
-            // Sumar depositos a banco hechos despues del cierre (estados DEPOSITADO o EN_TRANSITO)
-            // que ya sacaron el efectivo de la caja fisica.
-            let depositos_post: f64 = conn.query_row(
-                "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
-                 WHERE caja_id = ?1 AND estado IN ('DEPOSITADO', 'EN_TRANSITO')
-                   AND motivo LIKE '%cierre%'",
-                rusqlite::params![caja_id], |r| r.get(0),
-            ).unwrap_or(0.0);
+            // v2.4.27: descontar TODOS los retiros post-cierre, no solo depositos al banco.
+            // Antes solo restabamos retiros con motivo LIKE '%cierre%' y estado DEPOSITADO/EN_TRANSITO.
+            // Eso dejaba afuera retiros normales (estado SIN_DEPOSITO, motivos genericos como
+            // "para gastos", "vuelto a dueno", etc.). CUALQUIER retiro post-cierre saca dinero
+            // fisicamente de la caja, asi que debe descontarse del disponible.
+            // Diferenciamos los retiros POST-cierre de los hechos durante la sesion abierta
+            // por la fecha: el monto_real al cerrar ya excluyo los retiros previos al cierre.
+            let cerrada_at_str = cerrada_at.clone().unwrap_or_default();
+            let depositos_post: f64 = if !cerrada_at_str.is_empty() {
+                conn.query_row(
+                    "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+                     WHERE caja_id = ?1 AND fecha > ?2",
+                    rusqlite::params![caja_id, cerrada_at_str], |r| r.get(0),
+                ).unwrap_or(0.0)
+            } else { 0.0 };
             let mr = monto_real.unwrap_or(0.0);
             let monto_disponible = (mr - depositos_post).max(0.0);
             Ok(Some(serde_json::json!({
                 "caja_id": caja_id,
                 "monto_real": mr,
-                "monto_disponible": monto_disponible, // post-depositos
+                "monto_disponible": monto_disponible, // post-retiros (cualquier motivo/estado)
                 "depositos_post_cierre": depositos_post,
                 "cerrada_at": cerrada_at,
                 "usuario_cierre": usuario_cierre.or(usuario),
@@ -109,24 +116,26 @@ pub fn abrir_caja(
     }
 
     // Buscar ultimo cierre para validar continuidad.
-    // v2.4.24: descontamos depositos a banco POST-CIERRE — esos $X ya salieron
-    // fisicamente de la caja. El monto esperado para abrir es lo que QUEDÓ.
-    let ultimo: Option<(i64, f64)> = conn.query_row(
-        "SELECT id, COALESCE(monto_real, 0) FROM caja
+    // v2.4.27: descontamos TODOS los retiros post-cierre (cualquier motivo/estado),
+    // no solo depositos a banco. Cualquier retiro fisico saca dinero de la caja.
+    let ultimo: Option<(i64, f64, Option<String>)> = conn.query_row(
+        "SELECT id, COALESCE(monto_real, 0), COALESCE(cerrada_at, fecha_cierre) FROM caja
          WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
          ORDER BY id DESC LIMIT 1",
         [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).ok();
 
     let (caja_anterior_id, monto_esperado_apertura) = match ultimo {
-        Some((id, m)) => {
-            let depositos_post: f64 = conn.query_row(
-                "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
-                 WHERE caja_id = ?1 AND estado IN ('DEPOSITADO', 'EN_TRANSITO')
-                   AND motivo LIKE '%cierre%'",
-                rusqlite::params![id], |r| r.get(0),
-            ).unwrap_or(0.0);
+        Some((id, m, cerrada_at_opt)) => {
+            let cerrada_at_str = cerrada_at_opt.unwrap_or_default();
+            let depositos_post: f64 = if !cerrada_at_str.is_empty() {
+                conn.query_row(
+                    "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+                     WHERE caja_id = ?1 AND fecha > ?2",
+                    rusqlite::params![id, cerrada_at_str], |r| r.get(0),
+                ).unwrap_or(0.0)
+            } else { 0.0 };
             (Some(id), (m - depositos_post).max(0.0))
         }
         None => (None, 0.0),

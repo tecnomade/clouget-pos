@@ -98,6 +98,8 @@ export default function ServicioTecnicoPage() {
   const [filtroEstado, setFiltroEstado] = useState("");
   const [mostrarForm, setMostrarForm] = useState(false);
   const [tipoTaller, setTipoTaller] = useState<string>("MIXTO");
+  // v2.4.27: accesorios comunes pre-configurados (chips toggleables)
+  const [accesoriosComunes, setAccesoriosComunes] = useState<string[]>([]);
   const labels = TALLER_LABELS[tipoTaller] || TALLER_LABELS.MIXTO;
   const tallerEsMixto = tipoTaller === "MIXTO";
   const [form, setForm] = useState<OrdenServicio>(formNuevo(labels.defaultTipoEquipo));
@@ -173,6 +175,10 @@ export default function ServicioTecnicoPage() {
     obtenerConfig().then((cfg: any) => {
       const t = (cfg.tipo_taller || "MIXTO").toUpperCase();
       setTipoTaller(TALLER_LABELS[t] ? t : "MIXTO");
+      // v2.4.27: lista de accesorios pre-seleccionables (separados por coma).
+      const acc = (cfg.st_accesorios_comunes || "").split(",")
+        .map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+      setAccesoriosComunes(acc);
     }).catch(() => {});
     // v2.4.10 ST-2.5: cargar catálogo de tipos al montar
     stListarTiposEquipo().then(setStTipos).catch(() => {});
@@ -762,6 +768,39 @@ export default function ServicioTecnicoPage() {
 
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, fontWeight: 600 }}>Accesorios incluidos</label>
+                {/* v2.4.27: chips pre-seleccionables (configurables en Config → Servicio Técnico) */}
+                {accesoriosComunes.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
+                    {accesoriosComunes.map((acc) => {
+                      const lista = (form.accesorios || "").split(",").map((s) => s.trim()).filter(Boolean);
+                      const activo = lista.some((x) => x.toLowerCase() === acc.toLowerCase());
+                      return (
+                        <button
+                          type="button"
+                          key={acc}
+                          onClick={() => {
+                            const nuevos = activo
+                              ? lista.filter((x) => x.toLowerCase() !== acc.toLowerCase())
+                              : [...lista, acc];
+                            setForm({ ...form, accesorios: nuevos.join(", ") });
+                          }}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: 16,
+                            border: activo ? "1px solid var(--color-primary)" : "1px solid var(--color-border)",
+                            background: activo ? "var(--color-primary)" : "transparent",
+                            color: activo ? "white" : "inherit",
+                            fontSize: 12,
+                            fontWeight: 500,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {activo ? "✓ " : "+ "}{acc}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <input className="input" placeholder="Cargador, mochila, mouse..."
                   value={form.accesorios || ""}
                   onChange={(e) => setForm({ ...form, accesorios: e.target.value })} />

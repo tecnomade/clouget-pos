@@ -349,13 +349,13 @@ pub async fn st_crear_orden(
 
     let conn = state.db.conn.lock().map_err(err500)?;
 
-    // Generar numero correlativo
+    // v2.4.27: prefijo OT (Orden de Trabajo) — sequencial continuo con OS- antiguos.
     let next_seq: i64 = conn.query_row(
         "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 4) AS INTEGER)), 0) + 1
-         FROM ordenes_servicio WHERE numero LIKE 'OS-%'",
+         FROM ordenes_servicio WHERE numero LIKE 'OS-%' OR numero LIKE 'OT-%'",
         [], |r| r.get(0),
     ).unwrap_or(1);
-    let numero = format!("OS-{:06}", next_seq);
+    let numero = format!("OT-{:06}", next_seq);
 
     // Buscar/crear cliente si no existe (por identificación o teléfono)
     let cliente_id: Option<i64> = {

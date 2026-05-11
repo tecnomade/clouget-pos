@@ -375,6 +375,28 @@ export default function Configuracion() {
                     </div>
                   </div>
                 )}
+                {/* v2.4.27: lista de accesorios comunes pre-seleccionables al crear orden */}
+                {config.modulo_servicio_tecnico === "1" && (
+                  <div style={{ padding: "10px 12px", marginLeft: 24, marginTop: 8, background: "var(--color-surface-alt)", borderRadius: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
+                      🎒 Accesorios comunes (pre-seleccionables al crear orden)
+                    </label>
+                    <input
+                      className="input"
+                      placeholder="Cargador, Mochila, Mouse, Cable, Funda, Manual, Llaves, Encendedor"
+                      value={config.st_accesorios_comunes || ""}
+                      onChange={(e) => setConfig({ ...config, st_accesorios_comunes: e.target.value })}
+                      onBlur={() => {
+                        guardarConfig({ st_accesorios_comunes: config.st_accesorios_comunes || "" });
+                        toastExito("Accesorios comunes guardados");
+                      }}
+                      style={{ width: "100%", fontSize: 13 }}
+                    />
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                      Separa los accesorios con comas. Aparecerán como botones rápidos en el formulario de Nueva Orden para evitar tipear los más frecuentes.
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
