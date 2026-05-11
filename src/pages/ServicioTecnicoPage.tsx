@@ -840,6 +840,30 @@ export default function ServicioTecnicoPage() {
                   value={obsCambioEstado} onChange={(e) => setObsCambioEstado(e.target.value)} />
               </div>
 
+              {/* v2.4.20: cambiar técnico asignado en cualquier momento (post-creación) */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>👤 Técnico asignado</label>
+                <select className="input" style={{ fontSize: 12 }}
+                  value={detalle.tecnico_id || ""}
+                  onChange={(e) => {
+                    const tid = e.target.value ? parseInt(e.target.value) : null;
+                    const t = tecnicos.find(x => x.id === tid);
+                    const nuevoDetalle = { ...detalle, tecnico_id: tid, tecnico_nombre: t?.nombre || null };
+                    setDetalle(nuevoDetalle);
+                    actualizarOrdenServicio(nuevoDetalle)
+                      .then(() => toastExito(tid ? `Asignada a ${t?.nombre}` : "Sin asignar"))
+                      .catch(err => toastError("" + err));
+                  }}>
+                  <option value="">Sin asignar</option>
+                  {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                </select>
+                {detalle.tecnico_nombre && (
+                  <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    Actualmente: <strong>{detalle.tecnico_nombre}</strong>
+                  </div>
+                )}
+              </div>
+
               {/* Diagnóstico, trabajo, observaciones (editables) */}
               <div style={{ marginBottom: 12 }}>
                 <label style={{ fontSize: 12, fontWeight: 600 }}>Diagnóstico</label>

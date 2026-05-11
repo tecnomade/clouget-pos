@@ -227,6 +227,16 @@ pub fn crear_usuario(
         return Err(format!("Ya existe un usuario con el nombre '{}'", nombre));
     }
 
+    // v2.4.20: bloquear PINs duplicados — si dos usuarios tienen el mismo PIN,
+    // el login no es determinístico (devuelve el primero que encuentra) y el otro
+    // nunca puede entrar con su propio PIN. Mejor obligar a que sean únicos.
+    if let Some(otro) = pin_duplicado(&conn, &usuario.pin, None)? {
+        return Err(format!(
+            "El PIN ya está en uso por el usuario '{}'. Cada usuario debe tener un PIN único.",
+            otro,
+        ));
+    }
+
     let salt = utils::generar_salt();
     let pin_hash = utils::hash_pin(&salt, &usuario.pin);
 
@@ -351,6 +361,14 @@ pub fn actualizar_usuario(
     if let Some(ref new_pin) = pin {
         if !new_pin.chars().all(|c| c.is_ascii_digit()) || new_pin.len() < 4 || new_pin.len() > 6 {
             return Err("El PIN debe tener 4 a 6 dígitos numéricos".to_string());
+        }
+        // v2.4.20: bloquear PIN duplicado (excluyendo este mismo usuario para
+        // permitir guardar sin cambios o re-poner el mismo PIN).
+        if let Some(otro) = pin_duplicado(&conn, new_pin, Some(id))? {
+            return Err(format!(
+                "El PIN ya está en uso por '{}'. Cada usuario debe tener un PIN único.",
+                otro,
+            ));
         }
         let salt = utils::generar_salt();
         let pin_hash = utils::hash_pin(&salt, new_pin);
@@ -573,4 +591,33 @@ pub(crate) fn verificar_admin(sesion: &State<SesionState>) -> Result<(), String>
         Some(_) => Err("Se requiere permisos de administrador".to_string()),
         None => Err("Debe iniciar sesión".to_string()),
     }
+}
+
+/// v2.4.20: detecta si el PIN ya está en uso por otro usuario activo.
+/// Devuelve Some(nombre) si encuentra duplicado, None si está libre.
+///
+/// Cada usuario tiene su propio salt, así que no se pueden comparar hashes
+/// directamente — hay que rehashear el PIN candidato con CADA salt y comparar.
+/// Es O(N) por usuario pero N es típicamente <20, sin problema de performance.
+fn pin_duplicado(
+    conn: &rusqlite::Connection,
+    pin: &str,
+    excluir_id: Option<i64>,
+) -> Result<Option<String>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, pin_hash, pin_salt FROM usuarios WHERE activo = 1"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<(i64, String, String, String)> = stmt.query_map([], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+    }).map_err(|e| e.to_string())?
+       .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    for (id, nombre, hash, salt) in rows {
+        if Some(id) == excluir_id { continue; }
+        let intento = utils::hash_pin(&salt, pin);
+        if intento == hash {
+            return Ok(Some(nombre));
+        }
+    }
+    Ok(None)
 }

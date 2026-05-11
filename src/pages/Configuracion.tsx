@@ -54,6 +54,9 @@ export default function Configuracion() {
   const [nuevoRol, setNuevoRol] = useState("CAJERO");
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [editPin, setEditPin] = useState("");
+  // v2.4.20: editar nombre de usuario subordinado
+  const [editandoNombreId, setEditandoNombreId] = useState<number | null>(null);
+  const [editNombre, setEditNombre] = useState("");
   // v2.4.0: cada permiso ahora trae [key, label, categoria] (CORE | RESTAURANTE | APP_MOVIL)
   const [permisosDisponibles, setPermisosDisponibles] = useState<[string, string, string][]>([]);
   const [editandoPermisosId, setEditandoPermisosId] = useState<number | null>(null);
@@ -1213,7 +1216,45 @@ export default function Configuracion() {
                       opacity: u.activo ? 1 : 0.5,
                     }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{u.nombre}</div>
+                        {editandoNombreId === u.id ? (
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            <input className="input"
+                              autoFocus
+                              style={{ width: 180, fontSize: 12 }}
+                              value={editNombre}
+                              onChange={(e) => setEditNombre(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === "Enter") {
+                                  try {
+                                    await actualizarUsuario(u.id, editNombre.trim().toUpperCase());
+                                    setEditandoNombreId(null);
+                                    setUsuarios(await listarUsuarios());
+                                    toastExito("Nombre actualizado");
+                                  } catch (err) { toastError("Error: " + err); }
+                                } else if (e.key === "Escape") {
+                                  setEditandoNombreId(null);
+                                }
+                              }} />
+                            <button className="btn btn-primary" style={{ padding: "2px 8px", fontSize: 11 }}
+                              onClick={async () => {
+                                try {
+                                  await actualizarUsuario(u.id, editNombre.trim().toUpperCase());
+                                  setEditandoNombreId(null);
+                                  setUsuarios(await listarUsuarios());
+                                  toastExito("Nombre actualizado");
+                                } catch (err) { toastError("Error: " + err); }
+                              }}>OK</button>
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                              onClick={() => setEditandoNombreId(null)}>×</button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => { setEditandoNombreId(u.id); setEditNombre(u.nombre); }}
+                            title="Click para editar el nombre"
+                            style={{ fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                            {u.nombre} <span style={{ color: "var(--color-text-muted)", fontSize: 10 }}>✎</span>
+                          </div>
+                        )}
                         <span style={{
                           fontSize: 10, padding: "1px 6px", borderRadius: 3,
                           background: u.rol === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-hover)",

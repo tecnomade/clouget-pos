@@ -6,6 +6,31 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.20 — 2026-05-11 🔒
+
+**Bug seguridad PIN + UX en gestión de usuarios y órdenes ST.**
+
+### 🚨 Bug seguridad: PIN duplicado entre usuarios
+
+Si dos usuarios tenían el mismo PIN, el login no era determinístico — devolvía el primero que matcheaba en orden de inserción. El segundo usuario nunca podía entrar con su PIN, y peor, el admin creía que estaba logueado como "Juan" pero era "María" (mismo PIN).
+
+**Fix**:
+- Al **crear** un usuario con un PIN ya en uso → rechaza con mensaje claro: "El PIN ya está en uso por 'X'"
+- Al **cambiar PIN** de un usuario existente → mismo chequeo (excluyendo al propio usuario para permitir guardar sin cambios)
+- Helper `pin_duplicado(conn, pin, excluir_id?)` que rehashea el PIN candidato con cada salt y compara
+
+⚠ Si ya tenías PINs duplicados en BD, siguen funcionando como antes (el primero matchea). Te recomendamos cambiar los PINs duplicados manualmente a valores únicos.
+
+### 🆕 Editar nombre de usuario en Configuración
+
+Antes solo se podía cambiar PIN, contraseña, permisos y activar/desactivar. Ahora **click en el nombre** del usuario lo convierte en input editable. Enter o "OK" guarda. Backend ya soportaba el cambio de nombre, faltaba la UI.
+
+### 🆕 Cambiar técnico asignado en orden ST
+
+En el modal de detalle de la orden, nuevo selector "👤 Técnico asignado" que permite **reasignar** la orden a otro técnico en cualquier momento (no solo al crear). Útil cuando un técnico sale, está ocupado o se requiere reasignar trabajo. Auto-guarda al cambiar.
+
+---
+
 ## v2.4.19 — 2026-05-11 📱
 
 **Crear órdenes de servicio desde la app móvil.**
