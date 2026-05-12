@@ -43,6 +43,8 @@ export default function CajaPage() {
   // Anti-fraude: info del ultimo cierre + motivos
   const [ultimoCierre, setUltimoCierre] = useState<any>(null);
   const [motivoApertura, setMotivoApertura] = useState("");
+  // v2.4.28: tipo de exceso al abrir (cuando monto > disponible)
+  const [tipoApertura, setTipoApertura] = useState<"INGRESO" | "SOBRANTE" | null>(null);
   const [motivoDescuadre, setMotivoDescuadre] = useState("");
   // PIN supervisor modal (cuando rol no tiene permiso cerrar_caja o descuadre alto)
   const [pinPrompt, setPinPrompt] = useState<{ tipo: "permiso" | "descuadre"; mensaje: string } | null>(null);
@@ -182,17 +184,36 @@ export default function CajaPage() {
 
   const handleAbrir = async () => {
     const monto = parseFloat(montoInicial) || 0;
-    // Validar motivo si difiere del ultimo cierre
-    const cierreEsperado = ultimoCierre?.monto_real;
-    if (cierreEsperado != null && Math.abs(monto - cierreEsperado) > 0.01 && motivoApertura.trim().length < 5) {
-      toastError(`El monto inicial difiere del cierre anterior ($${cierreEsperado.toFixed(2)}). Debe explicar el motivo (mínimo 5 caracteres).`);
+    // v2.4.28: validar contra monto_DISPONIBLE (post-retiros), no monto_real bruto.
+    // Si depositaste todo al banco después del cierre, el disponible es $0 y debes
+    // poder abrir con $0 sin que el sistema te pida motivo de "descuadre".
+    const cierreEsperado = ultimoCierre?.monto_disponible ?? ultimoCierre?.monto_real;
+    const diff = cierreEsperado != null ? monto - cierreEsperado : 0;
+    const hayDif = cierreEsperado != null && Math.abs(diff) > 0.01;
+    const esExceso = diff > 0;
+
+    // Si hay exceso (sobrante o ingreso), exigir que el usuario elija tipo
+    if (hayDif && esExceso && !tipoApertura) {
+      toastError("Indica si el excedente es un Ingreso de caja o un Sobrante.");
       return;
     }
+    // Para faltante (negativo), siempre exigir motivo de mín 5 chars
+    if (hayDif && !esExceso && motivoApertura.trim().length < 5) {
+      toastError(`El monto inicial es menor al disponible ($${cierreEsperado!.toFixed(2)}). Debe explicar el motivo (mínimo 5 caracteres).`);
+      return;
+    }
+    // Componer motivo con prefijo según tipo (para auditoría)
+    let motivoFinal = motivoApertura.trim();
+    if (hayDif && esExceso) {
+      const prefijo = tipoApertura === "INGRESO" ? "[INGRESO DE CAJA]" : "[SOBRANTE]";
+      motivoFinal = motivoFinal ? `${prefijo} ${motivoFinal}` : `${prefijo} excedente $${diff.toFixed(2)}`;
+    }
     try {
-      const caja = await abrirCaja(monto, motivoApertura.trim() || undefined);
+      const caja = await abrirCaja(monto, motivoFinal || undefined);
       setCajaAbierta(caja);
       setMontoInicial("");
       setMotivoApertura("");
+      setTipoApertura(null);
       setUltimoCierre(null);
       // Limpiar retiros y resumen de cierre anterior para evitar mezclas visuales
       setRetiros([]);
@@ -659,26 +680,77 @@ export default function CajaPage() {
 
               {/* Alerta + motivo si difiere */}
               {/* v2.4.24: comparar contra monto_disponible (post-depositos) si hay depositos */}
+              {/* v2.4.28: si hay diferencia POSITIVA, preguntar si es INGRESO o SOBRANTE
+                  (semantica distinta para auditoria). Si es negativa = falta dinero,
+                  solo se pide motivo (no aplica ingreso). */}
               {(() => {
                 if (!ultimoCierre || !montoInicial) return null;
                 const referencia = ultimoCierre.monto_disponible ?? ultimoCierre.monto_real;
                 if (referencia == null) return null;
                 const diff = (parseFloat(montoInicial) || 0) - referencia;
                 if (Math.abs(diff) <= 0.01) return null;
+                const esExceso = diff > 0;
+                const tipo = tipoApertura;
                 return (
                 <div style={{ marginTop: 10 }}>
                   <div style={{
                     padding: "8px 10px", borderRadius: 6,
-                    background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.4)",
-                    color: "var(--color-danger)", fontSize: 12, marginBottom: 6,
+                    background: esExceso ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)",
+                    border: esExceso ? "1px solid rgba(245,158,11,0.4)" : "1px solid rgba(239,68,68,0.4)",
+                    color: esExceso ? "var(--color-warning)" : "var(--color-danger)",
+                    fontSize: 12, marginBottom: 8,
                   }}>
-                    ⚠ Diferencia: <strong>${diff.toFixed(2)}</strong>
+                    {esExceso ? "💰" : "⚠"} Diferencia: <strong>${diff.toFixed(2)}</strong>
                     {" "} (esperado: ${referencia.toFixed(2)} → apertura: ${(parseFloat(montoInicial) || 0).toFixed(2)})
                   </div>
-                  <label className="text-secondary" style={{ fontSize: 12 }}>Motivo de la diferencia *</label>
+                  {/* Selector de tipo solo si hay exceso */}
+                  {esExceso && (
+                    <div style={{ marginBottom: 10 }}>
+                      <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
+                        ¿Cómo registrar este excedente de ${diff.toFixed(2)}?
+                      </label>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => setTipoApertura("INGRESO")}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            border: tipo === "INGRESO" ? "2px solid var(--color-success)" : "1px solid var(--color-border)",
+                            background: tipo === "INGRESO" ? "rgba(34,197,94,0.1)" : "transparent",
+                            cursor: "pointer", textAlign: "left",
+                          }}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>📥 Ingreso de caja</div>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            Alguien aportó dinero (dueño, vuelto, etc.)
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTipoApertura("SOBRANTE")}
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            border: tipo === "SOBRANTE" ? "2px solid var(--color-warning)" : "1px solid var(--color-border)",
+                            background: tipo === "SOBRANTE" ? "rgba(245,158,11,0.1)" : "transparent",
+                            cursor: "pointer", textAlign: "left",
+                          }}>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>🪙 Sobrante</div>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            Estaba sin contar al cerrar
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <label className="text-secondary" style={{ fontSize: 12 }}>
+                    {esExceso ? "Detalle (opcional)" : "Motivo de la diferencia *"}
+                  </label>
                   <textarea
                     className="input mt-2"
-                    placeholder="Ej: Faltaron $X tomados por el dueño / sobraron $X de propina / etc."
+                    placeholder={esExceso
+                      ? (tipo === "INGRESO" ? "Ej: aportado por el dueño, propina sin contar, etc." : "Ej: cambio menudo no contado, etc.")
+                      : "Ej: Faltaron $X tomados por el dueño / faltó cobro / etc."}
                     value={motivoApertura}
                     onChange={(e) => setMotivoApertura(e.target.value)}
                     rows={2} />

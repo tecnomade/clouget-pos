@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta, stAbonosPorVenta } from "../services/api";
+import type { AbonoServicio } from "../services/api";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -66,6 +67,8 @@ export default function VentasDia() {
   const [verDetalleNcId, setVerDetalleNcId] = useState<number | null>(null);
   const [tendencia, setTendencia] = useState<VentaDiaria[]>([]);
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
+  // v2.4.28: abonos APLICADOS a la venta (de orden ST cobrada). null = no cargado todavia.
+  const [abonosVenta, setAbonosVenta] = useState<AbonoServicio[] | null>(null);
   const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
   const [ventaExpandida, setVentaExpandida] = useState<number | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
@@ -79,6 +82,11 @@ export default function VentasDia() {
     try {
       const vc = await obtenerVenta(ventaId);
       setVentaDetalle(vc);
+      // v2.4.28: cargar abonos APLICADOS a esta venta (si viene de orden ST cobrada).
+      setAbonosVenta(null);
+      stAbonosPorVenta(ventaId)
+        .then((ab) => setAbonosVenta(ab || []))
+        .catch(() => setAbonosVenta([]));
     } catch (err) {
       toastError("Error al cargar detalle: " + err);
     }
@@ -1226,7 +1234,7 @@ export default function VentasDia() {
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Informacion de Pago</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
                   <div><span className="text-secondary">Forma: </span>{ventaDetalle.venta.forma_pago}</div>
-                  <div><span className="text-secondary">Recibido: </span>${ventaDetalle.venta.monto_recibido.toFixed(2)}</div>
+                  <div><span className="text-secondary">Recibido al cobro: </span>${ventaDetalle.venta.monto_recibido.toFixed(2)}</div>
                   {ventaDetalle.venta.cambio > 0 && (
                     <div><span className="text-secondary">Cambio: </span>${ventaDetalle.venta.cambio.toFixed(2)}</div>
                   )}
@@ -1237,6 +1245,36 @@ export default function VentasDia() {
                     <div><span className="text-secondary">Referencia: </span><strong>{ventaDetalle.venta.referencia_pago}</strong></div>
                   )}
                 </div>
+                {/* v2.4.28: si la venta proviene de orden ST cobrada, mostrar abonos aplicados
+                    + total real recibido (cobro + abonos). Antes solo se veia "Recibido"
+                    que era solo lo del cobro, dando la falsa impresion de que el cliente
+                    pago menos del total. */}
+                {abonosVenta && abonosVenta.length > 0 && (() => {
+                  const totalAbonos = abonosVenta.reduce((s, a) => s + a.monto, 0);
+                  const totalReal = ventaDetalle.venta.monto_recibido + totalAbonos;
+                  return (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                        💰 Abonos previos aplicados
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
+                        {abonosVenta.map((a) => (
+                          <div key={a.id} style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>
+                              {a.fecha?.split(" ")[0] || ""} · {a.forma_pago}
+                              {a.banco_nombre ? ` (${a.banco_nombre})` : ""}
+                            </span>
+                            <strong>${a.monto.toFixed(2)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, paddingTop: 6, borderTop: "1px dashed var(--color-border)", fontSize: 13 }}>
+                        <strong>Total real recibido (cobro + abonos):</strong>
+                        <strong style={{ color: "var(--color-success)" }}>${totalReal.toFixed(2)}</strong>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {ventaDetalle.venta.comprobante_imagen && (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
                     <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6, fontWeight: 600 }}>

@@ -501,7 +501,10 @@ pub fn run() {
             commands::servicio_tecnico_catalogo::st_historial_filtrable,
             // Servicio Tecnico - Abonos / Holding / Cancelacion (ST-5)
             commands::servicio_tecnico_abonos::st_listar_abonos,
+            commands::servicio_tecnico_abonos::st_abonos_por_venta,
             commands::servicio_tecnico_abonos::st_recibir_abono,
+            commands::servicio_tecnico_abonos::st_editar_abono,
+            commands::servicio_tecnico_abonos::st_eliminar_abono,
             commands::servicio_tecnico_abonos::st_total_abonos_orden,
             commands::servicio_tecnico_abonos::st_cancelar_orden,
             commands::servicio_tecnico_abonos::st_listar_holdings_caja,

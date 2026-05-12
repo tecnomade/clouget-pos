@@ -93,6 +93,45 @@ pub fn st_listar_abonos(
     Ok(rows)
 }
 
+// ─── v2.4.28: abonos APLICADOS a una venta (para mostrar en detalle de venta) ──
+// No requiere modulo ST (es solo lectura para mostrar info en detalle de venta normal).
+#[tauri::command]
+pub fn st_abonos_por_venta(
+    db: State<'_, Database>,
+    venta_id: i64,
+) -> Result<Vec<AbonoServicio>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.orden_id, a.monto, a.forma_pago, a.banco_id, b.nombre,
+                a.referencia_pago, a.caja_id, a.estado, a.venta_id_aplicado,
+                a.fecha, a.fecha_aplicado, a.fecha_devuelto,
+                a.usuario_nombre, a.observacion
+         FROM st_abonos a
+         LEFT JOIN cuentas_banco b ON a.banco_id = b.id
+         WHERE a.venta_id_aplicado = ?1 AND a.estado = 'APLICADO'
+         ORDER BY a.fecha ASC"
+    ).map_err(|e| e.to_string())?;
+    let rows: Vec<AbonoServicio> = stmt.query_map(params![venta_id], |r| Ok(AbonoServicio {
+        id: Some(r.get(0)?),
+        orden_id: r.get(1)?,
+        monto: r.get(2)?,
+        forma_pago: r.get(3)?,
+        banco_id: r.get(4)?,
+        banco_nombre: r.get(5)?,
+        referencia_pago: r.get(6)?,
+        caja_id: r.get(7)?,
+        estado: r.get(8)?,
+        venta_id_aplicado: r.get(9)?,
+        fecha: r.get(10)?,
+        fecha_aplicado: r.get(11)?,
+        fecha_devuelto: r.get(12)?,
+        usuario_nombre: r.get(13)?,
+        observacion: r.get(14)?,
+    })).map_err(|e| e.to_string())?
+       .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
 // ─── Recibir abono ───────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -177,6 +216,119 @@ pub fn st_recibir_abono(
     ).map_err(|e| e.to_string())?;
 
     Ok(conn.last_insert_rowid())
+}
+
+// ─── v2.4.28: Editar abono en HOLDING (corregir typo) ───────────────────
+// Solo se permite editar abonos en HOLDING. APLICADOS y DEVUELTOS son inmutables
+// porque ya afectaron ventas/notas de credito y modificarlos causaria descuadre.
+#[tauri::command]
+pub fn st_editar_abono(
+    db: State<'_, Database>,
+    sesion: State<'_, SesionState>,
+    abono_id: i64,
+    monto: f64,
+    forma_pago: Option<String>,
+    banco_id: Option<i64>,
+    referencia_pago: Option<String>,
+    observacion: Option<String>,
+) -> Result<(), String> {
+    requiere_modulo(&db)?;
+
+    if monto <= 0.0 {
+        return Err("El monto del abono debe ser mayor a 0".to_string());
+    }
+
+    let usuario_nombre = {
+        let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        s.as_ref().map(|s| s.nombre.clone()).unwrap_or_else(|| "Sistema".to_string())
+    };
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Validar que el abono exista y este en HOLDING
+    let (orden_id, estado_actual, monto_actual): (i64, String, f64) = conn.query_row(
+        "SELECT orden_id, estado, monto FROM st_abonos WHERE id = ?1",
+        params![abono_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|_| "Abono no encontrado".to_string())?;
+
+    if estado_actual != "HOLDING" {
+        return Err(format!(
+            "Solo se pueden editar abonos en HOLDING. Este abono está en estado {}.",
+            estado_actual
+        ));
+    }
+
+    // Validar tope: holding total (con el nuevo monto) no debe exceder total de la orden
+    let total_items = crate::commands::servicio_tecnico_items::calcular_total_orden(&conn, orden_id)
+        .map(|t| t.total).unwrap_or(0.0);
+    let presupuesto: f64 = conn.query_row(
+        "SELECT COALESCE(presupuesto, 0) FROM ordenes_servicio WHERE id = ?1",
+        params![orden_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let tope = if total_items > 0.0 { total_items } else { presupuesto };
+    if tope > 0.0 {
+        let holding_otros: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM st_abonos WHERE orden_id = ?1 AND estado = 'HOLDING' AND id != ?2",
+            params![orden_id, abono_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        if holding_otros + monto > tope + 0.001 {
+            let restante = (tope - holding_otros).max(0.0);
+            return Err(format!(
+                "El monto excede el total de la orden (${:.2}). Suma de otros abonos: ${:.2}. Maximo permitido: ${:.2}",
+                tope, holding_otros, restante
+            ));
+        }
+    }
+
+    // Componer observacion con auditoria del cambio
+    let obs_final = match observacion {
+        Some(o) if !o.trim().is_empty() => format!("{} [editado por {}: ${:.2} → ${:.2}]", o.trim(), usuario_nombre, monto_actual, monto),
+        _ => format!("[editado por {}: ${:.2} → ${:.2}]", usuario_nombre, monto_actual, monto),
+    };
+
+    conn.execute(
+        "UPDATE st_abonos
+         SET monto = ?1,
+             forma_pago = COALESCE(?2, forma_pago),
+             banco_id = ?3,
+             referencia_pago = ?4,
+             observacion = ?5
+         WHERE id = ?6 AND estado = 'HOLDING'",
+        params![monto, forma_pago, banco_id, referencia_pago, obs_final, abono_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// ─── v2.4.28: Eliminar abono en HOLDING (corregir registro erroneo) ────
+// Solo se permite eliminar abonos en HOLDING. APLICADOS y DEVUELTOS son inmutables.
+#[tauri::command]
+pub fn st_eliminar_abono(
+    db: State<'_, Database>,
+    abono_id: i64,
+) -> Result<(), String> {
+    requiere_modulo(&db)?;
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let estado: String = conn.query_row(
+        "SELECT estado FROM st_abonos WHERE id = ?1",
+        params![abono_id], |r| r.get(0),
+    ).map_err(|_| "Abono no encontrado".to_string())?;
+
+    if estado != "HOLDING" {
+        return Err(format!(
+            "Solo se pueden eliminar abonos en HOLDING. Este abono está en estado {}.",
+            estado
+        ));
+    }
+
+    conn.execute(
+        "DELETE FROM st_abonos WHERE id = ?1 AND estado = 'HOLDING'",
+        params![abono_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 // ─── Total de abonos en HOLDING para una orden ───────────────────────────

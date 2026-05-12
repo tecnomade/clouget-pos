@@ -6,6 +6,51 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.28 — 2026-05-12 🐞 Caja + UX productos + Editar abonos + Kanban ST
+
+### 🚨 BUG Caja: pedía motivo aunque el monto coincidiera con el disponible
+
+Si cerrabas con $72.99 y depositabas todo al banco (disponible = $0), al abrir la nueva caja con $0 el sistema pedía justificar "diferencia de $72.99". Era el frontend comparando contra `monto_real` (bruto) en vez de `monto_disponible` (post-depósitos). Fix: usa `monto_disponible` para la validación.
+
+### 🆕 Diferencia al abrir caja: ¿Ingreso o Sobrante?
+
+Si pones más dinero del esperado (ej. esperado $0, contás $5), antes lo marcaba como "diferencia" sin distinguir el origen. Ahora aparecen 2 opciones:
+
+- **📥 Ingreso de caja** — alguien aportó dinero (dueño, vuelto, etc.)
+- **🪙 Sobrante** — estaba sin contar al cerrar la sesión anterior
+
+El motivo se prefija con `[INGRESO DE CAJA]` o `[SOBRANTE]` para auditoría posterior.
+
+### 🐞 Detalle de venta: ahora muestra abonos aplicados + total real recibido
+
+Si la venta vino de una orden ST cobrada con abonos previos, el modal solo mostraba "Recibido: $64.99" (lo del cobro), dando la impresión de que el cliente pagó menos del total. Ahora se ve:
+
+- Abonos previos aplicados (con fecha, forma de pago, banco)
+- **Total real recibido (cobro + abonos)** = el monto verdadero que pagó el cliente
+
+### 🆕 Editar / eliminar abono en HOLDING (corregir typos)
+
+Si el cajero registra un abono con un monto incorrecto (ej. $250 en vez de $25), ahora puede editarlo o eliminarlo siempre que el abono esté en HOLDING (no aplicado todavía). Aparecen los botones **✏ editar** y **🗑 eliminar** junto a cada abono HOLDING.
+
+- Editar permite cambiar monto, forma de pago, banco, referencia y observación.
+- Se valida que el nuevo monto no exceda el total de la orden.
+- Auditoría: la edición agrega `[editado por X: $A → $B]` a la observación.
+- Abonos en estado APLICADO o DEVUELTO son inmutables (ya generaron venta o NC).
+
+### 🆕 Lotes de caducidad: agregar al crear el producto (sin guardar primero)
+
+Antes había que guardar el producto, reabrirlo y recién entonces se podían agregar lotes. Ahora podés cargar lotes en el mismo formulario de creación — quedan marcados como **(pendiente)** en amarillo y se persisten automáticamente al guardar el producto.
+
+### 🐞 Kanban Servicio Técnico: columnas se desbordaban
+
+Las columnas con `1fr` no respetaban el min-width y los cards se cortaban. Ahora `minmax(180px, 1fr)` + scroll horizontal cuando no caben las 6 columnas. Texto largo (cliente, equipo, técnico) se trunca con `…` y muestra completo al hacer hover.
+
+### 🐞 Label "número de serie único al vender" mal posicionado
+
+Aparecía huérfano debajo de "Destino restaurante" cuando debía estar junto al checkbox **Requiere número de serie**. Movido a su lugar y solo aparece si el checkbox está activo.
+
+---
+
 ## v2.4.27 — 2026-05-11 🛠 ST: prefijo OT, recibo completo, accesorios rápidos + 🐞 caja
 
 ### 🚨 Bug crítico Caja: retiros post-cierre con motivo libre no se descontaban

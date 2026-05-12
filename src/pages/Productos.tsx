@@ -87,6 +87,14 @@ function FormProducto({
   const [nuevoLoteFecha, setNuevoLoteFecha] = useState("");
   const [nuevoLoteCantidad, setNuevoLoteCantidad] = useState("");
   const [nuevoLoteFechaElab, setNuevoLoteFechaElab] = useState("");
+  // v2.4.28: lotes a crear cuando el producto aun no se ha guardado.
+  // Se persisten despues del crearProducto en handleSubmit.
+  const [lotesPendientes, setLotesPendientes] = useState<Array<{
+    lote: string | null;
+    fecha_elaboracion?: string;
+    fecha_caducidad: string;
+    cantidad: number;
+  }>>([]);
   // Combos
   const [comboGrupos, setComboGrupos] = useState<any[]>([]);
   const [comboComponentes, setComboComponentes] = useState<any[]>([]);
@@ -179,6 +187,17 @@ function FormProducto({
       const unidadesValidas = unidades.filter(u => u.nombre.trim() && u.factor > 0);
       if (unidadesValidas.length > 0 || form.id) {
         await guardarUnidadesProducto(productoId, unidadesValidas).catch(() => {});
+      }
+      // v2.4.28: persistir lotes pendientes (creados durante alta de producto nuevo).
+      if (lotesPendientes.length > 0 && form.requiere_caducidad) {
+        for (const lp of lotesPendientes) {
+          try {
+            await registrarLoteCaducidad(productoId, lp.lote, lp.fecha_caducidad, lp.cantidad, undefined, undefined, lp.fecha_elaboracion);
+          } catch (e) {
+            console.error("Error guardando lote pendiente:", e);
+          }
+        }
+        setLotesPendientes([]);
       }
       // Guardar estructura de combo si aplica
       if (form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") {
@@ -648,6 +667,12 @@ function FormProducto({
             onChange={e => setForm({ ...form, requiere_serie: e.target.checked })} />
           Requiere numero de serie
         </label>
+        {/* v2.4.28: ayuda movida aqui — antes estaba huerfana al pie del bloque, lejos del checkbox */}
+        {form.requiere_serie && (
+          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 24, marginTop: 2 }}>
+            Si activa, cada unidad necesita un número de serie único al vender.
+          </div>
+        )}
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
           <input type="checkbox" checked={form.es_servicio ?? false}
             onChange={(e) => setForm({ ...form, es_servicio: e.target.checked, no_controla_stock: e.target.checked || (form.no_controla_stock ?? false) })} />
@@ -902,9 +927,7 @@ function FormProducto({
             })()}
           </div>
         )}
-        <span className="text-secondary" style={{ fontSize: 10, marginTop: 4, display: "block" }}>
-          Si activa, cada unidad necesita un numero de serie unico al vender.
-        </span>
+        {/* v2.4.28: el texto de ayuda fue movido junto al checkbox correspondiente arriba */}
         {form.requiere_serie && form.id && (
           <div style={{ marginTop: 10, padding: 10, background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
             <div style={{ display: "flex", gap: 16, alignItems: "center", fontSize: 12, marginBottom: 8 }}>
@@ -955,9 +978,11 @@ function FormProducto({
         )}
       </div>
 
-      {/* Lotes de caducidad */}
-      {form.requiere_caducidad && form.id && (() => {
-        const sumaLotes = lotes.reduce((a: number, l: any) => a + (Number(l.cantidad) || 0), 0);
+      {/* Lotes de caducidad — v2.4.28: tambien permite agregar lotes ANTES de guardar el producto */}
+      {form.requiere_caducidad && (() => {
+        const sumaLotesGuardados = lotes.reduce((a: number, l: any) => a + (Number(l.cantidad) || 0), 0);
+        const sumaLotesPendientes = lotesPendientes.reduce((a: number, l: any) => a + (Number(l.cantidad) || 0), 0);
+        const sumaLotes = sumaLotesGuardados + sumaLotesPendientes;
         const stockActual = Number(form.stock_actual ?? 0);
         const disponible = stockActual - sumaLotes;
         const excede = sumaLotes > stockActual;
@@ -978,7 +1003,7 @@ function FormProducto({
               ⚠ Los lotes suman {sumaLotes} pero el stock actual es {stockActual}. Hay {sumaLotes - stockActual} unidades de mas en lotes — elimine o ajuste el stock para que coincida.
             </div>
           )}
-          {lotes.length > 0 ? (
+          {(lotes.length > 0 || lotesPendientes.length > 0) ? (
             <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 8 }}>
               <thead>
                 <tr style={{ textAlign: "left" }}>
@@ -1010,10 +1035,27 @@ function FormProducto({
                     </td>
                   </tr>
                 ))}
+                {/* v2.4.28: lotes a guardar despues del crearProducto */}
+                {lotesPendientes.map((l, idx) => (
+                  <tr key={`pend-${idx}`} style={{ background: "rgba(245, 158, 11, 0.06)" }}>
+                    <td style={{ padding: "4px 8px" }}>{l.lote || "-"} <span style={{ fontSize: 9, color: "var(--color-warning)", marginLeft: 4 }}>(pendiente)</span></td>
+                    <td style={{ padding: "4px 8px" }}>{l.fecha_elaboracion || "-"}</td>
+                    <td style={{ padding: "4px 8px" }}>{l.fecha_caducidad}</td>
+                    <td style={{ padding: "4px 8px" }}>{l.cantidad}</td>
+                    <td style={{ padding: "4px 8px", textAlign: "right" }}>
+                      <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
+                        onClick={() => setLotesPendientes(prev => prev.filter((_, i) => i !== idx))}>
+                        Quitar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           ) : (
-            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 8 }}>No hay lotes registrados.</div>
+            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 8 }}>
+              No hay lotes registrados. {!form.id && "Podés agregar lotes ahora — se guardarán al crear el producto."}
+            </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
             <div>
@@ -1047,6 +1089,21 @@ function FormProducto({
                 }
                 if (cantNum > disponible) {
                   toastError(`Cantidad excede lo disponible (${disponible}). Si recibio mas unidades, registre una compra.`);
+                  return;
+                }
+                // v2.4.28: si el producto aun no se ha guardado, acumulamos en
+                // lotesPendientes — se persisten despues del crearProducto en handleSubmit.
+                if (!form.id) {
+                  setLotesPendientes(prev => [...prev, {
+                    lote: nuevoLote.trim() || null,
+                    fecha_elaboracion: nuevoLoteFechaElab || undefined,
+                    fecha_caducidad: nuevoLoteFecha,
+                    cantidad: cantNum,
+                  }]);
+                  setNuevoLote("");
+                  setNuevoLoteFecha("");
+                  setNuevoLoteCantidad("");
+                  setNuevoLoteFechaElab("");
                   return;
                 }
                 try {

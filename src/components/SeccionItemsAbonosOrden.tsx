@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   stListarItemsOrden, stAgregarItemOrden, stActualizarItemOrden,
   stEliminarItemOrden, stTotalOrden,
-  stListarAbonos, stRecibirAbono,
+  stListarAbonos, stRecibirAbono, stEditarAbono, stEliminarAbono,
   buscarProductos, listarCuentasBanco,
 } from "../services/api";
 import type {
@@ -61,6 +61,13 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
   const [abonoReferencia, setAbonoReferencia] = useState("");
   const [abonoObs, setAbonoObs] = useState("");
   const [bancos, setBancos] = useState<CuentaBanco[]>([]);
+  // v2.4.28: editar abono en HOLDING (corregir typo de monto/forma)
+  const [editandoAbonoId, setEditandoAbonoId] = useState<number | null>(null);
+  const [editAbonoMonto, setEditAbonoMonto] = useState("");
+  const [editAbonoForma, setEditAbonoForma] = useState("EFECTIVO");
+  const [editAbonoBancoId, setEditAbonoBancoId] = useState<number | null>(null);
+  const [editAbonoReferencia, setEditAbonoReferencia] = useState("");
+  const [editAbonoObs, setEditAbonoObs] = useState("");
 
   const totalHolding = useMemo(
     () => abonos.filter(a => a.estado === "HOLDING").reduce((s, a) => s + a.monto, 0),
@@ -409,23 +416,132 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                 a.estado === "HOLDING" ? "var(--color-warning)" :
                 a.estado === "APLICADO" ? "var(--color-success)" :
                 "var(--color-text-secondary)";
+              const editandoEste = editandoAbonoId === a.id;
               return (
                 <div key={a.id}
-                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 6px", borderBottom: "1px solid var(--color-border)" }}>
-                  <div>
-                    <strong style={{ color: colorEstado }}>${a.monto.toFixed(2)}</strong>
-                    {" · "}
-                    <span style={{ color: "var(--color-text-secondary)" }}>{a.forma_pago}</span>
-                    {a.banco_nombre && <span style={{ color: "var(--color-text-secondary)" }}> · {a.banco_nombre}</span>}
-                    {a.referencia_pago && <span style={{ color: "var(--color-text-secondary)" }}> · ref: {a.referencia_pago}</span>}
-                    {a.observacion && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.observacion}</div>}
+                  style={{ padding: "4px 6px", borderBottom: "1px solid var(--color-border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <strong style={{ color: colorEstado }}>${a.monto.toFixed(2)}</strong>
+                      {" · "}
+                      <span style={{ color: "var(--color-text-secondary)" }}>{a.forma_pago}</span>
+                      {a.banco_nombre && <span style={{ color: "var(--color-text-secondary)" }}> · {a.banco_nombre}</span>}
+                      {a.referencia_pago && <span style={{ color: "var(--color-text-secondary)" }}> · ref: {a.referencia_pago}</span>}
+                      {a.observacion && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.observacion}</div>}
+                    </div>
+                    <div style={{ textAlign: "right", display: "flex", gap: 4, alignItems: "center" }}>
+                      {/* v2.4.28: editar/eliminar solo para HOLDING. APLICADO/DEVUELTO inmutables */}
+                      {a.estado === "HOLDING" && editable && !editandoEste && (
+                        <>
+                          <button type="button"
+                            onClick={() => {
+                              setEditandoAbonoId(a.id || null);
+                              setEditAbonoMonto(a.monto.toString());
+                              setEditAbonoForma(a.forma_pago);
+                              setEditAbonoBancoId(a.banco_id ?? null);
+                              setEditAbonoReferencia(a.referencia_pago || "");
+                              setEditAbonoObs(a.observacion || "");
+                            }}
+                            style={{ fontSize: 10, padding: "2px 6px", border: "1px solid var(--color-border)", borderRadius: 4, background: "transparent", cursor: "pointer", color: "var(--color-text)" }}
+                            title="Editar abono (solo HOLDING)">
+                            ✏
+                          </button>
+                          <button type="button"
+                            onClick={async () => {
+                              if (!a.id) return;
+                              if (!confirm(`¿Eliminar este abono de $${a.monto.toFixed(2)}? Esta acción no se puede deshacer.`)) return;
+                              try {
+                                await stEliminarAbono(a.id);
+                                toastExito("Abono eliminado");
+                                await recargar();
+                              } catch (err) { toastError("Error: " + err); }
+                            }}
+                            style={{ fontSize: 10, padding: "2px 6px", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 4, background: "transparent", cursor: "pointer", color: "var(--color-danger)" }}
+                            title="Eliminar abono (solo HOLDING)">
+                            🗑
+                          </button>
+                        </>
+                      )}
+                      <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: colorEstado, color: "#fff" }}>
+                        {a.estado}
+                      </span>
+                      <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.fecha?.slice(0, 16)}</div>
+                    </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: colorEstado, color: "#fff" }}>
-                      {a.estado}
-                    </span>
-                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.fecha?.slice(0, 16)}</div>
-                  </div>
+                  {/* v2.4.28: form de edicion inline */}
+                  {editandoEste && (
+                    <div style={{ marginTop: 6, padding: 8, background: "rgba(245, 158, 11, 0.06)", borderRadius: 6, border: "1px solid rgba(245, 158, 11, 0.3)" }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, marginBottom: 6, color: "var(--color-warning)" }}>
+                        Editando abono — solo HOLDING puede modificarse
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                        <div>
+                          <label style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>Monto</label>
+                          <input type="number" step="0.01" className="input"
+                            value={editAbonoMonto}
+                            onChange={(e) => setEditAbonoMonto(e.target.value)}
+                            style={{ fontSize: 11 }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>Forma de pago</label>
+                          <select className="input"
+                            value={editAbonoForma}
+                            onChange={(e) => {
+                              setEditAbonoForma(e.target.value);
+                              if (e.target.value !== "TRANSFER") {
+                                setEditAbonoBancoId(null);
+                                setEditAbonoReferencia("");
+                              }
+                            }}
+                            style={{ fontSize: 11 }}>
+                            {FORMAS_PAGO_ABONO.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                      {editAbonoForma === "TRANSFER" && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                          <select className="input"
+                            value={editAbonoBancoId || ""}
+                            onChange={(e) => setEditAbonoBancoId(e.target.value ? parseInt(e.target.value) : null)}
+                            style={{ fontSize: 11 }}>
+                            <option value="">— Banco —</option>
+                            {bancos.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                          </select>
+                          <input className="input" placeholder="Referencia"
+                            value={editAbonoReferencia}
+                            onChange={(e) => setEditAbonoReferencia(e.target.value)}
+                            style={{ fontSize: 11 }} />
+                        </div>
+                      )}
+                      <input className="input" placeholder="Observación (opcional)"
+                        value={editAbonoObs}
+                        onChange={(e) => setEditAbonoObs(e.target.value)}
+                        style={{ fontSize: 11, marginBottom: 6 }} />
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button type="button" className="btn btn-success" style={{ fontSize: 11, flex: 1 }}
+                          onClick={async () => {
+                            if (!a.id) return;
+                            const m = parseFloat(editAbonoMonto);
+                            if (isNaN(m) || m <= 0) { toastError("Monto inválido"); return; }
+                            try {
+                              await stEditarAbono(a.id, m, editAbonoForma,
+                                editAbonoForma === "TRANSFER" ? editAbonoBancoId : null,
+                                editAbonoForma === "TRANSFER" ? (editAbonoReferencia || null) : null,
+                                editAbonoObs || null);
+                              toastExito("Abono actualizado");
+                              setEditandoAbonoId(null);
+                              await recargar();
+                            } catch (err) { toastError("Error: " + err); }
+                          }}>
+                          Guardar cambios
+                        </button>
+                        <button type="button" className="btn btn-outline" style={{ fontSize: 11 }}
+                          onClick={() => setEditandoAbonoId(null)}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

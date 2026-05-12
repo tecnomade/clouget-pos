@@ -426,30 +426,36 @@ export default function ServicioTecnicoPage() {
           </select>
         </div>
 
-        {/* Kanban */}
+        {/* Kanban — v2.4.28: minmax(180px, 1fr) para que respete min-width y haga scroll horizontal cuando no entra. */}
         {vista === "kanban" && (
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${ESTADOS.length}, 1fr)`, gap: 8, overflowX: "auto" }}>
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${ESTADOS.length}, minmax(180px, 1fr))`,
+            gap: 6,
+            overflowX: "auto",
+            paddingBottom: 6, // espacio para la scrollbar
+          }}>
             {ESTADOS.map(estado => (
-              <div key={estado} style={{ minWidth: 200 }}>
-                <div style={{ background: ESTADOS_COLORS[estado], color: "#fff", padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, textAlign: "center", marginBottom: 6 }}>
+              <div key={estado} style={{ minWidth: 0 /* permite que el grid item shrinque correctamente */ }}>
+                <div style={{ background: ESTADOS_COLORS[estado], color: "#fff", padding: "6px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, textAlign: "center", marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {estado.replace(/_/g, " ")} ({ordenesPorEstado[estado]?.length || 0})
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {(ordenesPorEstado[estado] || []).map(o => {
                     const tipo = TIPOS_EQUIPO.find(t => t.value === o.tipo_equipo) || TIPOS_EQUIPO[0];
                     return (
-                      <div key={o.id} className="card" style={{ padding: 8, cursor: "pointer", fontSize: 11 }}
+                      <div key={o.id} className="card" style={{ padding: 8, cursor: "pointer", fontSize: 11, minWidth: 0, overflow: "hidden" }}
                         onClick={() => abrirDetalle(o.id!)}>
-                        <div style={{ fontWeight: 700, color: "var(--color-primary)" }}>{o.numero}</div>
+                        <div style={{ fontWeight: 700, color: "var(--color-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{o.numero}</div>
                         <div style={{ fontSize: 11, marginTop: 2 }}>
                           <span style={{ background: tipo.color, color: "#fff", padding: "1px 5px", borderRadius: 3, fontSize: 9, marginRight: 4 }}>
                             {tipo.icon} {tipo.label}
                           </span>
                         </div>
-                        <div style={{ fontWeight: 600, marginTop: 4 }}>{o.equipo_descripcion}</div>
-                        <div style={{ color: "var(--color-text-secondary)" }}>{o.cliente_nombre || "-"}</div>
-                        {o.tecnico_nombre && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>👤 {o.tecnico_nombre}</div>}
-                        {o.fecha_promesa && <div style={{ fontSize: 10, color: "var(--color-warning)" }}>⏰ {o.fecha_promesa}</div>}
+                        <div style={{ fontWeight: 600, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={o.equipo_descripcion}>{o.equipo_descripcion}</div>
+                        <div style={{ color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={o.cliente_nombre || ""}>{o.cliente_nombre || "-"}</div>
+                        {o.tecnico_nombre && <div style={{ fontSize: 10, color: "var(--color-text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={o.tecnico_nombre}>👤 {o.tecnico_nombre}</div>}
+                        {o.fecha_promesa && <div style={{ fontSize: 10, color: "var(--color-warning)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>⏰ {o.fecha_promesa}</div>}
                       </div>
                     );
                   })}

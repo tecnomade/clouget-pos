@@ -1602,6 +1602,23 @@ export interface HoldingCaja {
 }
 export const stListarAbonos = (ordenId: number) =>
   smartInvoke<AbonoServicio[]>("st_listar_abonos", { ordenId });
+/** v2.4.28: abonos APLICADOS a una venta (para mostrar en detalle de venta) */
+export const stAbonosPorVenta = (ventaId: number) =>
+  smartInvoke<AbonoServicio[]>("st_abonos_por_venta", { ventaId });
+/** v2.4.28: editar abono en HOLDING (corregir typo). Solo HOLDING puede editarse. */
+export const stEditarAbono = (
+  abonoId: number,
+  monto: number,
+  formaPago?: string,
+  bancoId?: number | null,
+  referenciaPago?: string | null,
+  observacion?: string | null,
+) => smartInvoke<void>("st_editar_abono", {
+  abonoId, monto, formaPago, bancoId, referenciaPago, observacion,
+});
+/** v2.4.28: eliminar abono en HOLDING (registro erroneo). Solo HOLDING puede eliminarse. */
+export const stEliminarAbono = (abonoId: number) =>
+  smartInvoke<void>("st_eliminar_abono", { abonoId });
 export const stRecibirAbono = (
   ordenId: number,
   monto: number,
