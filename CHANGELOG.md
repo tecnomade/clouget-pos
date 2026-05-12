@@ -6,6 +6,53 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.0 — 2026-05-12 🗂 Pestañas internas (multi-vista)
+
+Cambio mayor de UX: ahora podés tener varias páginas abiertas a la vez, como en un navegador. Estás armando una venta en POS, alguien te pregunta por stock, vas a Productos, volvés al POS y **el carrito sigue ahí**. Sin perder lo que estabas haciendo.
+
+### 🗂 Cómo funciona
+
+- Cada página que abrís se vuelve una **pestaña** en la barra superior
+- Click en otra del sidebar → se abre como nueva pestaña (o se activa si ya estaba)
+- **Una pestaña por ruta** (no se duplican — clic en el mismo ítem activa la existente)
+- **Inicio** es pestaña fija (no se puede cerrar)
+- **X** en cada pestaña para cerrar (o **clic con rueda del mouse**, estilo navegador)
+- Cerrar la pestaña activa → activa la anterior automáticamente
+- Las pestañas **persisten al recargar la app** (sessionStorage), no entre cierres totales
+
+### ⚙ Reglas de seguridad
+
+- **Máximo 8 pestañas** abiertas (si pasás el límite, reemplaza la más vieja no-activa)
+- Cada usuario tiene **su propio set de pestañas** (no se mezclan entre cajeros que comparten PC)
+- Páginas sin permiso para el rol no se pueden abrir como pestaña (redirige a Inicio)
+- **Atajos F1-F10** siguen funcionando: abren la pestaña correspondiente o la activan
+- **State preservado**: usamos `display: none` para ocultar pestañas inactivas → carrito, formularios a medio llenar, filtros, scroll position, modales abiertos — todo queda intacto
+
+### 🔌 Toggle on/off
+
+Si por alguna razón el sistema de pestañas te causa problemas (rendimiento, comportamiento raro), podés desactivarlo en **Configuración → Pestañas internas (multi-vista)**. El sistema vuelve al modo clásico de una página a la vez. Recargá la app después de cambiar el toggle.
+
+### ⚠ ¿Por qué NO se pueden duplicar pestañas?
+
+Decisión deliberada de diseño profesional. Comparado con Square, Lightspeed Retail, Toast, Loyverse y Vend — **ninguno** permite duplicar la pantalla de venta porque genera bugs:
+
+- 2 carritos POS abiertos → cajero se confunde y agrega productos al cliente equivocado
+- 2 Cajas abiertas → registrás un retiro en una y la otra no lo sabe → cierre descuadrado
+- 2 Configuraciones → cambios pisándose
+
+Para "atender 2 clientes a la vez" en POS, ya tenés el sistema de **borradores** (guardar carrito y abrirlo después). Esa es la solución correcta para ese caso.
+
+### 🏗 Arquitectura técnica (para futuras referencias)
+
+- **`TabsContext`** — manejo del estado de tabs
+- **`TabsContainer`** — renderiza TODAS las tabs montadas, oculta inactivas con display:none
+- **`TabBar`** — barra horizontal con tabs (estilo navegador)
+- **`PageRenderer`** — switch path → componente
+- Sincronización **bidireccional** URL ↔ active tab (browser back/forward funciona)
+- Storage scope por `usuario_id` (sessionStorage)
+
+---
+
 ## v2.4.29 — 2026-05-12 📋 Cotización antes de cobrar (orden ST)
 
 Antes el cliente que pedía cotización antes de aprobar el trabajo no tenía un PDF formal — solo el presupuesto numérico en el formulario. Ahora hay un botón **"📋 Cotizar"** en el detalle de la orden ST (junto al botón Cobrar) que genera un PDF de cotización con:

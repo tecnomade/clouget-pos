@@ -265,6 +265,30 @@ export default function Configuracion() {
                     </label>
                   );
                 })()}
+                {/* v2.5.0: toggle de pestañas internas (multi-vista) */}
+                <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={(config.tabs_enabled ?? "1") !== "0"}
+                    onChange={(e) => {
+                      const v = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, tabs_enabled: v });
+                      guardarConfig({ tabs_enabled: v });
+                      toastExito(e.target.checked
+                        ? "Pestañas activadas. Recarga la app (Ctrl+R) para aplicar."
+                        : "Pestañas desactivadas. Recarga la app (Ctrl+R) para aplicar.");
+                    }}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>🗂 Pestañas internas (multi-vista)</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Permite tener varias páginas abiertas a la vez sin perder lo que estás haciendo
+                      (carrito, formularios, filtros). Si tenés problemas de rendimiento o algo no funciona,
+                      podés desactivarlo y volver a la navegación clásica de una sola página a la vez.
+                    </div>
+                  </div>
+                </label>
                 {/* Sesion persistente entre reinicios */}
                 <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
                   <input type="checkbox" checked={config.sesion_persistente === "1"}

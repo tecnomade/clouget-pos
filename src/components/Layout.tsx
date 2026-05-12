@@ -1,8 +1,11 @@
-import { useState, useEffect, useMemo } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useKeyboardShortcuts, SHORTCUTS_LIST } from "../hooks/useKeyboardShortcuts";
 import { useSesion } from "../contexts/SesionContext";
 import { useDemo } from "../contexts/DemoContext";
+import { useTabs } from "../contexts/TabsContext";
+import { getTabMetadata } from "../config/tabsRegistry";
+import TabBar from "./TabBar";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 import logoClouget from "../assets/logo-clouget.png";
@@ -66,10 +69,25 @@ const headerNavItems = [
   { path: "/config", icon: Gear, title: "Configuración (F6)", label: "", todos: false },
 ];
 
-export default function Layout() {
+export default function Layout({ children }: { children?: ReactNode }) {
   const { sesion, cerrarSesion, esAdmin, tienePermiso } = useSesion();
   const { esDemo, salirDemo } = useDemo();
+  const { enabled: tabsEnabled, openOrSwitch } = useTabs();
+  const navigate = useNavigate();
   useKeyboardShortcuts(sesion?.rol);
+
+  /** v2.5.0: handler que reemplaza la navegación normal con openOrSwitch.
+   *  Si tabs deshabilitadas, hace navigate normal (sin abrir tab). */
+  const handleNavClick = (e: React.MouseEvent, path: string) => {
+    if (!tabsEnabled) return; // dejar que NavLink navegue normalmente
+    e.preventDefault();
+    const meta = getTabMetadata(path);
+    if (meta) {
+      openOrSwitch({ path, ...meta });
+    } else {
+      navigate(path);
+    }
+  };
   const [mostrarAyuda, setMostrarAyuda] = useState(false);
   const [saliendoDemo, setSaliendoDemo] = useState(false);
   const [moduloSeriesActivo, setModuloSeriesActivo] = useState(false);
@@ -180,6 +198,7 @@ export default function Layout() {
       <header className="top-header">
         <NavLink
           to="/"
+          onClick={(e) => handleNavClick(e, "/")}
           className="top-header-logo"
           style={{
             textDecoration: "none",
@@ -240,7 +259,7 @@ export default function Layout() {
           {/* Nav items del header: Caja, Config */}
           <div style={{ display: "flex", gap: 4, marginRight: 8, paddingRight: 12, borderRight: "1px solid rgba(255,255,255,0.1)" }}>
             {enPOS && (
-              <NavLink to="/" style={{ padding: "4px 12px", borderRadius: 6, textDecoration: "none", color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 4, border: "1px solid rgba(255,255,255,0.08)" }}
+              <NavLink to="/" onClick={(e) => handleNavClick(e, "/")} style={{ padding: "4px 12px", borderRadius: 6, textDecoration: "none", color: "rgba(255,255,255,0.7)", display: "flex", alignItems: "center", gap: 4, border: "1px solid rgba(255,255,255,0.08)" }}
                 title="Inicio">
                 <House size={18} />
               </NavLink>
@@ -251,6 +270,7 @@ export default function Layout() {
                 <NavLink
                   key={item.path}
                   to={item.path}
+                  onClick={(e) => handleNavClick(e, item.path)}
                   className={({ isActive }) => (isActive ? "active" : "")}
                   style={({ isActive }) => ({
                     padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
@@ -426,6 +446,7 @@ export default function Layout() {
                       key={item.path}
                       to={item.path}
                       end={item.path === "/"}
+                      onClick={(e) => handleNavClick(e, item.path)}
                       title={labelCompleto}
                       onMouseEnter={(e) => {
                         if (sidebarExpandido) return; // sin tooltip si ya hay label visible
@@ -542,9 +563,13 @@ export default function Layout() {
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="main-content">
-        <Outlet />
+      {/* Main Content — v2.5.0: TabBar arriba (solo si hay >1 tab abierta) + children
+          (que ahora es TabsContainer con TODAS las tabs abiertas, una visible). */}
+      <main className="main-content" style={{ display: "flex", flexDirection: "column" }}>
+        <TabBar />
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {children}
+        </div>
       </main>
 
       {/* Modal de atajos de teclado */}

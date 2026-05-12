@@ -1,35 +1,16 @@
 import React, { useState, useEffect } from "react";
 import ReactDOM from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { SesionProvider, useSesion } from "./contexts/SesionContext";
 import { DemoProvider } from "./contexts/DemoContext";
+import { TabsProvider } from "./contexts/TabsContext";
 import Layout from "./components/Layout";
-import DashboardPage from "./pages/DashboardPage";
-import PuntoVenta from "./pages/PuntoVenta";
-import Productos from "./pages/Productos";
-import Clientes from "./pages/Clientes";
-import VentasDia from "./pages/VentasDia";
-import CajaPage from "./pages/CajaPage";
-import GastosPage from "./pages/GastosPage";
-import CuentasPage from "./pages/CuentasPage";
-import Configuracion from "./pages/Configuracion";
-import InventarioPage from "./pages/InventarioPage";
-import GuiasRemisionPage from "./pages/GuiasRemisionPage";
-import ReportesPage from "./pages/ReportesPage";
-import ComprasPage from "./pages/ComprasPage";
-import PagarPage from "./pages/PagarPage";
-import MovimientosBancariosPage from "./pages/MovimientosBancariosPage";
-import SeriesPage from "./pages/SeriesPage";
-import CaducidadPage from "./pages/CaducidadPage";
-import ServicioTecnicoPage from "./pages/ServicioTecnicoPage";
+import TabsContainer from "./components/TabsContainer";
 import LicenciaPage from "./pages/LicenciaPage";
 import LoginPage from "./pages/LoginPage";
-// Módulo Restaurante (gated por FEATURES.restaurante en branding.ts y por licencia.modulos)
-import MesasPage from "./restaurante/pages/MesasPage";
-import CocinaPage from "./restaurante/pages/CocinaPage";
-import ConfigMesasPage from "./restaurante/pages/ConfigMesasPage";
 import { FEATURES } from "./config/branding";
+import { getTabMetadata } from "./config/tabsRegistry";
 import { obtenerEstadoLicencia, obtenerSesionActual, obtenerConfig, configurarModoRed } from "./services/api";
 import { iniciarSyncService, sincronizarCacheProductos, reservarSecuenciales } from "./services/offlineSync";
 import ConnectionStatus from "./components/ConnectionStatus";
@@ -53,6 +34,8 @@ document.addEventListener("focusin", (e) => {
 function AppGate() {
   const [licencia, setLicencia] = useState<LicenciaInfo | null>(null);
   const [verificando, setVerificando] = useState(true);
+  // v2.5.0: feature flag de tabs (toggle en Configuración)
+  const [tabsEnabled, setTabsEnabled] = useState<boolean>(true);
   const { sesion, setSesion, esAdmin, tienePermiso } = useSesion();
 
   useEffect(() => {
@@ -85,10 +68,12 @@ function AppGate() {
       }
     }).catch(() => {}).finally(() => {
       // Luego verificar licencia y sesion
-      Promise.all([obtenerEstadoLicencia(), obtenerSesionActual()])
-        .then(([lic, ses]) => {
+      Promise.all([obtenerEstadoLicencia(), obtenerSesionActual(), obtenerConfig()])
+        .then(([lic, ses, cfg]) => {
           setLicencia(lic);
           if (ses) setSesion(ses);
+          // v2.5.0: leer toggle de tabs (default ON, valor "0" lo desactiva)
+          setTabsEnabled((cfg.tabs_enabled ?? "1") !== "0");
           setVerificando(false);
         })
         .catch(() => {
@@ -126,75 +111,61 @@ function AppGate() {
     return <LoginPage onLogin={(s) => setSesion(s)} esDemo={licencia.tipo === "demo"} />;
   }
 
+  // v2.5.0: función que valida si un path es accesible para la sesión actual.
+  // Replica la lógica de los <Route> con permisos del flujo viejo.
+  const canAccessPath = (path: string): boolean => {
+    // Rutas accesibles para todos los roles
+    const todos = ["/", "/pos", "/caja", "/ventas", "/cuentas"];
+    if (todos.includes(path)) return true;
+    // Rutas con permiso (admin bypassa)
+    const reglas: Record<string, string[]> = {
+      "/productos":             ["gestionar_productos"],
+      "/clientes":              ["gestionar_clientes"],
+      "/guias":                 ["ver_guias"],
+      "/gastos":                ["gestionar_gastos"],
+      "/compras":               ["gestionar_compras"],
+      "/pagar":                 ["gestionar_compras"],
+      "/movimientos-bancarios": ["ver_movimientos_bancarios"],
+      "/inventario":            ["gestionar_inventario"],
+      "/series":                ["gestionar_inventario"],
+      "/caducidad":             ["gestionar_inventario"],
+      "/servicio-tecnico":      ["gestionar_servicio_tecnico", "ver_servicio_tecnico"],
+      "/reportes":              ["ver_reportes"],
+    };
+    if (reglas[path]) {
+      if (esAdmin) return true;
+      return reglas[path].some(p => tienePermiso(p));
+    }
+    // Restaurante: solo si build + licencia
+    if (path === "/mesas" || path === "/cocina") {
+      return FEATURES.restaurante && hasModulo(licencia, "restaurante");
+    }
+    if (path === "/config-mesas") {
+      return esAdmin && FEATURES.restaurante && hasModulo(licencia, "restaurante");
+    }
+    // Configuración: solo admin
+    if (path === "/config") return esAdmin;
+    return false;
+  };
+
   return (
     <DemoProvider>
       {/* key={sesion.usuario_id} fuerza remount al cambiar de usuario:
           asi se resetea el historial de navegacion y todos los estados de pagina,
-          evitando que un cajero quede atorado en una ruta que solo ve admin (ej. /config). */}
+          evitando que un cajero quede atorado en una ruta que solo ve admin. */}
       <BrowserRouter key={sesion.usuario_id}>
-        <Routes>
-          <Route element={<Layout />}>
-            {/* Rutas disponibles para todos los roles */}
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/pos" element={<PuntoVenta />} />
-            <Route path="/caja" element={<CajaPage />} />
-            <Route path="/ventas" element={<VentasDia />} />
-            <Route path="/cuentas" element={<CuentasPage />} />
-            {/* Rutas con permisos: cada una se renderiza si es admin O tiene el permiso correspondiente.
-                Si el usuario no califica, el catch-all del final lo redirige al dashboard. */}
-            {(esAdmin || tienePermiso("gestionar_productos")) && (
-              <Route path="/productos" element={<Productos />} />
-            )}
-            {(esAdmin || tienePermiso("gestionar_clientes")) && (
-              <Route path="/clientes" element={<Clientes />} />
-            )}
-            {(esAdmin || tienePermiso("ver_guias")) && (
-              <Route path="/guias" element={<GuiasRemisionPage />} />
-            )}
-            {(esAdmin || tienePermiso("gestionar_gastos")) && (
-              <Route path="/gastos" element={<GastosPage />} />
-            )}
-            {(esAdmin || tienePermiso("gestionar_compras")) && (
-              <>
-                <Route path="/compras" element={<ComprasPage />} />
-                <Route path="/pagar" element={<PagarPage />} />
-              </>
-            )}
-            {(esAdmin || tienePermiso("ver_movimientos_bancarios")) && (
-              <Route path="/movimientos-bancarios" element={<MovimientosBancariosPage />} />
-            )}
-            {(esAdmin || tienePermiso("gestionar_inventario")) && (
-              <>
-                <Route path="/inventario" element={<InventarioPage />} />
-                <Route path="/series" element={<SeriesPage />} />
-                <Route path="/caducidad" element={<CaducidadPage />} />
-              </>
-            )}
-            {(esAdmin || tienePermiso("gestionar_servicio_tecnico") || tienePermiso("ver_servicio_tecnico")) && (
-              <Route path="/servicio-tecnico" element={<ServicioTecnicoPage />} />
-            )}
-            {(esAdmin || tienePermiso("ver_reportes")) && (
-              <Route path="/reportes" element={<ReportesPage />} />
-            )}
-            {/* Módulo Restaurante: rutas solo si build incluye feature Y licencia tiene módulo.
-                Layout filtrará el nav item con la misma lógica. Si el cliente no tiene módulo,
-                las rutas igual existen (catch-all redirige al dashboard). */}
-            {FEATURES.restaurante && hasModulo(licencia, "restaurante") && (
-              <>
-                <Route path="/mesas" element={<MesasPage />} />
-                <Route path="/cocina" element={<CocinaPage />} />
-                {esAdmin && <Route path="/config-mesas" element={<ConfigMesasPage />} />}
-              </>
-            )}
-            {/* Configuración: solo admin */}
-            {esAdmin && (
-              <Route path="/config" element={<Configuracion />} />
-            )}
-            {/* Catch-all: cualquier ruta no encontrada (ej. cajero accede a /config admin)
-                redirige al dashboard. Evita pantallas en blanco por rutas no autorizadas. */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
+        {/* v2.5.0: TabsProvider envuelve toda la app. Si tabsEnabled=false, actúa
+            como pass-through (modo clásico single-page). scope=usuario_id para
+            que cada user tenga su propio set de tabs (no se filtran tabs entre
+            cajeros que comparten la misma PC). */}
+        <TabsProvider enabled={tabsEnabled} scope={sesion.usuario_id}>
+          <Layout>
+            <TabsContainer
+              canAccessPath={canAccessPath}
+              resolveMetadata={(p) => getTabMetadata(p)}
+            />
+          </Layout>
+        </TabsProvider>
       </BrowserRouter>
       <ConnectionStatus />
     </DemoProvider>
