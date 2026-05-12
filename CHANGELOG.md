@@ -6,6 +6,18 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.1 — 2026-05-12 📦 Stock visible en buscador de productos del taller
+
+En el detalle de la orden ST, al buscar un producto para agregarlo como item presupuestado, ahora se muestra **el stock actual** junto al precio. Color del badge:
+
+- 🟢 Verde — stock disponible
+- 🟡 Amarillo — stock bajo (al o por debajo del mínimo)
+- 🔴 Rojo — sin stock (0 o negativo)
+
+Esto evita prometerle al cliente un repuesto que después no hay en bodega.
+
+---
+
 ## v2.5.0 — 2026-05-12 🗂 Pestañas internas (multi-vista)
 
 Cambio mayor de UX: ahora podés tener varias páginas abiertas a la vez, como en un navegador. Estás armando una venta en POS, alguien te pregunta por stock, vas a Productos, volvés al POS y **el carrito sigue ahí**. Sin perder lo que estabas haciendo.

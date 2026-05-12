@@ -296,16 +296,37 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                 </div>
                 {resultadosProducto.length > 0 && (
                   <div style={{ marginTop: 4, border: "1px solid var(--color-border)", borderRadius: 6, maxHeight: 180, overflowY: "auto", background: "var(--color-surface)" }}>
-                    {resultadosProducto.map(p => (
-                      <div key={p.id}
-                        onClick={() => handleAgregarProducto(p)}
-                        style={{ padding: "6px 8px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--color-border)", display: "flex", justifyContent: "space-between" }}
-                        onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-surface-alt)"}
-                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
-                        <span>{p.nombre} {p.codigo ? <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>· {p.codigo}</span> : null}</span>
-                        <span style={{ fontWeight: 600 }}>${p.precio_venta.toFixed(2)}</span>
-                      </div>
-                    ))}
+                    {resultadosProducto.map(p => {
+                      // v2.5.1: mostrar stock disponible. Color rojo si <=0, amarillo si bajo
+                      // (≤ stock_minimo), verde si OK. Si es servicio (precio_costo===-1 indicador
+                      // o stock 0 sin minimo), mostrar "—" en lugar de cantidad.
+                      const stock = p.stock_actual ?? 0;
+                      const minimo = p.stock_minimo ?? 0;
+                      const sinStock = stock <= 0;
+                      const stockBajo = !sinStock && minimo > 0 && stock <= minimo;
+                      const stockColor = sinStock
+                        ? "var(--color-danger)"
+                        : stockBajo
+                          ? "var(--color-warning)"
+                          : "var(--color-success)";
+                      return (
+                        <div key={p.id}
+                          onClick={() => handleAgregarProducto(p)}
+                          style={{ padding: "6px 8px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--color-border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "var(--color-surface-alt)"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {p.nombre}
+                            {p.codigo ? <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}> · {p.codigo}</span> : null}
+                          </span>
+                          <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 10, background: `${stockColor}20`, color: stockColor, fontWeight: 600, whiteSpace: "nowrap" }}
+                            title={sinStock ? "Sin stock" : stockBajo ? `Stock bajo (mínimo: ${minimo})` : "Stock disponible"}>
+                            📦 {stock}
+                          </span>
+                          <span style={{ fontWeight: 600, minWidth: 50, textAlign: "right" }}>${p.precio_venta.toFixed(2)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </>
