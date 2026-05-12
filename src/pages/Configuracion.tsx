@@ -375,6 +375,28 @@ export default function Configuracion() {
                     </div>
                   </div>
                 )}
+                {/* v2.4.29: dias de validez de cotizaciones generadas */}
+                {config.modulo_servicio_tecnico === "1" && (
+                  <div style={{ padding: "10px 12px", marginLeft: 24, marginTop: 8, background: "var(--color-surface-alt)", borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600 }}>📅 Validez de cotización (días):</label>
+                    <input
+                      type="number"
+                      min={1}
+                      className="input"
+                      style={{ width: 100, fontSize: 12 }}
+                      placeholder="30"
+                      value={config.st_cotizacion_validez_dias || ""}
+                      onChange={(e) => setConfig({ ...config, st_cotizacion_validez_dias: e.target.value })}
+                      onBlur={(e) => {
+                        const v = e.target.value || "30";
+                        guardarConfig({ st_cotizacion_validez_dias: v });
+                        toastExito("Validez actualizada");
+                      }} />
+                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Default 30 días. Aparece en el PDF como "Cotización válida por N días".
+                    </span>
+                  </div>
+                )}
                 {/* v2.4.27: lista de accesorios comunes pre-seleccionables al crear orden */}
                 {config.modulo_servicio_tecnico === "1" && (
                   <div style={{ padding: "10px 12px", marginLeft: 24, marginTop: 8, background: "var(--color-surface-alt)", borderRadius: 8 }}>

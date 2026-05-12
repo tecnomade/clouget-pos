@@ -1518,6 +1518,9 @@ export const cobrarOrdenServicio = (
   });
 export const imprimirOrdenServicioPdf = (ordenId: number, formato: "A4" | "TICKET_80" = "A4") =>
   smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId, formato });
+/** v2.4.29: genera PDF de COTIZACION (no afecta inventario, no genera venta) */
+export const imprimirCotizacionPdf = (ordenId: number, formato: "A4" | "TICKET_80" = "A4") =>
+  smartInvoke<string>("imprimir_orden_servicio_pdf", { ordenId, formato, tipo: "COTIZACION" });
 
 // === ST-5: Items presupuestados de la orden ===
 export interface ItemOrden {

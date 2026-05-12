@@ -1155,6 +1155,19 @@ export default function ServicioTecnicoPage() {
                   📄 Imprimir
                 </button>
               </div>
+              {/* v2.4.29: cotizacion (solo en estados pre-cobro). No afecta inventario, no genera venta. */}
+              {detalle.estado !== "ENTREGADO" && detalle.estado !== "ENTREGADO_PARCIAL" && detalle.estado !== "CANCELADA" && detalle.estado !== "CANCELADO" && (
+                <button className="btn btn-outline"
+                  title="Generar PDF de cotización con los items presupuestados (no afecta stock ni genera venta)"
+                  onClick={async () => {
+                    try {
+                      const { imprimirCotizacionPdf } = await import("../services/api");
+                      await imprimirCotizacionPdf(detalleId!, formatoImpresion);
+                    } catch (err) { toastError("" + err); }
+                  }}>
+                  📋 Cotizar
+                </button>
+              )}
               {detalle.estado !== "ENTREGADO" && detalle.estado !== "CANCELADA" && detalle.estado !== "CANCELADO" && (
                 <button className="btn btn-success" onClick={() => {
                   setMostrarCobrar(true);

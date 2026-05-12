@@ -687,9 +687,15 @@ pub fn imprimir_orden_servicio_pdf(
     db: State<Database>,
     orden_id: i64,
     formato: Option<String>,
+    // v2.4.29: tipo de documento: "ORDEN" (default, comportamiento clasico) | "COTIZACION"
+    // Cotizacion = lista items presupuestados + texto de validez, sin abonos/pagos/garantia.
+    tipo: Option<String>,
 ) -> Result<String, String> {
     requiere_modulo_servicio_tecnico(&db)?;
     use genpdf::{elements::*, fonts, style::*, Alignment, Margins, Document, Element, SimplePageDecorator};
+
+    let tipo_doc = tipo.unwrap_or_else(|| "ORDEN".to_string()).to_uppercase();
+    let es_cotizacion = tipo_doc == "COTIZACION";
 
     // v2.4.12 ST-4: formato configurable. Default A4 (compatibilidad con clientes
     // que no actualicen el frontend). Opciones: "A4" | "TICKET_80"
@@ -866,9 +872,14 @@ pub fn imprimir_orden_servicio_pdf(
     if !telefono.is_empty() { doc.push(Paragraph::new(&format!("Tel: {}", telefono)).aligned(Alignment::Center).styled(normal_st)); }
     doc.push(Break::new(1));
 
-    doc.push(Paragraph::new("ORDEN DE SERVICIO TÉCNICO").aligned(Alignment::Center).styled(header_st));
-    doc.push(Paragraph::new(&format!("No: {}    Fecha: {}", numero, fecha_ingreso)).aligned(Alignment::Center).styled(normal_st));
-    doc.push(Paragraph::new(&format!("Estado: {}", estado)).aligned(Alignment::Center).styled(normal_st));
+    // v2.4.29: titulo cambia segun tipo (orden vs cotizacion)
+    let titulo_doc = if es_cotizacion { "COTIZACIÓN" } else { "ORDEN DE SERVICIO TÉCNICO" };
+    doc.push(Paragraph::new(titulo_doc).aligned(Alignment::Center).styled(header_st));
+    let numero_doc = if es_cotizacion { format!("COT-{}", numero.trim_start_matches("OT-").trim_start_matches("OS-")) } else { numero.clone() };
+    doc.push(Paragraph::new(&format!("No: {}    Fecha: {}", numero_doc, fecha_ingreso)).aligned(Alignment::Center).styled(normal_st));
+    if !es_cotizacion {
+        doc.push(Paragraph::new(&format!("Estado: {}", estado)).aligned(Alignment::Center).styled(normal_st));
+    }
     doc.push(Break::new(1));
 
     doc.push(Paragraph::new("CLIENTE").styled(header_st));
@@ -918,14 +929,57 @@ pub fn imprimir_orden_servicio_pdf(
         doc.push(Break::new(0.5));
     }
 
-    if presupuesto > 0.0 || monto_final > 0.0 {
+    // v2.4.29: en COTIZACION, listamos los items presupuestados con precios.
+    // Esto da al cliente el detalle de qué se le va a cobrar antes de aprobar el trabajo.
+    if es_cotizacion {
+        let items_cot: Vec<(String, f64, f64, f64)> = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            let mut stmt = match conn.prepare(
+                "SELECT descripcion, cantidad, precio_unitario, iva_porcentaje
+                 FROM orden_servicio_items WHERE orden_id = ?1 ORDER BY id ASC"
+            ) {
+                Ok(s) => s,
+                Err(_) => return Err("Error preparando query items".to_string()),
+            };
+            let rows = stmt.query_map(rusqlite::params![orden_id], |r| Ok((
+                r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, f64>(3)?,
+            ))).ok().map(|it| it.collect::<Result<Vec<_>, _>>().unwrap_or_default())
+              .unwrap_or_default();
+            rows
+        };
+        if !items_cot.is_empty() {
+            doc.push(Break::new(1));
+            doc.push(Paragraph::new("DETALLE DE COTIZACIÓN").styled(header_st));
+            let mut subtotal = 0.0_f64;
+            let mut iva_total = 0.0_f64;
+            for (desc, cant, precio, iva_pct) in &items_cot {
+                let st = cant * precio;
+                let iva_item = st * iva_pct / 100.0;
+                subtotal += st;
+                iva_total += iva_item;
+                let linea = format!("• {} x{} · ${:.2} c/u = ${:.2}", desc, cant, precio, st);
+                doc.push(Paragraph::new(&linea).styled(normal_st));
+            }
+            doc.push(Break::new(0.3));
+            doc.push(Paragraph::new(&format!("Subtotal: ${:.2}", subtotal)).styled(label_st));
+            if iva_total > 0.001 {
+                doc.push(Paragraph::new(&format!("IVA: ${:.2}", iva_total)).styled(label_st));
+            }
+            doc.push(Paragraph::new(&format!("TOTAL: ${:.2}", subtotal + iva_total)).styled(header_st));
+        } else if presupuesto > 0.0 {
+            // Fallback al presupuesto si no hay items detallados
+            doc.push(Break::new(1));
+            doc.push(Paragraph::new(&format!("Presupuesto: ${:.2}", presupuesto)).styled(header_st));
+        }
+    } else if presupuesto > 0.0 || monto_final > 0.0 {
         doc.push(Break::new(1));
         if presupuesto > 0.0 { doc.push(Paragraph::new(&format!("Presupuesto: ${:.2}", presupuesto)).styled(label_st)); }
         if monto_final > 0.0 { doc.push(Paragraph::new(&format!("Total: ${:.2}", monto_final)).styled(header_st)); }
     }
 
     // v2.4.23: ABONOS recibidos (HOLDING o APLICADOS al cobro).
-    if !abonos.is_empty() {
+    // v2.4.29: en cotizacion no se muestran (la cotizacion es un documento previo al cobro).
+    if !es_cotizacion && !abonos.is_empty() {
         doc.push(Break::new(1));
         doc.push(Paragraph::new("ABONOS RECIBIDOS").styled(header_st));
         for a in &abonos {
@@ -944,7 +998,8 @@ pub fn imprimir_orden_servicio_pdf(
     // v2.4.27: PAGOS HECHOS AL COBRO (de pagos_venta).
     // Antes el PDF solo mostraba abonos y dejaba "saldo pendiente" aún cuando ya
     // se había cobrado el remanente al entregar. Ahora reflejamos ambos.
-    if !pagos_cobro.is_empty() {
+    // v2.4.29: en cotizacion no se muestran (no hay cobro todavia).
+    if !es_cotizacion && !pagos_cobro.is_empty() {
         doc.push(Break::new(1));
         let titulo_pagos = if abonos.is_empty() { "PAGO RECIBIDO" } else { "PAGO AL COBRO" };
         doc.push(Paragraph::new(titulo_pagos).styled(header_st));
@@ -968,20 +1023,24 @@ pub fn imprimir_orden_servicio_pdf(
     }
 
     // v2.4.27: SALDO REAL = max(monto_final, presupuesto) - (abonos + pagos_cobro)
-    let referencia = if monto_final > 0.0 { monto_final } else { presupuesto };
-    let total_recibido = total_abonos + total_pagos_cobro;
-    if referencia > 0.0 && total_recibido > 0.0 {
-        let saldo = (referencia - total_recibido).max(0.0);
-        doc.push(Break::new(0.5));
-        if saldo > 0.001 {
-            doc.push(Paragraph::new(&format!("Saldo pendiente: ${:.2}", saldo)).styled(header_st));
-        } else if total_recibido >= referencia - 0.001 {
-            doc.push(Paragraph::new("CANCELADO TOTALMENTE").styled(header_st));
+    // v2.4.29: en cotizacion no se calcula saldo (no hay pagos aplicados).
+    if !es_cotizacion {
+        let referencia = if monto_final > 0.0 { monto_final } else { presupuesto };
+        let total_recibido = total_abonos + total_pagos_cobro;
+        if referencia > 0.0 && total_recibido > 0.0 {
+            let saldo = (referencia - total_recibido).max(0.0);
+            doc.push(Break::new(0.5));
+            if saldo > 0.001 {
+                doc.push(Paragraph::new(&format!("Saldo pendiente: ${:.2}", saldo)).styled(header_st));
+            } else if total_recibido >= referencia - 0.001 {
+                doc.push(Paragraph::new("CANCELADO TOTALMENTE").styled(header_st));
+            }
         }
     }
 
     // v2.4.27: GARANTÍA del trabajo (si aplica).
-    if garantia_dias > 0 {
+    // v2.4.29: en cotizacion no se muestra (la garantia se documenta al entregar).
+    if !es_cotizacion && garantia_dias > 0 {
         doc.push(Break::new(0.8));
         doc.push(Paragraph::new(&format!("🛡 Garantía del trabajo: {} día{}",
             garantia_dias, if garantia_dias == 1 { "" } else { "s" })).styled(label_st));
@@ -995,6 +1054,24 @@ pub fn imprimir_orden_servicio_pdf(
         }
     }
     let _ = venta_id_opt; // por ahora solo lo usamos para query de pagos
+
+    // v2.4.29: linea de validez al final de la COTIZACION.
+    if es_cotizacion {
+        let validez_dias: i64 = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT CAST(value AS INTEGER) FROM config WHERE key = 'st_cotizacion_validez_dias'",
+                [], |r| r.get(0),
+            ).unwrap_or(30)
+        };
+        let validez_dias = if validez_dias > 0 { validez_dias } else { 30 };
+        doc.push(Break::new(0.8));
+        doc.push(Paragraph::new(&format!("📅 Cotización válida por {} día{}.",
+            validez_dias, if validez_dias == 1 { "" } else { "s" })).styled(label_st));
+        let hoy = chrono::Local::now().date_naive();
+        let venc = hoy + chrono::Duration::days(validez_dias);
+        doc.push(Paragraph::new(&format!("Vence el: {}", venc.format("%d/%m/%Y"))).styled(normal_st));
+    }
 
     // Leyenda / términos configurables (Configuración → Servicio Técnico)
     if !leyenda_orden.trim().is_empty() {
@@ -1012,10 +1089,14 @@ pub fn imprimir_orden_servicio_pdf(
 
     doc.push(Break::new(3));
     doc.push(Paragraph::new("___________________________").aligned(Alignment::Center).styled(normal_st));
-    doc.push(Paragraph::new("Firma del Cliente").aligned(Alignment::Center).styled(normal_st));
+    doc.push(Paragraph::new(if es_cotizacion { "Aceptación del Cliente" } else { "Firma del Cliente" }).aligned(Alignment::Center).styled(normal_st));
 
     let temp_dir = std::env::temp_dir();
-    let filename = format!("OrdenServicio-{}.pdf", numero.replace("/", "-"));
+    let filename = if es_cotizacion {
+        format!("Cotizacion-{}.pdf", numero.replace("/", "-"))
+    } else {
+        format!("OrdenServicio-{}.pdf", numero.replace("/", "-"))
+    };
     let pdf_path = temp_dir.join(&filename);
     doc.render_to_file(&pdf_path).map_err(|e| format!("Error generando PDF: {}", e))?;
 

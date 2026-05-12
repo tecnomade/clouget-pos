@@ -6,6 +6,24 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.4.29 — 2026-05-12 📋 Cotización antes de cobrar (orden ST)
+
+Antes el cliente que pedía cotización antes de aprobar el trabajo no tenía un PDF formal — solo el presupuesto numérico en el formulario. Ahora hay un botón **"📋 Cotizar"** en el detalle de la orden ST (junto al botón Cobrar) que genera un PDF de cotización con:
+
+- Título **"COTIZACIÓN"** + número `COT-NNNNNN`
+- Sección **"DETALLE DE COTIZACIÓN"** con cada item presupuestado (descripción, cantidad, precio unitario, subtotal)
+- Subtotal, IVA y TOTAL calculados desde los items
+- Línea **"📅 Cotización válida por N días"** + fecha de vencimiento calculada
+- Línea de aceptación al pie en lugar de firma
+
+El PDF de cotización **no afecta inventario** (no descuenta stock), **no genera venta**, **no consume abonos**. Es solo un documento informativo. Cuando el cliente aprueba, se sigue el flujo normal de "💰 Cobrar".
+
+**Configuración** → Servicio Técnico → **"📅 Validez de cotización (días)"** (default 30).
+
+El botón aparece solo en órdenes en estado pre-cobro (no en ENTREGADO ni CANCELADA).
+
+---
+
 ## v2.4.28 — 2026-05-12 🐞 Caja + UX productos + Editar abonos + Kanban ST
 
 ### 🚨 BUG Caja: pedía motivo aunque el monto coincidiera con el disponible
