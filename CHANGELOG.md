@@ -6,6 +6,39 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.2 — 2026-05-13 🛠 7 mejoras UX + métodos de pago SRI ampliados
+
+### 🐞 Bugs corregidos
+
+- **Cotización desde POS imprimía "NOTA DE VENTA"** en el ticket en lugar de "COTIZACIÓN". El query SQL no leía `tipo_estado` desde la tabla `ventas`, así que el flag de cotización siempre venía null. Fix: `imprimir_ticket` e `imprimir_ticket_pdf` ahora cargan `tipo_estado` y el render lo respeta.
+- **Botones ✏ y 🗑 de abono HOLDING casi invisibles**: tenían fontSize 10 y el icono solo. Ahora tienen 11px, con label "Editar" / "Eliminar" y border de color (azul / rojo). Más fáciles de descubrir.
+- **Presets de garantía (Sin / 7d / 15d / 30d / 60d / 90d / 180d) se desbordaban del modal de cobrar**. Layout cambiado a 2 filas: input arriba, presets en flex-wrap abajo.
+
+### 🆕 Mejoras UX
+
+- **Editar Chasis/VIN y Placa después de creada la orden**: en el detalle de orden ST, ahora hay 2 inputs editables al lado del equipo. Útil cuando al crear no se sabía el dato o se tipeó mal. Solo en órdenes no-cerradas.
+- **Formato 80mm de cotización ST mejorado**: antes la línea `"• Producto x2 · $5.00 c/u = $10.00"` se veía apretada y mezclada en ticket. Ahora en ticket se imprime en 2 líneas: descripción arriba, cantidades abajo. Separador `------` antes de los totales.
+- **LicenciaPage: links promo solo en modo demo**. "Ver todas las características" + URL "pos.clouget.com" se ocultan automáticamente cuando la licencia ya está activada (el cliente que ya nos compró no necesita seguir viendo promociones). Las novedades / descripción de mejoras siguen visibles.
+
+### 🆕 Catálogo SRI completo de formas de pago (Tabla 24)
+
+Antes el mapeo POS → SRI tenía huecos. Ahora soporta los 9 códigos oficiales del SRI:
+
+| Código SRI | Descripción | Forma POS |
+|---|---|---|
+| 01 | Sin sistema financiero | Efectivo |
+| 15 | Compensación de deudas | Compensación / Canje |
+| 16 | Tarjeta de débito | Tarjeta débito |
+| 17 | Dinero electrónico (BCE) | Dinero electrónico |
+| 18 | Tarjeta prepago | Tarjeta prepago |
+| 19 | Tarjeta de crédito | Tarjeta crédito |
+| 20 | Otros con sistema financiero | Transferencia · Cheque · Crédito · Mixto |
+| 21 | Endoso de títulos | Endoso |
+
+Nuevo archivo `src/config/formasPagoSri.ts` con el catálogo completo (label visible, código interno, código SRI, descripción oficial). Backend actualizado en `src-tauri/src/sri/xml.rs::forma_pago_sri` para hacer el mapeo correcto al emitir factura electrónica.
+
+---
+
 ## v2.5.1 — 2026-05-12 📦 Stock visible en buscador de productos del taller
 
 En el detalle de la orden ST, al buscar un producto para agregarlo como item presupuestado, ahora se muestra **el stock actual** junto al precio. Color del badge:

@@ -92,15 +92,32 @@ pub fn tarifa_iva(codigo: &str) -> f64 {
     }
 }
 
-/// Mapea forma de pago POS a codigo SRI
-/// Codigos SRI: 01=Efectivo, 19=Tarjeta credito, 16=Tarjeta debito, 20=Otros sistema financiero (transfer/credito)
+/// Mapea forma de pago POS a código SRI (Tabla 24 - Catálogo SRI Ecuador)
+///
+/// Códigos SRI vigentes:
+/// - 01 = SIN UTILIZACIÓN DEL SISTEMA FINANCIERO (efectivo, cheque cobrado en ventanilla)
+/// - 15 = COMPENSACIÓN DE DEUDAS (canje, trueque)
+/// - 16 = TARJETA DE DÉBITO
+/// - 17 = DINERO ELECTRÓNICO (BCE)
+/// - 18 = TARJETA PREPAGO
+/// - 19 = TARJETA DE CRÉDITO
+/// - 20 = OTROS CON UTILIZACIÓN DEL SISTEMA FINANCIERO (transferencia, depósito, cheque bancario)
+/// - 21 = ENDOSO DE TÍTULOS
+///
+/// v2.5.2: catálogo completo + nuevos códigos POS (CHEQUE, DEBITO, etc.)
 pub fn forma_pago_sri(forma_pos: &str) -> &str {
     match forma_pos.to_uppercase().as_str() {
         "EFECTIVO" => "01",
+        "CHEQUE" => "20",                            // cheque bancario = sistema financiero
         "TRANSFERENCIA" | "TRANSFER" => "20",
+        "DEPOSITO" => "20",
         "TARJETA" | "TARJETA_CREDITO" => "19",
-        "TARJETA_DEBITO" => "16",
-        "CREDITO" => "20",  // por defecto: otros con sistema financiero (cliente pagara despues)
+        "TARJETA_DEBITO" | "DEBITO" => "16",
+        "TARJETA_PREPAGO" | "PREPAGO" => "18",
+        "DINERO_ELECTRONICO" | "BCE" => "17",
+        "COMPENSACION" | "CANJE" => "15",
+        "ENDOSO" => "21",
+        "CREDITO" => "20",                           // crédito a cliente: queda pendiente, se cobrará por sistema financiero
         "MIXTO" => "20",
         _ => "01",
     }

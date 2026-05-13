@@ -921,9 +921,45 @@ export default function ServicioTecnicoPage() {
                   <div style={{ fontSize: 11 }}>
                     {detalle.equipo_marca && `${detalle.equipo_marca} `}
                     {detalle.equipo_modelo}
-                    {detalle.equipo_serie && ` · S/N: ${detalle.equipo_serie}`}
-                    {detalle.equipo_placa && ` · Placa: ${detalle.equipo_placa}`}
                   </div>
+                  {/* v2.5.2: serie/chasis y placa editables después de creada la orden.
+                      Se guarda en blur. Útil cuando al crear no se sabía o se tipeó mal. */}
+                  {!ESTADOS_CERRADOS.includes(detalle.estado || "") ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 6 }}>
+                      <div>
+                        <label style={{ fontSize: 10, color: "var(--color-text-secondary)", display: "block" }}>
+                          {detalle.tipo_equipo === "AUTOMOTRIZ" ? "Chasis / VIN" : "Serie"}
+                        </label>
+                        <input className="input" style={{ fontSize: 11, padding: "3px 6px" }}
+                          value={detalle.equipo_serie || ""}
+                          onChange={(e) => setDetalle({ ...detalle, equipo_serie: e.target.value })}
+                          onBlur={(e) => {
+                            const valor = e.target.value;
+                            actualizarOrdenServicio({ ...detalle, equipo_serie: valor })
+                              .then(() => toastExito("Serie actualizada"))
+                              .catch((err) => toastError("" + err));
+                          }} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: "var(--color-text-secondary)", display: "block" }}>Placa</label>
+                        <input className="input" style={{ fontSize: 11, padding: "3px 6px" }}
+                          value={detalle.equipo_placa || ""}
+                          onChange={(e) => setDetalle({ ...detalle, equipo_placa: e.target.value })}
+                          onBlur={(e) => {
+                            const valor = e.target.value;
+                            actualizarOrdenServicio({ ...detalle, equipo_placa: valor })
+                              .then(() => toastExito("Placa actualizada"))
+                              .catch((err) => toastError("" + err));
+                          }} />
+                      </div>
+                    </div>
+                  ) : (
+                    // Orden cerrada → solo lectura
+                    <div style={{ fontSize: 11, marginTop: 4 }}>
+                      {detalle.equipo_serie && ` S/N: ${detalle.equipo_serie}`}
+                      {detalle.equipo_placa && ` · Placa: ${detalle.equipo_placa}`}
+                    </div>
+                  )}
                   {detalle.tipo_equipo === "AUTOMOTRIZ" && detalle.equipo_kilometraje && (
                     <div style={{ fontSize: 11, marginTop: 4 }}>
                       KM: {detalle.equipo_kilometraje}
@@ -1317,34 +1353,36 @@ export default function ServicioTecnicoPage() {
                 </div>
               )}
 
-              {/* v2.4.12: garantía aplicada al cobrar (queda registrada en la orden) */}
+              {/* v2.4.12: garantía aplicada al cobrar (queda registrada en la orden)
+                  v2.5.2: layout vertical para que los presets no se desborden */}
               <div style={{ marginBottom: 12, padding: 10, background: "rgba(59, 130, 246, 0.08)", borderRadius: 6, border: "1px solid rgba(59, 130, 246, 0.3)" }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
                   🛡 Garantía del trabajo (días)
                 </label>
-                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                   <input className="input" type="number" min="0" max="365"
                     style={{ width: 100 }}
                     value={cobroGarantiaDias}
                     onChange={(e) => setCobroGarantiaDias(e.target.value)} />
                   <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>días</span>
-                  {/* Atajos rápidos */}
-                  <div style={{ display: "flex", gap: 4, marginLeft: 12 }}>
-                    {[0, 7, 15, 30, 60, 90, 180].map(d => (
-                      <button key={d} type="button"
-                        onClick={() => setCobroGarantiaDias(String(d))}
-                        style={{
-                          padding: "2px 8px", fontSize: 10, cursor: "pointer",
-                          background: cobroGarantiaDias === String(d) ? "var(--color-primary)" : "transparent",
-                          color: cobroGarantiaDias === String(d) ? "#fff" : "var(--color-text)",
-                          border: "1px solid var(--color-border)", borderRadius: 4,
-                        }}>
-                        {d === 0 ? "Sin" : `${d}d`}
-                      </button>
-                    ))}
-                  </div>
                 </div>
-                <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 4 }}>
+                {/* Atajos rápidos en su propia línea con flex-wrap para que no se salgan del modal */}
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[0, 7, 15, 30, 60, 90, 180].map(d => (
+                    <button key={d} type="button"
+                      onClick={() => setCobroGarantiaDias(String(d))}
+                      style={{
+                        padding: "3px 10px", fontSize: 11, cursor: "pointer",
+                        background: cobroGarantiaDias === String(d) ? "var(--color-primary)" : "transparent",
+                        color: cobroGarantiaDias === String(d) ? "#fff" : "var(--color-text)",
+                        border: "1px solid var(--color-border)", borderRadius: 4,
+                        whiteSpace: "nowrap",
+                      }}>
+                      {d === 0 ? "Sin" : `${d}d`}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 6 }}>
                   Quedará registrada en la orden y aparecerá en el comprobante.
                 </div>
               </div>

@@ -453,39 +453,45 @@ export default function LoginPage({ onLogin, esDemo }: Props) {
           ))}
         </div>
 
-        {/* Links */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {promo.links.map((link, i) => (
-            <a
-              key={i}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 14px",
-                background: "rgba(59,130,246,0.1)",
-                border: "1px solid rgba(59,130,246,0.2)",
-                borderRadius: 8,
-                color: "var(--color-primary-light, #93c5fd)",
-                fontSize: 13,
-                fontWeight: 500,
-                textDecoration: "none",
-                transition: "background 0.2s",
-              }}
-            >
-              <span style={{ fontSize: 14 }}>→</span>
-              {link.label}
-            </a>
-          ))}
-        </div>
+        {/* Links — v2.5.2: solo se muestran en modo DEMO. Una vez que la licencia
+            está activada, ocultamos los links promocionales (el cliente ya nos
+            compró, no necesita seguir viendo "ver todas las características"). */}
+        {esDemo && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {promo.links.map((link, i) => (
+              <a
+                key={i}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 14px",
+                  background: "rgba(59,130,246,0.1)",
+                  border: "1px solid rgba(59,130,246,0.2)",
+                  borderRadius: 8,
+                  color: "var(--color-primary-light, #93c5fd)",
+                  fontSize: 13,
+                  fontWeight: 500,
+                  textDecoration: "none",
+                  transition: "background 0.2s",
+                }}
+              >
+                <span style={{ fontSize: 14 }}>→</span>
+                {link.label}
+              </a>
+            ))}
+          </div>
+        )}
 
-        {/* Footer */}
-        <div style={{ marginTop: 32, fontSize: 11, opacity: 0.25 }}>
-          pos.clouget.com
-        </div>
+        {/* Footer — v2.5.2: oculto post-activación (igual que los links promo) */}
+        {esDemo && (
+          <div style={{ marginTop: 32, fontSize: 11, opacity: 0.25 }}>
+            pos.clouget.com
+          </div>
+        )}
       </div>
       )}
 

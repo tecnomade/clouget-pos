@@ -451,7 +451,9 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                       {a.observacion && <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.observacion}</div>}
                     </div>
                     <div style={{ textAlign: "right", display: "flex", gap: 4, alignItems: "center" }}>
-                      {/* v2.4.28: editar/eliminar solo para HOLDING. APLICADO/DEVUELTO inmutables */}
+                      {/* v2.4.28 / v2.5.2: editar/eliminar solo para HOLDING.
+                          APLICADO/DEVUELTO inmutables. Botones más grandes y con label
+                          para que se vean claramente (antes pasaban desapercibidos). */}
                       {a.estado === "HOLDING" && editable && !editandoEste && (
                         <>
                           <button type="button"
@@ -463,9 +465,15 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                               setEditAbonoReferencia(a.referencia_pago || "");
                               setEditAbonoObs(a.observacion || "");
                             }}
-                            style={{ fontSize: 10, padding: "2px 6px", border: "1px solid var(--color-border)", borderRadius: 4, background: "transparent", cursor: "pointer", color: "var(--color-text)" }}
-                            title="Editar abono (solo HOLDING)">
-                            ✏
+                            style={{
+                              fontSize: 11, padding: "4px 10px",
+                              border: "1px solid var(--color-primary)",
+                              borderRadius: 4, background: "rgba(59, 130, 246, 0.1)",
+                              cursor: "pointer", color: "var(--color-primary)",
+                              fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4,
+                            }}
+                            title="Editar este abono (solo en HOLDING)">
+                            ✏ Editar
                           </button>
                           <button type="button"
                             onClick={async () => {
@@ -477,9 +485,15 @@ export default function SeccionItemsAbonosOrden({ ordenId, ordenEstado, onTotalC
                                 await recargar();
                               } catch (err) { toastError("Error: " + err); }
                             }}
-                            style={{ fontSize: 10, padding: "2px 6px", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 4, background: "transparent", cursor: "pointer", color: "var(--color-danger)" }}
-                            title="Eliminar abono (solo HOLDING)">
-                            🗑
+                            style={{
+                              fontSize: 11, padding: "4px 10px",
+                              border: "1px solid var(--color-danger)",
+                              borderRadius: 4, background: "rgba(239, 68, 68, 0.1)",
+                              cursor: "pointer", color: "var(--color-danger)",
+                              fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4,
+                            }}
+                            title="Eliminar este abono (solo en HOLDING)">
+                            🗑 Eliminar
                           </button>
                         </>
                       )}

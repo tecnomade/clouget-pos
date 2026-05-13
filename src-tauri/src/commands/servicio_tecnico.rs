@@ -950,6 +950,9 @@ pub fn imprimir_orden_servicio_pdf(
         if !items_cot.is_empty() {
             doc.push(Break::new(1));
             doc.push(Paragraph::new("DETALLE DE COTIZACIÓN").styled(header_st));
+            // v2.5.2: en ticket 80mm el formato single-line se ve apretado y mezclado.
+            // Para ticket usamos formato multi-linea con descripcion arriba y cantidades
+            // abajo. Para A4 mantenemos el single-line clasico.
             let mut subtotal = 0.0_f64;
             let mut iva_total = 0.0_f64;
             for (desc, cant, precio, iva_pct) in &items_cot {
@@ -957,10 +960,20 @@ pub fn imprimir_orden_servicio_pdf(
                 let iva_item = st * iva_pct / 100.0;
                 subtotal += st;
                 iva_total += iva_item;
-                let linea = format!("• {} x{} · ${:.2} c/u = ${:.2}", desc, cant, precio, st);
-                doc.push(Paragraph::new(&linea).styled(normal_st));
+                if es_ticket {
+                    // 80mm: descripcion en una linea, datos en la siguiente
+                    doc.push(Paragraph::new(&format!("• {}", desc)).styled(normal_st));
+                    doc.push(Paragraph::new(&format!("  {} x ${:.2}  =  ${:.2}", cant, precio, st)).styled(normal_st));
+                } else {
+                    // A4: una sola linea
+                    doc.push(Paragraph::new(&format!("• {} x{} · ${:.2} c/u = ${:.2}", desc, cant, precio, st)).styled(normal_st));
+                }
             }
             doc.push(Break::new(0.3));
+            // Linea separadora antes de totales (ayuda visual en ticket)
+            if es_ticket {
+                doc.push(Paragraph::new("--------------------------------").styled(normal_st));
+            }
             doc.push(Paragraph::new(&format!("Subtotal: ${:.2}", subtotal)).styled(label_st));
             if iva_total > 0.001 {
                 doc.push(Paragraph::new(&format!("IVA: ${:.2}", iva_total)).styled(label_st));

@@ -7,12 +7,14 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Obtener venta completa
+    // v2.5.2: incluir tipo_estado para que el ticket impreso distinga
+    // COTIZACION/BORRADOR de NOTA DE VENTA al renderizar el titulo.
     let venta = conn
         .query_row(
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
+             numero_factura, establecimiento, punto_emision, tipo_estado
              FROM ventas WHERE id = ?1",
             rusqlite::params![venta_id],
             |row| {
@@ -44,7 +46,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     comprobante_imagen: None,
                     caja_id: None,
                     cliente_nombre: None,
-                    tipo_estado: None,
+                    tipo_estado: row.get(21).ok(),
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
                 })
@@ -138,12 +140,14 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Obtener venta completa
+    // v2.5.2: incluir tipo_estado para que el ticket impreso distinga
+    // COTIZACION/BORRADOR de NOTA DE VENTA al renderizar el titulo.
     let venta = conn
         .query_row(
             "SELECT id, numero, cliente_id, fecha, subtotal_sin_iva, subtotal_con_iva,
              descuento, iva, total, forma_pago, monto_recibido, cambio, estado,
              tipo_documento, estado_sri, autorizacion_sri, clave_acceso, observacion,
-             numero_factura, establecimiento, punto_emision
+             numero_factura, establecimiento, punto_emision, tipo_estado
              FROM ventas WHERE id = ?1",
             rusqlite::params![venta_id],
             |row| {
@@ -175,7 +179,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     comprobante_imagen: None,
                     caja_id: None,
                     cliente_nombre: None,
-                    tipo_estado: None,
+                    tipo_estado: row.get(21).ok(),
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
                 })
