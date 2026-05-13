@@ -6,6 +6,41 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.3 — 2026-05-13 🔄 Auto-refresh de pestañas (data fresca al volver)
+
+### 🐞 Bug detectado en sistema de pestañas (v2.5.0)
+
+Si tenías POS abierto en una pestaña, ibas a Productos, editabas un producto (cambiabas precio o nombre), y volvías al POS — **el POS seguía mostrando los datos viejos**. Esto pasa porque las pestañas mantienen su state preservado con `display: none` (esa es la ventaja: no perdés el carrito), pero el efecto colateral era que la data en cache no se refrescaba.
+
+### 🆕 Solución: Hook `useTabActivated`
+
+Nuevo hook en `TabsContext` que ejecuta un callback cada vez que una pestaña pasa a estar activa (después de no estarlo). Las páginas críticas ahora se auto-refrescan al recuperar el foco:
+
+| Pestaña | Qué se refresca al volver |
+|---|---|
+| **POS** | Lista de productos, categorías, listas de precios, cuentas bancarias |
+| **Caja** | Estado de caja abierta, retiros, ingresos, holdings ST |
+| **Servicio Técnico** | Listado de órdenes |
+| **Clientes** | Lista de clientes |
+| **Productos** | Lista de productos + categorías |
+
+### Para desarrolladores
+
+Ahora cualquier página puede opt-in al refresh con:
+
+```tsx
+import { useTabActivated } from "../contexts/TabsContext";
+
+useTabActivated("/mi-ruta", () => {
+  // este callback corre cada vez que la tab se vuelve activa
+  recargarMisDatos();
+});
+```
+
+Si tabs están desactivadas (modo clásico), el callback no se ejecuta — el remount del componente al cambiar de ruta ya recarga la data como antes.
+
+---
+
 ## v2.5.2 — 2026-05-13 🛠 7 mejoras UX + métodos de pago SRI ampliados
 
 ### 🐞 Bugs corregidos

@@ -4,6 +4,7 @@ import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, li
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import { FEATURES } from "../config/branding";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 // v2.4.14: miniatura de imagen con lazy-load por viewport
@@ -1538,6 +1539,10 @@ export default function Productos() {
       }
     }
   }, []);
+
+  // v2.5.3: refrescar lista al volver a esta pestaña (puede haberse importado
+  // productos desde Excel, hecho ventas que cambian stock, etc. desde otra tab).
+  useTabActivated("/productos", () => { cargarDatos(); });
 
   const handleEditar = async (id: number) => {
     const prod = await obtenerProducto(id);

@@ -4,6 +4,7 @@ import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimi
 import type { HoldingCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import Modal from "../components/Modal";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type { Caja, ResumenCaja } from "../types";
@@ -120,6 +121,10 @@ export default function CajaPage() {
   // Recargar al montar y cuando cambie el flag del modulo ST (asi los holdings
   // se cargan una vez que sabemos si el modulo esta activo).
   useEffect(() => { cargar(); }, [moduloServicioTecnicoActivo]);
+
+  // v2.5.3: refrescar caja cada vez que el usuario vuelve a esta pestaña
+  // (puede haber hecho ventas/retiros desde POS u otra tab que cambian el monto).
+  useTabActivated("/caja", () => { cargar(); });
 
   // Auto-refresh: recargar caja cuando la ventana recupera el foco o vuelve a ser visible.
   // Evita que el usuario tenga que navegar afuera y volver para ver el monto_esperado

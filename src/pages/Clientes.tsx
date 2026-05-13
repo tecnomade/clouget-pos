@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { listarClientes, crearCliente, actualizarCliente, listarListasPrecios, consultarIdentificacion } from "../services/api";
 import { useToast } from "../components/Toast";
+import { useTabActivated } from "../contexts/TabsContext";
 import type { Cliente, ListaPrecio } from "../types";
 
 export default function Clientes() {
@@ -24,6 +25,10 @@ export default function Clientes() {
   };
 
   useEffect(() => { cargar(); }, []);
+
+  // v2.5.3: refrescar lista al volver a esta pestaña (un cliente pudo crearse
+  // desde POS o editarse desde otra tab).
+  useTabActivated("/clientes", () => { cargar(); });
 
   const abrirNuevo = () => {
     setEditando(undefined);

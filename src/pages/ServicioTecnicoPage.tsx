@@ -15,6 +15,7 @@ import {
 import type { OrdenServicio, StTipoEquipo, StMarca, StModelo } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import ModalConfigServicioTecnico from "../components/ModalConfigServicioTecnico";
 import ModalHistorialServicioTecnico from "../components/ModalHistorialServicioTecnico";
 import ComboCatalogoEquipo from "../components/ComboCatalogoEquipo";
@@ -170,6 +171,10 @@ export default function ServicioTecnicoPage() {
   };
 
   useEffect(() => { cargar(); }, [filtroEstado]);
+
+  // v2.5.3: refrescar listado de ordenes al volver a esta pestaña
+  // (alguien pudo haber creado/cobrado una orden desde otro flujo).
+  useTabActivated("/servicio-tecnico", () => { cargar(); });
   useEffect(() => {
     listarUsuarios().then((us: any[]) => setTecnicos(us.filter((u: any) => u.rol === "TECNICO" || u.rol === "ADMIN"))).catch(() => {});
     obtenerConfig().then((cfg: any) => {

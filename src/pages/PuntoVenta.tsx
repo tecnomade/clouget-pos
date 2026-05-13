@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import PosGridTactil from "../components/PosGridTactil";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import DocumentosRecientes from "../components/DocumentosRecientes";
 import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
 
@@ -273,6 +274,16 @@ export default function PuntoVenta() {
       setSriAmbiente(estado.ambiente);
     }).catch(() => {});
   }, [cargarAlertas]);
+
+  // v2.5.3: refrescar productos + categorias + listas + bancos cada vez que el
+  // usuario vuelve a la pestaña POS (después de editar en otra tab). Sin esto,
+  // los cambios no se ven porque la tab POS queda montada con display:none.
+  useTabActivated("/pos", () => {
+    listarProductosTactil().then(setProductosTactil).catch(() => {});
+    listarCategorias().then(setCategoriasTactil).catch(() => {});
+    listarListasPrecios().then((ls: any[]) => setTodasListasPrecios(ls.filter((l: any) => l.activo))).catch(() => {});
+    listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+  });
 
   const handleBuscar = async (termino: string) => {
     setBusqueda(termino);

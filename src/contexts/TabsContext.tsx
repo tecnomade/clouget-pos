@@ -39,6 +39,9 @@ interface TabsContextValue {
   setActive: (path: string) => void;
   /** Indica si el path dado es la tab actualmente activa. */
   isActive: (path: string) => boolean;
+  /** v2.5.3: contador por tab que se incrementa cada vez que la tab se activa.
+   *  Se usa con useTabActivated para refrescar data cuando el usuario vuelve a una tab. */
+  activationVersion: Record<string, number>;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
@@ -90,6 +93,22 @@ export function TabsProvider({ enabled, scope = "default", children }: TabsProvi
   const initial = useRef(loadFromStorage(scope));
   const [tabs, setTabs] = useState<TabDef[]>(initial.current.tabs);
   const [activeId, setActiveId] = useState<string | null>(initial.current.activeId);
+  // v2.5.3: contador de activaciones por path. Cada vez que una tab se vuelve
+  // activa (después de no serlo), su counter se incrementa. Páginas pueden
+  // observar este counter via useTabActivated para refrescar data.
+  const [activationVersion, setActivationVersion] = useState<Record<string, number>>(
+    initial.current.activeId ? { [initial.current.activeId]: 1 } : {},
+  );
+  // Track previous activeId para detectar cambios de activación
+  const prevActiveIdRef = useRef<string | null>(initial.current.activeId);
+
+  useEffect(() => {
+    // Si el activeId cambió, incrementar el counter del nuevo activo (no del anterior)
+    if (activeId && activeId !== prevActiveIdRef.current) {
+      setActivationVersion(prev => ({ ...prev, [activeId]: (prev[activeId] || 0) + 1 }));
+      prevActiveIdRef.current = activeId;
+    }
+  }, [activeId]);
 
   useEffect(() => { saveToStorage(scope, tabs, activeId); }, [scope, tabs, activeId]);
 
@@ -147,8 +166,8 @@ export function TabsProvider({ enabled, scope = "default", children }: TabsProvi
   const isActive = useCallback((path: string) => activeId === path, [activeId]);
 
   const value = useMemo<TabsContextValue>(() => ({
-    enabled, tabs, activeId, openOrSwitch, close, setActive, isActive,
-  }), [enabled, tabs, activeId, openOrSwitch, close, setActive, isActive]);
+    enabled, tabs, activeId, openOrSwitch, close, setActive, isActive, activationVersion,
+  }), [enabled, tabs, activeId, openOrSwitch, close, setActive, isActive, activationVersion]);
 
   return <TabsContext.Provider value={value}>{children}</TabsContext.Provider>;
 }
@@ -166,9 +185,41 @@ export function useTabs(): TabsContextValue {
       close: () => {},
       setActive: () => {},
       isActive: () => true, // siempre "activa" en modo no-tabs (single page)
+      activationVersion: {},
     };
   }
   return ctx;
+}
+
+/**
+ * v2.5.3 — Hook que ejecuta el callback cada vez que la tab del path dado
+ * pasa a estar ACTIVA (incluyendo el primer mount).
+ *
+ * Útil para refrescar datos que pudieron cambiar mientras la tab estuvo oculta:
+ * por ejemplo, refrescar la lista de productos en POS si el usuario editó
+ * un producto en otra tab.
+ *
+ * @param myPath path de esta tab (ej. "/pos")
+ * @param callback función a ejecutar cuando la tab se activa
+ *
+ * @example
+ *   useTabActivated("/pos", () => {
+ *     listarProductosTactil().then(setProductosTactil);
+ *   });
+ *
+ * Si tabs están deshabilitadas (modo clásico), el callback NO se ejecuta
+ * automáticamente — el flujo single-page ya hace el remount tradicional.
+ */
+export function useTabActivated(myPath: string, callback: () => void) {
+  const { enabled, activationVersion } = useTabs();
+  const v = activationVersion[myPath] || 0;
+  const cbRef = useRef(callback);
+  cbRef.current = callback;
+  useEffect(() => {
+    if (!enabled) return; // sin tabs, el remount clásico ya carga data
+    if (v === 0) return;  // primer mount sin activación todavía — el page hará su carga normal en su useEffect inicial
+    cbRef.current();
+  }, [enabled, v]);
 }
 
 /** Hook para que las páginas sepan si su tab está activa (ej. para pausar polling). */
