@@ -30,3 +30,4 @@ pub mod servicio_tecnico_items;
 pub mod servicio_tecnico_reportes;
 pub mod combos;
 pub mod verificacion;
+pub mod retenciones;

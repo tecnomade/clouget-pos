@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.4 — 2026-05-13 📋 Módulo de Retenciones SRI (cruce con factura)
+
+### 🆕 Problema que resuelve
+
+En Ecuador, cuando vendés una factura a una empresa, esa empresa puede actuar como **agente de retención** y descontar parte del pago según normativa SRI:
+- Retención de IVA (Tabla 21): 10%, 20%, 30%, 70%, 100% del IVA
+- Retención de Renta (Tabla 304): 1%, 1.75%, 2%, 8%, 10% del subtotal
+
+**Ejemplo**: Factura $1.150 → cliente retiene 30% IVA ($45) + 2% Renta ($20) = $65
+- Cliente paga $1.085 + te entrega 2 comprobantes de retención
+- Antes: la factura quedaba con saldo pendiente $65 → descuadre contable
+- Ahora: registrás las 2 retenciones en el sistema → saldo pasa a **$0 (cancelada)**
+
+### 🆕 Cómo usarlo
+
+**Desde Ventas del Día → detalle de una FACTURA**, aparece un botón **📋 Retenciones SRI**.
+
+**Desde Cuentas por Cobrar → historial de pago de una factura a crédito**, aparece una tarjeta "Retenciones SRI" + botón **📋 Registrar / Gestionar**.
+
+El modal permite:
+- Seleccionar **tipo**: Retención de IVA o Retención de Renta
+- Elegir el **código SRI** del catálogo (Tabla 21 o Tabla 304) — incluye los más comunes (10%, 20%, 30%, 70%, 100% IVA · 1%, 1.75%, 2%, 8%, 10% Renta)
+- **Cálculo automático**: `valor = base × % / 100`
+- Ingresar **número del comprobante** de retención del cliente y **fecha de emisión**
+- Listar todas las retenciones aplicadas a la factura
+- **Eliminar** retenciones (corregir errores de tipeo)
+
+### 📊 Recálculo automático del saldo
+
+Al registrar una retención, el saldo de la factura se recalcula:
+```
+saldo = total - cobrado - retenciones_renta - retenciones_iva
+```
+
+Si saldo = 0 → la factura aparece como **✓ CANCELADA** (cobrada totalmente entre pago + retenciones).
+
+### 🛡 Validaciones
+
+- No permite que `valor` exceda el saldo pendiente de la factura
+- Tipo, código SRI, número de comprobante y fecha son obligatorios
+- Solo aplica a tipo de documento **FACTURA** (no a Notas de Venta — éstas no generan retenciones)
+- Retenciones registradas se pueden **eliminar** si fueron mal cargadas (registro de auditoría queda en `usuario` y `fecha_registro`)
+
+### 🏗 Backend
+
+- Tabla nueva `retenciones_recibidas` (id, venta_id, tipo, código_sri, base, %, valor, num_comprobante, fechas, usuario, observación)
+- 4 comandos Tauri: `listar_retenciones_venta`, `total_retenciones_venta`, `registrar_retencion`, `eliminar_retencion`
+- Catálogo SRI completo en `src/config/retencionesSri.ts` (frontend)
+
+### Próximamente (v2.5.5)
+
+- Reporte de retenciones recibidas para declaración SRI
+- Retenciones que vos hacés a proveedores (lado opuesto del flujo)
+
+---
+
 ## v2.5.3 — 2026-05-13 🔄 Auto-refresh de pestañas (data fresca al volver)
 
 ### 🐞 Bug detectado en sistema de pestañas (v2.5.0)

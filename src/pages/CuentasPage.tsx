@@ -12,7 +12,11 @@ import {
   rechazarPagoCuenta,
   contarPagosPendientes,
   listarPagosPendientesConfirmacion,
+  totalRetencionesVenta,
+  obtenerVenta,
 } from "../services/api";
+import type { TotalesRetencion } from "../services/api";
+import ModalRetenciones from "../components/ModalRetenciones";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSesion } from "../contexts/SesionContext";
 import { useToast } from "../components/Toast";
@@ -32,6 +36,10 @@ export default function CuentasPage() {
 
   // Detalle de cuenta (historial de pagos)
   const [cuentaDetalle, setCuentaDetalle] = useState<CuentaDetalle | null>(null);
+  // v2.5.4: retenciones SRI aplicadas a la venta del detalle actual
+  const [retencionesDetalle, setRetencionesDetalle] = useState<TotalesRetencion | null>(null);
+  const [mostrarModalRetenciones, setMostrarModalRetenciones] = useState(false);
+  const [ventaCompleta, setVentaCompleta] = useState<{ subtotal: number; iva: number; total: number } | null>(null);
 
   // Pago form
   const [pagandoCuenta, setPagandoCuenta] = useState<number | null>(null);
@@ -99,9 +107,36 @@ export default function CuentasPage() {
       const detalle = await obtenerCuentaDetalle(cuentaId);
       setCuentaDetalle(detalle);
       setVista("historial");
+      // v2.5.4: cargar retenciones SRI + datos de venta para el modal
+      setRetencionesDetalle(null);
+      setVentaCompleta(null);
+      const vid = detalle.cuenta.venta_id;
+      totalRetencionesVenta(vid)
+        .then(setRetencionesDetalle)
+        .catch(() => setRetencionesDetalle({ total_renta: 0, total_iva: 0, total: 0, cantidad: 0 }));
+      obtenerVenta(vid)
+        .then((vc) => setVentaCompleta({
+          subtotal: vc.venta.subtotal_sin_iva + vc.venta.subtotal_con_iva - vc.venta.descuento,
+          iva: vc.venta.iva,
+          total: vc.venta.total,
+        }))
+        .catch(() => {});
     } catch (err) {
       toastError("Error: " + err);
     }
+  };
+
+  // v2.5.4: refrescar cuando cambia el modal
+  const refrescarRetencionesYCuenta = async () => {
+    if (!cuentaDetalle) return;
+    try {
+      const [det, t] = await Promise.all([
+        obtenerCuentaDetalle(cuentaDetalle.cuenta.id!),
+        totalRetencionesVenta(cuentaDetalle.cuenta.venta_id),
+      ]);
+      setCuentaDetalle(det);
+      setRetencionesDetalle(t);
+    } catch { /* ignore */ }
   };
 
   const resetPagoForm = () => {
@@ -253,6 +288,31 @@ export default function CuentasPage() {
                 <div className="font-bold" style={{ color: cuentaDetalle.cuenta.saldo > 0 ? "var(--color-danger)" : "var(--color-success)" }}>
                   ${cuentaDetalle.cuenta.saldo.toFixed(2)}
                 </div>
+              </div>
+            </div>
+            {/* v2.5.4: Tarjeta de retenciones + boton para registrar */}
+            <div className="card" style={{ flex: 1, maxWidth: 240 }}>
+              <div className="card-body text-center">
+                <span className="text-secondary" style={{ fontSize: 12 }}>Retenciones SRI</span>
+                <div className="font-bold" style={{ color: "#a855f7" }}>
+                  ${(retencionesDetalle?.total ?? 0).toFixed(2)}
+                  {retencionesDetalle && retencionesDetalle.cantidad > 0 && (
+                    <span style={{ fontSize: 10, marginLeft: 4, color: "var(--color-text-secondary)" }}>
+                      ({retencionesDetalle.cantidad})
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setMostrarModalRetenciones(true)}
+                  style={{
+                    marginTop: 6, padding: "4px 12px", fontSize: 11, fontWeight: 600,
+                    background: "rgba(168,85,247,0.1)",
+                    border: "1px solid #a855f7",
+                    color: "#a855f7",
+                    borderRadius: 4, cursor: "pointer",
+                  }}>
+                  📋 {retencionesDetalle && retencionesDetalle.cantidad > 0 ? "Gestionar" : "Registrar"}
+                </button>
               </div>
             </div>
           </div>
@@ -538,6 +598,20 @@ export default function CuentasPage() {
             </div>
           )}
         </div>
+
+        {/* v2.5.4: Modal de retenciones SRI */}
+        {mostrarModalRetenciones && cuentaDetalle && ventaCompleta && (
+          <ModalRetenciones
+            ventaId={cuentaDetalle.cuenta.venta_id}
+            numero={cuentaDetalle.venta_numero}
+            total={ventaCompleta.total}
+            subtotal={ventaCompleta.subtotal}
+            iva={ventaCompleta.iva}
+            totalCobrado={cuentaDetalle.cuenta.monto_pagado}
+            onClose={() => setMostrarModalRetenciones(false)}
+            onChanged={refrescarRetencionesYCuenta}
+          />
+        )}
       </>
     );
   }

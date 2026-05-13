@@ -1608,6 +1608,42 @@ export const stListarAbonos = (ordenId: number) =>
 /** v2.4.28: abonos APLICADOS a una venta (para mostrar en detalle de venta) */
 export const stAbonosPorVenta = (ventaId: number) =>
   smartInvoke<AbonoServicio[]>("st_abonos_por_venta", { ventaId });
+
+// ─── v2.5.4: Retenciones recibidas (SRI Ecuador) ─────────────────────────
+export interface RetencionRecibida {
+  id?: number;
+  venta_id: number;
+  tipo: "RENTA" | "IVA" | string;
+  codigo_sri: string;
+  base_imponible: number;
+  porcentaje: number;
+  valor: number;
+  numero_comprobante: string;
+  fecha_emision: string;       // YYYY-MM-DD
+  fecha_registro?: string | null;
+  usuario?: string | null;
+  observacion?: string | null;
+}
+export interface TotalesRetencion {
+  total_renta: number;
+  total_iva: number;
+  total: number;
+  cantidad: number;
+}
+export const listarRetencionesVenta = (ventaId: number) =>
+  smartInvoke<RetencionRecibida[]>("listar_retenciones_venta", { ventaId });
+export const totalRetencionesVenta = (ventaId: number) =>
+  smartInvoke<TotalesRetencion>("total_retenciones_venta", { ventaId });
+export const registrarRetencion = (
+  ventaId: number, tipo: "RENTA" | "IVA",
+  codigoSri: string, baseImponible: number, porcentaje: number, valor: number,
+  numeroComprobante: string, fechaEmision: string, observacion?: string | null,
+) => smartInvoke<number>("registrar_retencion", {
+  ventaId, tipo, codigoSri, baseImponible, porcentaje, valor,
+  numeroComprobante, fechaEmision, observacion,
+});
+export const eliminarRetencion = (retencionId: number) =>
+  smartInvoke<void>("eliminar_retencion", { retencionId });
 /** v2.4.28: editar abono en HOLDING (corregir typo). Solo HOLDING puede editarse. */
 export const stEditarAbono = (
   abonoId: number,

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta, stAbonosPorVenta } from "../services/api";
-import type { AbonoServicio } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta, stAbonosPorVenta, totalRetencionesVenta } from "../services/api";
+import type { AbonoServicio, TotalesRetencion } from "../services/api";
+import ModalRetenciones from "../components/ModalRetenciones";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
@@ -69,6 +70,9 @@ export default function VentasDia() {
   const [ventaDetalle, setVentaDetalle] = useState<VentaCompleta | null>(null);
   // v2.4.28: abonos APLICADOS a la venta (de orden ST cobrada). null = no cargado todavia.
   const [abonosVenta, setAbonosVenta] = useState<AbonoServicio[] | null>(null);
+  // v2.5.4: retenciones recibidas SRI aplicadas a esta venta
+  const [retencionesTotales, setRetencionesTotales] = useState<TotalesRetencion | null>(null);
+  const [mostrarModalRetenciones, setMostrarModalRetenciones] = useState(false);
   const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
   const [ventaExpandida, setVentaExpandida] = useState<number | null>(null);
   const [filtroTipo, setFiltroTipo] = useState<string>("COMPLETADA");
@@ -87,9 +91,22 @@ export default function VentasDia() {
       stAbonosPorVenta(ventaId)
         .then((ab) => setAbonosVenta(ab || []))
         .catch(() => setAbonosVenta([]));
+      // v2.5.4: cargar totales de retenciones SRI aplicadas a la factura
+      setRetencionesTotales(null);
+      totalRetencionesVenta(ventaId)
+        .then((t) => setRetencionesTotales(t))
+        .catch(() => setRetencionesTotales({ total_renta: 0, total_iva: 0, total: 0, cantidad: 0 }));
     } catch (err) {
       toastError("Error al cargar detalle: " + err);
     }
+  };
+
+  // v2.5.4: refrescar retenciones cuando se modifica desde el modal
+  const refrescarRetenciones = () => {
+    if (!ventaDetalle?.venta?.id) return;
+    totalRetencionesVenta(ventaDetalle.venta.id)
+      .then((t) => setRetencionesTotales(t))
+      .catch(() => {});
   };
 
   const esRango = fechaDesde !== fechaHasta;
@@ -1275,6 +1292,56 @@ export default function VentasDia() {
                     </div>
                   );
                 })()}
+                {/* v2.5.4: RETENCIONES SRI recibidas. Solo aplica a FACTURA. */}
+                {ventaDetalle.venta.tipo_documento === "FACTURA" && retencionesTotales && retencionesTotales.cantidad > 0 && (() => {
+                  const totalAbonos = (abonosVenta || []).reduce((s, a) => s + a.monto, 0);
+                  const totalCobrado = ventaDetalle.venta.monto_recibido + totalAbonos;
+                  const saldo = Math.max(ventaDetalle.venta.total - totalCobrado - retencionesTotales.total, 0);
+                  return (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--color-text-secondary)", marginBottom: 6 }}>
+                        📋 Retenciones SRI ({retencionesTotales.cantidad})
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
+                        {retencionesTotales.total_renta > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>Retención Renta:</span>
+                            <strong style={{ color: "#a855f7" }}>${retencionesTotales.total_renta.toFixed(2)}</strong>
+                          </div>
+                        )}
+                        {retencionesTotales.total_iva > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between" }}>
+                            <span>Retención IVA:</span>
+                            <strong style={{ color: "var(--color-warning)" }}>${retencionesTotales.total_iva.toFixed(2)}</strong>
+                          </div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, paddingTop: 4, borderTop: "1px dashed var(--color-border)" }}>
+                          <strong>Saldo pendiente:</strong>
+                          <strong style={{ color: saldo <= 0.001 ? "var(--color-success)" : "var(--color-danger)" }}>
+                            {saldo <= 0.001 ? "✓ CANCELADA" : `$${saldo.toFixed(2)}`}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* v2.5.4: Botón para registrar retenciones (solo FACTURA) */}
+                {ventaDetalle.venta.tipo_documento === "FACTURA" && (
+                  <div style={{ marginTop: 10, textAlign: "right" }}>
+                    <button
+                      onClick={() => setMostrarModalRetenciones(true)}
+                      style={{
+                        padding: "6px 14px", fontSize: 12, fontWeight: 600,
+                        background: "rgba(168,85,247,0.1)",
+                        border: "1px solid #a855f7",
+                        color: "#a855f7",
+                        borderRadius: 6, cursor: "pointer",
+                      }}>
+                      📋 Retenciones SRI
+                      {retencionesTotales && retencionesTotales.cantidad > 0 && ` (${retencionesTotales.cantidad})`}
+                    </button>
+                  </div>
+                )}
                 {ventaDetalle.venta.comprobante_imagen && (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--color-border)" }}>
                     <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 6, fontWeight: 600 }}>
@@ -1404,6 +1471,22 @@ export default function VentasDia() {
         onOmitir={() => setEmailVenta(null)}
         enviando={enviandoEmail}
       />
+
+      {/* v2.5.4: Modal de retenciones SRI */}
+      {mostrarModalRetenciones && ventaDetalle?.venta?.id != null && (
+        <ModalRetenciones
+          ventaId={ventaDetalle.venta.id}
+          numero={ventaDetalle.venta.numero}
+          total={ventaDetalle.venta.total}
+          subtotal={ventaDetalle.venta.subtotal_sin_iva + ventaDetalle.venta.subtotal_con_iva - ventaDetalle.venta.descuento}
+          iva={ventaDetalle.venta.iva}
+          totalCobrado={
+            ventaDetalle.venta.monto_recibido + (abonosVenta || []).reduce((s, a) => s + a.monto, 0)
+          }
+          onClose={() => setMostrarModalRetenciones(false)}
+          onChanged={refrescarRetenciones}
+        />
+      )}
 
       {/* Visor fullscreen del comprobante de transferencia */}
       {comprobanteFullscreen && (

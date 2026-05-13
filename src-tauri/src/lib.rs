@@ -522,6 +522,11 @@ pub fn run() {
             offline::cache::listar_cola_offline,
             offline::cache::marcar_operacion_enviada,
             offline::cache::marcar_operacion_error,
+            // v2.5.4: Retenciones SRI (cruce con factura para llegar a saldo cero)
+            commands::retenciones::listar_retenciones_venta,
+            commands::retenciones::total_retenciones_venta,
+            commands::retenciones::registrar_retencion,
+            commands::retenciones::eliminar_retencion,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,

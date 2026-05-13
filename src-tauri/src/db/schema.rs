@@ -1247,6 +1247,37 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Migracion: agregar comprobante_imagen a pagos_venta si no existe (tablas viejas)
     let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN comprobante_imagen TEXT", []);
 
+    // --- Migracion v2.5.4: Retenciones recibidas (SRI Ecuador) ---
+    // Cuando un cliente (empresa) compra y nos paga, puede retener IVA y/o Renta
+    // segun la normativa SRI. Esto reduce el saldo pendiente de la factura.
+    // Ej: Factura $1150 → cliente retiene 30% IVA ($45) + 2% Renta ($20) = $65
+    // → cliente paga $1085 + nos entrega 2 comprobantes de retencion
+    // → registramos las 2 retenciones aqui → saldo pasa a 0 (cancelado)
+    //
+    // tipo: 'RENTA' o 'IVA'
+    // codigo_sri: codigo de la tabla SRI (Renta tabla 304, IVA tabla 21)
+    // numero_comprobante: el N° del comprobante de retencion fisico/electronico del cliente
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS retenciones_recibidas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            codigo_sri TEXT NOT NULL,
+            base_imponible REAL NOT NULL,
+            porcentaje REAL NOT NULL,
+            valor REAL NOT NULL,
+            numero_comprobante TEXT NOT NULL,
+            fecha_emision TEXT NOT NULL,
+            fecha_registro TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            usuario TEXT,
+            observacion TEXT,
+            FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_retenciones_venta ON retenciones_recibidas(venta_id);
+        CREATE INDEX IF NOT EXISTS idx_retenciones_fecha ON retenciones_recibidas(fecha_registro);
+        CREATE INDEX IF NOT EXISTS idx_retenciones_tipo ON retenciones_recibidas(tipo);
+    ");
+
     // --- Migracion: Presentaciones / unidades multiples por producto ---
     // Un producto puede venderse en varias unidades (UND, SIXPACK=6, JABA=12, CAJA=24)
     // Cada presentacion tiene su factor de conversion a la unidad base y su precio propio.
