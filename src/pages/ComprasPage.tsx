@@ -20,6 +20,7 @@ import type { CuentaBanco } from "../types";
 import type { PreviewXmlCompra, ItemMapeadoXml } from "../services/api";
 import { useToast } from "../components/Toast";
 import Modal from "../components/Modal";
+import { FORMAS_PAGO_SRI } from "../config/formasPagoSri";
 import type { Proveedor, Compra, CompraCompleta, ItemCompra, Categoria } from "../types";
 import type { ProductoBusqueda } from "../types";
 
@@ -633,18 +634,30 @@ export default function ComprasPage() {
                       />
                     </div>
                     <div>
-                      <label className="text-secondary" style={{ fontSize: 12 }}>Forma de pago</label>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>
+                        Forma de pago <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>(según SRI)</span>
+                      </label>
+                      {/* v2.5.5: catálogo SRI Tabla 24 con código visible */}
                       <select className="input" value={formaPago} onChange={(e) => { setFormaPago(e.target.value); setBancoIdCompra(null); setReferenciaCompra(""); }}>
-                        <option value="EFECTIVO">Efectivo</option>
-                        <option value="TRANSFERENCIA">Transferencia</option>
-                        <option value="DEBITO">Débito Bancario</option>
-                        <option value="CHEQUE">Cheque</option>
+                        {FORMAS_PAGO_SRI.map(f => (
+                          <option key={f.codigo} value={f.codigo}>
+                            {f.icono ? `${f.icono} ` : ""}{f.label} · SRI {f.codigoSri}
+                          </option>
+                        ))}
                       </select>
+                      {(() => {
+                        const sel = FORMAS_PAGO_SRI.find(f => f.codigo === formaPago);
+                        return sel ? (
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            Código SRI <strong>{sel.codigoSri}</strong>: {sel.descripcionSri}
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   </div>
 
-                  {/* Banco + referencia para pagos no-efectivo */}
-                  {(["DEBITO", "TRANSFERENCIA", "CHEQUE"].includes(formaPago)) && (
+                  {/* Banco + referencia para pagos no-efectivo (todo lo que no sea EFECTIVO ni CREDITO) */}
+                  {(formaPago !== "EFECTIVO" && formaPago !== "CREDITO") && (
                     <div style={{ marginTop: 12, padding: 10, background: "rgba(59,130,246,0.06)", borderRadius: 6, border: "1px solid rgba(59,130,246,0.25)" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                         <div>
@@ -1420,14 +1433,25 @@ export default function ComprasPage() {
                 <div>
                   <div style={{ display: "grid", gridTemplateColumns: "auto 120px", gap: 8, alignItems: "end" }}>
                     <div>
-                      <label className="text-secondary" style={{ fontSize: 12 }}>Forma de pago</label>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>
+                        Forma de pago <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>(según SRI)</span>
+                      </label>
+                      {/* v2.5.5: catálogo SRI Tabla 24 con código visible */}
                       <select className="input" value={xmlFormaPago} onChange={(e) => { setXmlFormaPago(e.target.value); setXmlBancoId(""); setXmlReferencia(""); }}>
-                        <option value="EFECTIVO">Efectivo</option>
-                        <option value="TRANSFERENCIA">Transferencia</option>
-                        <option value="DEBITO">Débito Bancario</option>
-                        <option value="CHEQUE">Cheque</option>
-                        <option value="CREDITO">Credito</option>
+                        {FORMAS_PAGO_SRI.map(f => (
+                          <option key={f.codigo} value={f.codigo}>
+                            {f.icono ? `${f.icono} ` : ""}{f.label} · SRI {f.codigoSri}
+                          </option>
+                        ))}
                       </select>
+                      {(() => {
+                        const sel = FORMAS_PAGO_SRI.find(f => f.codigo === xmlFormaPago);
+                        return sel ? (
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            Código SRI <strong>{sel.codigoSri}</strong>: {sel.descripcionSri}
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                     {xmlFormaPago === "CREDITO" && (
                       <div>

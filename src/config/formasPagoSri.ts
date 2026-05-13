@@ -20,16 +20,20 @@ export interface FormaPagoSri {
   icono?: string;
 }
 
+// v2.5.5: códigos POS estandarizados por backward-compat con datos existentes.
+// El backend Rust (`forma_pago_sri` en xml.rs) acepta tanto los códigos legacy
+// (TRANSFERENCIA, DEBITO) como los nuevos (TRANSFER, TARJETA_DEBITO). El catálogo
+// usa los códigos legacy para no romper compras / ventas guardadas con esos valores.
 export const FORMAS_PAGO_SRI: FormaPagoSri[] = [
   { codigo: "EFECTIVO",          label: "Efectivo",            codigoSri: "01", descripcionSri: "Sin utilización del sistema financiero", icono: "💵" },
   { codigo: "CHEQUE",            label: "Cheque",              codigoSri: "20", descripcionSri: "Otros con utilización del sistema financiero", icono: "🧾" },
-  { codigo: "TRANSFER",          label: "Transferencia",       codigoSri: "20", descripcionSri: "Otros con utilización del sistema financiero", icono: "🏦" },
-  { codigo: "TARJETA_DEBITO",    label: "Tarjeta de débito",   codigoSri: "16", descripcionSri: "Tarjeta de débito",                            icono: "💳" },
-  { codigo: "TARJETA_CREDITO",   label: "Tarjeta de crédito",  codigoSri: "19", descripcionSri: "Tarjeta de crédito",                           icono: "💳" },
+  { codigo: "TRANSFERENCIA",     label: "Transferencia",       codigoSri: "20", descripcionSri: "Otros con utilización del sistema financiero", icono: "🏦" },
+  { codigo: "DEBITO",            label: "Tarjeta de débito",   codigoSri: "16", descripcionSri: "Tarjeta de débito",                            icono: "💳" },
+  { codigo: "TARJETA",           label: "Tarjeta de crédito",  codigoSri: "19", descripcionSri: "Tarjeta de crédito",                           icono: "💳" },
   { codigo: "TARJETA_PREPAGO",   label: "Tarjeta prepago",     codigoSri: "18", descripcionSri: "Tarjeta prepago",                              icono: "💳" },
   { codigo: "DINERO_ELECTRONICO", label: "Dinero electrónico", codigoSri: "17", descripcionSri: "Dinero electrónico (BCE)",                    icono: "📱" },
   { codigo: "COMPENSACION",      label: "Compensación / canje", codigoSri: "15", descripcionSri: "Compensación de deudas",                      icono: "🔄" },
-  { codigo: "CREDITO",           label: "Crédito (fiado)",     codigoSri: "20", descripcionSri: "Otros con utilización del sistema financiero", icono: "📋" },
+  { codigo: "CREDITO",           label: "Crédito (queda por pagar)", codigoSri: "20", descripcionSri: "Otros con utilización del sistema financiero", icono: "📋" },
 ];
 
 /** Helper: obtener forma SRI por código interno */

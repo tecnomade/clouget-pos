@@ -6,6 +6,32 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.5 — 2026-05-13 💳 Catálogo SRI de formas de pago en Compras
+
+En el módulo de Compras (compra manual + importar XML SRI), el dropdown de "Forma de pago" ahora muestra el catálogo completo del SRI Tabla 24 con el código visible en cada opción:
+
+```
+💵 Efectivo · SRI 01
+🧾 Cheque · SRI 20
+🏦 Transferencia · SRI 20
+💳 Tarjeta de débito · SRI 16
+💳 Tarjeta de crédito · SRI 19
+💳 Tarjeta prepago · SRI 18
+📱 Dinero electrónico · SRI 17
+🔄 Compensación / canje · SRI 15
+📋 Crédito (queda por pagar) · SRI 20
+```
+
+Debajo del dropdown se muestra: **"Código SRI XX: descripción oficial"** para que no quede duda sobre qué código se va a reportar al SRI.
+
+3 formas de pago nuevas se agregaron al catálogo: **Tarjeta prepago (18)**, **Dinero electrónico BCE (17)** y **Compensación / canje (15)**.
+
+### Backward compat
+
+Las compras existentes con códigos legacy (EFECTIVO, TRANSFERENCIA, DEBITO, CHEQUE, CREDITO) siguen funcionando — el catálogo se actualizó para mantener exactamente esos mismos códigos internos.
+
+---
+
 ## v2.5.4 — 2026-05-13 📋 Módulo de Retenciones SRI (cruce con factura)
 
 ### 🆕 Problema que resuelve
