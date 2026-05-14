@@ -2312,6 +2312,8 @@ export default function Configuracion() {
                 Respalde automaticamente su base de datos en la nube.
               </p>
 
+              {/* v2.5.6: usar setConfig FUNCTIONAL para evitar stale state cuando
+                  hay setConfig() en flight desde otro handler concurrente */}
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                   <input
@@ -2319,17 +2321,21 @@ export default function Configuracion() {
                     checked={config.backup_cloud_activo === "1"}
                     onChange={async (e) => {
                       const val = e.target.checked ? "1" : "0";
-                      await guardarConfig({ backup_cloud_activo: val });
-                      setConfig({ ...config, backup_cloud_activo: val });
-                      const bk = await estadoBackupCloud();
-                      setBackupEstado(bk);
+                      setConfig((prev) => ({ ...prev, backup_cloud_activo: val }));
+                      try {
+                        await guardarConfig({ backup_cloud_activo: val });
+                        const bk = await estadoBackupCloud();
+                        setBackupEstado(bk);
+                      } catch (err) { toastError("" + err); }
                     }}
                   />
                   Activar backup automatico
                 </label>
               </div>
 
-              {config.backup_cloud_activo === "1" && (
+              {config.backup_cloud_activo === "1" && (() => {
+                const tieneBackupPremium = (config.licencia_modulos || "").includes("backup_premium");
+                return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label className="form-label">Tipo de respaldo</label>
@@ -2337,16 +2343,26 @@ export default function Configuracion() {
                       className="form-input"
                       value={config.backup_cloud_tipo || ""}
                       onChange={async (e) => {
-                        await guardarConfig({ backup_cloud_tipo: e.target.value });
-                        setConfig({ ...config, backup_cloud_tipo: e.target.value });
+                        const val = e.target.value;
+                        // v2.5.6: setConfig functional + guardar después → evita stale state
+                        setConfig((prev) => ({ ...prev, backup_cloud_tipo: val }));
+                        try {
+                          await guardarConfig({ backup_cloud_tipo: val });
+                        } catch (err) { toastError("" + err); }
                       }}
                     >
                       <option value="">Seleccionar...</option>
-                      {(config.licencia_modulos || "").includes("backup_premium") && (
-                        <option value="premium">Premium (servidor Clouget)</option>
-                      )}
+                      <option value="premium" disabled={!tieneBackupPremium}>
+                        Premium (servidor Clouget) {!tieneBackupPremium && "🔒 Requiere módulo"}
+                      </option>
                       <option value="gdrive">Google Drive (cuenta propia)</option>
                     </select>
+                    {!tieneBackupPremium && (
+                      <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                        💡 El backup Premium requiere el módulo <strong>backup_premium</strong> en tu licencia.
+                        Contacta al administrador para activarlo.
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -2355,8 +2371,11 @@ export default function Configuracion() {
                       className="form-input"
                       value={config.backup_cloud_frecuencia || "6"}
                       onChange={async (e) => {
-                        await guardarConfig({ backup_cloud_frecuencia: e.target.value });
-                        setConfig({ ...config, backup_cloud_frecuencia: e.target.value });
+                        const val = e.target.value;
+                        setConfig((prev) => ({ ...prev, backup_cloud_frecuencia: val }));
+                        try {
+                          await guardarConfig({ backup_cloud_frecuencia: val });
+                        } catch (err) { toastError("" + err); }
                       }}
                     >
                       <option value="1">Cada hora</option>
@@ -2366,10 +2385,33 @@ export default function Configuracion() {
                     </select>
                   </div>
 
+                  {/* v2.5.6: Sección PREMIUM (servidor Clouget) — antes no existía. */}
+                  {config.backup_cloud_tipo === "premium" && (
+                    <div style={{ padding: 12, background: "rgba(168,85,247,0.06)", borderRadius: 8, border: "1px solid rgba(168,85,247,0.3)" }}>
+                      <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "#a855f7" }}>
+                        ☁ Backup Premium (Servidor Clouget)
+                      </p>
+                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                        Tu base de datos se respalda automáticamente cifrada en el servidor de Clouget.
+                        Acceso restaurable desde admin.clouget.com con tu código de licencia.
+                      </p>
+                      <div style={{ fontSize: 11, marginBottom: 8 }}>
+                        <div>✓ Licencia válida: <strong>{(config.licencia_codigo || "—").toString().slice(0, 20) || "—"}</strong></div>
+                        <div>✓ Módulo backup_premium: <strong style={{ color: "var(--color-success)" }}>Activo</strong></div>
+                        <div>✓ Frecuencia: cada {config.backup_cloud_frecuencia || "6"} horas (automático)</div>
+                      </div>
+                      <p style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 8 }}>
+                        Use el botón "Respaldar ahora" abajo para forzar una subida inmediata.
+                      </p>
+                    </div>
+                  )}
+
                   {config.backup_cloud_tipo === "gdrive" && (
-                    <div style={{ padding: 12, background: "var(--color-bg-secondary)", borderRadius: 8 }}>
+                    <div style={{ padding: 12, background: "var(--color-bg-secondary, var(--color-surface-alt))", borderRadius: 8, border: "1px solid var(--color-border)" }}>
                       <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                        Google Drive: {backupEstado?.gdrive_conectado ? "Conectado" : "No conectado"}
+                        🔗 Google Drive: {backupEstado?.gdrive_conectado
+                          ? <span style={{ color: "var(--color-success)" }}>✓ Conectado</span>
+                          : <span style={{ color: "var(--color-warning)" }}>⚠ No conectado</span>}
                       </p>
                       {backupEstado?.gdrive_conectado ? (
                         <button
@@ -2401,10 +2443,10 @@ export default function Configuracion() {
                               }
                             }}
                           >
-                            Conectar Google Drive
+                            🔗 Conectar Google Drive
                           </button>
                           <p style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 4 }}>
-                            Se abrira el navegador para autorizar acceso a Google Drive.
+                            Se abrirá el navegador para autorizar acceso a tu Google Drive personal.
                           </p>
                         </div>
                       )}
@@ -2434,7 +2476,8 @@ export default function Configuracion() {
                     </p>
                   )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           </div>
           )}

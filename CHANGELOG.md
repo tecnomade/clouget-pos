@@ -6,6 +6,36 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.6 — 2026-05-14 🐞 Backup en la Nube: fix selección + sección Premium visible
+
+### 🚨 Bug: el dropdown "Tipo de respaldo" no se mantenía seleccionado
+
+Al seleccionar "Google Drive (cuenta propia)" o "Premium", la opción se reseteaba a "Seleccionar..." y nunca aparecía el botón para conectar / configurar.
+
+**Causa**: stale state en React. El handler usaba `setConfig({ ...config, ... })` capturando un `config` viejo. Si el usuario activaba el checkbox "Activar backup automático" y a continuación elegía un tipo, el segundo `setConfig` pisaba el cambio del primero (por la closure del JS).
+
+**Fix**: ahora todos los handlers usan `setConfig((prev) => ({ ...prev, ... }))` (functional update) que siempre recibe el state más reciente. La selección persiste correctamente.
+
+### 🆕 Sección "Premium (servidor Clouget)" antes invisible
+
+Cuando seleccionabas "Premium" no aparecía nada — ni info ni botón. Ahora aparece una caja explicativa morada con:
+
+- Indicador de licencia válida (código truncado)
+- Confirmación módulo `backup_premium` activo
+- Frecuencia configurada
+- Instrucciones de uso
+- Cifrado automático en el servidor de Clouget
+
+### 🆕 Bloqueo visual cuando no se tiene el módulo
+
+Si la licencia NO incluye `backup_premium`, la opción aparece deshabilitada con candado 🔒 y un mensaje:
+
+> 💡 El backup Premium requiere el módulo backup_premium en tu licencia. Contacta al administrador para activarlo.
+
+Antes la opción simplemente no aparecía, ahora se ve pero deshabilitada — más claro para el cliente que sabe que existe el feature.
+
+---
+
 ## v2.5.5 — 2026-05-13 💳 Catálogo SRI de formas de pago en Compras
 
 En el módulo de Compras (compra manual + importar XML SRI), el dropdown de "Forma de pago" ahora muestra el catálogo completo del SRI Tabla 24 con el código visible en cada opción:
