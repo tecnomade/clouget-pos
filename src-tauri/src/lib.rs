@@ -17,26 +17,74 @@ use tauri_plugin_updater::UpdaterExt;
 use db::{Database, SesionState};
 use std::sync::{Arc, Mutex};
 
-/// Comando custom: verifica e instala update desde un endpoint dinamico (segun canal).
+/// Comando custom: verifica e instala update desde endpoint dinamico (segun canal).
 /// El plugin oficial solo lee endpoints estaticos del tauri.conf.json.
-/// Este comando permite consultar el endpoint del canal beta sin recompilar la app.
+///
+/// v2.5.10: si canal=beta consulta AMBOS endpoints (beta + stable) y toma la version
+/// MAS ALTA. Antes solo consultaba beta, asi que un usuario en canal beta no recibia
+/// versiones stable nuevas si no habia una beta posterior — quedaba atras del stable.
 #[tauri::command]
 async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<Option<String>, String> {
-    let canal_safe = if canal == "beta" { "beta" } else { "stable" };
-    let endpoint_url = format!(
-        "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest?canal={}",
-        canal_safe
-    );
-    let url = url::Url::parse(&endpoint_url).map_err(|e| e.to_string())?;
+    let endpoint_base = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest";
 
-    let updater = app.updater_builder()
-        .endpoints(vec![url]).map_err(|e| e.to_string())?
-        .build().map_err(|e| e.to_string())?;
+    // Helper: parsear "X.Y.Z" a tupla (mayor, menor, parche) para comparar versiones.
+    // Si falla el parseo, devuelve (0,0,0) que pierde contra cualquier version real.
+    fn parse_version(v: &str) -> (u32, u32, u32) {
+        let parts: Vec<&str> = v.trim_start_matches('v').split(|c| c == '.' || c == '-').collect();
+        let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (major, minor, patch)
+    }
 
-    match updater.check().await.map_err(|e| e.to_string())? {
+    // Lista de endpoints a consultar segun canal:
+    // - stable: solo el endpoint stable
+    // - beta: stable Y beta (asi el usuario beta nunca pierde versiones estables nuevas)
+    let endpoints_a_consultar: Vec<String> = if canal == "beta" {
+        vec![
+            format!("{}?canal=stable", endpoint_base),
+            format!("{}?canal=beta", endpoint_base),
+        ]
+    } else {
+        vec![format!("{}?canal=stable", endpoint_base)]
+    };
+
+    // Consultar cada endpoint por separado, buscar el update con version mas alta
+    let mut mejor_update: Option<tauri_plugin_updater::Update> = None;
+    let mut mejor_version_tuple = (0u32, 0u32, 0u32);
+
+    for ep_url in &endpoints_a_consultar {
+        let url = match url::Url::parse(ep_url) {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        let updater_one = match app.updater_builder()
+            .endpoints(vec![url])
+            .and_then(|b| b.build())
+        {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        // check() puede devolver Err si el endpoint no responde — ignorar ese endpoint
+        // y seguir con los demas (no abortar todo el chequeo por un endpoint caido)
+        match updater_one.check().await {
+            Ok(Some(upd)) => {
+                let v = parse_version(&upd.version);
+                if v > mejor_version_tuple {
+                    mejor_version_tuple = v;
+                    mejor_update = Some(upd);
+                }
+            }
+            Ok(None) => { /* sin update en este endpoint, seguir */ }
+            Err(e) => {
+                eprintln!("[Updater {}] error consultando {}: {}", canal, ep_url, e);
+            }
+        }
+    }
+
+    match mejor_update {
         Some(update) => {
             let new_version = update.version.clone();
-            // Descargar e instalar
             update.download_and_install(|_, _| {}, || {}).await
                 .map_err(|e| e.to_string())?;
             Ok(Some(new_version))

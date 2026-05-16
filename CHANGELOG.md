@@ -6,6 +6,31 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.10 — 2026-05-16 🐞 Canal Beta ahora recibe también versiones Stable
+
+### Bug reportado
+
+Los clientes/testers con canal **Beta** configurado no recibían las versiones **Stable** nuevas. Si después de una beta no salía otra beta sino solo stables, quedaban atrasados (sin las correcciones críticas de stable).
+
+### Causa
+
+El comando `verificar_update_canal` consultaba SOLO el endpoint `?canal=beta` cuando el cliente estaba en beta. El endpoint beta no incluye las versiones stable.
+
+### Fix
+
+Ahora si el canal es **Beta**, el cliente consulta **AMBOS endpoints** (stable + beta) y aplica la versión MÁS ALTA. Esto garantiza que un usuario en beta nunca se queda atrás respecto a stable.
+
+Comportamiento por canal:
+
+| Canal | Endpoints consultados | Resultado |
+|---|---|---|
+| **Stable** | Solo `?canal=stable` | Última stable |
+| **Beta** | `?canal=stable` + `?canal=beta` | Versión más alta de ambas |
+
+Adicional: si un endpoint está caído, el cliente sigue probando los demás (no aborta el chequeo entero por un endpoint con error).
+
+---
+
 ## v2.5.9 — 2026-05-16 ⬆ Auto-update UX refinada (startup vs runtime + detalles)
 
 Mejora del flujo de actualización de v2.5.8 según feedback:
