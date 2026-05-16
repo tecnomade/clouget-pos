@@ -6,6 +6,52 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.7 — 2026-05-16 🚨 Bug CRÍTICO: POS no veía caja abierta / venta no se sumaba a Caja
+
+### 🐞 Síntomas reportados por cliente
+
+> "Cierro sesión, abro caja, al vender me vuelve a pedir abrir caja"
+> "Al vender, la venta no se suma a la caja — tengo que cerrar y volver a abrir"
+
+### Causa raíz
+
+Con el sistema de pestañas internas (v2.5.0+), las páginas POS y Caja se mantienen montadas en memoria (display:none) para preservar su state. Pero NO se comunicaban entre sí:
+
+- **POS** cacheaba `cajaAbierta` al montar. Si después abrías caja desde la pestaña Caja, POS no se enteraba y al vender daba "Debe abrir la caja".
+- **Caja** mostraba el monto cacheado al momento del último render. Las ventas hechas en POS no se sumaban hasta refrescar.
+
+El refresh por `useTabActivated` (v2.5.3) solo actualizaba productos/categorías, NO la caja. Esto se nos pasó.
+
+### 🆕 Fix v2.5.7 — Event bus cross-tab
+
+Implementé un sistema de notificaciones DOM events entre pestañas:
+
+**1. Cuando POS completa una venta** dispara:
+```js
+window.dispatchEvent(new CustomEvent("clouget:venta-completada", {...}));
+```
+→ CajaPage escucha y refresca automáticamente (en vivo, sin tener que cambiar de tab).
+
+**2. Cuando Caja se abre/cierra** dispara:
+```js
+window.dispatchEvent(new CustomEvent("clouget:caja-cambio", {...}));
+```
+→ PuntoVenta escucha y refresca `cajaAbierta` automáticamente. Si vas al POS y la caja ya estaba abierta, ya no da el falso error "Debe abrir caja".
+
+**3. PuntoVenta useTabActivated** ahora también refresca `cajaAbierta` al volver a la tab (no solo productos). Backup adicional por si el evento no llegó.
+
+### Impacto
+
+- Ya no es necesario "cerrar y reabrir caja" para ver ventas reflejadas.
+- Ya no aparece el falso error "Debe abrir caja" cuando la caja sí está abierta.
+- La sincronización entre tabs ahora es **inmediata** (event-driven), no solo al cambiar de tab.
+
+### Comunícale al cliente
+
+Después de actualizar (auto-update al próximo arranque), el problema desaparece. **No requiere migración de datos ni cambiar configuración** — funciona de inmediato.
+
+---
+
 ## v2.5.6 — 2026-05-14 🐞 Backup en la Nube: fix selección + sección Premium visible
 
 ### 🚨 Bug: el dropdown "Tipo de respaldo" no se mantenía seleccionado

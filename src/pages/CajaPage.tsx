@@ -126,6 +126,15 @@ export default function CajaPage() {
   // (puede haber hecho ventas/retiros desde POS u otra tab que cambian el monto).
   useTabActivated("/caja", () => { cargar(); });
 
+  // v2.5.7: refrescar en VIVO (sin esperar a cambiar tab) cuando POS notifica
+  // que se completo una venta. Asi el monto_esperado se actualiza al instante
+  // si el usuario tiene Caja abierta mientras vende en otra tab.
+  useEffect(() => {
+    const handler = () => { cargar(); };
+    window.addEventListener("clouget:venta-completada", handler);
+    return () => window.removeEventListener("clouget:venta-completada", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-refresh: recargar caja cuando la ventana recupera el foco o vuelve a ser visible.
   // Evita que el usuario tenga que navegar afuera y volver para ver el monto_esperado
   // actualizado despues de hacer cambios en otra ventana (ej: una venta en POS).
@@ -224,6 +233,8 @@ export default function CajaPage() {
       setRetiros([]);
       setResumenRetiros([]);
       setResumen(null);
+      // v2.5.7: notificar a otras tabs (POS principalmente) que se abrio caja
+      window.dispatchEvent(new CustomEvent("clouget:caja-cambio", { detail: { evento: "apertura", caja_id: caja.id } }));
       toastExito("Caja abierta correctamente");
     } catch (err) {
       const msg = String(err);
@@ -279,6 +290,8 @@ export default function CajaPage() {
       if (res.caja?.id) {
         listarRetirosCaja(res.caja.id).then(setResumenRetiros).catch(() => setResumenRetiros([]));
       }
+      // v2.5.7: notificar a otras tabs (POS) que se cerro caja
+      window.dispatchEvent(new CustomEvent("clouget:caja-cambio", { detail: { evento: "cierre" } }));
       toastExito("Caja cerrada correctamente");
       return true;
     } catch (err) {

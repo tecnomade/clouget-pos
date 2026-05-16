@@ -278,12 +278,27 @@ export default function PuntoVenta() {
   // v2.5.3: refrescar productos + categorias + listas + bancos cada vez que el
   // usuario vuelve a la pestaña POS (después de editar en otra tab). Sin esto,
   // los cambios no se ven porque la tab POS queda montada con display:none.
+  // v2.5.7: AGREGADO refresh de cajaAbierta. Si el cliente abrio caja desde la
+  // pestaña Caja, POS tenia cajaAbierta=null cacheado y al vender daba error
+  // "Debe abrir la caja". Ahora refresca el estado real al volver al POS.
   useTabActivated("/pos", () => {
     listarProductosTactil().then(setProductosTactil).catch(() => {});
     listarCategorias().then(setCategoriasTactil).catch(() => {});
     listarListasPrecios().then((ls: any[]) => setTodasListasPrecios(ls.filter((l: any) => l.activo))).catch(() => {});
     listarCuentasBanco().then(setCuentasBanco).catch(() => {});
+    obtenerCajaAbierta().then(setCajaAbierta).catch(() => setCajaAbierta(null));
   });
+
+  // v2.5.7: escuchar cambios de caja (apertura/cierre) desde OTRAS tabs vía evento global.
+  // No depende de useTabActivated — funciona aunque esta tab no este activa, asi cuando
+  // el usuario activa POS la cajaAbierta ya esta actualizada (sin lag).
+  useEffect(() => {
+    const handler = () => {
+      obtenerCajaAbierta().then(setCajaAbierta).catch(() => setCajaAbierta(null));
+    };
+    window.addEventListener("clouget:caja-cambio", handler);
+    return () => window.removeEventListener("clouget:caja-cambio", handler);
+  }, []);
 
   const handleBuscar = async (termino: string) => {
     setBusqueda(termino);
@@ -823,6 +838,11 @@ export default function PuntoVenta() {
       setComprobanteImagen(null);
       setPagosMixtos([]);
       setModoPagoMixto(false);
+      // v2.5.7: notificar a otras tabs (CajaPage, Dashboard, etc.) que hubo una
+      // venta para que actualicen sus montos sin esperar al refresh por activacion.
+      window.dispatchEvent(new CustomEvent("clouget:venta-completada", {
+        detail: { ventaId: resultado.venta.id, total: resultado.venta.total },
+      }));
       // IMPRESION AUTOMATICA AL REGISTRAR: si esta activa, imprime ANTES de enviar al SRI
       // Esto asegura que el cliente se lleve su ticket sin esperar al SRI
       if (autoImprimirTicket && resultado.venta.id) {
