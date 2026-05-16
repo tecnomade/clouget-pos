@@ -6,6 +6,42 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.8 — 2026-05-16 ⬆ Auto-update: chequeo periódico + confirmación + banner llamativo
+
+### 🐞 Por qué los testers no recibían updates
+
+El sistema de auto-update **solo verificaba al iniciar la app**. Los POS suelen quedar abiertos 12-16 horas/día sin reiniciar, así que el chequeo nunca se volvía a disparar — los clientes/testers no se enteraban de versiones nuevas.
+
+Encima, antes el sistema **descargaba e instalaba automáticamente** sin preguntar. Eso es peligroso si el cliente está en medio de una venta: el reinicio podría perder el carrito o un cobro a medias.
+
+### 🆕 Solución v2.5.8
+
+**1. Verificación recurrente cada 60 minutos** (además del check inicial a los 5 segundos del arranque). Si la app está abierta todo el día, el cliente se entera de updates dentro de la hora.
+
+**2. Banner con confirmación** — ya no descarga sin preguntar. Cuando hay nueva versión aparece un banner llamativo arriba:
+
+> 🎉 **Nueva versión X.X.X disponible.** Aplica el cambio cuando termines lo que estás haciendo — se cerrará y reiniciará la app.
+>
+> [⬆ Actualizar ahora]  [Más tarde]
+
+- **"Actualizar ahora"** → descarga + reinicia (igual que antes pero solo con consentimiento)
+- **"Más tarde"** → oculta el banner. Volverá a aparecer en el próximo check (60 min) o al reiniciar la app
+
+**3. Botón manual "🔄 Buscar actualización ahora"** en Configuración → Actualizaciones. Permite al cliente forzar un chequeo en cualquier momento (útil para soporte: "le digo al cliente que vaya a Config y haga click").
+
+**4. Feedback visible siempre que el usuario pide chequeo manual**:
+- Si HAY update → aparece el banner llamativo
+- Si NO HAY update → aparece banner verde "✓ Estás en la última versión" (auto-cierra en 4s)
+- Si HAY ERROR → aparece banner rojo con el error
+
+### Impacto
+
+- Clientes ya no se quedan en versiones viejas por días/semanas
+- Nunca más se pierde trabajo por reinicio sorpresa
+- Soporte puede instruir al cliente a forzar chequeo
+
+---
+
 ## v2.5.7 — 2026-05-16 🚨 Bug CRÍTICO: POS no veía caja abierta / venta no se sumaba a Caja
 
 ### 🐞 Síntomas reportados por cliente

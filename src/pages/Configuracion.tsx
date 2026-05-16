@@ -2048,8 +2048,23 @@ export default function Configuracion() {
                 </label>
               </div>
               <div style={{ marginTop: 10, padding: 8, background: "rgba(59,130,246,0.08)", borderRadius: 4, fontSize: 11, color: "var(--color-text-secondary)" }}>
-                💡 Los cambios se aplican en el proximo chequeo (se verifica al iniciar la app).
-                Version actual: <strong>v{__APP_VERSION__}</strong>
+                💡 Los cambios se aplican en el próximo chequeo (al iniciar la app o cada 60 min mientras esté abierta).
+                Versión actual: <strong>v{__APP_VERSION__}</strong>
+              </div>
+              {/* v2.5.8: chequeo manual de actualizaciones */}
+              <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 12, padding: "6px 14px" }}
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("clouget:verificar-update"));
+                    toastExito("Buscando actualizaciones...");
+                  }}>
+                  🔄 Buscar actualización ahora
+                </button>
+                <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  Si hay nueva versión aparecerá un banner azul arriba en unos segundos.
+                </span>
               </div>
             </div>
           </div>
