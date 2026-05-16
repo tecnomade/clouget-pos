@@ -6,6 +6,37 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.9 — 2026-05-16 ⬆ Auto-update UX refinada (startup vs runtime + detalles)
+
+Mejora del flujo de actualización de v2.5.8 según feedback:
+
+### 🆕 Diferenciación startup vs runtime
+
+**Al abrir la app** (3 segundos después del arranque):
+- Aparece un banner azul fino: **"🔄 Buscando actualización..."**
+- Si encuentra → **instala automáticamente** (sin preguntar — el cliente recién está abriendo, no está en medio de nada)
+- Si no encuentra → desaparece el banner silenciosamente
+
+**Mientras la app está abierta** (check cada 60 minutos):
+- Si encuentra → muestra banner con **[⬆ Actualizar ahora]** / **[Más tarde]**
+- No instala automáticamente — el cliente podría estar en medio de una venta o cobro y perder trabajo si reinicia sin avisar
+
+### 🆕 "Ver detalles de la actualización"
+
+El banner ahora incluye un toggle expandible **"Ver detalles de la actualización"** que muestra las notas de la release (body del último commit/release de GitHub) — así el cliente sabe qué se está instalando antes de aceptar.
+
+Si el body no viene (fallback): mensaje genérico "Esta nueva versión incluye correcciones y mejoras. Revisá el detalle completo en GitHub."
+
+### Resumen del comportamiento
+
+| Cuándo | Acción |
+|---|---|
+| Arranque de la app (1ra vez) | Muestra "Buscando..." → si hay, instala auto |
+| App abierta, 60 min después | Si hay, banner con [Actualizar] [Más tarde] + detalles |
+| Click manual en Configuración | Igual que runtime: banner con confirmación + detalles |
+
+---
+
 ## v2.5.8 — 2026-05-16 ⬆ Auto-update: chequeo periódico + confirmación + banner llamativo
 
 ### 🐞 Por qué los testers no recibían updates
