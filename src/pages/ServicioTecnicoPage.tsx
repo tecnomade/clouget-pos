@@ -1191,7 +1191,14 @@ export default function ServicioTecnicoPage() {
                   onClick={() => setFormatoImpresion("TICKET_80")}
                   title="Térmica 80mm">80mm</button>
                 <button className="btn"
-                  style={{ fontSize: 12, padding: "6px 14px", borderRadius: 0, border: "none", borderLeft: "1px solid var(--color-border)" }}
+                  style={{
+                    fontSize: 12, padding: "6px 14px", borderRadius: 0, border: "none",
+                    borderLeft: "1px solid var(--color-border)",
+                    // v2.5.11: forzar color de texto (antes heredaba blanco-sobre-blanco en dark)
+                    background: "transparent",
+                    color: "var(--color-text)",
+                    fontWeight: 600,
+                  }}
                   onClick={() => imprimirOrdenServicioPdf(detalleId!, formatoImpresion).catch(err => toastError("" + err))}>
                   📄 Imprimir
                 </button>

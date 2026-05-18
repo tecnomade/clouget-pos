@@ -339,11 +339,46 @@ pub fn historial_movimientos_orden(db: State<Database>, orden_id: i64) -> Result
 pub fn eliminar_orden_servicio(db: State<Database>, id: i64) -> Result<(), String> {
     requiere_modulo_servicio_tecnico(&db)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // v2.5.11 BUG FIX: bloquear eliminacion si hay abonos en cualquier estado.
+    // Antes solo se chequeaba venta_id, dejando que se elimine una orden con
+    // abonos en HOLDING — eso causa que el dinero entre a caja sin contrapartida
+    // y rompe la contabilidad. Si la orden tiene abonos, hay que usar
+    // "Cancelar orden" (st_cancelar_orden) que devuelve los abonos correctamente.
+    let total_abonos: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM st_abonos WHERE orden_id = ?1",
+        rusqlite::params![id], |r| r.get(0)
+    ).unwrap_or(0);
+    if total_abonos > 0 {
+        return Err(format!(
+            "No se puede eliminar esta orden porque tiene {} abono(s) registrado(s) en caja. \
+             Si querés anular la orden, usá 'Cancelar orden' — eso devuelve los abonos \
+             en holding automáticamente.",
+            total_abonos
+        ));
+    }
+
+    // v2.5.11: tambien bloquear si tiene items presupuestados (actividad documentada).
+    // Es razonable que el usuario al menos limpie los items antes de eliminar.
+    let total_items: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM orden_servicio_items WHERE orden_id = ?1",
+        rusqlite::params![id], |r| r.get(0)
+    ).unwrap_or(0);
+    if total_items > 0 {
+        return Err(format!(
+            "No se puede eliminar esta orden porque tiene {} item(s) en el detalle. \
+             Eliminá los items primero o usá 'Cancelar orden' para anularla preservando la traza.",
+            total_items
+        ));
+    }
+
     let venta_id: Option<i64> = conn.query_row(
         "SELECT venta_id FROM ordenes_servicio WHERE id = ?1",
         rusqlite::params![id], |r| r.get(0)
     ).unwrap_or(None);
     if venta_id.is_some() {
+        // Si tiene venta vinculada, no eliminar fisicamente — marcar cancelada
+        // (la venta tiene su propio ciclo de vida, no podemos romper integridad)
         conn.execute("UPDATE ordenes_servicio SET estado = 'CANCELADO' WHERE id = ?1", rusqlite::params![id])
             .map_err(|e| e.to_string())?;
     } else {
@@ -950,30 +985,65 @@ pub fn imprimir_orden_servicio_pdf(
         if !items_cot.is_empty() {
             doc.push(Break::new(1));
             doc.push(Paragraph::new("DETALLE DE COTIZACIÓN").styled(header_st));
-            // v2.5.2: en ticket 80mm el formato single-line se ve apretado y mezclado.
-            // Para ticket usamos formato multi-linea con descripcion arriba y cantidades
-            // abajo. Para A4 mantenemos el single-line clasico.
+            // v2.5.11: A4 usa tabla por columnas (estilo nota de venta) en vez de
+            // viñetas planas. 80mm mantiene formato multi-linea (mejor en angosto).
             let mut subtotal = 0.0_f64;
             let mut iva_total = 0.0_f64;
-            for (desc, cant, precio, iva_pct) in &items_cot {
-                let st = cant * precio;
-                let iva_item = st * iva_pct / 100.0;
-                subtotal += st;
-                iva_total += iva_item;
-                if es_ticket {
-                    // 80mm: descripcion en una linea, datos en la siguiente
+
+            if es_ticket {
+                // ── 80mm: descripcion + linea de cantidad/precio ──
+                for (desc, cant, precio, iva_pct) in &items_cot {
+                    let st = cant * precio;
+                    let iva_item = st * iva_pct / 100.0;
+                    subtotal += st;
+                    iva_total += iva_item;
                     doc.push(Paragraph::new(&format!("• {}", desc)).styled(normal_st));
                     doc.push(Paragraph::new(&format!("  {} x ${:.2}  =  ${:.2}", cant, precio, st)).styled(normal_st));
-                } else {
-                    // A4: una sola linea
-                    doc.push(Paragraph::new(&format!("• {} x{} · ${:.2} c/u = ${:.2}", desc, cant, precio, st)).styled(normal_st));
                 }
-            }
-            doc.push(Break::new(0.3));
-            // Linea separadora antes de totales (ayuda visual en ticket)
-            if es_ticket {
+                doc.push(Break::new(0.3));
                 doc.push(Paragraph::new("--------------------------------").styled(normal_st));
+            } else {
+                // ── A4: tabla con columnas # | Descripcion | Cant | P.Unit | Subtotal ──
+                let s_small = Style::new().with_font_size(9);
+                let s_small_bold = Style::new().with_font_size(9).bold();
+                // Helpers locales (mismo patron que nota_venta_pdf.rs)
+                let pp = |text: String, style: Style| Paragraph::new(text).styled(style).padded(Margins::trbl(2, 2, 2, 4));
+                let pp_right = |text: String, style: Style| Paragraph::new(text).aligned(Alignment::Right).styled(style).padded(Margins::trbl(2, 4, 2, 2));
+
+                // Columnas proporcionales: # (1) | Descripcion (8) | Cant (2) | P.Unit (2) | Subtotal (2)
+                let mut tabla = TableLayout::new(vec![1, 8, 2, 2, 2]);
+                tabla.set_cell_decorator(FrameCellDecorator::new(true, true, false));
+
+                // Cabecera
+                tabla.row()
+                    .element(pp("#".to_string(), s_small_bold))
+                    .element(pp("Descripción".to_string(), s_small_bold))
+                    .element(pp_right("Cant.".to_string(), s_small_bold))
+                    .element(pp_right("P.Unit.".to_string(), s_small_bold))
+                    .element(pp_right("Subtotal".to_string(), s_small_bold))
+                    .push()
+                    .map_err(|e| format!("Error tabla cabecera cotizacion: {}", e))?;
+
+                // Filas
+                for (i, (desc, cant, precio, iva_pct)) in items_cot.iter().enumerate() {
+                    let st = cant * precio;
+                    let iva_item = st * iva_pct / 100.0;
+                    subtotal += st;
+                    iva_total += iva_item;
+                    let cant_fmt = if *cant == cant.floor() { format!("{:.0}", cant) } else { format!("{:.2}", cant) };
+                    tabla.row()
+                        .element(pp(format!("{}", i + 1), s_small))
+                        .element(pp(desc.clone(), s_small))
+                        .element(pp_right(cant_fmt, s_small))
+                        .element(pp_right(format!("${:.2}", precio), s_small))
+                        .element(pp_right(format!("${:.2}", st), s_small))
+                        .push()
+                        .map_err(|e| format!("Error tabla fila cotizacion: {}", e))?;
+                }
+                doc.push(tabla);
+                doc.push(Break::new(0.5));
             }
+
             doc.push(Paragraph::new(&format!("Subtotal: ${:.2}", subtotal)).styled(label_st));
             if iva_total > 0.001 {
                 doc.push(Paragraph::new(&format!("IVA: ${:.2}", iva_total)).styled(label_st));

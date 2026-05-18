@@ -6,6 +6,41 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.11 — 2026-05-16 🚨 Bug crítico eliminar ST + UI fixes
+
+### 🚨 BUG CRÍTICO: orden ST con abonos se podía eliminar
+
+El comando `eliminar_orden_servicio` solo chequeaba si la orden tenía `venta_id`, pero **no chequeaba si tenía abonos en HOLDING**. Esto permitía borrar una orden cuyos abonos ya habían entrado a caja, dejando el dinero en caja sin contrapartida → **descuadre contable**.
+
+**Fix v2.5.11**:
+- Ahora bloquea la eliminación si hay **cualquier abono** registrado (HOLDING / APLICADO / DEVUELTO).
+- Mensaje claro: *"No se puede eliminar esta orden porque tiene N abono(s) registrado(s) en caja. Si querés anular la orden, usá 'Cancelar orden' — eso devuelve los abonos en holding automáticamente."*
+- También bloquea si tiene items presupuestados (sugerimos eliminar items primero o cancelar la orden).
+- La lógica original de marcar `CANCELADO` cuando hay venta_id sigue intacta.
+
+**Para órdenes ya eliminadas erróneamente**: los abonos huérfanos quedan en `st_abonos` con `orden_id` apuntando a una fila inexistente. Si necesitás limpieza retroactiva, contactanos.
+
+### 🎨 Botón "📄 Imprimir" no se leía en tema oscuro
+
+El botón en el footer del detalle de orden ST heredaba el color `inherit` que en dark theme quedaba blanco-sobre-blanco. Se forzó `color: var(--color-text)` y `fontWeight: 600` para que siempre se vea.
+
+### 🆕 Cotización PDF (A4): items ahora en tabla por columnas
+
+Antes los items se imprimían como viñetas planas:
+```
+• Producto X x2 · $5.00 c/u = $10.00
+```
+Ahora en A4 se muestran como tabla con columnas (igual que las notas de venta):
+
+| # | Descripción | Cant. | P.Unit. | Subtotal |
+|---|---|---|---|---|
+| 1 | Cambio de aceite | 1 | $35.00 | $35.00 |
+| 2 | Filtro de aire | 1 | $12.00 | $12.00 |
+
+El formato 80mm se mantiene multi-línea (mejor lectura en ticket angosto).
+
+---
+
 ## v2.5.10 — 2026-05-16 🐞 Canal Beta ahora recibe también versiones Stable
 
 ### Bug reportado
