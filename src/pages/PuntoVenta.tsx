@@ -504,27 +504,35 @@ export default function PuntoVenta() {
     //   4) precio_venta default
     // El cambio de tarifa POR ITEM se hace despues, en el modal del item del carrito.
     //
-    // v2.5.12 BUG FIX: cuando hay unidad agrupada (factor > 1) PERO no tiene precio
-    // explicito, antes se usaba el precio_venta SIN multiplicar por el factor, lo cual
-    // dejaba un blister de 10 unidades al precio de 1 unidad. Solo aplicamos el factor
-    // al precio_venta default (no a precio_lista, que el usuario podría haber configurado
-    // explícitamente para esa presentación).
+    // v2.5.12 / v2.5.13 BUG FIX: precio para presentaciones agrupadas (blister, jaba…)
+    // Lógica:
+    //   1. Si la presentación tiene precio EXPLÍCITO configurado → usar ese (no tocar).
+    //   2. Si NO tiene precio explícito Y hay factor > 1 → multiplicar precio_base × factor.
+    //      Esto es matemáticamente neutral: el blister x10 cuesta lo mismo que 10 unitarias.
+    //   3. Si es unidad base (factor = 1) → flujo normal de listas de precios.
+    //
+    // Las listas de precios (precio_lista, resolverPrecioProducto) están a nivel de
+    // PRODUCTO BASE — no contemplan presentaciones. Por eso multiplicamos por factor
+    // cuando el item es presentación agrupada sin precio propio.
     let precioEfectivo: number;
     const factorUnidad: number = (unidadElegida?.factor != null && unidadElegida.factor > 0) ? unidadElegida.factor : 1;
+    const esPresentacionAgrupada = factorUnidad > 1;
+
     if (unidadElegida?.precio != null) {
-      // Precio explicito de la presentacion (caso ideal)
+      // Caso ideal: el usuario configuró precio explícito al blister/jaba/etc.
       precioEfectivo = unidadElegida.precio;
     } else if (producto.precio_lista != null) {
-      // Hay lista de precios → asumimos que el precio ya esta en la unidad correcta
-      precioEfectivo = producto.precio_lista;
+      // Lista de precios resuelta para el producto base
+      precioEfectivo = esPresentacionAgrupada ? producto.precio_lista * factorUnidad : producto.precio_lista;
     } else if (clienteSeleccionado?.lista_precio_id) {
       try {
-        precioEfectivo = await resolverPrecioProducto(producto.id, clienteSeleccionado.id ?? undefined);
+        const p = await resolverPrecioProducto(producto.id, clienteSeleccionado.id ?? undefined);
+        precioEfectivo = esPresentacionAgrupada ? p * factorUnidad : p;
       } catch {
         precioEfectivo = producto.precio_venta * factorUnidad;
       }
     } else {
-      // Default: precio_venta unitario × factor de la presentación (fix del bug)
+      // Default: precio_venta unitario × factor (= precio de la presentación calculado)
       precioEfectivo = producto.precio_venta * factorUnidad;
     }
 
@@ -954,13 +962,29 @@ export default function PuntoVenta() {
   }, [regimen]);
 
   // Recalcular precios del carrito al cambiar de cliente
+  //
+  // v2.5.13 BUG FIX: antes esta funcion recalculaba TODOS los items con el precio
+  // de la unidad base del producto (resolverPrecioProducto solo conoce el producto,
+  // no la presentacion). Esto pisaba el precio configurado de los blister/jaba/etc.
+  // Ej: blister x10 a $2.00 quedaba en $0.25 al cambiar cliente (precio unitario).
+  // Ahora:
+  //   - Items en unidad BASE (factor = 1, sin unidad_id): se recalculan normal.
+  //   - Items en UNIDAD AGRUPADA (factor > 1): NO se tocan. Si el item tenia precio
+  //     explicito de presentacion, se respeta. Si vino del precio_venta * factor,
+  //     tambien se respeta porque sigue siendo el calculo matematicamente neutral.
+  //     Si el cliente tiene lista de precios que aplica a presentaciones, deberia
+  //     ajustarse el precio_lista de la unidad, no del producto base.
   const recalcularPreciosCarrito = useCallback(async (clienteId: number | null) => {
     if (carrito.length === 0) return;
     const nuevoCarrito = await Promise.all(
       carrito.map(async (item) => {
+        // Skip si es presentacion agrupada: no recalcular para no pisar precio_unidad
+        const factor = item.factor_unidad ?? 1;
+        if (factor > 1 || item.unidad_id) {
+          return item;
+        }
         try {
           const nuevoPrecio = await resolverPrecioProducto(item.producto_id, clienteId ?? undefined);
-          // Determine which list matches the new price
           let listaSel: string | undefined;
           if (item.precios_disponibles) {
             const match = item.precios_disponibles.find(p => Math.abs(p.precio - nuevoPrecio) < 0.001);

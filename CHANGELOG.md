@@ -6,6 +6,31 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.13 — 2026-05-19 🐞 Bug precio agrupado se pisaba al seleccionar cliente
+
+Continuación del fix de v2.5.12. Quedaba un caso no cubierto: si en el POS tenías un blister/jaba/sixpack en el carrito Y después seleccionabas un cliente (o el cliente ya estaba seleccionado al agregar), el precio se pisaba al unitario.
+
+### Causa raíz
+
+`recalcularPreciosCarrito` (que se dispara al cambiar de cliente) llamaba a `resolverPrecioProducto(producto_id, clienteId)` para TODOS los items del carrito. Esa función solo conoce el precio del **producto base** (unidad), no de las presentaciones (blister, jaba). Resultado: el blister de 10 a $2.00 se quedaba en $0.25 (precio unitario) al cambiar cliente.
+
+### Fix v2.5.13
+
+**1. `recalcularPreciosCarrito` ahora NO toca presentaciones agrupadas** (factor > 1 o con unidad_id). Solo recalcula items en unidad base. Las presentaciones mantienen el precio con el que entraron al carrito.
+
+**2. `agregarAlCarrito` aplica factor también con lista de precios del cliente**. Antes solo aplicaba al fallback `precio_venta`. Ahora si la presentación no tiene precio explícito Y el cliente tiene lista de precios, calcula `precio_lista × factor` (ej. $0.25 × 10 = $2.50 para blister x10).
+
+### Recomendación de configuración
+
+Para evitar ambigüedad, **configurá precio explícito a cada presentación** en Productos → Unidades. Eso siempre prevalece sobre cualquier lista. Ejemplo:
+- Aspirina unitaria: $0.25
+- Aspirina blister x10: $2.00 (descuento por agrupado)
+- Aspirina caja x100: $18.00 (descuento mayor por mayoreo)
+
+Si no configurás precio a la presentación, el sistema usa `precio_unitario × factor` automáticamente.
+
+---
+
 ## v2.5.12 — 2026-05-19 🚨 Bug CRÍTICO cobro mixto + precio unidad agrupada
 
 ### 🚨 BUG CRÍTICO: cobro mixto fallaba con "table pagos_venta has no column named pago_estado"
