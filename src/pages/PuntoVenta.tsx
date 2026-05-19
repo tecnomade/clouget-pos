@@ -503,19 +503,29 @@ export default function PuntoVenta() {
     //   3) Resolver via cliente.lista_precio_id si tiene
     //   4) precio_venta default
     // El cambio de tarifa POR ITEM se hace despues, en el modal del item del carrito.
+    //
+    // v2.5.12 BUG FIX: cuando hay unidad agrupada (factor > 1) PERO no tiene precio
+    // explicito, antes se usaba el precio_venta SIN multiplicar por el factor, lo cual
+    // dejaba un blister de 10 unidades al precio de 1 unidad. Solo aplicamos el factor
+    // al precio_venta default (no a precio_lista, que el usuario podría haber configurado
+    // explícitamente para esa presentación).
     let precioEfectivo: number;
+    const factorUnidad: number = (unidadElegida?.factor != null && unidadElegida.factor > 0) ? unidadElegida.factor : 1;
     if (unidadElegida?.precio != null) {
+      // Precio explicito de la presentacion (caso ideal)
       precioEfectivo = unidadElegida.precio;
     } else if (producto.precio_lista != null) {
+      // Hay lista de precios → asumimos que el precio ya esta en la unidad correcta
       precioEfectivo = producto.precio_lista;
     } else if (clienteSeleccionado?.lista_precio_id) {
       try {
         precioEfectivo = await resolverPrecioProducto(producto.id, clienteSeleccionado.id ?? undefined);
       } catch {
-        precioEfectivo = producto.precio_venta;
+        precioEfectivo = producto.precio_venta * factorUnidad;
       }
     } else {
-      precioEfectivo = producto.precio_venta;
+      // Default: precio_venta unitario × factor de la presentación (fix del bug)
+      precioEfectivo = producto.precio_venta * factorUnidad;
     }
 
     // Check if already in cart MISMA unidad + MISMO lote

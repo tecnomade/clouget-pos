@@ -6,6 +6,31 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.12 — 2026-05-19 🚨 Bug CRÍTICO cobro mixto + precio unidad agrupada
+
+### 🚨 BUG CRÍTICO: cobro mixto fallaba con "table pagos_venta has no column named pago_estado"
+
+Al hacer una venta con **pago mixto** (efectivo + transferencia + crédito, etc.), el sistema fallaba con:
+```
+Error al registrar venta: Error guardando pago: table pagos_venta has no column named pago_estado
+```
+
+**Causa raíz**: las migraciones de verificación de transferencias (`pago_estado`, `verificado_por`, `fecha_verificacion`, `motivo_verificacion`) sobre `pagos_venta` estaban ubicadas **antes** del `CREATE TABLE pagos_venta` en `schema.rs`. En instalaciones nuevas, los `ALTER TABLE` corrían sobre una tabla inexistente y fallaban silenciosamente. Cuando finalmente se creaba la tabla, no tenía esas columnas.
+
+**Fix**: las migraciones se movieron **después** del CREATE TABLE, garantizando que se ejecuten sobre la tabla recién creada. Idempotente para clientes existentes que ya tienen las columnas (los ALTER fallan silenciosamente, sin efecto).
+
+**Impacto**: cualquier instalación nueva post v2.5.12 va a tener cobro mixto funcionando. Las instalaciones viejas que ya funcionaban siguen igual.
+
+### 🐞 Bug: precio de unidad agrupada (blister, jaba, sixpack) iba al unitario
+
+Si tenías un producto con presentación agrupada (ej. blister de 10 aspirinas) **sin precio explícito** en esa presentación, al venderlo el precio se quedaba en el unitario:
+- Aspirina unitaria: $0.25
+- Aspirina blister x10: debería ser ~$2.50 (= $0.25 × 10) → se mostraba **$0.25** ❌
+
+**Fix v2.5.12**: si la presentación no tiene precio explícito definido, ahora se aplica automáticamente `precio_venta_unitario × factor` para que sea matemáticamente neutral. Si el usuario configuró un precio específico para la presentación, ese sigue prevaleciendo (ej. blister con descuento por agrupado: $2.00 en vez de $2.50).
+
+---
+
 ## v2.5.11 — 2026-05-16 🚨 Bug crítico eliminar ST + UI fixes
 
 ### 🚨 BUG CRÍTICO: orden ST con abonos se podía eliminar

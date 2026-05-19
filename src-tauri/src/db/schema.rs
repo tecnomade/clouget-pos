@@ -616,16 +616,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     );
 
-    // Mismas columnas para pagos_venta (caso de venta MIXTO con porcion TRANSFER)
-    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
-    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN verificado_por INTEGER", []);
-    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN fecha_verificacion TEXT", []);
-    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN motivo_verificacion TEXT", []);
-    let _ = conn.execute(
-        "UPDATE pagos_venta SET pago_estado = 'VERIFICADO'
-         WHERE UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND (pago_estado IS NULL OR pago_estado = 'NO_APLICA')",
-        [],
-    );
+    // v2.5.12 BUG FIX: las ALTER TABLE de pagos_venta movidas mas abajo, despues
+    // del CREATE TABLE pagos_venta (~linea 1232). Antes corrian aca y fallaban
+    // silenciosamente en instalaciones nuevas porque la tabla aun no existia,
+    // dejando pagos_venta SIN la columna pago_estado. El INSERT en cobro mixto
+    // fallaba con "table pagos_venta has no column named pago_estado".
 
     // Config: reglas de comprobante para cajero
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('transferencia_requiere_referencia', '0')", []);
@@ -1246,6 +1241,22 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     // Migracion: agregar comprobante_imagen a pagos_venta si no existe (tablas viejas)
     let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN comprobante_imagen TEXT", []);
+
+    // v2.5.12 BUG FIX: migraciones de verificacion de transferencias para pagos_venta.
+    // Antes estaban arriba (~linea 620) ANTES del CREATE TABLE, lo cual causaba que
+    // fallaran silenciosamente en instalaciones nuevas y la columna pago_estado nunca
+    // se agregara. Movidas aca, despues del CREATE TABLE, garantizando que se ejecuten
+    // sobre la tabla recien creada (idempotente: si ya existen, los ALTER fallan silent
+    // y no pasa nada).
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN verificado_por INTEGER", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN fecha_verificacion TEXT", []);
+    let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN motivo_verificacion TEXT", []);
+    let _ = conn.execute(
+        "UPDATE pagos_venta SET pago_estado = 'VERIFICADO'
+         WHERE UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND (pago_estado IS NULL OR pago_estado = 'NO_APLICA')",
+        [],
+    );
 
     // --- Migracion v2.5.4: Retenciones recibidas (SRI Ecuador) ---
     // Cuando un cliente (empresa) compra y nos paga, puede retener IVA y/o Renta
