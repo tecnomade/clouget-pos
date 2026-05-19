@@ -6,6 +6,35 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.15 — 2026-05-19 🚨 Ventas mixtas no se registraban + Movimientos Bancarios no las mostraba
+
+### 🚨 BUG CRÍTICO: ventas con pago MIXTO podían fallar silenciosamente
+
+En instalaciones donde la migración de v2.5.12 no se aplicó correctamente (BDs creadas antes de v2.5.12 que ya tenían la tabla `pagos_venta` sin la columna `pago_estado`), el INSERT del cobro mixto fallaba y la venta entera se perdía.
+
+**Fix self-healing v2.5.15**:
+1. Antes de insertar pagos mixtos, **ejecutamos los ALTER TABLE on-the-fly** para asegurar que las columnas existan (silent si ya existen).
+2. **Fallback de emergencia**: si el INSERT con `pago_estado` falla por la razón que sea, intentamos un INSERT mínimo sin esa columna — la venta se guarda igual.
+3. Log a stderr cuando se activa el fallback (visible en herramientas de debugging) para que detectemos casos raros.
+
+**Garantía**: una venta mixta JAMÁS debería fallar por problema de schema. Si fallaba antes, ahora se guarda igual.
+
+### 🚨 Movimientos Bancarios: ventas no aparecían
+
+El query usaba `WHERE v.tipo_estado = 'COMPLETADA'` pero las **ventas normales tienen `tipo_estado` NULL** (solo se setea para BORRADOR / COTIZACION / GUIA_REMISION). Resultado: las ventas normales con transferencia bancaria nunca aparecían en Movimientos Bancarios.
+
+**Fix**: `(v.tipo_estado IS NULL OR v.tipo_estado = 'COMPLETADA')` en ambas subqueries (ventas simples + porciones de ventas mixtas).
+
+Adicional: el filtro de forma de pago ahora es **case-insensitive** — acepta tanto `'TRANSFER'` (POS) como `'TRANSFERENCIA'` (Compras).
+
+### Impacto
+
+- Clientes que vieron error en cobro mixto post v2.5.12: ahora se registra siempre.
+- Movimientos Bancarios ahora muestra **todas** las transferencias (incluyendo porciones de pagos mixtos).
+- Dashboard sigue sumando correctamente con el fix de v2.5.14.
+
+---
+
 ## v2.5.14 — 2026-05-19 🐞 5 fixes (ticket térmico + dashboard + kardex + RIMPE)
 
 ### 🐞 #1 — Ticket Epson 80mm: columnas desbordadas

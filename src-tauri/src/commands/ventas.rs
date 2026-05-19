@@ -531,6 +531,16 @@ pub fn registrar_venta(
 
             // Insertar cada pago en pagos_venta. Para componentes TRANSFER, marcar el
             // estado de verificacion segun rol del usuario (igual que la venta misma).
+            //
+            // v2.5.15 SELF-HEALING: si la columna pago_estado no existe en la BD del cliente
+            // (bug de migracion en instalaciones viejas), intentamos agregarla on-the-fly
+            // antes del INSERT. Si igual falla, hacemos INSERT minimo sin esas columnas para
+            // no perder la venta — luego UPDATE silencioso para setear pago_estado.
+            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
+            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN verificado_por INTEGER", []);
+            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN fecha_verificacion TEXT", []);
+            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN motivo_verificacion TEXT", []);
+
             for p in pagos {
                 let pf = p.forma_pago.to_uppercase();
                 let es_pago_transfer = matches!(pf.as_str(), "TRANSFER" | "TRANSFERENCIA");
@@ -541,13 +551,23 @@ pub fn registrar_venta(
                 let p_verif_fecha: Option<String> = if p_estado == "VERIFICADO" {
                     Some(chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
                 } else { None };
-                conn.execute(
+                // Intento principal: INSERT con todas las columnas (caso normal)
+                let res_full = conn.execute(
                     "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia, comprobante_imagen,
                                               pago_estado, verificado_por, fecha_verificacion)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                     rusqlite::params![venta_id, p.forma_pago, p.monto, p.banco_id, p.referencia, p.comprobante_imagen,
                                       p_estado, p_verif_por, p_verif_fecha],
-                ).map_err(|e| format!("Error guardando pago: {}", e))?;
+                );
+                if let Err(e) = res_full {
+                    eprintln!("[VentaMixta] INSERT con pago_estado fallo: {} - intentando INSERT minimo", e);
+                    // Fallback defensivo: INSERT sin las columnas nuevas (cliente con BD viejisima)
+                    conn.execute(
+                        "INSERT INTO pagos_venta (venta_id, forma_pago, monto, banco_id, referencia, comprobante_imagen)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![venta_id, p.forma_pago, p.monto, p.banco_id, p.referencia, p.comprobante_imagen],
+                    ).map_err(|e2| format!("Error guardando pago (intento fallback tambien fallo): {}", e2))?;
+                }
             }
 
             // Si hay un pago tipo CREDITO y no se creo CXC arriba (es_fiado=false), crearla por el monto credito

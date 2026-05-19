@@ -285,8 +285,8 @@ pub fn listar_movimientos_bancarios(
             FROM ventas v
             LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
             LEFT JOIN clientes cl ON v.cliente_id = cl.id
-            WHERE v.banco_id IS NOT NULL AND v.forma_pago = 'TRANSFER'
-              AND v.anulada = 0 AND v.tipo_estado = 'COMPLETADA'
+            WHERE v.banco_id IS NOT NULL AND UPPER(v.forma_pago) IN ('TRANSFER', 'TRANSFERENCIA')
+              AND v.anulada = 0 AND (v.tipo_estado IS NULL OR v.tipo_estado = 'COMPLETADA')
               AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
               AND date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
 
@@ -304,8 +304,8 @@ pub fn listar_movimientos_bancarios(
             INNER JOIN ventas v ON v.id = pv.venta_id
             LEFT JOIN cuentas_banco cb ON pv.banco_id = cb.id
             LEFT JOIN clientes cl ON v.cliente_id = cl.id
-            WHERE pv.banco_id IS NOT NULL AND pv.forma_pago = 'TRANSFER'
-              AND v.anulada = 0 AND v.tipo_estado = 'COMPLETADA'
+            WHERE pv.banco_id IS NOT NULL AND UPPER(pv.forma_pago) IN ('TRANSFER', 'TRANSFERENCIA')
+              AND v.anulada = 0 AND (v.tipo_estado IS NULL OR v.tipo_estado = 'COMPLETADA')
               AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
               AND date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
 
