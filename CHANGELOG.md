@@ -6,6 +6,47 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.16 — 2026-05-19 🚨 Dashboard y Ventas no se actualizaban al cobrar (event bus + tab activation)
+
+### 🚨 Bug reportado
+
+Después de hacer una venta (especialmente con cobro mixto) desde la pestaña POS:
+- El Dashboard (Inicio) seguía mostrando montos viejos en Efectivo / Transferencia / Por cobrar
+- La pestaña Ventas seguía mostrando solo las ventas anteriores
+
+El usuario tenía que cerrar y reabrir la app para ver los datos actualizados.
+
+### Causa raíz
+
+Las pestañas con sistema multi-vista (v2.5.0+) mantienen sus páginas montadas con `display:none` para preservar estado. Pero el Dashboard y Ventas NO escuchaban el evento global `clouget:venta-completada` que POS dispara al cobrar (introducido en v2.5.7). Tampoco refrescaban al re-activar la tab (`useTabActivated`).
+
+Resultado: al hacer una venta, los datos quedaban stale en las otras tabs.
+
+### Fix v2.5.16
+
+**1. DashboardPage** ahora:
+- Escucha el evento `clouget:venta-completada` → recarga todos los KPIs (Ventas hoy, Efectivo, Transferencia, Por cobrar, etc.)
+- Escucha `clouget:caja-cambio` → recarga si hay movimientos de caja desde otra tab
+- Se refresca al re-activar la tab (`useTabActivated("/")`)
+
+**2. VentasDia** ahora:
+- Escucha `clouget:venta-completada` → recarga la lista de ventas
+- Se refresca al re-activar la tab (`useTabActivated("/ventas")`)
+
+**3. Backend `listar_ventas_sesion_caja`** mejorado:
+- Ahora trae `caja_id` real (antes era `None` hardcoded → rompía filtro "Solo sesión #X")
+- Ahora trae `cliente_nombre` (LEFT JOIN clientes)
+- Filtro de fecha más permisivo: incluye todas las ventas del día además de las desde apertura
+
+### Resultado
+
+Al cobrar una venta en POS, en cuestión de milisegundos:
+- Si tienes Dashboard abierto en otra tab → KPIs se actualizan automáticamente
+- Si tienes Ventas abierto en otra tab → la nueva venta aparece en la lista
+- Si vuelves a cualquiera de esas tabs después → también se refrescan al activarse
+
+---
+
 ## v2.5.15 — 2026-05-19 🚨 Ventas mixtas no se registraban + Movimientos Bancarios no las mostraba
 
 ### 🚨 BUG CRÍTICO: ventas con pago MIXTO podían fallar silenciosamente

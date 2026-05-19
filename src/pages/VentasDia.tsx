@@ -7,6 +7,7 @@ import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStoc
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import ModalEmailCliente from "../components/ModalEmailCliente";
 import ModalNotaCredito from "../components/ModalNotaCredito";
 import ModalDetalleNc from "../components/ModalDetalleNc";
@@ -183,6 +184,15 @@ export default function VentasDia() {
   };
 
   useEffect(() => { cargar(); }, [fechaDesde, fechaHasta]);
+
+  // v2.5.16: refrescar lista al volver a esta tab + al detectar venta nueva en otra tab
+  useTabActivated("/ventas", () => { cargar(); });
+  useEffect(() => {
+    const h = () => { cargar(); };
+    window.addEventListener("clouget:venta-completada", h);
+    return () => window.removeEventListener("clouget:venta-completada", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Cargar ID de la caja actualmente abierta para habilitar filtro "solo esta sesion"
   useEffect(() => {

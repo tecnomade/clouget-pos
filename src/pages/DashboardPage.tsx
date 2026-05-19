@@ -7,6 +7,7 @@ import {
   alertasPagosVencidos, alertasCaducidad, contarTransferenciasPendientes,
 } from "../services/api";
 import { useSesion } from "../contexts/SesionContext";
+import { useTabActivated } from "../contexts/TabsContext";
 import ModalTransferenciasPendientes from "../components/ModalTransferenciasPendientes";
 import type { ResumenDiario, AlertaStock, VentaDiaria, ProductoMasVendido, UltimaVenta } from "../services/api";
 import type { Caja, ResumenCliente } from "../types";
@@ -81,6 +82,9 @@ export default function DashboardPage() {
   const [verModalTransferencias, setVerModalTransferencias] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [cajaViejaAbierta, setCajaViejaAbierta] = useState(false);
+  // v2.5.16: trigger para recargar el dashboard cuando volvamos a la tab o cuando
+  // otra tab dispare evento de venta-completada (sino quedaba stale).
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const hoy = fechaHoy();
@@ -130,6 +134,19 @@ export default function DashboardPage() {
       setDeudores(d);
       setCargando(false);
     }).catch(() => setCargando(false));
+  }, [refreshKey]);
+
+  // v2.5.16: recargar al volver a la tab Inicio + al detectar venta completada
+  // en cualquier otra tab (escucha evento global emitido por POS/ST al cobrar).
+  useTabActivated("/", () => setRefreshKey(k => k + 1));
+  useEffect(() => {
+    const h = () => setRefreshKey(k => k + 1);
+    window.addEventListener("clouget:venta-completada", h);
+    window.addEventListener("clouget:caja-cambio", h);
+    return () => {
+      window.removeEventListener("clouget:venta-completada", h);
+      window.removeEventListener("clouget:caja-cambio", h);
+    };
   }, []);
 
   if (cargando) {

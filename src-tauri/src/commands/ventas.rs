@@ -874,6 +874,11 @@ pub fn listar_ventas_sesion_caja(
             chrono::Local::now().format("%Y-%m-%d 00:00:00").to_string()
         });
 
+    // v2.5.16 BUG FIX: query incluye caja_id + cliente_nombre (antes hardcoded a None).
+    // Tambien cambia WHERE a "date(fecha) = date('now')" para traer TODAS las ventas
+    // del dia del cajero — el frontend filtra por chip "Solo sesion #X" opcionalmente.
+    // Antes con WHERE v.fecha >= fecha_apertura, si fecha_apertura era de una sesion
+    // vieja o si timezone divergia, las ventas nuevas no aparecian.
     let mut stmt = conn
         .prepare(
             "SELECT v.id, v.numero, v.cliente_id, v.fecha, v.subtotal_sin_iva, v.subtotal_con_iva,
@@ -881,11 +886,14 @@ pub fn listar_ventas_sesion_caja(
              v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
              v.numero_factura, v.establecimiento, v.punto_emision,
              v.banco_id, v.referencia_pago, cb.nombre as banco_nombre,
-             COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado
+             COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado,
+             v.caja_id, c.nombre as cliente_nombre
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
-             WHERE v.fecha >= ?1 AND v.anulada = 0
-             ORDER BY v.fecha DESC",
+             LEFT JOIN clientes c ON v.cliente_id = c.id
+             WHERE (v.fecha >= ?1 OR date(v.fecha) = date('now','localtime'))
+               AND COALESCE(v.anulada, 0) = 0
+             ORDER BY v.fecha DESC, v.id DESC",
         )
         .map_err(|e| e.to_string())?;
 
@@ -917,8 +925,8 @@ pub fn listar_ventas_sesion_caja(
                 referencia_pago: row.get(22).ok(),
                 banco_nombre: row.get(23).ok(),
                 comprobante_imagen: None,
-                caja_id: None,
-                cliente_nombre: None,
+                caja_id: row.get(25).ok(),
+                cliente_nombre: row.get(26).ok(),
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
