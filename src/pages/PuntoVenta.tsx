@@ -1843,10 +1843,19 @@ export default function PuntoVenta() {
               </div>
             </div>
 
-            {/* Tipo documento - solo si no RIMPE_POPULAR */}
-            {regimen !== "RIMPE_POPULAR" && (
+            {/* Tipo documento - v2.5.14: ahora también disponible en RIMPE Popular
+                si tiene el módulo SRI activo (la emisión de factura es opcional pero
+                permitida — el cliente puede pedirla). Antes se bloqueaba completamente. */}
+            {(regimen !== "RIMPE_POPULAR" || sriModuloActivo) && (
               <div style={{ marginBottom: 8 }}>
-                <label className="text-secondary" style={{ fontSize: 11 }}>Tipo documento</label>
+                <label className="text-secondary" style={{ fontSize: 11 }}>
+                  Tipo documento
+                  {regimen === "RIMPE_POPULAR" && (
+                    <span style={{ fontSize: 9, color: "var(--color-text-secondary)", marginLeft: 4 }}>
+                      (Factura opcional en RIMPE Popular)
+                    </span>
+                  )}
+                </label>
                 <div className="flex gap-2" style={{ marginTop: 4 }}>
                   {(["NOTA_VENTA", "FACTURA"] as const).map((tipo) => (
                     <button key={tipo}

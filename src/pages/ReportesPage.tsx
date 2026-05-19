@@ -1353,9 +1353,22 @@ export default function ReportesPage() {
           <div>
             <div style={{ marginBottom: 12, padding: 12, background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
-                Filtros (selecciona categorias o deja vacio para todas)
+                Filtrar por categorías
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                {/* v2.5.14: chip "Todas" siempre visible. Activo cuando lista vacía
+                    (= sin filtro). Click → limpia las selecciones. */}
+                <button type="button"
+                  onClick={() => setKardexCatsSeleccionadas([])}
+                  style={{
+                    padding: "4px 10px", borderRadius: 4,
+                    border: `1px solid ${kardexCatsSeleccionadas.length === 0 ? "var(--color-success)" : "var(--color-border)"}`,
+                    background: kardexCatsSeleccionadas.length === 0 ? "var(--color-success)" : "transparent",
+                    color: kardexCatsSeleccionadas.length === 0 ? "#fff" : "var(--color-text)",
+                    fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  }}>
+                  ✓ Todas
+                </button>
                 {categoriasMaestro.map(c => (
                   <button key={c.id} type="button"
                     onClick={() => {
@@ -1371,13 +1384,12 @@ export default function ReportesPage() {
                       fontSize: 11, fontWeight: 600, cursor: "pointer",
                     }}>{c.nombre}</button>
                 ))}
-                {kardexCatsSeleccionadas.length > 0 && (
-                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
-                    onClick={() => setKardexCatsSeleccionadas([])}>
-                    Limpiar
-                  </button>
-                )}
               </div>
+              {kardexCatsSeleccionadas.length > 0 && (
+                <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                  💡 Filtrando por <strong>{kardexCatsSeleccionadas.length}</strong> categoría(s). Click "✓ Todas" para ver el inventario completo.
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
                   Periodo: {desde} a {hasta}

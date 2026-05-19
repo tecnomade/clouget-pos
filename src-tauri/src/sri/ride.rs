@@ -539,9 +539,11 @@ pub fn generar_ride_pdf(
 // ============================================
 
 /// Genera un ticket de venta como PDF en formato 80mm para abrir en visor del sistema.
+/// v2.5.14: agregado parametro pagos_mixtos (vec vacio si la venta no es MIXTO).
 pub fn generar_ticket_pdf(
     venta: &VentaCompleta,
     config: &HashMap<String, String>,
+    pagos_mixtos: &[crate::models::PagoMixto],
 ) -> Result<Vec<u8>, String> {
     let fonts_dir = crate::utils::obtener_ruta_fuentes();
 
@@ -690,11 +692,34 @@ pub fn generar_ticket_pdf(
     doc.push(Break::new(0.2));
 
     // Forma de pago (solo para ventas reales)
+    // v2.5.14 BUG FIX: si la venta es MIXTO, mostrar desglose de cada pago.
+    // Antes solo decía "Pago: MIXTO" sin detalle, dejando al cliente sin saber
+    // cuánto fue en efectivo / transfer / crédito.
     if !es_cotizacion && !es_borrador {
-        doc.push(p(&format!("Pago: {}", venta.venta.forma_pago), s_normal));
-        if venta.venta.monto_recibido > 0.0 {
-            doc.push(p(&format!("Recibido: ${}", format_dinero(venta.venta.monto_recibido)), s_normal));
-            doc.push(p(&format!("Cambio:   ${}", format_dinero(venta.venta.cambio)), s_normal));
+        let es_mixto = venta.venta.forma_pago.eq_ignore_ascii_case("MIXTO");
+        if es_mixto && !pagos_mixtos.is_empty() {
+            doc.push(p("Pago: MIXTO", s_normal));
+            for pago in pagos_mixtos {
+                let mut linea = format!("  • {}: ${}", pago.forma_pago, format_dinero(pago.monto));
+                if let Some(ref banco) = pago.banco_nombre {
+                    if !banco.is_empty() { linea.push_str(&format!(" ({})", banco)); }
+                }
+                doc.push(p(&linea, s_small));
+                if let Some(ref ref_pago) = pago.referencia {
+                    if !ref_pago.is_empty() {
+                        doc.push(p(&format!("    Ref: {}", ref_pago), s_small));
+                    }
+                }
+            }
+            if venta.venta.monto_recibido > 0.0 && venta.venta.cambio > 0.001 {
+                doc.push(p(&format!("Cambio: ${}", format_dinero(venta.venta.cambio)), s_normal));
+            }
+        } else {
+            doc.push(p(&format!("Pago: {}", venta.venta.forma_pago), s_normal));
+            if venta.venta.monto_recibido > 0.0 {
+                doc.push(p(&format!("Recibido: ${}", format_dinero(venta.venta.monto_recibido)), s_normal));
+                doc.push(p(&format!("Cambio:   ${}", format_dinero(venta.venta.cambio)), s_normal));
+            }
         }
     }
 

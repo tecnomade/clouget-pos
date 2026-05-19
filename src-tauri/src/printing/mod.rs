@@ -4,8 +4,20 @@ use crate::models::VentaCompleta;
 use std::collections::HashMap;
 
 /// Genera el contenido de texto del ticket
-pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -> Vec<u8> {
-    let ancho = 48; // caracteres para impresora de 80mm (42 para 58mm)
+/// v2.5.14: nuevo parametro pagos_mixtos para desglosar pago MIXTO en el ticket
+pub fn generar_ticket(
+    venta: &VentaCompleta,
+    config: &HashMap<String, String>,
+    pagos_mixtos: &[crate::models::PagoMixto],
+) -> Vec<u8> {
+    // v2.5.14 BUG FIX: las impresoras Epson 80mm con fuente A imprimen MAX 42 columnas,
+    // no 48. Con 48 las líneas se cortaban y los valores bajaban a nueva línea (se veía
+    // "P.UNIT SUBTOT" en una línea y los precios en otra). Configurable por si el cliente
+    // usa una térmica con fuente más pequeña que cabe 48.
+    let ancho: usize = config.get("ticket_ancho_columnas")
+        .and_then(|s| s.parse().ok())
+        .filter(|v: &usize| *v >= 28 && *v <= 64)
+        .unwrap_or(42);
     let mut ticket: Vec<u8> = Vec::new();
 
     // Comandos ESC/POS
@@ -108,9 +120,15 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
     // Cabecera de detalle
+    // v2.5.14: columnas calibradas para que SUMEN exactamente `ancho` (default 42).
+    // Layout: nombre (ancho-20) + cant (4) + p.unit (7) + subtot (8) + 3 espacios = ancho
+    let col_nombre: usize = ancho.saturating_sub(20).max(14);
     ticket.extend_from_slice(esc_bold_on);
     ticket.extend_from_slice(
-        format!("{:<22} {:>5} {:>8} {:>9}\n", "PRODUCTO", "CANT", "P.UNIT", "SUBTOT").as_bytes(),
+        format!(
+            "{:<wnom$} {:>4} {:>7} {:>8}\n",
+            "PRODUCTO", "CANT", "P.UNIT", "SUBTOT", wnom = col_nombre
+        ).as_bytes(),
     );
     ticket.extend_from_slice(esc_bold_off);
     ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
@@ -128,20 +146,21 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
             (Some(u), _) if !u.is_empty() => format!("{} ({})", nombre_base, u),
             _ => nombre_base.to_string(),
         };
-        // Si el nombre es muy largo, truncar
-        let nombre_corto: String = if nombre_prod.len() > 22 {
-            nombre_prod[..22].to_string()
+        // Si el nombre es muy largo, truncar a col_nombre chars (respetando UTF-8)
+        let nombre_corto: String = if nombre_prod.chars().count() > col_nombre {
+            nombre_prod.chars().take(col_nombre).collect()
         } else {
             nombre_prod.clone()
         };
 
         ticket.extend_from_slice(
             format!(
-                "{:<22} {:>5} {:>8.2} {:>9.2}\n",
+                "{:<wnom$} {:>4} {:>7.2} {:>8.2}\n",
                 nombre_corto,
                 format_cantidad(det.cantidad),
                 det.precio_unitario,
-                det.subtotal
+                det.subtotal,
+                wnom = col_nombre
             )
             .as_bytes(),
         );
@@ -184,42 +203,84 @@ pub fn generar_ticket(venta: &VentaCompleta, config: &HashMap<String, String>) -
     // Pago (skip for cotizacion and borrador)
     if !es_cotizacion && !es_borrador {
         let forma = venta.venta.forma_pago.as_str();
-        let forma_label = match forma {
-            "EFECTIVO" => "Efectivo",
-            "TRANSFERENCIA" | "TRANSFER" => "Transferencia",
-            "TARJETA" => "Tarjeta",
-            "CHEQUE" => "Cheque",
-            "CREDITO" | "CRÉDITO" | "FIADO" => "Credito",
-            other => other,
-        };
-        ticket.extend_from_slice(format!("Forma pago: {}\n", forma_label).as_bytes());
-
+        let es_mixto = forma.eq_ignore_ascii_case("MIXTO");
         let es_credito = matches!(forma, "CREDITO" | "CRÉDITO" | "FIADO");
 
-        // Banco + referencia (transferencia / cheque / tarjeta)
-        if let Some(ref banco) = venta.venta.banco_nombre {
-            if !banco.is_empty() {
-                ticket.extend_from_slice(format!("Banco: {}\n", banco).as_bytes());
+        // v2.5.14: para pago MIXTO mostramos desglose; sino solo la forma simple
+        if es_mixto && !pagos_mixtos.is_empty() {
+            ticket.extend_from_slice(esc_bold_on);
+            ticket.extend_from_slice(b"Forma pago: MIXTO\n");
+            ticket.extend_from_slice(esc_bold_off);
+            for pago in pagos_mixtos {
+                let forma_upper = pago.forma_pago.to_uppercase();
+                let label_corto = match forma_upper.as_str() {
+                    "EFECTIVO" => "Efectivo",
+                    "TRANSFERENCIA" | "TRANSFER" => "Transfer.",
+                    "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
+                    "TARJETA_DEBITO" | "DEBITO" => "T.Debito",
+                    "CHEQUE" => "Cheque",
+                    "CREDITO" | "FIADO" => "Credito",
+                    other => other,
+                };
+                ticket.extend_from_slice(
+                    linea_monto(&format!("  {}:", label_corto), pago.monto, ancho).as_bytes()
+                );
+                if let Some(ref banco) = pago.banco_nombre {
+                    if !banco.is_empty() {
+                        ticket.extend_from_slice(format!("    Banco: {}\n", banco).as_bytes());
+                    }
+                }
+                if let Some(ref refp) = pago.referencia {
+                    if !refp.is_empty() {
+                        ticket.extend_from_slice(format!("    Ref: {}\n", refp).as_bytes());
+                    }
+                }
             }
-        }
-        if let Some(ref refp) = venta.venta.referencia_pago {
-            if !refp.is_empty() {
-                ticket.extend_from_slice(format!("Ref: {}\n", refp).as_bytes());
-            }
-        }
-
-        // Monto pagado (siempre visible para no-credito), cambio solo si efectivo
-        if !es_credito {
-            ticket.extend_from_slice(linea_monto("Pagado:", venta.venta.total, ancho).as_bytes());
-        }
-        if venta.venta.monto_recibido > 0.0 && forma == "EFECTIVO" {
-            ticket.extend_from_slice(linea_monto("Recibido:", venta.venta.monto_recibido, ancho).as_bytes());
-            if venta.venta.cambio > 0.0 {
+            // Total pagado (suma de mixto)
+            let total_pagado: f64 = pagos_mixtos.iter().map(|p| p.monto).sum();
+            ticket.extend_from_slice(esc_bold_on);
+            ticket.extend_from_slice(linea_monto("Total pagado:", total_pagado, ancho).as_bytes());
+            ticket.extend_from_slice(esc_bold_off);
+            if venta.venta.cambio > 0.001 {
                 ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
             }
-        }
-        if es_credito {
-            ticket.extend_from_slice(linea_monto("Saldo pendiente:", venta.venta.total, ancho).as_bytes());
+        } else {
+            let forma_label = match forma {
+                "EFECTIVO" => "Efectivo",
+                "TRANSFERENCIA" | "TRANSFER" => "Transferencia",
+                "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
+                "TARJETA_DEBITO" | "DEBITO" => "Tarjeta debito",
+                "CHEQUE" => "Cheque",
+                "CREDITO" | "CRÉDITO" | "FIADO" => "Credito",
+                other => other,
+            };
+            ticket.extend_from_slice(format!("Forma pago: {}\n", forma_label).as_bytes());
+
+            // Banco + referencia (transferencia / cheque / tarjeta)
+            if let Some(ref banco) = venta.venta.banco_nombre {
+                if !banco.is_empty() {
+                    ticket.extend_from_slice(format!("Banco: {}\n", banco).as_bytes());
+                }
+            }
+            if let Some(ref refp) = venta.venta.referencia_pago {
+                if !refp.is_empty() {
+                    ticket.extend_from_slice(format!("Ref: {}\n", refp).as_bytes());
+                }
+            }
+
+            // Monto pagado (siempre visible para no-credito), cambio solo si efectivo
+            if !es_credito {
+                ticket.extend_from_slice(linea_monto("Pagado:", venta.venta.total, ancho).as_bytes());
+            }
+            if venta.venta.monto_recibido > 0.0 && forma == "EFECTIVO" {
+                ticket.extend_from_slice(linea_monto("Recibido:", venta.venta.monto_recibido, ancho).as_bytes());
+                if venta.venta.cambio > 0.0 {
+                    ticket.extend_from_slice(linea_monto("Cambio:", venta.venta.cambio, ancho).as_bytes());
+                }
+            }
+            if es_credito {
+                ticket.extend_from_slice(linea_monto("Saldo pendiente:", venta.venta.total, ancho).as_bytes());
+            }
         }
     }
 

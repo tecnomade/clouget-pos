@@ -50,9 +50,22 @@ pub fn resumen_diario(db: State<Database>, fecha: String) -> Result<ResumenDiari
         )
         .unwrap_or(0);
 
+    // v2.5.14 BUG FIX: antes solo sumaba ventas con forma_pago='EFECTIVO' puro.
+    // Las ventas MIXTO (efectivo + transfer + crédito en una misma venta) se ignoraban
+    // porque su forma_pago era 'MIXTO'. Ahora sumamos:
+    //   - Ventas puras (forma_pago='EFECTIVO'): total completo
+    //   - Ventas mixtas: porción 'EFECTIVO' desde pagos_venta
     let total_efectivo: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas WHERE date(fecha) = date(?1) AND forma_pago = 'EFECTIVO' AND anulada = 0",
+            "SELECT COALESCE(SUM(monto_efectivo), 0) FROM (
+                SELECT total AS monto_efectivo FROM ventas
+                 WHERE date(fecha) = date(?1) AND forma_pago = 'EFECTIVO' AND COALESCE(anulada, 0) = 0
+                UNION ALL
+                SELECT pv.monto AS monto_efectivo FROM pagos_venta pv
+                 INNER JOIN ventas v ON v.id = pv.venta_id
+                 WHERE date(v.fecha) = date(?1) AND v.forma_pago = 'MIXTO' AND COALESCE(v.anulada, 0) = 0
+                   AND UPPER(pv.forma_pago) = 'EFECTIVO'
+             )",
             rusqlite::params![fecha],
             |row| row.get(0),
         )
@@ -60,7 +73,15 @@ pub fn resumen_diario(db: State<Database>, fecha: String) -> Result<ResumenDiari
 
     let total_transferencia: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas WHERE date(fecha) = date(?1) AND forma_pago = 'TRANSFER' AND anulada = 0",
+            "SELECT COALESCE(SUM(monto_transfer), 0) FROM (
+                SELECT total AS monto_transfer FROM ventas
+                 WHERE date(fecha) = date(?1) AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND COALESCE(anulada, 0) = 0
+                UNION ALL
+                SELECT pv.monto AS monto_transfer FROM pagos_venta pv
+                 INNER JOIN ventas v ON v.id = pv.venta_id
+                 WHERE date(v.fecha) = date(?1) AND v.forma_pago = 'MIXTO' AND COALESCE(v.anulada, 0) = 0
+                   AND UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+             )",
             rusqlite::params![fecha],
             |row| row.get(0),
         )
@@ -238,10 +259,18 @@ pub fn resumen_periodo(
         )
         .unwrap_or(0);
 
+    // v2.5.14: incluir porciones de pago mixto (mismo fix que resumen_diario)
     let total_efectivo: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND forma_pago = 'EFECTIVO' AND anulada = 0",
+            "SELECT COALESCE(SUM(monto_efectivo), 0) FROM (
+                SELECT total AS monto_efectivo FROM ventas
+                 WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND forma_pago = 'EFECTIVO' AND COALESCE(anulada, 0) = 0
+                UNION ALL
+                SELECT pv.monto AS monto_efectivo FROM pagos_venta pv
+                 INNER JOIN ventas v ON v.id = pv.venta_id
+                 WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.forma_pago = 'MIXTO' AND COALESCE(v.anulada, 0) = 0
+                   AND UPPER(pv.forma_pago) = 'EFECTIVO'
+             )",
             rusqlite::params![fecha_inicio, fecha_fin],
             |row| row.get(0),
         )
@@ -249,8 +278,15 @@ pub fn resumen_periodo(
 
     let total_transferencia: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND forma_pago = 'TRANSFER' AND anulada = 0",
+            "SELECT COALESCE(SUM(monto_transfer), 0) FROM (
+                SELECT total AS monto_transfer FROM ventas
+                 WHERE date(fecha) BETWEEN date(?1) AND date(?2) AND UPPER(forma_pago) IN ('TRANSFER','TRANSFERENCIA') AND COALESCE(anulada, 0) = 0
+                UNION ALL
+                SELECT pv.monto AS monto_transfer FROM pagos_venta pv
+                 INNER JOIN ventas v ON v.id = pv.venta_id
+                 WHERE date(v.fecha) BETWEEN date(?1) AND date(?2) AND v.forma_pago = 'MIXTO' AND COALESCE(v.anulada, 0) = 0
+                   AND UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
+             )",
             rusqlite::params![fecha_inicio, fecha_fin],
             |row| row.get(0),
         )

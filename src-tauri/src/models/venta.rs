@@ -110,6 +110,10 @@ pub struct PagoMixto {
     pub referencia: Option<String>,
     #[serde(default)]
     pub comprobante_imagen: Option<String>,
+    /// v2.5.14: nombre del banco resuelto desde JOIN (solo se completa al leer,
+    /// no al enviar desde el frontend). Sirve para mostrarlo en ticket impreso.
+    #[serde(default)]
+    pub banco_nombre: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

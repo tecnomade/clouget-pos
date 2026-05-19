@@ -6,6 +6,51 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.14 — 2026-05-19 🐞 5 fixes (ticket térmico + dashboard + kardex + RIMPE)
+
+### 🐞 #1 — Ticket Epson 80mm: columnas desbordadas
+
+Las impresoras Epson 80mm con fuente A imprimen máximo **42 columnas**, pero el código usaba 48. Las líneas se cortaban y los valores bajaban a la siguiente línea ("P.UNIT SUBTOT" en una línea, los precios en otra, etc.).
+
+**Fix**: ancho calibrado a 42 columnas, columnas de la tabla recalculadas (nombre 22 + cant 4 + p.unit 7 + subtot 8 = 42 exactos). Configurable vía `config.ticket_ancho_columnas` para impresoras especiales (rango 28-64).
+
+### 🐞 #2 — Ticket pago MIXTO: no mostraba detalle
+
+Cuando hacías una venta con varios pagos (efectivo + transfer + crédito), el ticket solo decía "Pago: MIXTO" sin detalle. Ahora muestra desglose:
+
+```
+Forma pago: MIXTO
+  Efectivo:                       $1.00
+  Transfer.:                      $1.00
+    Banco: Pichincha
+    Ref: 28726926282
+  Credito:                        $0.25
+Total pagado:                     $2.25
+```
+
+Aplica tanto al ticket térmico ESC/POS como al PDF.
+
+### 🐞 #3 — Dashboard no sumaba ventas MIXTAS a Efectivo/Transferencia
+
+Los KPIs de "Efectivo" y "Transferencia" en el Home solo contaban ventas con forma_pago puro. Las ventas MIXTAS quedaban invisibles. Ahora se suman las porciones desde `pagos_venta`:
+
+- Venta de $50 efectivo puro → +$50 a Efectivo
+- Venta de $1 efectivo + $1 transfer en MIXTO → +$1 a Efectivo Y +$1 a Transferencia
+
+Aplica también al reporte de período (`resumen_periodo`).
+
+### 🆕 #4 — Kardex Multi: chip "✓ Todas" siempre visible
+
+Antes el filtro de categorías era "vacío = todas" pero el usuario no veía esa lógica claramente. Ahora hay un chip verde **"✓ Todas"** que está activo cuando no hay filtro. Click para limpiar la selección. Texto explicativo si hay categorías seleccionadas: *"💡 Filtrando por N categoría(s). Click '✓ Todas' para ver el inventario completo."*
+
+### 🆕 #5 — RIMPE Negocio Popular ahora puede emitir Facturas (si tiene módulo SRI)
+
+Antes el tipo de documento "Factura" estaba completamente oculto en régimen RIMPE Popular. Ahora si el cliente tiene el módulo SRI activo, puede elegir entre **Nota de Venta** (default) y **Factura** — la emisión electrónica es opcional pero permitida para clientes que la pidan.
+
+El régimen RIMPE Popular sigue sin obligación de emitir factura electrónica; simplemente damos la opción de hacerlo voluntariamente.
+
+---
+
 ## v2.5.13 — 2026-05-19 🐞 Bug precio agrupado se pisaba al seleccionar cliente
 
 Continuación del fix de v2.5.12. Quedaba un caso no cubierto: si en el POS tenías un blister/jaba/sixpack en el carrito Y después seleccionabas un cliente (o el cliente ya estaba seleccionado al agregar), el precio se pisaba al unitario.

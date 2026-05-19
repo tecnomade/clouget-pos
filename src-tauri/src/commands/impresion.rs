@@ -110,13 +110,35 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
         .collect::<Result<std::collections::HashMap<_, _>, _>>()
         .map_err(|e| e.to_string())?;
 
+    // v2.5.14: cargar pagos mixtos para desglose en ticket
+    let mut pagos_mixtos: Vec<crate::models::PagoMixto> = Vec::new();
+    if venta.forma_pago.eq_ignore_ascii_case("MIXTO") {
+        let mut stmt_p = conn.prepare(
+            "SELECT pv.forma_pago, pv.monto, b.nombre, pv.referencia
+             FROM pagos_venta pv
+             LEFT JOIN cuentas_banco b ON pv.banco_id = b.id
+             WHERE pv.venta_id = ?1 ORDER BY pv.id ASC"
+        ).map_err(|e| e.to_string())?;
+        let iter = stmt_p.query_map(rusqlite::params![venta_id], |row| Ok(crate::models::PagoMixto {
+            forma_pago: row.get(0)?,
+            monto: row.get(1)?,
+            banco_id: None,
+            banco_nombre: row.get::<_, Option<String>>(2)?,
+            referencia: row.get::<_, Option<String>>(3)?,
+            comprobante_imagen: None,
+        })).map_err(|e| e.to_string())?;
+        for r in iter {
+            if let Ok(p) = r { pagos_mixtos.push(p); }
+        }
+    }
+
     let venta_completa = crate::models::VentaCompleta {
         venta,
         detalles,
         cliente_nombre,
     };
 
-    let ticket_data = printing::generar_ticket(&venta_completa, &config);
+    let ticket_data = printing::generar_ticket(&venta_completa, &config, &pagos_mixtos);
 
     // Obtener nombre de impresora de la config
     let impresora = config
@@ -243,6 +265,29 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
         .collect::<Result<std::collections::HashMap<_, _>, _>>()
         .map_err(|e| e.to_string())?;
 
+    // v2.5.14: si la venta es MIXTO, cargar los pagos desglosados para mostrar en el ticket
+    let mut pagos_mixtos: Vec<crate::models::PagoMixto> = Vec::new();
+    if venta.forma_pago.eq_ignore_ascii_case("MIXTO") {
+        let mut stmt_p = conn.prepare(
+            "SELECT pv.forma_pago, pv.monto, b.nombre, pv.referencia
+             FROM pagos_venta pv
+             LEFT JOIN cuentas_banco b ON pv.banco_id = b.id
+             WHERE pv.venta_id = ?1
+             ORDER BY pv.id ASC"
+        ).map_err(|e| e.to_string())?;
+        let iter = stmt_p.query_map(rusqlite::params![venta_id], |row| Ok(crate::models::PagoMixto {
+            forma_pago: row.get(0)?,
+            monto: row.get(1)?,
+            banco_id: None,
+            banco_nombre: row.get::<_, Option<String>>(2)?,
+            referencia: row.get::<_, Option<String>>(3)?,
+            comprobante_imagen: None,
+        })).map_err(|e| e.to_string())?;
+        for r in iter {
+            if let Ok(p) = r { pagos_mixtos.push(p); }
+        }
+    }
+
     drop(stmt);
     drop(cfg_stmt);
     drop(conn);
@@ -253,7 +298,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
         cliente_nombre,
     };
 
-    let pdf_bytes = crate::sri::ride::generar_ticket_pdf(&venta_completa, &config)?;
+    let pdf_bytes = crate::sri::ride::generar_ticket_pdf(&venta_completa, &config, &pagos_mixtos)?;
 
     // Guardar en directorio temporal
     let temp_dir = std::env::temp_dir();
@@ -2590,7 +2635,8 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
         venta: venta_fake, detalles, cliente_nombre,
     };
 
-    let ticket_data = crate::printing::generar_ticket(&venta_completa, &config);
+    // v2.5.14: ticket NC no tiene pagos mixtos, vec vacio
+    let ticket_data = crate::printing::generar_ticket(&venta_completa, &config, &[]);
 
     let impresora = config.get("impresora").map(|s| s.to_string()).unwrap_or_default();
     if impresora.is_empty() {
