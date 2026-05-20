@@ -976,6 +976,15 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Migracion: COMBOS / KITS - productos compuestos por otros productos
     // tipo_producto: 'SIMPLE' (default) | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
     let _ = conn.execute("ALTER TABLE productos ADD COLUMN tipo_producto TEXT NOT NULL DEFAULT 'SIMPLE'", []);
+
+    // v2.5.22: PMP (Promedio Ponderado Movil) para valuacion de inventario.
+    // - precio_costo: ultimo precio de compra (modo "reposicion")
+    // - costo_promedio: PMP recalculado en cada compra
+    //   formula: (stock_actual * costo_promedio + nueva_cantidad * precio_compra) / (stock_actual + nueva_cantidad)
+    // Si la columna ya existe, ALTER silently fails y queda lo que estaba.
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN costo_promedio REAL NOT NULL DEFAULT 0", []);
+    // En productos existentes, inicializar costo_promedio = precio_costo (asumimos que ese es el costo de su stock inicial)
+    let _ = conn.execute("UPDATE productos SET costo_promedio = precio_costo WHERE costo_promedio = 0 AND precio_costo > 0", []);
     // Grupos de componentes (solo COMBO_FLEXIBLE):
     //   Ejemplo "Combo Almuerzo": grupo "Plato" (escoger 1 de N), grupo "Bebida" (escoger 1 de N)
     let _ = conn.execute_batch("

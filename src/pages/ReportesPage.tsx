@@ -35,7 +35,11 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "kardex" | "cajeros" | "ventas" | "cancelaciones_st" | "garantias_st">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "cancelaciones_st" | "garantias_st">("utilidad");
+  // v2.5.22: estado para reporte de valuación de inventario
+  const [valuacionData, setValuacionData] = useState<any | null>(null);
+  const [valuacionMetodo, setValuacionMetodo] = useState<"PMP" | "ULTIMO">("PMP");
+  const [valuacionCargando, setValuacionCargando] = useState(false);
   // v2.4.14: reportes de Servicio Tecnico
   const [cancelacionesST, setCancelacionesST] = useState<ResumenCancelaciones | null>(null);
   const [garantiasST, setGarantiasST] = useState<ResumenGarantias | null>(null);
@@ -618,6 +622,7 @@ export default function ReportesPage() {
             ["cxc", "Cuentas por Cobrar"],
             ["cxp", "Cuentas por Pagar"],
             ["inventario", "Inventario"],
+            ["valuacion", "💼 Valuación"],
             ["kardex", "Kardex Multi"],
             ["cajeros", "Cajeros"],
             ...(moduloSTActivo ? [
@@ -1346,6 +1351,112 @@ export default function ReportesPage() {
               </div>
             </div>
           )
+        )}
+
+        {/* TAB VALUACIÓN DE INVENTARIO — v2.5.22 */}
+        {tab === "valuacion" && (
+          <div>
+            <div style={{ marginBottom: 12, padding: 12, background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>Método de valuación:</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="button"
+                    onClick={() => setValuacionMetodo("PMP")}
+                    style={{
+                      padding: "6px 14px", borderRadius: 4,
+                      border: `1px solid ${valuacionMetodo === "PMP" ? "var(--color-primary)" : "var(--color-border)"}`,
+                      background: valuacionMetodo === "PMP" ? "var(--color-primary)" : "transparent",
+                      color: valuacionMetodo === "PMP" ? "#fff" : "var(--color-text)",
+                      fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    }}>
+                    📊 Promedio Ponderado (PMP)
+                  </button>
+                  <button type="button"
+                    onClick={() => setValuacionMetodo("ULTIMO")}
+                    style={{
+                      padding: "6px 14px", borderRadius: 4,
+                      border: `1px solid ${valuacionMetodo === "ULTIMO" ? "var(--color-primary)" : "var(--color-border)"}`,
+                      background: valuacionMetodo === "ULTIMO" ? "var(--color-primary)" : "transparent",
+                      color: valuacionMetodo === "ULTIMO" ? "#fff" : "var(--color-text)",
+                      fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    }}>
+                    🏷 Último precio de compra
+                  </button>
+                </div>
+                <button className="btn btn-primary" style={{ marginLeft: "auto" }}
+                  disabled={valuacionCargando}
+                  onClick={async () => {
+                    setValuacionCargando(true);
+                    try {
+                      const { reporteValuacionInventario } = await import("../services/api");
+                      const data = await reporteValuacionInventario(valuacionMetodo);
+                      setValuacionData(data);
+                    } catch (err) { toastError("Error: " + err); }
+                    setValuacionCargando(false);
+                  }}>
+                  {valuacionCargando ? "Calculando..." : "Generar reporte"}
+                </button>
+              </div>
+              <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 8 }}>
+                💡 <strong>PMP (Promedio Ponderado Móvil)</strong>: el costo se recalcula con cada compra, suavizando variaciones de precios. Recomendado por SRI para PyMEs. ·
+                <strong>Último precio</strong>: usa el precio de la última compra registrada (modo "reposición").
+              </div>
+            </div>
+
+            {valuacionData && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+                  <KpiCard label="Productos" valor={String(valuacionData.totales.items)} />
+                  <KpiCard label="Unidades totales" valor={valuacionData.totales.unidades.toFixed(0)} />
+                  <KpiCard label="Valor inventario" valor={fmt(valuacionData.totales.valor_inventario)} color="var(--color-primary)" sub={`Método: ${valuacionData.metodo_descripcion}`} />
+                  <KpiCard label="Utilidad potencial" valor={fmt(valuacionData.totales.utilidad_potencial)} color="var(--color-success)" sub={`Margen ${valuacionData.totales.margen_pct.toFixed(1)}%`} />
+                </div>
+
+                <div style={{ background: "var(--color-surface)", borderRadius: 6, border: "1px solid var(--color-border)", overflow: "auto" }}>
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ background: "var(--color-surface-alt)", textAlign: "left" }}>
+                        <th style={{ padding: 8 }}>Código</th>
+                        <th style={{ padding: 8 }}>Producto</th>
+                        <th style={{ padding: 8 }}>Categoría</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Stock</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Costo unit.</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Valor stock</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Precio venta</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Utilidad</th>
+                        <th style={{ padding: 8, textAlign: "right" }}>Margen %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {valuacionData.productos.length === 0 ? (
+                        <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: "var(--color-text-secondary)" }}>
+                          Sin productos con stock para valuar.
+                        </td></tr>
+                      ) : valuacionData.productos.map((p: any) => (
+                        <tr key={p.id} style={{ borderTop: "1px solid var(--color-border)" }}>
+                          <td style={{ padding: 6 }}>{p.codigo || "-"}</td>
+                          <td style={{ padding: 6 }}>{p.nombre}</td>
+                          <td style={{ padding: 6 }}>{p.categoria || "-"}</td>
+                          <td style={{ padding: 6, textAlign: "right" }}>{p.stock.toFixed(0)}</td>
+                          <td style={{ padding: 6, textAlign: "right" }}>${p.costo_usado.toFixed(4)}</td>
+                          <td style={{ padding: 6, textAlign: "right", fontWeight: 600 }}>${p.valor_inventario.toFixed(2)}</td>
+                          <td style={{ padding: 6, textAlign: "right" }}>${p.precio_venta.toFixed(2)}</td>
+                          <td style={{ padding: 6, textAlign: "right", color: "var(--color-success)" }}>${p.utilidad_potencial.toFixed(2)}</td>
+                          <td style={{ padding: 6, textAlign: "right" }}>{p.margen_pct.toFixed(1)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {!valuacionData && !valuacionCargando && (
+              <div style={{ padding: 32, textAlign: "center", color: "var(--color-text-secondary)" }}>
+                Seleccioná un método y click "Generar reporte" para ver la valuación de tu inventario.
+              </div>
+            )}
+          </div>
         )}
 
         {/* TAB KARDEX MULTI */}

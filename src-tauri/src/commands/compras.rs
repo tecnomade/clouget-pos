@@ -80,11 +80,35 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
                 )
                 .unwrap_or_else(|_| "Producto desconocido".to_string());
 
-            // Actualizar stock y precio_costo del producto
+            // v2.5.22 PMP: recalcular costo_promedio (Promedio Ponderado Movil)
+            // antes de actualizar stock. Fórmula:
+            //   nuevo_promedio = (stock_actual * costo_promedio + nueva_cant * precio_compra) / (stock_actual + nueva_cant)
+            // Si stock_actual <= 0, el nuevo promedio es directamente el precio_compra.
+            let (stock_actual, costo_promedio_actual): (f64, f64) = conn
+                .query_row(
+                    "SELECT stock_actual, COALESCE(costo_promedio, precio_costo) FROM productos WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                )
+                .unwrap_or((0.0, item.precio_unitario));
+
+            let nuevo_costo_promedio: f64 = if stock_actual <= 0.0 {
+                // Sin stock previo (o negativo) → nuevo costo = precio de esta compra
+                item.precio_unitario
+            } else {
+                let stock_total = stock_actual + item.cantidad;
+                if stock_total <= 0.0 {
+                    item.precio_unitario
+                } else {
+                    (stock_actual * costo_promedio_actual + item.cantidad * item.precio_unitario) / stock_total
+                }
+            };
+
+            // Actualizar stock + precio_costo (último) + costo_promedio (PMP)
             conn.execute(
                 "UPDATE productos SET stock_actual = stock_actual + ?1, precio_costo = ?2,
-                 updated_at = datetime('now','localtime') WHERE id = ?3",
-                rusqlite::params![item.cantidad, item.precio_unitario, pid],
+                 costo_promedio = ?3, updated_at = datetime('now','localtime') WHERE id = ?4",
+                rusqlite::params![item.cantidad, item.precio_unitario, nuevo_costo_promedio, pid],
             )
             .map_err(|e| e.to_string())?;
 
@@ -951,9 +975,25 @@ pub fn importar_xml_compra(
                 rusqlite::params![cid, pid, desc, cant, precio, sub],
             )
             .map_err(|e| e.to_string())?;
+            // v2.5.22 PMP: recalcular costo_promedio antes del UPDATE (igual que registrar_compra)
+            let (stock_actual_pmp, costo_prom_prev): (f64, f64) = tx
+                .query_row(
+                    "SELECT stock_actual, COALESCE(costo_promedio, precio_costo) FROM productos WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                )
+                .unwrap_or((0.0, *precio));
+            let nuevo_pmp = if stock_actual_pmp <= 0.0 {
+                *precio
+            } else {
+                let total_after = stock_actual_pmp + cant;
+                if total_after <= 0.0 { *precio } else {
+                    (stock_actual_pmp * costo_prom_prev + cant * precio) / total_after
+                }
+            };
             tx.execute(
-                "UPDATE productos SET stock_actual = stock_actual + ?1, precio_costo = ?2, updated_at = datetime('now','localtime') WHERE id = ?3",
-                rusqlite::params![cant, precio, pid],
+                "UPDATE productos SET stock_actual = stock_actual + ?1, precio_costo = ?2, costo_promedio = ?3, updated_at = datetime('now','localtime') WHERE id = ?4",
+                rusqlite::params![cant, precio, nuevo_pmp, pid],
             )
             .ok();
         }

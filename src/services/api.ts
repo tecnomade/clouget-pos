@@ -1319,6 +1319,31 @@ export const reporteKardexMulti = (categorias: number[] | null, productos: numbe
     total_entradas: number; total_salidas: number;
     valor_entradas: number; valor_salidas: number;
   }>("reporte_kardex_multi", { categorias, productos, fechaDesde, fechaHasta });
+
+// v2.5.22: Valuación de inventario (PMP / Último precio)
+export interface ValuacionInventario {
+  metodo: "PMP" | "ULTIMO";
+  metodo_descripcion: string;
+  productos: Array<{
+    id: number; codigo?: string; nombre: string; categoria?: string;
+    stock: number;
+    costo_ultimo: number; costo_pmp: number; costo_usado: number;
+    precio_venta: number;
+    valor_inventario: number;
+    valor_potencial_venta: number;
+    utilidad_potencial: number;
+    margen_pct: number;
+  }>;
+  totales: {
+    items: number; unidades: number;
+    valor_inventario: number;
+    valor_potencial_venta: number;
+    utilidad_potencial: number;
+    margen_pct: number;
+  };
+}
+export const reporteValuacionInventario = (metodo: "PMP" | "ULTIMO" = "PMP", categoriaId?: number | null) =>
+  smartInvoke<ValuacionInventario>("reporte_valuacion_inventario", { metodo, categoriaId: categoriaId ?? null });
 export const listarCategoriasSimple = () =>
   smartInvoke<Array<{ id: number; nombre: string }>>("listar_categorias_simple");
 

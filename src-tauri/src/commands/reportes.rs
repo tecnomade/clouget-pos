@@ -1687,3 +1687,115 @@ pub fn reporte_ventas_filtros_disponibles(
         "categorias": categorias,
     }))
 }
+
+// ============================================================================
+// v2.5.22: Valuación de inventario (PMP / Último precio)
+// ============================================================================
+
+/// Reporte de valuación de inventario.
+///
+/// Métodos soportados:
+/// - "PMP" (default): usa costo_promedio (Promedio Ponderado Móvil)
+/// - "ULTIMO": usa precio_costo (último precio de compra registrado)
+///
+/// Excluye servicios y productos sin control de stock (no tienen valor de inventario).
+/// Para combos: el "valor" se calcula al armarlos en tiempo real desde componentes,
+/// por eso los combos NO se incluyen en este reporte (sus componentes ya están contados).
+#[tauri::command]
+pub fn reporte_valuacion_inventario(
+    db: State<Database>,
+    metodo: Option<String>,
+    categoria_id: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let metodo_str = metodo.unwrap_or_else(|| "PMP".to_string()).to_uppercase();
+    let usar_pmp = metodo_str != "ULTIMO";
+
+    // Auto-healing: asegurar que la columna costo_promedio existe
+    let _ = conn.execute("ALTER TABLE productos ADD COLUMN costo_promedio REAL NOT NULL DEFAULT 0", []);
+
+    let mut sql = String::from(
+        "SELECT p.id, p.codigo, p.nombre, c.nombre as categoria,
+                p.stock_actual,
+                p.precio_costo as costo_ultimo,
+                COALESCE(p.costo_promedio, p.precio_costo) as costo_pmp,
+                p.precio_venta
+         FROM productos p
+         LEFT JOIN categorias c ON p.categoria_id = c.id
+         WHERE p.activo = 1
+           AND COALESCE(p.es_servicio, 0) = 0
+           AND COALESCE(p.no_controla_stock, 0) = 0
+           AND COALESCE(p.tipo_producto, 'SIMPLE') = 'SIMPLE'
+           AND p.stock_actual > 0"
+    );
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(cid) = categoria_id {
+        sql.push_str(" AND p.categoria_id = ?1");
+        params_vec.push(Box::new(cid));
+    }
+    sql.push_str(" ORDER BY p.nombre");
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let mut total_valor: f64 = 0.0;
+    let mut total_unidades: f64 = 0.0;
+    let mut total_potencial_venta: f64 = 0.0; // valor a precio_venta
+    let mut items_count: i64 = 0;
+
+    let productos: Vec<serde_json::Value> = stmt.query_map(params_refs.as_slice(), |row| {
+        let id: i64 = row.get(0)?;
+        let codigo: Option<String> = row.get(1)?;
+        let nombre: String = row.get(2)?;
+        let categoria: Option<String> = row.get(3)?;
+        let stock: f64 = row.get(4)?;
+        let costo_ultimo: f64 = row.get(5)?;
+        let costo_pmp: f64 = row.get(6)?;
+        let precio_venta: f64 = row.get(7)?;
+        let costo_usado = if usar_pmp { costo_pmp } else { costo_ultimo };
+        let valor = stock * costo_usado;
+        let potencial = stock * precio_venta;
+        let utilidad = potencial - valor;
+        let margen_pct = if valor > 0.0 { (utilidad / valor) * 100.0 } else { 0.0 };
+
+        total_valor += valor;
+        total_unidades += stock;
+        total_potencial_venta += potencial;
+        items_count += 1;
+
+        Ok(serde_json::json!({
+            "id": id,
+            "codigo": codigo,
+            "nombre": nombre,
+            "categoria": categoria,
+            "stock": stock,
+            "costo_ultimo": costo_ultimo,
+            "costo_pmp": costo_pmp,
+            "costo_usado": costo_usado,
+            "precio_venta": precio_venta,
+            "valor_inventario": valor,
+            "valor_potencial_venta": potencial,
+            "utilidad_potencial": utilidad,
+            "margen_pct": margen_pct,
+        }))
+    }).map_err(|e| e.to_string())?
+      .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    let utilidad_total = total_potencial_venta - total_valor;
+    let margen_total_pct = if total_valor > 0.0 { (utilidad_total / total_valor) * 100.0 } else { 0.0 };
+
+    Ok(serde_json::json!({
+        "metodo": if usar_pmp { "PMP" } else { "ULTIMO" },
+        "metodo_descripcion": if usar_pmp { "Promedio Ponderado Móvil" } else { "Último precio de compra" },
+        "productos": productos,
+        "totales": {
+            "items": items_count,
+            "unidades": total_unidades,
+            "valor_inventario": total_valor,
+            "valor_potencial_venta": total_potencial_venta,
+            "utilidad_potencial": utilidad_total,
+            "margen_pct": margen_total_pct,
+        }
+    }))
+}

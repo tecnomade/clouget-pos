@@ -389,6 +389,7 @@ pub fn run() {
             commands::reportes::reporte_inventario_valorizado,
             commands::reportes::reporte_kardex_producto,
             commands::reportes::reporte_kardex_multi,
+            commands::reportes::reporte_valuacion_inventario,
             commands::reportes::reporte_ventas_por_cajero,
             commands::reportes::reporte_ventas_filtrable,
             commands::reportes::reporte_ventas_filtros_disponibles,

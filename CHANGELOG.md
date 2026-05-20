@@ -6,6 +6,78 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.22 — 2026-05-19 💼 Valuación de inventario con PMP (Promedio Ponderado Móvil)
+
+### 🆕 Feature mayor: valuación de inventario profesional
+
+Antes Clouget mostraba "stock" pero no había forma rápida de saber **cuánto vale tu inventario** ni **cuánta utilidad tienes potencial** si vendieras todo. Ahora hay un reporte dedicado.
+
+### Nuevo: `productos.costo_promedio` (PMP)
+
+Cada producto tiene 2 indicadores de costo:
+
+- **`precio_costo`** (existente): último precio de compra registrado
+- **`costo_promedio`** (nuevo): Promedio Ponderado Móvil — se recalcula con cada compra
+
+**Fórmula PMP** (al registrar una compra):
+```
+nuevo_promedio = (stock_actual × promedio_actual + cantidad_compra × precio_compra)
+                 / (stock_actual + cantidad_compra)
+```
+
+Si el stock anterior era 0 (o negativo), el nuevo promedio es directamente el precio de compra.
+
+### Nuevo tab: **Reportes → 💼 Valuación**
+
+Tabla completa de tu inventario con:
+
+| Columna | Descripción |
+|---|---|
+| Código + Producto + Categoría | Identificación |
+| Stock | Unidades disponibles |
+| Costo unit. | Según método elegido (PMP o Último) |
+| **Valor stock** | `stock × costo_unit` |
+| Precio venta | Para cálculo de utilidad |
+| **Utilidad potencial** | `(precio_venta - costo_unit) × stock` |
+| Margen % | Relación utilidad / costo |
+
+KPIs al tope:
+- Productos contados
+- Unidades totales
+- **Valor total del inventario**
+- **Utilidad potencial** (cuánto ganarías si vendieras todo a precio actual)
+- Margen %
+
+### Selector de método
+
+| Método | Cuándo usarlo |
+|---|---|
+| **📊 PMP (Promedio Ponderado Móvil)** | Default. Suaviza variaciones de precios. Recomendado por SRI para PyMEs. |
+| **🏷 Último precio de compra** | Modo "reposición" — refleja lo que te costaría reponer tu inventario hoy a precios actuales. |
+
+### Backend
+
+- Nuevo comando `reporte_valuacion_inventario(metodo, categoria_id?)`
+- Excluye servicios y productos sin control de stock (no aplica valuación)
+- Excluye combos (sus componentes se cuentan individualmente)
+- Auto-healing: ejecuta `ALTER TABLE productos ADD COLUMN costo_promedio` por si la migración no se aplicó
+- Inicialización: al cargar instalaciones existentes, `costo_promedio = precio_costo` (no se pierde nada)
+
+### Arquitectura
+
+Como explicamos en discusión previa: el cálculo de PMP se hace **localmente** en cada cliente Clouget POS porque la arquitectura es 100% offline-first. **No hay inconsistencias** porque hay un único punto de procesamiento (sea local o el servidor LAN en modo Multi-POS), con transacciones atómicas en SQLite.
+
+### Para clientes existentes
+
+Al actualizar a v2.5.22, **no se pierde información**:
+- Las compras anteriores no se recalculan (no hay tiempo de máquina, costoso)
+- `costo_promedio` arranca igual al `precio_costo` actual
+- A partir de la próxima compra, el PMP empieza a ajustarse correctamente
+
+Si querés recalcular el histórico, contactá soporte — podemos hacer un script que replay los movimientos.
+
+---
+
 ## v2.5.21 — 2026-05-19 🎁 Combos con servicios: stock calculado correctamente
 
 ### Bug detectado por usuario
