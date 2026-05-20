@@ -6,6 +6,33 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.20 — 2026-05-19 🚨 BUG: combos imposibles de vender con stock bloqueante
+
+Reportado en demo en vivo: al intentar vender un combo aparecía error *"Stock insuficiente para 'combo prueba': requiere 1.00, disponible 0.00"* y no se podía completar la venta.
+
+### Causa raíz
+
+La validación de stock bloqueante (cuando `stock_negativo_modo='BLOQUEAR'` o `'BLOQUEAR_OCULTAR'`) usaba el `stock_actual` del producto padre (el combo). Pero los combos **no tienen stock propio** — su stock disponible se calcula desde los componentes. El padre siempre tiene `stock_actual = 0`, así que el validador bloqueaba.
+
+### Fix v2.5.20
+
+**Backend `registrar_venta`**: la validación de stock ahora expande los combos a sus componentes antes de chequear:
+
+- Si el item es **producto simple**: valida stock del producto
+- Si es **COMBO_FIJO**: expande a sus componentes (lee `producto_componentes`) y valida stock de cada uno
+- Si es **COMBO_FLEXIBLE**: usa la selección del cliente (`combo_seleccion`)
+
+El mismo mapa de "stock requerido" acumula todos los items del carrito, así que múltiples combos que comparten componentes se validan correctamente (ej. 2 combos que ambos llevan jugo → valida que haya stock para 2 jugos).
+
+**Frontend** (PuntoVenta): la validación al agregar al carrito y al cambiar cantidad también skip combos (el backend ya valida los componentes).
+
+### Resultado
+
+- Combos se pueden vender en cualquier modo de stock (PERMITIR / BLOQUEAR / BLOQUEAR_OCULTAR)
+- Si algún componente del combo no tiene stock suficiente, el error es claro: *"Stock insuficiente para 'Componente X': requiere N, disponible M"*
+
+---
+
 ## v2.5.19 — 2026-05-19 🎁 Combos: costo y stock calculados auto + unidad "COMBO"
 
 ### 🆕 Precio costo del combo: calculado, no editable

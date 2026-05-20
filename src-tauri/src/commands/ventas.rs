@@ -40,16 +40,56 @@ pub fn registrar_venta(
         .query_row("SELECT value FROM config WHERE key = 'stock_negativo_modo'", [], |r| r.get(0))
         .unwrap_or_else(|_| "PERMITIR".to_string());
     if stock_modo == "BLOQUEAR" || stock_modo == "BLOQUEAR_OCULTAR" {
-        // Acumular cantidad necesaria por producto (sumar lineas duplicadas + factor unidad)
+        // v2.5.20 BUG FIX: para COMBOS hay que validar stock de COMPONENTES,
+        // no del padre (que siempre es 0 porque combos no tienen stock propio).
+        //
+        // Estrategia: armar un mapa de stock REQUERIDO por producto físico final.
+        // - Producto simple: pid → cantidad * factor
+        // - Combo fijo: cada componente → cantidad_combo_vendido * cantidad_componente
+        // - Combo flexible: usar item.combo_seleccion
         let mut requerido: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         for it in &venta.items {
-            // Skip lineas sin producto (servicios manuales): no afectan stock.
             let Some(pid) = it.producto_id else { continue };
             let factor = it.factor_unidad.unwrap_or(1.0);
-            *requerido.entry(pid).or_insert(0.0) += it.cantidad * factor;
+            let cant_total = it.cantidad * factor;
+
+            // ¿Es combo? Chequear tipo_producto + presencia de componentes
+            let (tipo_prod, tiene_componentes): (String, i64) = conn.query_row(
+                "SELECT COALESCE(tipo_producto, 'SIMPLE'),
+                        (SELECT COUNT(*) FROM producto_componentes WHERE producto_padre_id = productos.id)
+                 FROM productos WHERE id = ?1",
+                rusqlite::params![pid],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+            ).unwrap_or(("SIMPLE".to_string(), 0));
+            let es_combo = tipo_prod == "COMBO_FIJO" || tipo_prod == "COMBO_FLEXIBLE" || tiene_componentes > 0;
+
+            if !es_combo {
+                // Producto simple: cargar cantidad del producto base
+                *requerido.entry(pid).or_insert(0.0) += cant_total;
+            } else if tipo_prod == "COMBO_FLEXIBLE" {
+                // Usar combo_seleccion (lo que el cajero escogió en el momento)
+                if let Some(sel) = &it.combo_seleccion {
+                    for c in sel {
+                        if c.cantidad > 0.0 {
+                            *requerido.entry(c.producto_hijo_id).or_insert(0.0) += c.cantidad * cant_total;
+                        }
+                    }
+                }
+            } else {
+                // COMBO_FIJO (o producto con componentes detectados): leer de producto_componentes
+                let mut stmt = conn.prepare(
+                    "SELECT producto_hijo_id, cantidad FROM producto_componentes WHERE producto_padre_id = ?1"
+                ).map_err(|e| e.to_string())?;
+                let rows = stmt.query_map(rusqlite::params![pid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))
+                    .map_err(|e| e.to_string())?;
+                for row in rows {
+                    let (hijo_id, cant_componente) = row.map_err(|e| e.to_string())?;
+                    *requerido.entry(hijo_id).or_insert(0.0) += cant_componente * cant_total;
+                }
+            }
         }
+
         for (pid, cant_req) in &requerido {
-            // Saltar productos sin control de stock o servicios
             let (stock_actual, es_serv, no_ctrl): (f64, bool, bool) = conn.query_row(
                 "SELECT stock_actual, COALESCE(es_servicio,0), COALESCE(no_controla_stock,0) FROM productos WHERE id = ?1",
                 rusqlite::params![pid],

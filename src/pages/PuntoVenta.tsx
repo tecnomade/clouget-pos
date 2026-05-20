@@ -418,7 +418,11 @@ export default function PuntoVenta() {
     if (stockModo !== "PERMITIR") {
       try {
         const prodFull = await obtenerProducto(producto.id);
-        const omiteStock = prodFull && (prodFull.es_servicio || (prodFull as any).no_controla_stock);
+        // v2.5.20: omitir validación de stock para servicios, productos sin control,
+        // Y combos (los combos no tienen stock propio — el backend valida los componentes)
+        const esCombo = prodFull && ((prodFull as any).tipo_producto === "COMBO_FIJO" ||
+                                      (prodFull as any).tipo_producto === "COMBO_FLEXIBLE");
+        const omiteStock = prodFull && (prodFull.es_servicio || (prodFull as any).no_controla_stock || esCombo);
         if (!omiteStock) {
           const stockActual = Number(producto.stock_actual ?? prodFull?.stock_actual ?? 0);
           // Calcular cuanto ya esta en el carrito de este producto (todas las lineas)
@@ -651,7 +655,11 @@ export default function PuntoVenta() {
     }
     // Validar contra stock_disponible (general) si stockModo bloqueante
     if (stockModo !== "PERMITIR" && item) {
-      const omiteStock = (item as any).combo_seleccion || (item.stock_disponible == null);
+      // v2.5.20: skip si es combo (con o sin seleccion) — el backend valida componentes
+      const esCombo = (item as any).combo_seleccion || (item as any).es_combo ||
+                      (item as any).tipo_producto === "COMBO_FIJO" ||
+                      (item as any).tipo_producto === "COMBO_FLEXIBLE";
+      const omiteStock = esCombo || (item.stock_disponible == null);
       if (!omiteStock) {
         const factor = item.factor_unidad ?? 1;
         const cantidadBase = cantidad * factor;
