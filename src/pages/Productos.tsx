@@ -38,7 +38,7 @@ function FormProducto({
   tiposUnidad?: Array<{ id: number; nombre: string; abreviatura: string }>;
   puedeVerCostos?: boolean;
 }) {
-  const { toastError } = useToast();
+  const { toastError, toastExito } = useToast();
   const [form, setForm] = useState<Producto>(
     productoEditar ?? {
       nombre: "",
@@ -202,13 +202,26 @@ function FormProducto({
       }
       // Guardar estructura de combo si aplica
       if (form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") {
+        // v2.5.17: validacion clave — un combo sin componentes no descontaria stock
+        // al venderse. Esto explica el bug reportado "combos no descuentan stock"
+        // (probablemente se guardaron sin componentes por error).
+        if (comboComponentes.length === 0) {
+          toastError("⚠ Este combo no tiene componentes definidos. Agrégalos antes de guardar — sin componentes el combo NO descontará stock al vender.");
+          return;
+        }
+        if (form.tipo_producto === "COMBO_FLEXIBLE" && comboGrupos.length === 0) {
+          toastError("⚠ Un combo flexible requiere al menos 1 grupo de opciones. Agrega un grupo antes de guardar.");
+          return;
+        }
         // Resolver producto_padre_id en cada componente y grupo (puede ser nuevo)
         const grpsToSave = comboGrupos.map(g => ({ ...g, producto_padre_id: productoId, id: g.id && g.id > 0 ? g.id : undefined }));
         const compsToSave = comboComponentes.map(c => ({ ...c, producto_padre_id: productoId, id: c.id && c.id > 0 ? c.id : undefined }));
         try {
           await guardarComboEstructura(productoId, grpsToSave as any, compsToSave as any);
+          toastExito(`Combo guardado con ${comboComponentes.length} componente(s)`);
         } catch (e) {
           toastError("Error guardando combo: " + e);
+          return; // no continuar si falla guardar combo
         }
       }
       onGuardar();
@@ -661,38 +674,9 @@ function FormProducto({
         onError={(msg) => toastError(msg)}
       />
 
-      {/* Requiere número de serie */}
+      {/* v2.5.17: Tipo de producto SUBIDO arriba — los checkboxes de abajo no aplican a combos. */}
       <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt, rgba(255,255,255,0.03))", borderRadius: "var(--radius)", border: "1px solid var(--color-border)" }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-          <input type="checkbox" checked={form.requiere_serie ?? false}
-            onChange={e => setForm({ ...form, requiere_serie: e.target.checked })} />
-          Requiere numero de serie
-        </label>
-        {/* v2.4.28: ayuda movida aqui — antes estaba huerfana al pie del bloque, lejos del checkbox */}
-        {form.requiere_serie && (
-          <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 24, marginTop: 2 }}>
-            Si activa, cada unidad necesita un número de serie único al vender.
-          </div>
-        )}
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
-          <input type="checkbox" checked={form.es_servicio ?? false}
-            onChange={(e) => setForm({ ...form, es_servicio: e.target.checked, no_controla_stock: e.target.checked || (form.no_controla_stock ?? false) })} />
-          Es un servicio (no se controla stock; SI se incluye en tickets y facturas)
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: form.es_servicio ? "not-allowed" : "pointer", marginTop: 8, opacity: form.es_servicio ? 0.6 : 1 }}>
-          <input type="checkbox" checked={form.no_controla_stock ?? false}
-            onChange={(e) => setForm({ ...form, no_controla_stock: e.target.checked })}
-            disabled={form.es_servicio} />
-          No controlar stock (productos a granel, digitales)
-        </label>
-        {config.modulo_caducidad === "1" && (
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
-            <input type="checkbox" checked={form.requiere_caducidad ?? false}
-              onChange={(e) => setForm({ ...form, requiere_caducidad: e.target.checked })} />
-            Requiere control de caducidad (alimentos, medicinas)
-          </label>
-        )}
-        <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px dashed var(--color-border)" }}>
+        <div style={{ marginBottom: (form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE") ? 0 : 12 }}>
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Tipo de producto</label>
           <select className="input" style={{ marginTop: 4, fontSize: 13 }}
             value={form.tipo_producto || "SIMPLE"}
@@ -702,9 +686,48 @@ function FormProducto({
             <option value="COMBO_FLEXIBLE">Combo flexible (cliente elige: ej. plato + bebida + postre)</option>
           </select>
           <span style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, display: "block" }}>
-            Los combos descuentan stock de sus componentes al vender. El precio del combo es independiente.
+            {form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE"
+              ? "Los combos descuentan stock de sus componentes individuales (definidos abajo). Cada componente maneja su propio control de stock/servicio/caducidad."
+              : "Los combos descuentan stock de sus componentes al vender. El precio del combo es independiente."}
           </span>
         </div>
+        {/* v2.5.17: checkboxes de control individual NO aplican a combos
+            (cada componente del combo tiene los suyos). Solo se muestran para Simple. */}
+        {form.tipo_producto !== "COMBO_FIJO" && form.tipo_producto !== "COMBO_FLEXIBLE" && (
+          <>
+            <div style={{ marginBottom: 8, paddingTop: 12, borderTop: "1px dashed var(--color-border)" }}>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Control individual</label>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+              <input type="checkbox" checked={form.requiere_serie ?? false}
+                onChange={e => setForm({ ...form, requiere_serie: e.target.checked })} />
+              Requiere numero de serie
+            </label>
+            {form.requiere_serie && (
+              <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginLeft: 24, marginTop: 2 }}>
+                Si activa, cada unidad necesita un número de serie único al vender.
+              </div>
+            )}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
+              <input type="checkbox" checked={form.es_servicio ?? false}
+                onChange={(e) => setForm({ ...form, es_servicio: e.target.checked, no_controla_stock: e.target.checked || (form.no_controla_stock ?? false) })} />
+              Es un servicio (no se controla stock; SI se incluye en tickets y facturas)
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: form.es_servicio ? "not-allowed" : "pointer", marginTop: 8, opacity: form.es_servicio ? 0.6 : 1 }}>
+              <input type="checkbox" checked={form.no_controla_stock ?? false}
+                onChange={(e) => setForm({ ...form, no_controla_stock: e.target.checked })}
+                disabled={form.es_servicio} />
+              No controlar stock (productos a granel, digitales)
+            </label>
+            {config.modulo_caducidad === "1" && (
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer", marginTop: 8 }}>
+                <input type="checkbox" checked={form.requiere_caducidad ?? false}
+                  onChange={(e) => setForm({ ...form, requiere_caducidad: e.target.checked })} />
+                Requiere control de caducidad (alimentos, medicinas)
+              </label>
+            )}
+          </>
+        )}
 
         {/* Destino de preparación — solo visible si el módulo Restaurante está
             activo (licencia + brand Clouget). Si no, se mantiene el valor en

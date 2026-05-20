@@ -414,6 +414,17 @@ pub fn registrar_venta(
                     // Multiplica por la cantidad de combos vendidos
                     componentes_a_descontar.push((hijo_id, cant * item.cantidad));
                 }
+                // v2.5.17 DIAGNOSTICO: si el combo no tiene componentes, registrar
+                // en kardex un movimiento VENTA_COMBO_VACIO para que admin detecte
+                // que el combo fue mal configurado (se vendio sin descontar nada).
+                if componentes_a_descontar.is_empty() {
+                    eprintln!("[Combo VACIO] Producto {:?} ({}) vendido como COMBO_FIJO pero no tiene componentes en producto_componentes. Stock NO descontado.", item.producto_id, nombre_prod);
+                    let _ = conn.execute(
+                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                         VALUES (?1, 'VENTA_COMBO_VACIO', 0, 0, 0, 0, ?2, ?3, ?4)",
+                        rusqlite::params![item.producto_id, venta_id, usuario_nombre, est_id],
+                    );
+                }
             } else {
                 // COMBO_FLEXIBLE: requiere combo_seleccion
                 if let Some(sel) = &item.combo_seleccion {

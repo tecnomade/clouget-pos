@@ -6,6 +6,37 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.17 — 2026-05-19 🎁 Combos: validación + UX limpio
+
+### 🐞 Bug "combos no descuentan stock al vender"
+
+La causa más probable: **combos guardados sin componentes**. La UI permitía guardar un producto marcado como "Combo / Kit fijo" sin haber agregado componentes, y al vender no había nada que descontar.
+
+### Fix v2.5.17
+
+**1. Validación al guardar combo:**
+- Si guardas un producto tipo COMBO_FIJO sin componentes → error: *"⚠ Este combo no tiene componentes definidos. Agrégalos antes de guardar — sin componentes el combo NO descontará stock al vender."*
+- Si guardas COMBO_FLEXIBLE sin grupos → error: *"⚠ Un combo flexible requiere al menos 1 grupo de opciones."*
+- Toast de éxito al guardar: *"Combo guardado con N componente(s)"*
+
+**2. UI simplificada para combos:**
+- Los checkboxes de control individual (**Requiere número de serie**, **Es un servicio**, **No controlar stock**, **Requiere control de caducidad**) están **OCULTOS** cuando el tipo de producto es COMBO. Esos atributos pertenecen a cada componente individualmente, no al combo en sí.
+- "Tipo de producto" subido al inicio del bloque para que el usuario lo defina primero.
+- Texto de ayuda actualizado: *"Cada componente maneja su propio control de stock/servicio/caducidad."*
+
+**3. Diagnóstico backend:**
+- Si al vender un COMBO_FIJO el sistema detecta que no tiene componentes definidos, registra en `movimientos_inventario` un evento `VENTA_COMBO_VACIO` (visible en Reportes → Kardex) para que el admin sepa qué combos están mal configurados.
+- También log a stderr: `[Combo VACIO] Producto X (nombre) vendido como COMBO_FIJO pero no tiene componentes...`
+
+### Si tu combo ya está mal configurado
+
+1. Ve a Productos → busca el combo → editar
+2. En el panel **🎁 Componentes del Combo**, agregá los componentes que faltan
+3. Guardar → el sistema confirma cuántos componentes tiene
+4. Próxima venta descuenta correctamente
+
+---
+
 ## v2.5.16 — 2026-05-19 🚨 Dashboard y Ventas no se actualizaban al cobrar (event bus + tab activation)
 
 ### 🚨 Bug reportado
