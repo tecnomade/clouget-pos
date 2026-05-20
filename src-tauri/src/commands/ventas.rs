@@ -333,6 +333,10 @@ pub fn registrar_venta(
             ).ok();
         }
 
+        // v2.5.18 SELF-HEALING: asegurar que la columna tipo_producto exista
+        // (en BDs viejas el ALTER pudo no haberse ejecutado correctamente)
+        let _ = conn.execute("ALTER TABLE productos ADD COLUMN tipo_producto TEXT NOT NULL DEFAULT 'SIMPLE'", []);
+
         // Obtener stock antes de descontar y verificar si es servicio / no_controla_stock / combo
         let (stock_antes, es_servicio, no_controla_stock, tipo_producto): (f64, bool, bool, String) = conn
             .query_row(
@@ -342,7 +346,33 @@ pub fn registrar_venta(
             )
             .unwrap_or((0.0, false, false, "SIMPLE".to_string()));
 
-        let es_combo = tipo_producto == "COMBO_FIJO" || tipo_producto == "COMBO_FLEXIBLE";
+        // v2.5.18 DEFENSIVA: aunque tipo_producto sea "SIMPLE", si el producto TIENE
+        // componentes registrados, tratarlo como COMBO_FIJO. Esto cubre casos donde
+        // tipo_producto se perdió por bug de schema pero la estructura del combo está OK.
+        let tiene_componentes: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM producto_componentes WHERE producto_padre_id = ?1",
+            rusqlite::params![item.producto_id],
+            |r| r.get(0),
+        ).unwrap_or(0);
+        let es_combo_efectivo = tipo_producto == "COMBO_FIJO"
+            || tipo_producto == "COMBO_FLEXIBLE"
+            || (tiene_componentes > 0 && tipo_producto != "COMBO_FLEXIBLE");
+        let es_combo = es_combo_efectivo;
+        // Si detectamos componentes pero tipo es SIMPLE, auto-corregir el tipo en BD
+        // para que próximas ventas no necesiten esta heurística.
+        if tiene_componentes > 0 && tipo_producto == "SIMPLE" {
+            eprintln!("[Combo Auto-Fix] Producto {:?} tiene {} componentes pero tipo_producto='SIMPLE'. Auto-corrigiendo a COMBO_FIJO.", item.producto_id, tiene_componentes);
+            let _ = conn.execute(
+                "UPDATE productos SET tipo_producto = 'COMBO_FIJO' WHERE id = ?1",
+                rusqlite::params![item.producto_id],
+            );
+        }
+        // Para el resto del flujo, el tipo efectivo es el detectado
+        let tipo_producto = if es_combo_efectivo && tipo_producto == "SIMPLE" {
+            "COMBO_FIJO".to_string()
+        } else {
+            tipo_producto
+        };
         // Los combos no descuentan stock del padre — se gestiona via componentes mas abajo
         let omite_stock = es_servicio || no_controla_stock || es_combo;
 

@@ -6,7 +6,29 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.18 — 2026-05-19 🚨 BUG combos con componentes igual no descontaban stock
+
+Continuación del bug de v2.5.17. El cliente reportó "sí tenía componentes" pero igual no descontaba. **Causa raíz**: en algunas BDs viejas la columna `tipo_producto` no se creó correctamente o se reseteó a `'SIMPLE'` por bug de schema. Como el descuento solo se activaba si `tipo_producto IN ('COMBO_FIJO', 'COMBO_FLEXIBLE')`, los combos con la columna mal quedaban sin descontar.
+
+### Fix triple v2.5.18
+
+**1. Self-healing**: antes de leer el producto, se ejecuta `ALTER TABLE productos ADD COLUMN tipo_producto` para garantizar la columna (silent si ya existe).
+
+**2. Detección defensiva**: aunque `tipo_producto` esté como `'SIMPLE'`, si el producto **tiene componentes registrados** en `producto_componentes`, se trata automáticamente como `COMBO_FIJO` y se descuentan los componentes.
+
+**3. Auto-corrección permanente**: cuando se detecta esta inconsistencia, el sistema **actualiza la columna en BD** a `'COMBO_FIJO'` para que próximas ventas no necesiten la heurística.
+
+**4. Log a stderr**: `[Combo Auto-Fix] Producto X tiene N componentes pero tipo_producto='SIMPLE'. Auto-corrigiendo a COMBO_FIJO.`
+
+### Resultado
+
+A partir de v2.5.18, **cualquier producto que tenga componentes registrados descontará stock al venderse**, sin importar el estado de la columna `tipo_producto`. Y si tu BD tenía el bug de schema, se auto-corrige al primer venta del combo.
+
+---
+
 ## v2.5.17 — 2026-05-19 🎁 Combos: validación + UX limpio
+
+
 
 ### 🐞 Bug "combos no descuentan stock al vender"
 
