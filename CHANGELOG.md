@@ -6,6 +6,55 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.19 — 2026-05-19 🎁 Combos: costo y stock calculados auto + unidad "COMBO"
+
+### 🆕 Precio costo del combo: calculado, no editable
+
+El precio costo del combo ya **no se ingresa manualmente**. Se calcula automáticamente como la suma de los costos de los componentes × cantidad de cada uno:
+
+```
+Costo combo = Σ (precio_costo_componente × cantidad_en_combo)
+```
+
+El campo se muestra **deshabilitado** con el valor calculado en vivo cuando agregas o quitas componentes. Texto debajo: *"= suma de costos de componentes × cantidad"*
+
+### 🆕 Stock del combo: calculado por componentes (no propio)
+
+Los combos **no tienen stock propio**. La cantidad disponible se calcula como el mínimo entre `stock_componente / cantidad_requerida` para cada componente:
+
+```
+Combos disponibles = min(stock_componenteₙ / cantidad_combo_componenteₙ)
+```
+
+Ej: Si el combo necesita 2 jugos y 1 sandwich, y tienes 10 jugos + 4 sandwiches:
+- Con jugos puedes armar 5 combos (10÷2)
+- Con sandwiches puedes armar 4 combos (4÷1)
+- **Combos disponibles = 4** (el mínimo)
+
+El campo aparece como "Combos disponibles" (auto, deshabilitado) con texto explicativo. Color rojo si llegó a 0.
+
+### 🆕 Unidad de medida default "COMBO" al seleccionar tipo combo
+
+Cuando cambias el tipo de producto a "Combo / Kit fijo" o "Combo flexible", la unidad de medida se setea automáticamente a **"COMBO"** (si estaba en "UND" default). El usuario puede cambiarla después si quiere.
+
+La opción "COMBO" se agrega al dropdown de unidades:
+- Si tu catálogo de unidades ya tiene COMBO → se usa esa
+- Si no la tiene → se agrega como opción inline
+
+### Inputs deshabilitados / ocultos para combos
+
+- `precio_costo`: deshabilitado, muestra valor calculado
+- `stock_actual`: oculto (no aplica)
+- `stock_minimo`: oculto (no aplica)
+- `requiere_serie`, `es_servicio`, `no_controla_stock`, `requiere_caducidad`: ocultos (cada componente maneja los suyos)
+
+### Compatibilidad
+
+- Combos viejos guardados con valores manuales en `precio_costo`/`stock_actual` se mantienen — solo se reseteán al cambiar el tipo de producto a Combo.
+- Al guardar un combo, se envía `precio_costo: 0`, `stock_actual: 0`, `stock_minimo: 0` (el cálculo real se hace en el momento de uso).
+
+---
+
 ## v2.5.18 — 2026-05-19 🚨 BUG combos con componentes igual no descontaban stock
 
 Continuación del bug de v2.5.17. El cliente reportó "sí tenía componentes" pero igual no descontaba. **Causa raíz**: en algunas BDs viejas la columna `tipo_producto` no se creó correctamente o se reseteó a `'SIMPLE'` por bug de schema. Como el descuento solo se activaba si `tipo_producto IN ('COMBO_FIJO', 'COMBO_FLEXIBLE')`, los combos con la columna mal quedaban sin descontar.

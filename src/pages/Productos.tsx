@@ -335,37 +335,94 @@ function FormProducto({
             ))}
           </select>
         </div>
-        {puedeVerCostos ? (
-          <div>
-            <label className="text-secondary" style={{ fontSize: 12 }}>Precio costo</label>
-            <NumericInput value={form.precio_costo} step={0.01} min={0}
-              onChange={(v) => setForm({ ...form, precio_costo: v })} />
-          </div>
-        ) : (
-          <div>
-            <label className="text-secondary" style={{ fontSize: 12, color: "var(--color-text-secondary)" }} title="Sin permiso 'ver_costos'">Precio costo (oculto)</label>
-            <input className="input" value="••••" readOnly disabled style={{ fontFamily: "monospace" }} />
-          </div>
-        )}
-        <div>
-          <label className="text-secondary" style={{ fontSize: 12 }}>Precio venta *</label>
-          <NumericInput value={form.precio_venta} step={0.01} min={0}
-            onChange={(v) => setForm({ ...form, precio_venta: v })} />
-        </div>
-        {!form.es_servicio && (
-          <>
-            <div>
-              <label className="text-secondary" style={{ fontSize: 12 }}>Stock actual</label>
-              <NumericInput value={form.stock_actual} step={1} min={0}
-                onChange={(v) => setForm({ ...form, stock_actual: v })} />
-            </div>
-            <div>
-              <label className="text-secondary" style={{ fontSize: 12 }}>Stock mínimo</label>
-              <NumericInput value={form.stock_minimo} step={1} min={0}
-                onChange={(v) => setForm({ ...form, stock_minimo: v })} />
-            </div>
-          </>
-        )}
+        {/* v2.5.19: si es combo, precio_costo + stock + stock_minimo se CALCULAN
+            automáticamente desde los componentes. Inputs deshabilitados con info. */}
+        {(() => {
+          const esCombo = form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE";
+          // Cálculo del stock disponible del combo (mínimo entre stock_componente / cantidad_requerida)
+          const stockComboCalc = (() => {
+            if (!esCombo || comboComponentes.length === 0) return null;
+            const minDisponible = comboComponentes.reduce((min, c) => {
+              const stockHijo = (c as any).hijo_stock_actual ?? 0;
+              const cantReq = c.cantidad || 1;
+              const cuantosCombos = Math.floor(stockHijo / cantReq);
+              return cuantosCombos < min ? cuantosCombos : min;
+            }, Number.MAX_SAFE_INTEGER);
+            return Number.isFinite(minDisponible) ? minDisponible : 0;
+          })();
+          // Suma costos de componentes (si los componentes traen hijo_precio_costo)
+          const costoComboCalc = (() => {
+            if (!esCombo || comboComponentes.length === 0) return null;
+            return comboComponentes.reduce((s, c) => {
+              const costoHijo = (c as any).hijo_precio_costo ?? 0;
+              return s + costoHijo * (c.cantidad || 1);
+            }, 0);
+          })();
+          return (
+            <>
+              {puedeVerCostos ? (
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12 }}>
+                    Precio costo {esCombo && <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>(auto)</span>}
+                  </label>
+                  {esCombo ? (
+                    <input className="input" value={costoComboCalc != null ? `$${costoComboCalc.toFixed(2)}` : "Define componentes"}
+                      readOnly disabled style={{ fontStyle: "italic", color: "var(--color-text-secondary)" }} />
+                  ) : (
+                    <NumericInput value={form.precio_costo} step={0.01} min={0}
+                      onChange={(v) => setForm({ ...form, precio_costo: v })} />
+                  )}
+                  {esCombo && (
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      = suma de costos de componentes × cantidad
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12, color: "var(--color-text-secondary)" }} title="Sin permiso 'ver_costos'">Precio costo (oculto)</label>
+                  <input className="input" value="••••" readOnly disabled style={{ fontFamily: "monospace" }} />
+                </div>
+              )}
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12 }}>Precio venta *</label>
+                <NumericInput value={form.precio_venta} step={0.01} min={0}
+                  onChange={(v) => setForm({ ...form, precio_venta: v })} />
+              </div>
+              {!form.es_servicio && !esCombo && (
+                <>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Stock actual</label>
+                    <NumericInput value={form.stock_actual} step={1} min={0}
+                      onChange={(v) => setForm({ ...form, stock_actual: v })} />
+                  </div>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Stock mínimo</label>
+                    <NumericInput value={form.stock_minimo} step={1} min={0}
+                      onChange={(v) => setForm({ ...form, stock_minimo: v })} />
+                  </div>
+                </>
+              )}
+              {esCombo && (
+                <>
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>
+                      Combos disponibles <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>(auto)</span>
+                    </label>
+                    <input className="input" value={stockComboCalc != null ? `${stockComboCalc} combo(s)` : "Define componentes"}
+                      readOnly disabled style={{ fontStyle: "italic", color: stockComboCalc != null && stockComboCalc <= 0 ? "var(--color-danger)" : "var(--color-text-secondary)" }} />
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      = mínimo de (stock componente / cantidad requerida)
+                    </div>
+                  </div>
+                  <div style={{ alignSelf: "center", fontSize: 11, color: "var(--color-text-secondary)", padding: "12px 0" }}>
+                    Los combos no tienen stock propio. Se arman al venderse usando los componentes.
+                  </div>
+                </>
+              )}
+            </>
+          );
+        })()}
         <div>
           <label className="text-secondary" style={{ fontSize: 12 }}>IVA %</label>
           <select
@@ -458,12 +515,19 @@ function FormProducto({
             onChange={(e) => setForm({ ...form, unidad_medida: e.target.value })}
           >
             {tiposUnidad && tiposUnidad.length > 0 ? (
-              tiposUnidad.map((u) => (
-                <option key={u.id} value={u.abreviatura}>{u.nombre} ({u.abreviatura})</option>
-              ))
+              <>
+                {tiposUnidad.map((u) => (
+                  <option key={u.id} value={u.abreviatura}>{u.nombre} ({u.abreviatura})</option>
+                ))}
+                {/* v2.5.19: si form usa COMBO pero no está en la lista, agregar opción */}
+                {form.unidad_medida === "COMBO" && !tiposUnidad.some((u: any) => u.abreviatura === "COMBO") && (
+                  <option value="COMBO">Combo (COMBO)</option>
+                )}
+              </>
             ) : (
               <>
                 <option value="UND">Unidad</option>
+                <option value="COMBO">Combo</option>
                 <option value="KG">Kilogramo</option>
                 <option value="LB">Libra</option>
                 <option value="LT">Litro</option>
@@ -680,7 +744,21 @@ function FormProducto({
           <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Tipo de producto</label>
           <select className="input" style={{ marginTop: 4, fontSize: 13 }}
             value={form.tipo_producto || "SIMPLE"}
-            onChange={(e) => setForm({ ...form, tipo_producto: e.target.value })}>
+            onChange={(e) => {
+              const nuevo = e.target.value;
+              const esCombo = nuevo === "COMBO_FIJO" || nuevo === "COMBO_FLEXIBLE";
+              // v2.5.19: al cambiar a combo, setear unidad_medida = "COMBO" por default
+              // (si todavia esta el default "UND"). Tambien limpiar stock_actual/minimo
+              // porque no aplican a combos (se calculan de componentes).
+              setForm({
+                ...form,
+                tipo_producto: nuevo,
+                ...(esCombo && (form.unidad_medida === "UND" || !form.unidad_medida)
+                  ? { unidad_medida: "COMBO" }
+                  : {}),
+                ...(esCombo ? { stock_actual: 0, stock_minimo: 0, precio_costo: 0 } : {}),
+              });
+            }}>
             <option value="SIMPLE">Simple (producto individual)</option>
             <option value="COMBO_FIJO">Combo / Kit fijo (canasta, paquete con componentes definidos)</option>
             <option value="COMBO_FLEXIBLE">Combo flexible (cliente elige: ej. plato + bebida + postre)</option>
@@ -916,6 +994,7 @@ function FormProducto({
                           hijo_nombre: p.nombre,
                           hijo_codigo: p.codigo ?? undefined,
                           hijo_precio_venta: p.precio_venta,
+                          hijo_precio_costo: p.precio_costo, // v2.5.19: para calcular costo del combo
                           hijo_stock_actual: p.stock_actual,
                           hijo_unidad_medida: undefined,
                         } as any
