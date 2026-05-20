@@ -5,10 +5,13 @@ use std::collections::HashMap;
 
 /// Genera el contenido de texto del ticket
 /// v2.5.14: nuevo parametro pagos_mixtos para desglosar pago MIXTO en el ticket
+/// v2.5.24: nuevo parametro componentes_combo para detallar componentes en venta de combos
+///          Map key=producto_id (del combo padre), value=Vec<(nombre_componente, cantidad_por_combo)>
 pub fn generar_ticket(
     venta: &VentaCompleta,
     config: &HashMap<String, String>,
     pagos_mixtos: &[crate::models::PagoMixto],
+    componentes_combo: &HashMap<i64, Vec<(String, f64)>>,
 ) -> Vec<u8> {
     // v2.5.14 BUG FIX: las impresoras Epson 80mm con fuente A imprimen MAX 42 columnas,
     // no 48. Con 48 las líneas se cortaban y los valores bajaban a nueva línea (se veía
@@ -164,6 +167,29 @@ pub fn generar_ticket(
             )
             .as_bytes(),
         );
+
+        // v2.5.24: si este item es un combo (producto_id en componentes_combo),
+        // listar los componentes incluidos con indent + cantidad_total
+        if let Some(pid) = det.producto_id {
+            if let Some(comps) = componentes_combo.get(&pid) {
+                for (nombre_comp, cant_por_combo) in comps {
+                    let cant_total = cant_por_combo * det.cantidad;
+                    // Truncar nombre del componente para que entre con indent
+                    let nombre_truncado: String = if nombre_comp.chars().count() > col_nombre - 4 {
+                        nombre_comp.chars().take(col_nombre - 4).collect()
+                    } else {
+                        nombre_comp.clone()
+                    };
+                    ticket.extend_from_slice(
+                        format!(
+                            "  + {} x{}\n",
+                            nombre_truncado,
+                            format_cantidad(cant_total)
+                        ).as_bytes(),
+                    );
+                }
+            }
+        }
 
         if det.descuento > 0.0 {
             ticket.extend_from_slice(

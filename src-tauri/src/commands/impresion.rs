@@ -132,13 +132,40 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
         }
     }
 
+    // v2.5.24: cargar componentes de combos vendidos para detallar en el ticket
+    let mut componentes_combo: std::collections::HashMap<i64, Vec<(String, f64)>> = std::collections::HashMap::new();
+    for det in &detalles {
+        if let Some(pid) = det.producto_id {
+            // Solo si el producto es combo
+            let es_combo: bool = conn.query_row(
+                "SELECT COALESCE(tipo_producto, 'SIMPLE') IN ('COMBO_FIJO', 'COMBO_FLEXIBLE') FROM productos WHERE id = ?1",
+                rusqlite::params![pid],
+                |row| Ok(row.get::<_, i32>(0)? != 0),
+            ).unwrap_or(false);
+            if !es_combo || componentes_combo.contains_key(&pid) { continue; }
+            let mut stmt_cc = conn.prepare(
+                "SELECT p.nombre, c.cantidad FROM producto_componentes c
+                 INNER JOIN productos p ON c.producto_hijo_id = p.id
+                 WHERE c.producto_padre_id = ?1 ORDER BY c.orden ASC, c.id ASC"
+            ).map_err(|e| e.to_string())?;
+            let iter = stmt_cc.query_map(rusqlite::params![pid], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            }).map_err(|e| e.to_string())?;
+            let mut comps: Vec<(String, f64)> = Vec::new();
+            for r in iter {
+                if let Ok(c) = r { comps.push(c); }
+            }
+            componentes_combo.insert(pid, comps);
+        }
+    }
+
     let venta_completa = crate::models::VentaCompleta {
         venta,
         detalles,
         cliente_nombre,
     };
 
-    let ticket_data = printing::generar_ticket(&venta_completa, &config, &pagos_mixtos);
+    let ticket_data = printing::generar_ticket(&venta_completa, &config, &pagos_mixtos, &componentes_combo);
 
     // Obtener nombre de impresora de la config
     let impresora = config
@@ -2636,7 +2663,8 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
     };
 
     // v2.5.14: ticket NC no tiene pagos mixtos, vec vacio
-    let ticket_data = crate::printing::generar_ticket(&venta_completa, &config, &[]);
+    // v2.5.24: ticket NC no tiene combos, mapa vacio
+    let ticket_data = crate::printing::generar_ticket(&venta_completa, &config, &[], &std::collections::HashMap::new());
 
     let impresora = config.get("impresora").map(|s| s.to_string()).unwrap_or_default();
     if impresora.is_empty() {

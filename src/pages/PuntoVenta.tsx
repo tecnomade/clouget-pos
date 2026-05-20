@@ -120,6 +120,8 @@ export default function PuntoVenta() {
 
   // Modal detalle producto
   const [productoDetalle, setProductoDetalle] = useState<any | null>(null);
+  // v2.5.24: componentes del combo cuando el productoDetalle es un combo
+  const [detalleComboComponentes, setDetalleComboComponentes] = useState<any[]>([]);
 
   // Admin PIN modal for price editing
   const [mostrarPinAdmin, setMostrarPinAdmin] = useState(false);
@@ -477,7 +479,13 @@ export default function PuntoVenta() {
         return;
       }
       // COMBO_FIJO: continua normal, el backend descuenta componentes.
-      // Opcionalmente podriamos precargar componentes para mostrar en carrito.
+      // v2.5.24: pre-cargar componentes para mostrar detalle en el carrito
+      if (tp === "COMBO_FIJO") {
+        try {
+          const comps = await listarComboComponentes(producto.id);
+          (producto as any).__combo_componentes = comps;
+        } catch { /* ignorar, seguimos sin detalle */ }
+      }
     } catch { /* producto sin info combo, seguir */ }
 
     // Caducidad: si el producto requiere_caducidad y no se especifico lote, abrir selector
@@ -618,6 +626,8 @@ export default function PuntoVenta() {
           lote_cantidad_disponible: loteElegido?.cantidad,
           // Combo: selección de componentes (solo COMBO_FLEXIBLE)
           combo_seleccion: comboSeleccion && comboSeleccion.length > 0 ? comboSeleccion : undefined,
+          // v2.5.24: componentes del COMBO_FIJO precargados para mostrar en carrito
+          combo_componentes_fijos: (producto as any).__combo_componentes,
         } as any,
       ]);
     }
@@ -1576,6 +1586,16 @@ export default function PuntoVenta() {
                 try {
                   const p = await obtenerProducto(pid);
                   setProductoDetalle(p);
+                  // v2.5.24: si es combo, cargar también componentes para mostrar en el modal
+                  const tp = (p as any).tipo_producto || "SIMPLE";
+                  if (tp === "COMBO_FIJO" || tp === "COMBO_FLEXIBLE") {
+                    try {
+                      const comps = await listarComboComponentes(p.id!);
+                      setDetalleComboComponentes(comps);
+                    } catch { setDetalleComboComponentes([]); }
+                  } else {
+                    setDetalleComboComponentes([]);
+                  }
                 } catch (err) { toastError("Error: " + err); }
               }}
               busqueda={busqueda}
@@ -1726,6 +1746,15 @@ export default function PuntoVenta() {
                         <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, paddingLeft: 4, borderLeft: "2px solid rgba(168,85,247,0.5)" }}>
                           {(item as any).combo_seleccion.map((c: any, ix: number) => (
                             <div key={ix}>🍽 {c.nombre || `Producto #${c.producto_hijo_id}`} × {c.cantidad}</div>
+                          ))}
+                        </div>
+                      )}
+                      {/* v2.5.24: componentes del COMBO_FIJO (cargados al agregar) */}
+                      {(item as any).combo_componentes_fijos && (item as any).combo_componentes_fijos.length > 0 && (
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2, paddingLeft: 4, borderLeft: "2px solid rgba(168,85,247,0.5)" }}>
+                          <div style={{ fontWeight: 600, color: "#a855f7", marginBottom: 2 }}>🎁 Incluye:</div>
+                          {(item as any).combo_componentes_fijos.map((c: any) => (
+                            <div key={c.id}>+ {c.hijo_nombre} × {(c.cantidad * item.cantidad).toFixed(c.cantidad === Math.floor(c.cantidad) ? 0 : 2)}</div>
                           ))}
                         </div>
                       )}
@@ -2354,19 +2383,32 @@ export default function PuntoVenta() {
         </div>
       )}
       {/* Modal PIN Admin para editar precio */}
-      {productoDetalle && (
-        <div className="modal-overlay" onClick={() => setProductoDetalle(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+      {productoDetalle && (() => {
+        // v2.5.24: detectar si es combo para cargar componentes
+        const tp = (productoDetalle as any).tipo_producto || "SIMPLE";
+        const esCombo = tp === "COMBO_FIJO" || tp === "COMBO_FLEXIBLE";
+        return (
+        <div className="modal-overlay" onClick={() => { setProductoDetalle(null); setDetalleComboComponentes([]); }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <div className="modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ margin: 0 }}>Detalle del Producto</h3>
-              <button onClick={() => setProductoDetalle(null)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--color-text)" }}>×</button>
+              <h3 style={{ margin: 0 }}>
+                {esCombo ? "🎁 " : ""}Detalle del Producto
+              </h3>
+              <button onClick={() => { setProductoDetalle(null); setDetalleComboComponentes([]); }} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--color-text)" }}>×</button>
             </div>
             <div className="modal-body">
               {productoDetalle.imagen && (
                 <img src={`data:image/png;base64,${productoDetalle.imagen}`} alt={productoDetalle.nombre}
                   style={{ width: 120, height: 120, objectFit: "contain", display: "block", margin: "0 auto 12px", borderRadius: 8 }} />
               )}
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{productoDetalle.nombre}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
+                {productoDetalle.nombre}
+                {esCombo && (
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, marginLeft: 8, background: "rgba(168,85,247,0.15)", color: "#a855f7", fontWeight: 600 }}>
+                    {tp === "COMBO_FIJO" ? "Combo Fijo" : "Combo Flexible"}
+                  </span>
+                )}
+              </div>
               {productoDetalle.descripcion && (
                 <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 12 }}>
                   {productoDetalle.descripcion}
@@ -2377,23 +2419,56 @@ export default function PuntoVenta() {
                 <div><strong>Código barras:</strong> {productoDetalle.codigo_barras || "-"}</div>
                 <div><strong>Precio venta:</strong> <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>${productoDetalle.precio_venta?.toFixed(2)}</span></div>
                 <div><strong>Precio costo:</strong> ${productoDetalle.precio_costo?.toFixed(2)}</div>
-                <div><strong>Stock actual:</strong> <span style={{ fontWeight: 600, color: productoDetalle.stock_actual <= 0 ? "var(--color-danger)" : undefined }}>{productoDetalle.stock_actual}</span></div>
-                <div><strong>Stock mínimo:</strong> {productoDetalle.stock_minimo}</div>
+                {!esCombo && (
+                  <>
+                    <div><strong>Stock actual:</strong> <span style={{ fontWeight: 600, color: productoDetalle.stock_actual <= 0 ? "var(--color-danger)" : undefined }}>{productoDetalle.stock_actual}</span></div>
+                    <div><strong>Stock mínimo:</strong> {productoDetalle.stock_minimo}</div>
+                  </>
+                )}
                 <div><strong>IVA:</strong> {productoDetalle.iva_porcentaje}%</div>
                 <div><strong>Unidad:</strong> {productoDetalle.unidad_medida}</div>
               </div>
+              {/* v2.5.24: detalle de componentes si es combo */}
+              {esCombo && (
+                <div style={{ marginTop: 12, padding: 10, background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.3)", borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: "#a855f7" }}>
+                    🎁 Componentes del combo ({detalleComboComponentes.length})
+                  </div>
+                  {detalleComboComponentes.length === 0 ? (
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", fontStyle: "italic" }}>
+                      Cargando componentes...
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {detalleComboComponentes.map((c: any) => (
+                        <div key={c.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", background: "var(--color-surface)", borderRadius: 4, fontSize: 12 }}>
+                          <span>
+                            <strong>{c.cantidad}×</strong> {c.hijo_nombre}
+                            {c.hijo_codigo && <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}> · {c.hijo_codigo}</span>}
+                          </span>
+                          <span style={{ color: "var(--color-text-secondary)" }}>
+                            {c.hijo_es_servicio ? "🛎 servicio" : `stock: ${c.hijo_stock_actual ?? 0}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn btn-outline" onClick={() => setProductoDetalle(null)}>Cerrar</button>
               <button className="btn btn-primary" onClick={() => {
                 const pid = productoDetalle.id;
                 setProductoDetalle(null);
+                setDetalleComboComponentes([]);
                 navigate(`/productos?edit=${pid}`);
               }}>Editar Producto</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
       {mostrarPinAdmin && (
         <div className="modal-overlay" onClick={() => {
           setMostrarPinAdmin(false);

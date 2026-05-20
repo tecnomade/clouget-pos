@@ -6,6 +6,60 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.24 — 2026-05-20 🎁 Combos visibles en todos lados (filtro + detalle + carrito + ticket)
+
+### 🔍 Nuevo filtro en Productos: por tipo
+
+Junto al filtro de categoría hay un nuevo selector "tipo de producto" para listar solo lo que necesitás:
+
+- **Todos los tipos** (default)
+- **📦 Solo productos** simples
+- **🛎 Solo servicios**
+- **🎁 Solo combos**
+- **⚠ Sin stock** (para reposición rápida)
+
+### 🎁 Detalle del Producto en POS muestra componentes del combo
+
+Al click en el botón "Ver detalle" 👁 de un combo en el grid táctil del POS, el modal ahora:
+
+- Muestra badge "Combo Fijo" / "Combo Flexible" al lado del nombre
+- Lista los componentes incluidos con cantidad y stock individual
+- Oculta los campos "Stock actual" y "Stock mínimo" (no aplican a combos)
+
+### 🛒 Carrito muestra "Incluye:" para combos
+
+Al agregar un combo al carrito, aparece debajo del nombre la lista de componentes incluidos:
+
+```
+🎁 combo prueba                   $25.00
+🎁 Incluye:
+   + 1 kilo arroz × 1
+   + 1 atun × 1
+   + sobres café × 2
+```
+
+Las cantidades se multiplican según las unidades del combo vendidas (ej. si vendés 2 combos, se ve "× 4" para los sobres de café).
+
+### 🧾 Ticket impreso detalla los componentes
+
+El ticket térmico (ESC/POS) y PDF ahora muestran los componentes después de cada combo vendido:
+
+```
+combo prueba              1   25.00   25.00
+  + 1 kilo arroz x1
+  + 1 atun x1
+  + sobres cafe x2
+```
+
+Esto ayuda al cliente a confirmar qué incluye el combo que está pagando, y al cajero/cocinero a saber qué entregar.
+
+### Implementación técnica
+
+- **Frontend**: `Productos.tsx` filtro adicional · `PuntoVenta.tsx` precarga componentes al agregar combo al carrito · Modal detalle del producto carga `listarComboComponentes` si es combo
+- **Backend**: `generar_ticket` acepta nuevo parámetro `componentes_combo: HashMap<i64, Vec<(String, f64)>>` · `imprimir_ticket` y `imprimir_ticket_pdf` cargan componentes de combos vendidos antes de renderizar
+
+---
+
 ## v2.5.23 — 2026-05-20 🎨 UI: sidebar más visible + header limpio
 
 ### 🎨 Sidebar items más visibles

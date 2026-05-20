@@ -1548,6 +1548,8 @@ export default function Productos() {
   const [productoEditar, setProductoEditar] = useState<Producto | undefined>();
   const [filtro, setFiltro] = useState("");
   const [filtroCategoriaId, setFiltroCategoriaId] = useState<number | null>(null);
+  // v2.5.24: filtro por tipo de producto (todos / simple / servicio / combo)
+  const [filtroTipo, setFiltroTipo] = useState<"TODOS" | "SIMPLE" | "SERVICIO" | "COMBO" | "SIN_STOCK">("TODOS");
   const [ordenamiento, setOrdenamiento] = useState<string>("nombre_asc");
   const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
   const [vistaAgrupada, setVistaAgrupada] = useState(false);
@@ -1750,6 +1752,12 @@ export default function Productos() {
       if (filtro && !p.nombre.toLowerCase().includes(filtro.toLowerCase()) &&
           !(p.codigo && p.codigo.toLowerCase().includes(filtro.toLowerCase()))) return false;
       if (categoriaNombreFiltro !== null && p.categoria_nombre !== categoriaNombreFiltro) return false;
+      // v2.5.24: filtro por tipo
+      const tp = (p as any).tipo_producto || "SIMPLE";
+      if (filtroTipo === "SERVICIO" && !(p as any).es_servicio) return false;
+      if (filtroTipo === "COMBO" && tp !== "COMBO_FIJO" && tp !== "COMBO_FLEXIBLE") return false;
+      if (filtroTipo === "SIMPLE" && (tp !== "SIMPLE" || (p as any).es_servicio)) return false;
+      if (filtroTipo === "SIN_STOCK" && p.stock_actual > 0) return false;
       return true;
     });
 
@@ -1766,7 +1774,7 @@ export default function Productos() {
     });
 
     return lista;
-  }, [productos, filtro, categoriaNombreFiltro, ordenamiento]);
+  }, [productos, filtro, categoriaNombreFiltro, ordenamiento, filtroTipo]);
 
   const productosAgrupados = useMemo(() => {
     const grupos: Record<string, typeof productosFiltrados> = {};
@@ -2059,6 +2067,17 @@ export default function Productos() {
                 onChange={(e) => setFiltroCategoriaId(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Todas las categorías</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+              {/* v2.5.24: filtro por tipo de producto */}
+              <select className="input" style={{ width: 150, fontSize: 12 }}
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value as any)}
+                title="Filtrar por tipo de producto">
+                <option value="TODOS">Todos los tipos</option>
+                <option value="SIMPLE">📦 Solo productos</option>
+                <option value="SERVICIO">🛎 Solo servicios</option>
+                <option value="COMBO">🎁 Solo combos</option>
+                <option value="SIN_STOCK">⚠ Sin stock</option>
               </select>
               <select className="input" style={{ width: 160, fontSize: 12 }}
                 value={ordenamiento}
