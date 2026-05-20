@@ -128,6 +128,12 @@ pub struct ProductoBusqueda {
     /// El frontend hace lazy-load de la imagen real solo cuando entra al viewport.
     #[serde(default)]
     pub tiene_imagen: bool,
+    /// v2.5.21: flags para que el frontend pueda excluir servicios y productos sin
+    /// control de stock del cálculo de stock disponible en combos.
+    #[serde(default)]
+    pub es_servicio: bool,
+    #[serde(default)]
+    pub no_controla_stock: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

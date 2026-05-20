@@ -6,6 +6,37 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.21 — 2026-05-19 🎁 Combos con servicios: stock calculado correctamente
+
+### Bug detectado por usuario
+
+Si un combo incluía un **servicio** entre sus componentes (ej. plato + delivery), el cálculo de "Combos disponibles" daba **0** porque los servicios tienen `stock_actual = 0` (no manejan stock). El sistema asumía que el servicio "se acabó".
+
+### Fix
+
+**Frontend (cálculo en el form de combo)**: ahora **excluye** servicios (`hijo_es_servicio`) y productos sin control de stock (`hijo_no_controla_stock`) del cálculo del mínimo. Solo se toman en cuenta los componentes físicos.
+
+**Ejemplos:**
+
+| Combo | Componentes | Combos disponibles |
+|---|---|---|
+| Plato + Delivery | Plato (stock 5) + Delivery (servicio) | **5 combos** ✅ |
+| Solo servicios | Diagnóstico + Reparación (ambos servicios) | **∞ ilimitado** ✅ |
+| Plato + Postre | Plato (stock 5) + Postre (stock 3) | **3 combos** (el postre limita) ✅ |
+
+Display especial: si el combo **solo tiene servicios**, muestra **"∞ ilimitado (solo servicios)"** en verde en vez de un número.
+
+### Backend mejorado
+
+- `ProductoBusqueda` ahora incluye `es_servicio` y `no_controla_stock` para que el frontend pueda excluirlos del cálculo al armar el combo.
+- Aplica a `buscar_productos` (standalone) y `buscar_productos_multi_almacen` (modo multi-almacén).
+
+### Nota técnica
+
+El backend ya manejaba bien los servicios al **vender** (no descuenta stock de servicios). Este fix es para el **display informativo** en el form de combo — el cálculo de "Combos disponibles" ahora coincide con lo que realmente se puede vender.
+
+---
+
 ## v2.5.20 — 2026-05-19 🚨 BUG: combos imposibles de vender con stock bloqueante
 
 Reportado en demo en vivo: al intentar vender un combo aparecía error *"Stock insuficiente para 'combo prueba': requiere 1.00, disponible 0.00"* y no se podía completar la venta.

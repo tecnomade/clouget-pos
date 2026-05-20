@@ -339,10 +339,20 @@ function FormProducto({
             automáticamente desde los componentes. Inputs deshabilitados con info. */}
         {(() => {
           const esCombo = form.tipo_producto === "COMBO_FIJO" || form.tipo_producto === "COMBO_FLEXIBLE";
-          // Cálculo del stock disponible del combo (mínimo entre stock_componente / cantidad_requerida)
+          // v2.5.21: cálculo del stock disponible del combo (mínimo entre stock_componente / cantidad_requerida)
+          // IGNORANDO servicios y productos sin control de stock (esos son "infinitos" — no limitan).
+          // Si el combo SOLO tiene servicios, el stock es "ilimitado" → mostramos "∞".
           const stockComboCalc = (() => {
             if (!esCombo || comboComponentes.length === 0) return null;
-            const minDisponible = comboComponentes.reduce((min, c) => {
+            // Filtrar solo componentes que SI controlan stock
+            const componentesConStock = comboComponentes.filter((c) => {
+              const esServ = (c as any).hijo_es_servicio === true;
+              const noCtrl = (c as any).hijo_no_controla_stock === true;
+              return !esServ && !noCtrl;
+            });
+            // Si no hay componentes físicos, stock ilimitado
+            if (componentesConStock.length === 0) return Infinity;
+            const minDisponible = componentesConStock.reduce((min, c) => {
               const stockHijo = (c as any).hijo_stock_actual ?? 0;
               const cantReq = c.cantidad || 1;
               const cuantosCombos = Math.floor(stockHijo / cantReq);
@@ -409,10 +419,24 @@ function FormProducto({
                     <label className="text-secondary" style={{ fontSize: 12 }}>
                       Combos disponibles <span style={{ color: "var(--color-text-secondary)", fontSize: 10 }}>(auto)</span>
                     </label>
-                    <input className="input" value={stockComboCalc != null ? `${stockComboCalc} combo(s)` : "Define componentes"}
-                      readOnly disabled style={{ fontStyle: "italic", color: stockComboCalc != null && stockComboCalc <= 0 ? "var(--color-danger)" : "var(--color-text-secondary)" }} />
+                    {(() => {
+                      // v2.5.21: formato del display considerando "infinito" si solo hay servicios
+                      let label = "Define componentes";
+                      let color: string = "var(--color-text-secondary)";
+                      if (stockComboCalc === Infinity) {
+                        label = "∞ ilimitado (solo servicios)";
+                        color = "var(--color-success)";
+                      } else if (stockComboCalc != null) {
+                        label = `${stockComboCalc} combo(s)`;
+                        color = stockComboCalc <= 0 ? "var(--color-danger)" : "var(--color-text-secondary)";
+                      }
+                      return (
+                        <input className="input" value={label} readOnly disabled
+                          style={{ fontStyle: "italic", color }} />
+                      );
+                    })()}
                     <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                      = mínimo de (stock componente / cantidad requerida)
+                      = mínimo de (stock componente / cantidad requerida) — servicios excluidos
                     </div>
                   </div>
                   <div style={{ alignSelf: "center", fontSize: 11, color: "var(--color-text-secondary)", padding: "12px 0" }}>
@@ -997,6 +1021,9 @@ function FormProducto({
                           hijo_precio_costo: p.precio_costo, // v2.5.19: para calcular costo del combo
                           hijo_stock_actual: p.stock_actual,
                           hijo_unidad_medida: undefined,
+                          // v2.5.21: flags para excluir servicios y productos sin control del cálculo de stock
+                          hijo_es_servicio: (p as any).es_servicio === true,
+                          hijo_no_controla_stock: (p as any).no_controla_stock === true,
                         } as any
                       ]);
                       setComboBuscar("");

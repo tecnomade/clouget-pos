@@ -202,11 +202,14 @@ pub fn buscar_productos(
     // Busqueda en: nombre, codigo, codigo_barras Y descripcion (info adicional).
     // Ordena por relevancia: 1=nombre, 2=codigo/cb, 3=descripcion. Asi los matches
     // del titulo aparecen primero y los de descripcion al final como fallback.
+    // v2.5.21: tambien traemos es_servicio y no_controla_stock para el calculo
+    // de stock disponible de combos en el frontend (excluir servicios)
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.precio_venta, p.precio_costo, p.iva_porcentaje,
                     p.incluye_iva, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
                     pp.precio as precio_lista,
+                    COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
                     CASE
                         WHEN p.nombre LIKE ?1 THEN 1
                         WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
@@ -239,6 +242,8 @@ pub fn buscar_productos(
                 categoria_nombre: row.get(10)?,
                 precio_lista: row.get(11)?,
                 tiene_imagen: false, // no aplicable en esta query
+                es_servicio: row.get::<_, i32>(12)? != 0,
+                no_controla_stock: row.get::<_, i32>(13)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -261,6 +266,7 @@ fn buscar_productos_multi_almacen(
         .query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![est_codigo], |row| row.get(0))
         .ok();
 
+    // v2.5.21: tambien traemos es_servicio y no_controla_stock (igual que la version sin multi-almacen)
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
@@ -268,6 +274,7 @@ fn buscar_productos_multi_almacen(
                     COALESCE(se.stock_minimo, p.stock_minimo) as stock_min,
                     c.nombre as cat_nombre,
                     pp.precio as precio_lista,
+                    COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
                     CASE
                         WHEN p.nombre LIKE ?1 THEN 1
                         WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
@@ -300,6 +307,8 @@ fn buscar_productos_multi_almacen(
                 categoria_nombre: row.get(8)?,
                 precio_lista: row.get(9)?,
                 tiene_imagen: false,
+                es_servicio: row.get::<_, i32>(10)? != 0,
+                no_controla_stock: row.get::<_, i32>(11)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -396,6 +405,8 @@ pub fn listar_productos(
                 categoria_nombre: row.get(8)?,
                 precio_lista: row.get(9)?,
                 tiene_imagen: row.get::<_, i32>(12)? != 0,
+                es_servicio: false, // listar_productos no incluye este flag, default false
+                no_controla_stock: false,
             })
         })
         .map_err(|e| e.to_string())?
@@ -438,6 +449,8 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 categoria_nombre: row.get(8)?,
                 precio_lista: None,
                 tiene_imagen: false,
+                es_servicio: false,
+                no_controla_stock: false,
             })
         })
         .map_err(|e| e.to_string())?

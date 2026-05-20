@@ -65,6 +65,9 @@ export interface ProductoBusqueda {
   precio_lista?: number;
   // v2.4.14: flag indicador para mostrar miniatura en listado (lazy-load la imagen real)
   tiene_imagen?: boolean;
+  // v2.5.21: flags para excluir servicios y productos sin control del cálculo de stock de combos
+  es_servicio?: boolean;
+  no_controla_stock?: boolean;
 }
 
 export interface Categoria {
