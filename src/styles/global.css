@@ -166,12 +166,14 @@ button, input, select, textarea {
   justify-content: center;
   /* width/height/margin se ajustan dinamicamente. En modo colapsado: cuadrado 44x44 centrado.
      En modo expandido: full-width con padding para acomodar label. */
-  min-height: 38px;
+  min-height: 40px;
   width: auto;
-  margin: 1px 6px;
+  margin: 2px 6px;
   padding: 6px 8px;
   border-radius: 8px;
-  color: rgba(255,255,255,0.55);
+  /* v2.5.23: subimos la opacidad base de 0.55 a 0.72 para que los items se vean mejor
+     sin perder el efecto de jerarquia con el activo. */
+  color: rgba(255,255,255,0.72);
   cursor: pointer;
   transition: all 0.12s;
   text-decoration: none;
@@ -179,16 +181,25 @@ button, input, select, textarea {
 }
 
 .sidebar-compact .nav-item:hover {
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.95);
+  /* v2.5.23: hover mas marcado para feedback claro al usuario */
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,1);
+  /* Subtle lift al pasar el mouse */
+  transform: translateX(1px);
 }
 
 .sidebar-compact .nav-item.active {
-  background: rgba(59, 130, 246, 0.18);
-  color: #60a5fa;
-  /* Indicador lateral via box-shadow inset (no usa pseudo-element con left negativo
-     para no chocar con overflowX:hidden necesario para el scroll vertical). */
-  box-shadow: inset 3px 0 0 0 #60a5fa;
+  /* v2.5.23: estado activo mas marcado pero todavia elegante */
+  background: rgba(59, 130, 246, 0.22);
+  color: #93c5fd;
+  font-weight: 600;
+  /* Indicador lateral mas grueso (4px) + glow sutil */
+  box-shadow: inset 4px 0 0 0 #60a5fa, 0 0 0 1px rgba(96, 165, 250, 0.15);
+}
+
+.sidebar-compact .nav-item.active:hover {
+  background: rgba(59, 130, 246, 0.28);
+  color: #bfdbfe;
 }
 
 .sidebar-compact .nav-spacer {

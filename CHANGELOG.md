@@ -6,6 +6,33 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.23 — 2026-05-20 🎨 UI: sidebar más visible + header limpio
+
+### 🎨 Sidebar items más visibles
+
+Refinamiento sutil para mejorar la legibilidad sin ser estridente:
+
+- **Opacidad ícono inactivo**: 0.55 → **0.72** (se ven más nítidos)
+- **Hover background**: rgba(255,255,255,0.08) → **0.12** (feedback más claro)
+- **Hover lift**: `translateX(+1px)` sutil al pasar el mouse
+- **Active background**: azul 0.18 → **0.22** + `font-weight: 600`
+- **Active borde lateral**: 3px → **4px + glow sutil**
+- **Active color**: #60a5fa → **#93c5fd** (mejor contraste)
+- **Spacing entre items**: 1px → **2px** (mejor respiración visual)
+- **Active hover**: ahora tiene estado distinto para mejor feedback
+
+### 🧹 Header limpio: sin logo Clouget
+
+El logo "CB Clouget" que aparecía a la izquierda del header se eliminó. Ya se ve en la barra de Windows así que era redundante.
+
+Resultado: el header ahora muestra **solo el nombre del negocio del cliente** alineado a la izquierda + página actual + controles. Más limpio y enfocado en lo que importa.
+
+- Nombre del negocio: **15px bold** (antes 14px semi-bold)
+- Sin logo redundante
+- Más espacio para el nombre del cliente
+
+---
+
 ## v2.5.22 — 2026-05-19 💼 Valuación de inventario con PMP (Promedio Ponderado Móvil)
 
 ### 🆕 Feature mayor: valuación de inventario profesional

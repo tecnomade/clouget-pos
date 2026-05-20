@@ -8,7 +8,6 @@ import { getTabMetadata } from "../config/tabsRegistry";
 import TabBar from "./TabBar";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
-import logoClouget from "../assets/logo-clouget.png";
 import { FEATURES } from "../config/branding";
 import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot, CaretLeft, CaretRight } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
@@ -208,33 +207,23 @@ export default function Layout({ children }: { children?: ReactNode }) {
             gap: 8,
             minWidth: 0,
             overflow: "hidden",
+            paddingLeft: 4, // v2.5.23: alinea bien al borde izquierdo
           }}
           title="Ir a Inicio"
         >
-          {/* Logo MUY pequeño solo como botón "home" — estilo Spotify */}
-          <img
-            src={logoClouget}
-            alt=""
-            style={{
-              height: 18,
-              width: "auto",
-              filter: "brightness(0) invert(1)",
-              objectFit: "contain",
-              opacity: 0.85,
-              flexShrink: 0,
-            }}
-          />
+          {/* v2.5.23: logo Clouget eliminado del header — ya está visible en la barra
+              de Windows. Quedó solo el nombre del negocio del usuario, alineado a la izquierda. */}
           {nombreNegocio && (
             <span
               style={{
-                fontSize: 14,
+                fontSize: 15,
                 color: "rgba(255,255,255,0.95)",
-                fontWeight: 600,
+                fontWeight: 700,
                 letterSpacing: 0.2,
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
-                maxWidth: 280,
+                maxWidth: 320,
               }}
             >
               {nombreNegocio}
