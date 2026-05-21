@@ -1597,12 +1597,8 @@ export default function ReportesPage() {
                           <td className="text-right">{m.stock_anterior}</td>
                           <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
                           <td className="text-right">{m.costo_unitario != null ? fmt(m.costo_unitario) : "-"}</td>
-                          <td style={{ fontSize: 11 }}>{
-                            m.motivo
-                              || (m.tipo === "VENTA" && m.referencia_id ? `Venta #${m.referencia_id}` : "")
-                              || (m.tipo === "VENTA_COMBO" && m.referencia_id ? `Venta combo #${m.referencia_id}` : "")
-                              || "-"
-                          }</td>
+                          {/* v2.5.28: backend ahora resuelve motivo con LEFT JOIN a ventas/compras */}
+                          <td style={{ fontSize: 11 }} title={m.motivo || ""}>{m.motivo || "-"}</td>
                           <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
                         </tr>
                         ));

@@ -275,11 +275,10 @@ export default function InventarioPage() {
                       <td className="text-right text-secondary">{m.stock_anterior}</td>
                       <td className="text-right font-bold">{m.stock_nuevo}</td>
                       <td className="text-secondary" style={{ fontSize: 12, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }} title={m.motivo || ""}>
-                        {m.motivo
-                          || (m.tipo === "VENTA" && m.referencia_id ? `Venta #${m.referencia_id}` : null)
-                          || (m.tipo === "VENTA_COMBO" && m.referencia_id ? `Venta combo #${m.referencia_id}` : null)
-                          || (m.tipo === "GUIA_REMISION" && m.referencia_id ? `Guía #${m.referencia_id}` : null)
-                          || "-"}
+                        {/* v2.5.28: el backend ahora resuelve el motivo correctamente
+                            (Venta NV-XXXX, Compra COMP-XXXX, etc.) via LEFT JOIN.
+                            Si aún así está vacío (movimientos manuales sin motivo) mostrar "-" */}
+                        {m.motivo || "-"}
                       </td>
                       <td className="text-secondary" style={{ fontSize: 12 }}>{m.usuario || "-"}</td>
                     </tr>

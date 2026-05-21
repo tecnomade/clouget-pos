@@ -6,6 +6,32 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.28 — 2026-05-21 🔧 Kardex muestra número visible (NV-XXXX) en lugar de id interno
+
+### 🐛 Bug: el motivo del kardex mostraba "Venta #233" pero solo había 93 ventas
+
+El "#233" venía del `id` autoincremental interno de la tabla `ventas`, NO del `numero` visible (`NV-000000093`) que el usuario reconoce. Confundía completamente — parecía que faltaban ventas.
+
+### Fix:
+
+**Backend — escribe motivo correcto al grabar** (`ventas.rs`, función `registrar_venta`):
+- Movimientos `VENTA`: ahora graban motivo `"Venta NV-000000093"`
+- Movimientos `VENTA_COMBO`: motivo `"Venta NV-000000093 (combo: <nombre del combo>)"`
+- Movimientos `VENTA_COMBO_VACIO`: motivo con marca de error explícita
+
+**Backend — fallback automático para movimientos antiguos** (`reportes.rs` kardex multi + `inventario.rs` listar_movimientos):
+- LEFT JOIN con tabla `ventas` (cuando `referencia_id` apunta a venta) → muestra `"Venta NV-XXXX"` (o número de factura si existe)
+- LEFT JOIN con tabla `compras` (cuando es movimiento de compra) → muestra `"Compra COMP-XXXX - Nombre Proveedor"`
+- Casos especiales: `GUIA_REMISION → Guia GR-XXXX`, `NOTA_CREDITO → NC referida a NV-XXXX`, `ANULACION_VENTA → Anulacion NV-XXXX`
+
+**Frontend** (Reportes/Kardex Multi + Inventario/Kardex):
+- Eliminado el fallback `"Venta #<id>"` que mostraba el id interno engañoso
+- Agregado `title` (tooltip) con el motivo completo cuando se trunca
+
+Resultado: ahora el kardex muestra `"Venta NV-000000093"` y al hacer click puedes encontrar esa venta exacta en la lista de ventas.
+
+---
+
 ## v2.5.27 — 2026-05-21 🔎 Buscador siempre visible + motivo en kardex ST + badges sidebar
 
 ### 🔎 Buscador del Kardex Multi siempre visible

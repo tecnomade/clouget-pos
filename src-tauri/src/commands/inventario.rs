@@ -121,12 +121,35 @@ pub fn listar_movimientos(
 ) -> Result<Vec<MovimientoInventario>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
+    // v2.5.28: LEFT JOIN para resolver motivo cuando esta NULL en BD (movimientos antiguos)
+    // Asi el kardex muestra el numero visible (NV-XXXX) en vez del id interno o "-"
     let mut sql = String::from(
         "SELECT m.id, m.producto_id, p.nombre, p.codigo, m.tipo, m.cantidad,
                 m.stock_anterior, m.stock_nuevo, m.costo_unitario, m.referencia_id,
-                m.motivo, m.usuario, m.created_at
+                COALESCE(
+                    NULLIF(m.motivo, ''),
+                    CASE
+                        WHEN v.numero IS NOT NULL THEN
+                            CASE
+                                WHEN m.tipo = 'GUIA_REMISION' OR m.tipo = 'AJUSTE_GUIA' THEN 'Guia ' || v.numero
+                                WHEN m.tipo = 'NOTA_CREDITO' OR m.tipo = 'DEVOLUCION' THEN 'NC referida a ' || v.numero
+                                WHEN m.tipo = 'ANULACION_VENTA' THEN 'Anulacion ' || v.numero
+                                ELSE 'Venta ' || COALESCE(NULLIF(v.numero_factura, ''), v.numero)
+                            END
+                        WHEN cp.numero IS NOT NULL THEN
+                            'Compra ' || COALESCE(NULLIF(cp.numero_factura, ''), cp.numero) ||
+                            CASE WHEN prov.nombre IS NOT NULL THEN ' - ' || prov.nombre ELSE '' END
+                        ELSE NULL
+                    END
+                ) as motivo,
+                m.usuario, m.created_at
          FROM movimientos_inventario m
          JOIN productos p ON m.producto_id = p.id
+         LEFT JOIN ventas v ON m.referencia_id = v.id
+              AND m.tipo NOT LIKE 'COMPRA%'
+              AND m.tipo NOT IN ('ENTRADA','SALIDA','AJUSTE','AJUSTE_POSITIVO','AJUSTE_NEGATIVO','INGRESO_COMPRA')
+         LEFT JOIN compras cp ON m.referencia_id = cp.id AND m.tipo LIKE 'COMPRA%'
+         LEFT JOIN proveedores prov ON cp.proveedor_id = prov.id
          WHERE 1=1"
     );
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();

@@ -441,9 +441,12 @@ pub fn registrar_venta(
         // Registrar movimiento de inventario (kardex) para productos físicos
         // costo_unitario = precio_costo snapshot del momento de la venta (NO precio de venta)
         if !omite_stock {
+            // v2.5.28: grabar motivo con el numero visible (NV-XXXXXXXXX) para que
+            // el kardex muestre "Venta NV-000000093" en lugar del id interno.
+            let motivo_venta = format!("Venta {}", numero);
             let _ = conn.execute(
-                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                 VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                 VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 rusqlite::params![
                     item.producto_id,
                     -(cantidad_base),
@@ -453,6 +456,7 @@ pub fn registrar_venta(
                     venta_id,
                     usuario_nombre,
                     est_id,
+                    motivo_venta,
                 ],
             );
         }
@@ -489,10 +493,11 @@ pub fn registrar_venta(
                 // que el combo fue mal configurado (se vendio sin descontar nada).
                 if componentes_a_descontar.is_empty() {
                     eprintln!("[Combo VACIO] Producto {:?} ({}) vendido como COMBO_FIJO pero no tiene componentes en producto_componentes. Stock NO descontado.", item.producto_id, nombre_prod);
+                    let motivo_vacio = format!("Venta {} - COMBO SIN COMPONENTES ({})", numero, nombre_prod);
                     let _ = conn.execute(
-                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                         VALUES (?1, 'VENTA_COMBO_VACIO', 0, 0, 0, 0, ?2, ?3, ?4)",
-                        rusqlite::params![item.producto_id, venta_id, usuario_nombre, est_id],
+                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                         VALUES (?1, 'VENTA_COMBO_VACIO', 0, 0, 0, 0, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![item.producto_id, venta_id, usuario_nombre, est_id, motivo_vacio],
                     );
                 }
             } else {
@@ -532,10 +537,11 @@ pub fn registrar_venta(
                             rusqlite::params![cant_total, hijo_id, eid],
                         ).ok();
                     }
+                    let motivo_combo = format!("Venta {} (combo: {})", numero, nombre_prod);
                     let _ = conn.execute(
-                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                         VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario_nombre, est_id],
+                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                         VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario_nombre, est_id, motivo_combo],
                     );
                 }
 
