@@ -99,7 +99,8 @@ export default function Layout({ children }: { children?: ReactNode }) {
   const [sidebarExpandido, setSidebarExpandido] = useState<boolean>(
     () => localStorage.getItem("clouget-sidebar-expandido") === "1",
   );
-  const sidebarWidth = sidebarExpandido ? 200 : 56;
+  // v2.5.25: sidebar colapsado un poco mas ancho (60→64) para iconos size=24 mas comodos
+  const sidebarWidth = sidebarExpandido ? 210 : 64;
   useEffect(() => {
     localStorage.setItem("clouget-sidebar-expandido", sidebarExpandido ? "1" : "0");
     // Setear CSS variable para que .main-content ajuste su margin-left
@@ -452,7 +453,7 @@ export default function Layout({ children }: { children?: ReactNode }) {
                         padding: sidebarExpandido ? "8px 14px" : undefined,
                       }}
                     >
-                      <IconComp size={22} weight="regular" />
+                      <IconComp size={24} weight="regular" />
                       {sidebarExpandido && (
                         <span
                           style={{
@@ -507,7 +508,7 @@ export default function Layout({ children }: { children?: ReactNode }) {
             padding: sidebarExpandido ? "8px 14px" : undefined,
           }}
         >
-          <SignOut size={20} />
+          <SignOut size={22} />
           {sidebarExpandido && (
             <span style={{ fontSize: 13, fontWeight: 500 }}>Cerrar sesión</span>
           )}

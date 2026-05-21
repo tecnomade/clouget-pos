@@ -164,16 +164,14 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  /* width/height/margin se ajustan dinamicamente. En modo colapsado: cuadrado 44x44 centrado.
-     En modo expandido: full-width con padding para acomodar label. */
-  min-height: 40px;
+  /* v2.5.25: items mas grandes para mejor click target y legibilidad */
+  min-height: 46px;
   width: auto;
-  margin: 2px 6px;
-  padding: 6px 8px;
+  margin: 3px 6px;
+  padding: 8px 10px;
   border-radius: 8px;
-  /* v2.5.23: subimos la opacidad base de 0.55 a 0.72 para que los items se vean mejor
-     sin perder el efecto de jerarquia con el activo. */
-  color: rgba(255,255,255,0.72);
+  /* v2.5.25: opacidad casi llena para mejor contraste */
+  color: rgba(255,255,255,0.85);
   cursor: pointer;
   transition: all 0.12s;
   text-decoration: none;

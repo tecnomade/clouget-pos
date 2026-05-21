@@ -63,6 +63,8 @@ export default function ReportesPage() {
   } | null>(null);
   // Kardex multi-categoria
   const [kardexMultiData, setKardexMultiData] = useState<any | null>(null);
+  // v2.5.25: buscador en kardex multi (filtra resultados ya cargados por nombre/codigo/usuario)
+  const [kardexBusqueda, setKardexBusqueda] = useState("");
   const [categoriasMaestro, setCategoriasMaestro] = useState<Array<{ id: number; nombre: string }>>([]);
   const [kardexCatsSeleccionadas, setKardexCatsSeleccionadas] = useState<number[]>([]);
   const [kardexCargando, setKardexCargando] = useState(false);
@@ -1520,6 +1522,33 @@ export default function ReportesPage() {
                   <KpiCard label="Total Salidas" valor={kardexMultiData.total_salidas.toFixed(2)} sub={fmt(kardexMultiData.valor_salidas)} color="var(--color-danger)" />
                   <KpiCard label="Movimiento neto" valor={(kardexMultiData.total_entradas - kardexMultiData.total_salidas).toFixed(2)} />
                 </div>
+                {/* v2.5.25: buscador para filtrar movimientos por nombre/codigo/usuario/motivo */}
+                <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                  <input className="input" style={{ flex: 1, fontSize: 12 }}
+                    placeholder="🔍 Buscar en resultados (producto, motivo, usuario)..."
+                    value={kardexBusqueda}
+                    onChange={(e) => setKardexBusqueda(e.target.value)} />
+                  {kardexBusqueda && (
+                    <button className="btn btn-outline" style={{ fontSize: 10, padding: "4px 10px" }}
+                      onClick={() => setKardexBusqueda("")}>
+                      Limpiar
+                    </button>
+                  )}
+                  <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                    {(() => {
+                      const q = kardexBusqueda.trim().toLowerCase();
+                      if (!q) return `${kardexMultiData.movimientos.length} movimientos`;
+                      const filtrados = kardexMultiData.movimientos.filter((m: any) =>
+                        (m.nombre || "").toLowerCase().includes(q) ||
+                        (m.categoria || "").toLowerCase().includes(q) ||
+                        (m.motivo || "").toLowerCase().includes(q) ||
+                        (m.usuario || "").toLowerCase().includes(q) ||
+                        (m.tipo || "").toLowerCase().includes(q)
+                      );
+                      return `${filtrados.length} de ${kardexMultiData.movimientos.length}`;
+                    })()}
+                  </span>
+                </div>
                 <div className="card">
                   <table className="table" style={{ width: "100%" }}>
                     <thead>
@@ -1531,9 +1560,21 @@ export default function ReportesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {kardexMultiData.movimientos.length === 0 ? (
-                        <tr><td colSpan={10} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Sin movimientos en este periodo y filtros</td></tr>
-                      ) : kardexMultiData.movimientos.map((m: any) => (
+                      {(() => {
+                        const q = kardexBusqueda.trim().toLowerCase();
+                        const lista = !q ? kardexMultiData.movimientos : kardexMultiData.movimientos.filter((m: any) =>
+                          (m.nombre || "").toLowerCase().includes(q) ||
+                          (m.categoria || "").toLowerCase().includes(q) ||
+                          (m.motivo || "").toLowerCase().includes(q) ||
+                          (m.usuario || "").toLowerCase().includes(q) ||
+                          (m.tipo || "").toLowerCase().includes(q)
+                        );
+                        if (lista.length === 0) {
+                          return <tr><td colSpan={10} style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>
+                            {q ? `Sin resultados para "${kardexBusqueda}"` : "Sin movimientos en este periodo y filtros"}
+                          </td></tr>;
+                        }
+                        return lista.map((m: any) => (
                         <tr key={m.id}>
                           <td style={{ fontSize: 11 }}>{m.fecha?.slice(0, 16).replace("T", " ")}</td>
                           <td style={{ fontWeight: 600, fontSize: 11 }}>{m.nombre}</td>
@@ -1556,7 +1597,8 @@ export default function ReportesPage() {
                           <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
                           <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
                         </tr>
-                      ))}
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>

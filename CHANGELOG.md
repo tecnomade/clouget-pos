@@ -6,6 +6,58 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.25 — 2026-05-21 🚨 Combos en Servicio Técnico + buscadores + sidebar más grande
+
+### 🚨 BUG CRÍTICO: combos vendidos desde Servicio Técnico no descontaban stock
+
+`cobrar_orden_servicio` solo descontaba stock del producto padre, sin saber que podía ser un combo. Si en el detalle de una orden ST se agregaba un combo como item presupuestado, al cobrar la venta se generaba pero los componentes nunca se descontaban del inventario.
+
+**Fix v2.5.25**: aplicada la misma lógica que en `registrar_venta` (POS):
+- Detecta si el producto es combo (`tipo_producto` o presencia de componentes en `producto_componentes`)
+- Si es combo → descuenta cada componente × cantidad del combo
+- Si es simple → descuenta del padre como antes
+- Registra movimiento `VENTA_COMBO` en kardex para trazabilidad
+- Auto-healing: funciona aunque `tipo_producto` esté mal en BD (usa heurística por componentes)
+
+### 🔍 Buscador instantáneo en Reportes → Kardex Multi
+
+Después de generar el reporte, hay un input "🔍 Buscar en resultados" que filtra los movimientos por:
+- Nombre de producto
+- Categoría
+- Motivo
+- Usuario
+- Tipo de movimiento
+
+Contador en vivo: "23 de 1547 movimientos" cuando hay filtro activo.
+
+### 🔍 Buscador en Inventario / Kardex
+
+Mismo patrón: input "🔍 Buscar en movimientos" en la barra de filtros que busca instantáneo sobre los datos cargados. Útil cuando hay muchos movimientos en el rango de fechas.
+
+### 🎨 Sidebar items más grandes
+
+| Aspecto | Antes | Ahora |
+|---|---|---|
+| Tamaño icono | 22px | **24px** |
+| Min height item | 40px | **46px** |
+| Opacidad inactivo | 0.72 | **0.85** (casi llena) |
+| Sidebar colapsado width | 56px | **64px** (más cómodo) |
+| Sidebar expandido width | 200px | **210px** |
+| Spacing entre items | 2px | **3px** |
+| Padding interno | 6px 8px | **8px 10px** |
+
+Resultado: los íconos son más fáciles de identificar y el click target es más generoso (mejor en táctil).
+
+### Sobre "Kardex Multi"
+
+Es el reporte de **movimientos de inventario de múltiples productos** filtrados por categoría y período. Te dice todos los movimientos (entrada por compra, salida por venta, ajustes, anulaciones) en el tiempo. Útil para:
+- Auditoría de inventario
+- Detectar mermas o robos
+- Verificar que las cantidades cuadran
+- Buscar movimientos específicos (ahora con el nuevo buscador)
+
+---
+
 ## v2.5.24 — 2026-05-20 🎁 Combos visibles en todos lados (filtro + detalle + carrito + ticket)
 
 ### 🔍 Nuevo filtro en Productos: por tipo

@@ -40,6 +40,8 @@ export default function InventarioPage() {
   const [filtroTipo, setFiltroTipo] = useState<string>("");
   const [filtroProductoId, setFiltroProductoId] = useState<number | undefined>(undefined);
   const [filtroProductoNombre, setFiltroProductoNombre] = useState("");
+  // v2.5.25: buscador en kardex (filtra movimientos ya cargados)
+  const [busquedaKardex, setBusquedaKardex] = useState("");
 
   // Modal de movimiento
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -177,6 +179,11 @@ export default function InventarioPage() {
               <option value="AJUSTE">Ajuste</option>
               <option value="DEVOLUCION">Devolucion</option>
             </select>
+            {/* v2.5.25: buscador instantaneo sobre movimientos ya cargados */}
+            <input className="input" style={{ flex: 1, minWidth: 180, fontSize: 12 }}
+              placeholder="🔍 Buscar en movimientos (producto, motivo, usuario)..."
+              value={busquedaKardex}
+              onChange={(e) => setBusquedaKardex(e.target.value)} />
             {filtroProductoId ? (
               <div className="flex items-center gap-1">
                 <span style={{ fontSize: 12, background: "var(--color-surface-alt)", color: "var(--color-text)", padding: "4px 8px", borderRadius: 4 }}>
@@ -197,11 +204,24 @@ export default function InventarioPage() {
           </div>
         </div>
 
-        {/* Tabla de movimientos */}
+        {/* v2.5.25: filtrar movimientos por busqueda (instantaneo, sobre datos ya cargados) */}
+        {(() => {
+          const q = busquedaKardex.trim().toLowerCase();
+          const movimientosFiltrados = !q ? movimientos : movimientos.filter((m: any) =>
+            (m.producto_nombre || m.nombre || "").toLowerCase().includes(q) ||
+            (m.motivo || "").toLowerCase().includes(q) ||
+            (m.usuario || "").toLowerCase().includes(q) ||
+            (m.tipo || "").toLowerCase().includes(q)
+          );
+          return (
         <div className="card">
           <div className="card-header flex justify-between items-center">
             <span>Movimientos de Inventario</span>
-            <span className="text-secondary" style={{ fontSize: 12 }}>{movimientos.length} registro{movimientos.length !== 1 ? "s" : ""}</span>
+            <span className="text-secondary" style={{ fontSize: 12 }}>
+              {q
+                ? `${movimientosFiltrados.length} de ${movimientos.length} registros`
+                : `${movimientos.length} registro${movimientos.length !== 1 ? "s" : ""}`}
+            </span>
           </div>
           <div style={{ maxHeight: 500, overflow: "auto" }}>
             <table className="table">
@@ -218,7 +238,7 @@ export default function InventarioPage() {
                 </tr>
               </thead>
               <tbody>
-                {movimientos.map((m) => {
+                {movimientosFiltrados.map((m: any) => {
                   const tc = TIPO_COLORES[m.tipo] || { bg: "var(--color-surface-alt)", color: "var(--color-text-secondary)" };
                   return (
                     <tr key={m.id}>
@@ -261,10 +281,10 @@ export default function InventarioPage() {
                     </tr>
                   );
                 })}
-                {movimientos.length === 0 && (
+                {movimientosFiltrados.length === 0 && (
                   <tr>
                     <td colSpan={8} className="text-center text-secondary" style={{ padding: 40 }}>
-                      No hay movimientos para este periodo
+                      {q ? `Sin resultados para "${busquedaKardex}"` : "No hay movimientos para este periodo"}
                     </td>
                   </tr>
                 )}
@@ -272,6 +292,8 @@ export default function InventarioPage() {
             </table>
           </div>
         </div>
+          );
+        })()}
       </div>
 
       {/* Modal de Entrada / Ajuste */}

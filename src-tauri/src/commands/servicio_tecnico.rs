@@ -669,10 +669,69 @@ pub fn cobrar_orden_servicio(
         ).ok();
         if let Some(pid) = it.producto_id {
             if !it.es_servicio {
-                tx.execute(
-                    "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2 AND es_servicio = 0 AND no_controla_stock = 0",
-                    rusqlite::params![it.cantidad, pid],
-                ).ok();
+                // v2.5.25 BUG FIX: aplicar misma lógica que registrar_venta — si el producto
+                // es COMBO, descontar componentes; si es simple, descontar del padre.
+                // Auto-healing por si tipo_producto está mal en BD: chequea también si
+                // existen registros en producto_componentes.
+                let (tipo_prod, n_comp): (String, i64) = tx.query_row(
+                    "SELECT COALESCE(tipo_producto, 'SIMPLE'),
+                            (SELECT COUNT(*) FROM producto_componentes WHERE producto_padre_id = productos.id)
+                     FROM productos WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                ).unwrap_or(("SIMPLE".to_string(), 0));
+                let es_combo = tipo_prod == "COMBO_FIJO" || tipo_prod == "COMBO_FLEXIBLE" || n_comp > 0;
+
+                if !es_combo {
+                    // Producto simple: descontar del padre como antes
+                    tx.execute(
+                        "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2 AND es_servicio = 0 AND no_controla_stock = 0",
+                        rusqlite::params![it.cantidad, pid],
+                    ).ok();
+                } else {
+                    // Combo: descontar componentes según producto_componentes
+                    let componentes: Vec<(i64, f64)> = {
+                        let mut stmt = match tx.prepare(
+                            "SELECT producto_hijo_id, cantidad FROM producto_componentes WHERE producto_padre_id = ?1"
+                        ) {
+                            Ok(s) => s,
+                            Err(_) => continue,
+                        };
+                        let mut comps: Vec<(i64, f64)> = Vec::new();
+                        if let Ok(iter) = stmt.query_map(rusqlite::params![pid], |r| {
+                            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                        }) {
+                            for r in iter {
+                                if let Ok(c) = r { comps.push(c); }
+                            }
+                        }
+                        comps
+                    };
+
+                    if componentes.is_empty() {
+                        eprintln!("[ST Combo VACIO] Producto {} (orden #{}) vendido como combo pero sin componentes. Stock NO descontado.", pid, orden_id);
+                    }
+                    for (hijo_id, cant_componente) in componentes {
+                        let cant_total = cant_componente * it.cantidad;
+                        // Solo descontar si el hijo controla stock (no servicio, no no_controla_stock)
+                        tx.execute(
+                            "UPDATE productos SET stock_actual = stock_actual - ?1
+                             WHERE id = ?2 AND COALESCE(es_servicio,0) = 0 AND COALESCE(no_controla_stock,0) = 0",
+                            rusqlite::params![cant_total, hijo_id],
+                        ).ok();
+                        // Registrar movimiento de kardex (VENTA_COMBO) para trazabilidad
+                        let (stock_h_antes, costo_h): (f64, f64) = tx.query_row(
+                            "SELECT stock_actual + ?1, precio_costo FROM productos WHERE id = ?2",
+                            rusqlite::params![cant_total, hijo_id],
+                            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, f64>(1)?)),
+                        ).unwrap_or((0.0, 0.0));
+                        let _ = tx.execute(
+                            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                             VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
+                            rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario],
+                        );
+                    }
+                }
             }
         }
     }
