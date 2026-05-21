@@ -6,6 +6,35 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.27 — 2026-05-21 🔎 Buscador siempre visible + motivo en kardex ST + badges sidebar
+
+### 🔎 Buscador del Kardex Multi siempre visible
+
+Antes el input "Buscar en resultados" sólo aparecía DESPUÉS de generar el reporte, escondido entre los KPIs y la tabla. Ahora vive en la **barra de filtros**, junto al período y el botón "Generar Kardex", siempre visible.
+
+- Mientras no haya datos cargados queda deshabilitado (con tooltip explicativo)
+- Apenas presionas "Generar Kardex" se activa y filtra en vivo
+
+### 🔧 Ventas desde Servicio Técnico ahora muestran motivo en kardex
+
+Bug: los movimientos `VENTA_COMBO` (y `VENTA` simples) generados al cobrar una orden de servicio quedaban en kardex con motivo vacío (mostraban "-"), perdiendo trazabilidad.
+
+Fix backend (`cobrar_orden_servicio` en `servicio_tecnico.rs`):
+- **Productos simples**: ahora insertan un movimiento `VENTA` en `movimientos_inventario` con motivo `"Venta ST NV-XXXXXXXXX (orden ST-YYY)"` — antes sólo hacían `UPDATE stock_actual` sin dejar rastro en kardex
+- **Combos**: el motivo del `VENTA_COMBO` ahora incluye `"Venta ST NV-XXXXXXXXX (orden ST-YYY · combo: <nombre del combo>)"` para que se vea de qué combo viene cada descuento de componente
+
+Fix frontend (Reportes/Kardex Multi + Inventario/Kardex):
+- Fallback para movimientos antiguos (anteriores a esta versión) que tienen motivo NULL:
+  - `VENTA` → muestra `Venta #<id>`
+  - `VENTA_COMBO` → muestra `Venta combo #<id>`
+  - `GUIA_REMISION` → muestra `Guía #<id>`
+
+### ⌨️ Botones de atajo (F1, F2, F4, F8…) más visibles en el sidebar
+
+Los badges con los atajos de teclado al lado de cada item del sidebar eran **casi imperceptibles**: `fontSize: 9px` y `opacity: 0.4`. Ahora usan el mismo estilo `.kbd` que los botones del POS — chip contrastado tipo tecla, legible de un vistazo sin ser invasivo.
+
+---
+
 ## v2.5.26 — 2026-05-21 ⌨️ Atajos de teclado visibles como badges
 
 ### ⌨️ Comandos de teclado destacados en los botones del POS

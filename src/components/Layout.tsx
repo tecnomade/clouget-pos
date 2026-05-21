@@ -469,13 +469,7 @@ export default function Layout({ children }: { children?: ReactNode }) {
                         </span>
                       )}
                       {sidebarExpandido && item.shortcut && (
-                        <span
-                          style={{
-                            fontSize: 9,
-                            opacity: 0.4,
-                            fontFamily: "monospace",
-                          }}
-                        >
+                        <span className="kbd" style={{ marginLeft: 0 }}>
                           {item.shortcut}
                         </span>
                       )}

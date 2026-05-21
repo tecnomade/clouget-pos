@@ -1503,10 +1503,23 @@ export default function ReportesPage() {
                   💡 Filtrando por <strong>{kardexCatsSeleccionadas.length}</strong> categoría(s). Click "✓ Todas" para ver el inventario completo.
                 </div>
               )}
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
                   Periodo: {desde} a {hasta}
                 </span>
+                {/* v2.5.27: buscador siempre visible (antes solo aparecía DESPUÉS de generar el reporte) */}
+                <input className="input" style={{ flex: 1, minWidth: 220, fontSize: 12 }}
+                  placeholder="🔍 Buscar en resultados (producto, motivo, usuario)..."
+                  value={kardexBusqueda}
+                  onChange={(e) => setKardexBusqueda(e.target.value)}
+                  disabled={!kardexMultiData}
+                  title={!kardexMultiData ? "Genera el reporte primero para poder buscar" : ""} />
+                {kardexBusqueda && (
+                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "4px 10px" }}
+                    onClick={() => setKardexBusqueda("")}>
+                    Limpiar
+                  </button>
+                )}
                 <button className="btn btn-primary" style={{ marginLeft: "auto" }}
                   onClick={cargarKardexMulti} disabled={kardexCargando}>
                   {kardexCargando ? "Cargando..." : "Generar Kardex"}
@@ -1522,19 +1535,9 @@ export default function ReportesPage() {
                   <KpiCard label="Total Salidas" valor={kardexMultiData.total_salidas.toFixed(2)} sub={fmt(kardexMultiData.valor_salidas)} color="var(--color-danger)" />
                   <KpiCard label="Movimiento neto" valor={(kardexMultiData.total_entradas - kardexMultiData.total_salidas).toFixed(2)} />
                 </div>
-                {/* v2.5.25: buscador para filtrar movimientos por nombre/codigo/usuario/motivo */}
-                <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
-                  <input className="input" style={{ flex: 1, fontSize: 12 }}
-                    placeholder="🔍 Buscar en resultados (producto, motivo, usuario)..."
-                    value={kardexBusqueda}
-                    onChange={(e) => setKardexBusqueda(e.target.value)} />
-                  {kardexBusqueda && (
-                    <button className="btn btn-outline" style={{ fontSize: 10, padding: "4px 10px" }}
-                      onClick={() => setKardexBusqueda("")}>
-                      Limpiar
-                    </button>
-                  )}
-                  <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                {/* contador de resultados (la búsqueda ya está arriba en la barra de filtros) */}
+                <div style={{ marginBottom: 10, display: "flex", justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
                     {(() => {
                       const q = kardexBusqueda.trim().toLowerCase();
                       if (!q) return `${kardexMultiData.movimientos.length} movimientos`;
@@ -1594,7 +1597,12 @@ export default function ReportesPage() {
                           <td className="text-right">{m.stock_anterior}</td>
                           <td className="text-right" style={{ fontWeight: 600 }}>{m.stock_nuevo}</td>
                           <td className="text-right">{m.costo_unitario != null ? fmt(m.costo_unitario) : "-"}</td>
-                          <td style={{ fontSize: 11 }}>{m.motivo || "-"}</td>
+                          <td style={{ fontSize: 11 }}>{
+                            m.motivo
+                              || (m.tipo === "VENTA" && m.referencia_id ? `Venta #${m.referencia_id}` : "")
+                              || (m.tipo === "VENTA_COMBO" && m.referencia_id ? `Venta combo #${m.referencia_id}` : "")
+                              || "-"
+                          }</td>
                           <td style={{ fontSize: 11 }}>{m.usuario || "-"}</td>
                         </tr>
                         ));

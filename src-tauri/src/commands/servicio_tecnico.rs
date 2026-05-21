@@ -683,13 +683,30 @@ pub fn cobrar_orden_servicio(
                 let es_combo = tipo_prod == "COMBO_FIJO" || tipo_prod == "COMBO_FLEXIBLE" || n_comp > 0;
 
                 if !es_combo {
-                    // Producto simple: descontar del padre como antes
+                    // Producto simple: descontar del padre y registrar kardex con motivo
+                    // (v2.5.27: agregar trazabilidad en kardex — antes solo hacía UPDATE)
+                    let (stock_p_antes, costo_p): (f64, f64) = tx.query_row(
+                        "SELECT stock_actual, precio_costo FROM productos WHERE id = ?1 AND COALESCE(es_servicio,0) = 0 AND COALESCE(no_controla_stock,0) = 0",
+                        rusqlite::params![pid],
+                        |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                    ).unwrap_or((0.0, 0.0));
                     tx.execute(
                         "UPDATE productos SET stock_actual = stock_actual - ?1 WHERE id = ?2 AND es_servicio = 0 AND no_controla_stock = 0",
                         rusqlite::params![it.cantidad, pid],
                     ).ok();
+                    let motivo_st = format!("Venta ST {} (orden {})", numero, numero_orden);
+                    let _ = tx.execute(
+                        "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                         VALUES (?1, 'VENTA', ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)",
+                        rusqlite::params![pid, -it.cantidad, stock_p_antes, stock_p_antes - it.cantidad, costo_p, venta_id, usuario, motivo_st],
+                    );
                 } else {
                     // Combo: descontar componentes según producto_componentes
+                    // Obtener nombre del combo padre para incluirlo en el motivo del kardex
+                    let nombre_combo: String = tx.query_row(
+                        "SELECT nombre FROM productos WHERE id = ?1",
+                        rusqlite::params![pid], |r| r.get(0),
+                    ).unwrap_or_else(|_| format!("#{}", pid));
                     let componentes: Vec<(i64, f64)> = {
                         let mut stmt = match tx.prepare(
                             "SELECT producto_hijo_id, cantidad FROM producto_componentes WHERE producto_padre_id = ?1"
@@ -711,6 +728,7 @@ pub fn cobrar_orden_servicio(
                     if componentes.is_empty() {
                         eprintln!("[ST Combo VACIO] Producto {} (orden #{}) vendido como combo pero sin componentes. Stock NO descontado.", pid, orden_id);
                     }
+                    let motivo_combo = format!("Venta ST {} (orden {} · combo: {})", numero, numero_orden, nombre_combo);
                     for (hijo_id, cant_componente) in componentes {
                         let cant_total = cant_componente * it.cantidad;
                         // Solo descontar si el hijo controla stock (no servicio, no no_controla_stock)
@@ -719,16 +737,16 @@ pub fn cobrar_orden_servicio(
                              WHERE id = ?2 AND COALESCE(es_servicio,0) = 0 AND COALESCE(no_controla_stock,0) = 0",
                             rusqlite::params![cant_total, hijo_id],
                         ).ok();
-                        // Registrar movimiento de kardex (VENTA_COMBO) para trazabilidad
+                        // Registrar movimiento de kardex (VENTA_COMBO) con motivo trazable
                         let (stock_h_antes, costo_h): (f64, f64) = tx.query_row(
                             "SELECT stock_actual + ?1, precio_costo FROM productos WHERE id = ?2",
                             rusqlite::params![cant_total, hijo_id],
                             |r| Ok((r.get::<_, f64>(0)?, r.get::<_, f64>(1)?)),
                         ).unwrap_or((0.0, 0.0));
                         let _ = tx.execute(
-                            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                             VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
-                            rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario],
+                            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id, motivo)
+                             VALUES (?1, 'VENTA_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)",
+                            rusqlite::params![hijo_id, -cant_total, stock_h_antes, stock_h_antes - cant_total, costo_h, venta_id, usuario, motivo_combo],
                         );
                     }
                 }
