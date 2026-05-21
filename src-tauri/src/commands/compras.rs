@@ -2,27 +2,134 @@ use crate::db::{Database, SesionState};
 use crate::models::{Compra, CompraCompleta, CompraDetalle, NuevaCompra};
 use tauri::State;
 
-#[tauri::command]
-pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<CompraCompleta, String> {
-    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+/// v2.5.30: helper para obtener nombre de usuario actual desde sesion
+fn usuario_actual(sesion: &SesionState) -> String {
+    sesion.sesion.lock().ok()
+        .and_then(|g| g.as_ref().map(|u| u.nombre.clone()))
+        .unwrap_or_else(|| "ADMIN".to_string())
+}
 
-    // Generar numero secuencial CMP-000001
-    let secuencial: i64 = conn
-        .query_row(
-            "SELECT CAST(value AS INTEGER) FROM config WHERE key = 'secuencial_compra'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(1);
+/// v2.5.30: valida que numero_factura+tipo_documento no este duplicado para el proveedor.
+/// Retorna Err con mensaje amigable si ya existe. Tambien valida clave_acceso unica.
+fn validar_factura_unica(
+    conn: &rusqlite::Connection,
+    proveedor_id: i64,
+    numero_factura: Option<&str>,
+    tipo_documento: &str,
+    clave_acceso: Option<&str>,
+    excluir_compra_id: Option<i64>,
+) -> Result<(), String> {
+    // Validar clave_acceso unica (global) — solo si viene
+    if let Some(ca) = clave_acceso {
+        if !ca.trim().is_empty() && ca.trim().len() == 49 {
+            let exists: Option<i64> = match excluir_compra_id {
+                Some(eid) => conn.query_row(
+                    "SELECT id FROM compras WHERE clave_acceso = ?1 AND id != ?2 AND estado != 'ANULADA' LIMIT 1",
+                    rusqlite::params![ca.trim(), eid], |r| r.get(0),
+                ).ok(),
+                None => conn.query_row(
+                    "SELECT id FROM compras WHERE clave_acceso = ?1 AND estado != 'ANULADA' LIMIT 1",
+                    rusqlite::params![ca.trim()], |r| r.get(0),
+                ).ok(),
+            };
+            if exists.is_some() {
+                return Err(format!(
+                    "Esta factura ya fue importada (clave de acceso SRI duplicada: {}…)",
+                    &ca.trim()[..ca.trim().len().min(20)]
+                ));
+            }
+        }
+    }
+    // Validar numero_factura + tipo + proveedor — solo si viene numero_factura
+    if let Some(nf) = numero_factura {
+        let nf_trim = nf.trim();
+        if !nf_trim.is_empty() {
+            let exists: Option<(i64, String)> = match excluir_compra_id {
+                Some(eid) => conn.query_row(
+                    "SELECT id, COALESCE(numero, '') FROM compras
+                     WHERE proveedor_id = ?1 AND tipo_documento = ?2 AND numero_factura = ?3
+                       AND id != ?4 AND estado != 'ANULADA' LIMIT 1",
+                    rusqlite::params![proveedor_id, tipo_documento, nf_trim, eid],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ).ok(),
+                None => conn.query_row(
+                    "SELECT id, COALESCE(numero, '') FROM compras
+                     WHERE proveedor_id = ?1 AND tipo_documento = ?2 AND numero_factura = ?3
+                       AND estado != 'ANULADA' LIMIT 1",
+                    rusqlite::params![proveedor_id, tipo_documento, nf_trim],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ).ok(),
+            };
+            if let Some((_id, num_existente)) = exists {
+                return Err(format!(
+                    "Ya existe una compra de este proveedor con número de {} '{}' (compra interna {}). Si fue anulada puede registrar otra; de lo contrario verifique el número.",
+                    if tipo_documento == "FACTURA" { "factura" }
+                    else if tipo_documento == "NOTA_VENTA" { "nota de venta" }
+                    else { "documento" },
+                    nf_trim, num_existente
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
-    let numero = format!("CMP-{:06}", secuencial);
-
-    // Incrementar secuencial
-    conn.execute(
+/// v2.5.30: auto-genera el numero interno de compra (COMP-XXXXXXXXX, 9 dig).
+/// Usa el MAX existente + 1 (independiente del config 'secuencial_compra' viejo).
+fn proximo_numero_compra(conn: &rusqlite::Connection) -> String {
+    let next: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(CAST(SUBSTR(numero, 6) AS INTEGER)), 0) + 1
+         FROM compras WHERE numero LIKE 'COMP-%'",
+        [], |r| r.get(0),
+    ).unwrap_or(1);
+    // Sincronizamos tambien el config viejo para compatibilidad
+    let _ = conn.execute(
         "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = 'secuencial_compra'",
-        rusqlite::params![secuencial + 1],
-    )
-    .map_err(|e| e.to_string())?;
+        rusqlite::params![next + 1],
+    );
+    format!("COMP-{:09}", next)
+}
+
+#[tauri::command]
+pub fn registrar_compra(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    compra: NuevaCompra,
+) -> Result<CompraCompleta, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let usuario = usuario_actual(&sesion);
+
+    // v2.5.30: tipo de documento — default INFORMAL si no se especifica
+    let tipo_documento = compra.tipo_documento.clone()
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "INFORMAL".to_string());
+    if !["FACTURA", "NOTA_VENTA", "INFORMAL"].contains(&tipo_documento.as_str()) {
+        return Err(format!("tipo_documento invalido '{}' (esperado: FACTURA, NOTA_VENTA o INFORMAL)", tipo_documento));
+    }
+
+    // v2.5.30: numero_factura es opcional. Si tipo es FACTURA y viene vacio dejarlo NULL.
+    // Si tipo es INFORMAL forzamos numero_factura a NULL (no aplica).
+    let numero_factura: Option<String> = if tipo_documento == "INFORMAL" {
+        None
+    } else {
+        compra.numero_factura.as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let clave_acceso: Option<String> = compra.clave_acceso.as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // v2.5.30: validar duplicado por numero_factura+proveedor+tipo y clave_acceso
+    validar_factura_unica(
+        &conn, compra.proveedor_id,
+        numero_factura.as_deref(), &tipo_documento,
+        clave_acceso.as_deref(), None,
+    )?;
+
+    // v2.5.30: numero interno SIEMPRE autogenerado (formato COMP-XXXXXXXXX, 9 dig)
+    let numero = proximo_numero_compra(&conn);
 
     // Calcular totales
     let mut subtotal_total = 0.0;
@@ -43,14 +150,21 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
         return Err("Debe seleccionar una cuenta bancaria para esta forma de pago".into());
     }
 
+    // fecha_emision: si viene del frontend en formato YYYY-MM-DD, normalizar a ISO
+    let fecha_emision_norm = compra.fecha_emision.as_ref()
+        .map(|s| convertir_fecha_sri(s).unwrap_or_else(|| s.clone()))
+        .filter(|s| !s.trim().is_empty());
+
     // Insertar compra
     conn.execute(
-        "INSERT INTO compras (numero, proveedor_id, numero_factura, subtotal, iva, total, forma_pago, es_credito, observacion, banco_id, referencia_pago)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO compras (numero, proveedor_id, numero_factura, subtotal, iva, total,
+                              forma_pago, es_credito, observacion, banco_id, referencia_pago,
+                              tipo_documento, estado_sri, clave_acceso, fecha_emision, usuario)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         rusqlite::params![
             numero,
             compra.proveedor_id,
-            compra.numero_factura,
+            numero_factura,
             subtotal_total,
             iva_total,
             total,
@@ -59,9 +173,22 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             compra.observacion,
             compra.banco_id,
             compra.referencia_pago,
+            tipo_documento,
+            None::<String>, // estado_sri: manual no es autorizada; solo XML lo marca
+            clave_acceso,
+            fecha_emision_norm,
+            usuario,
         ],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        // Si el UNIQUE INDEX fue violado, devolver mensaje amigable
+        let msg = e.to_string();
+        if msg.contains("UNIQUE") && msg.contains("clave_acceso") {
+            "Esta factura ya fue registrada (clave de acceso SRI duplicada)".to_string()
+        } else if msg.contains("UNIQUE") && msg.contains("factura_proveedor") {
+            "Ya existe una compra de este proveedor con ese numero de factura".to_string()
+        } else { msg }
+    })?;
 
     let compra_id = conn.last_insert_rowid();
 
@@ -104,6 +231,9 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
                 }
             };
 
+            // Stock anterior antes del UPDATE — para kardex
+            let stock_antes_kardex = stock_actual;
+
             // Actualizar stock + precio_costo (último) + costo_promedio (PMP)
             conn.execute(
                 "UPDATE productos SET stock_actual = stock_actual + ?1, precio_costo = ?2,
@@ -111,6 +241,14 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
                 rusqlite::params![item.cantidad, item.precio_unitario, nuevo_costo_promedio, pid],
             )
             .map_err(|e| e.to_string())?;
+
+            // v2.5.30: registrar movimiento en kardex (INGRESO_COMPRA)
+            let motivo_kardex = format!("Compra {} - {}", numero, &nombre);
+            let _ = conn.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+                 VALUES (?1, 'INGRESO_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![pid, item.cantidad, stock_antes_kardex, stock_antes_kardex + item.cantidad, item.precio_unitario, compra_id, usuario, motivo_kardex],
+            );
 
             Some(nombre)
         } else {
@@ -160,6 +298,7 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             precio_unitario: item.precio_unitario,
             subtotal: item_subtotal,
             nombre_producto: descripcion,
+            cantidad_devuelta: 0.0,
         });
     }
 
@@ -223,7 +362,7 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             numero: numero.clone(),
             proveedor_id: compra.proveedor_id,
             fecha,
-            numero_factura: compra.numero_factura,
+            numero_factura,
             subtotal: subtotal_total,
             iva: iva_total,
             total,
@@ -235,6 +374,11 @@ pub fn registrar_compra(db: State<Database>, compra: NuevaCompra) -> Result<Comp
             banco_id: banco_id_saved,
             referencia_pago: referencia_pago_saved,
             banco_nombre: banco_nombre_saved,
+            tipo_documento: Some(tipo_documento),
+            estado_sri: None,
+            clave_acceso,
+            fecha_emision: fecha_emision_norm,
+            total_devuelto: 0.0,
         },
         detalles,
     })
@@ -252,7 +396,9 @@ pub fn listar_compras(
         (Some(_), Some(_)) => {
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre,
+                    COALESCE(c.tipo_documento, 'INFORMAL'), c.estado_sri, c.clave_acceso, c.fecha_emision,
+                    COALESCE((SELECT SUM(total) FROM compra_devoluciones WHERE compra_id = c.id), 0)
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
              LEFT JOIN cuentas_banco b ON c.banco_id = b.id
@@ -262,7 +408,9 @@ pub fn listar_compras(
         _ => {
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre,
+                    COALESCE(c.tipo_documento, 'INFORMAL'), c.estado_sri, c.clave_acceso, c.fecha_emision,
+                    COALESCE((SELECT SUM(total) FROM compra_devoluciones WHERE compra_id = c.id), 0)
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
              LEFT JOIN cuentas_banco b ON c.banco_id = b.id
@@ -291,6 +439,11 @@ pub fn listar_compras(
             banco_id: row.get(13).ok(),
             referencia_pago: row.get(14).ok(),
             banco_nombre: row.get(15).ok(),
+            tipo_documento: Some(row.get::<_, String>(16)?),
+            estado_sri: row.get(17).ok(),
+            clave_acceso: row.get(18).ok(),
+            fecha_emision: row.get(19).ok(),
+            total_devuelto: row.get(20).unwrap_or(0.0),
         })
     };
 
@@ -320,7 +473,9 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
         .query_row(
             "SELECT c.id, c.numero, c.proveedor_id, c.fecha, c.numero_factura,
                     c.subtotal, c.iva, c.total, c.estado, c.forma_pago, c.es_credito,
-                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre
+                    c.observacion, p.nombre, c.banco_id, c.referencia_pago, b.nombre as banco_nombre,
+                    COALESCE(c.tipo_documento, 'INFORMAL'), c.estado_sri, c.clave_acceso, c.fecha_emision,
+                    COALESCE((SELECT SUM(total) FROM compra_devoluciones WHERE compra_id = c.id), 0)
              FROM compras c
              JOIN proveedores p ON c.proveedor_id = p.id
              LEFT JOIN cuentas_banco b ON c.banco_id = b.id
@@ -344,6 +499,11 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
                     banco_id: row.get(13).ok(),
                     referencia_pago: row.get(14).ok(),
                     banco_nombre: row.get(15).ok(),
+                    tipo_documento: Some(row.get::<_, String>(16)?),
+                    estado_sri: row.get(17).ok(),
+                    clave_acceso: row.get(18).ok(),
+                    fecha_emision: row.get(19).ok(),
+                    total_devuelto: row.get(20).unwrap_or(0.0),
                 })
             },
         )
@@ -352,7 +512,8 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
     let mut stmt = conn
         .prepare(
             "SELECT cd.id, cd.compra_id, cd.producto_id, cd.descripcion,
-                    cd.cantidad, cd.precio_unitario, cd.subtotal, p.nombre
+                    cd.cantidad, cd.precio_unitario, cd.subtotal, p.nombre,
+                    COALESCE(cd.cantidad_devuelta, 0)
              FROM compra_detalles cd
              LEFT JOIN productos p ON cd.producto_id = p.id
              WHERE cd.compra_id = ?1",
@@ -370,6 +531,7 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
                 precio_unitario: row.get(5)?,
                 subtotal: row.get(6)?,
                 nombre_producto: row.get(7)?,
+                cantidad_devuelta: row.get(8).unwrap_or(0.0),
             })
         })
         .map_err(|e| e.to_string())?
@@ -380,20 +542,36 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
 }
 
 #[tauri::command]
-pub fn anular_compra(db: State<Database>, id: i64) -> Result<(), String> {
+pub fn anular_compra(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    id: i64,
+    motivo: Option<String>,
+) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let usuario = usuario_actual(&sesion);
 
     // Verificar que la compra existe y no está ya anulada
-    let estado: String = conn
+    let (estado, numero, total_devuelto): (String, String, f64) = conn
         .query_row(
-            "SELECT estado FROM compras WHERE id = ?1",
+            "SELECT estado, numero,
+                    COALESCE((SELECT SUM(total) FROM compra_devoluciones WHERE compra_id = compras.id), 0)
+             FROM compras WHERE id = ?1",
             rusqlite::params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|_| "Compra no encontrada".to_string())?;
 
     if estado == "ANULADA" {
         return Err("La compra ya está anulada".to_string());
+    }
+
+    // v2.5.30: no se puede anular si ya tiene devoluciones aplicadas
+    if total_devuelto > 0.001 {
+        return Err(format!(
+            "No se puede anular: esta compra ya tiene devoluciones aplicadas por ${:.2}. Reverse las devoluciones primero o use Devolver Total en su lugar.",
+            total_devuelto
+        ));
     }
 
     // Revertir stock para cada detalle con producto_id
@@ -411,19 +589,36 @@ pub fn anular_compra(db: State<Database>, id: i64) -> Result<(), String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    let motivo_str = motivo.unwrap_or_else(|| "Sin motivo".to_string());
     for (producto_id, cantidad) in detalles {
+        // Stock antes (para kardex)
+        let stock_antes: f64 = conn.query_row(
+            "SELECT stock_actual FROM productos WHERE id = ?1",
+            rusqlite::params![producto_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+
         conn.execute(
             "UPDATE productos SET stock_actual = stock_actual - ?1,
              updated_at = datetime('now','localtime') WHERE id = ?2",
             rusqlite::params![cantidad, producto_id],
         )
         .map_err(|e| e.to_string())?;
+
+        // v2.5.30: kardex inverso
+        let motivo_kardex = format!("Anulacion compra {} - {}", numero, motivo_str);
+        let _ = conn.execute(
+            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+             VALUES (?1, 'ANULACION_COMPRA', ?2, ?3, ?4, 0, ?5, ?6, ?7)",
+            rusqlite::params![producto_id, -cantidad, stock_antes, stock_antes - cantidad, id, usuario, motivo_kardex],
+        );
     }
 
-    // Marcar compra como anulada
+    // Marcar compra como anulada (guardar motivo en observacion)
     conn.execute(
-        "UPDATE compras SET estado = 'ANULADA' WHERE id = ?1",
-        rusqlite::params![id],
+        "UPDATE compras SET estado = 'ANULADA',
+                            observacion = COALESCE(observacion || ' · ', '') || 'ANULADA: ' || ?2
+         WHERE id = ?1",
+        rusqlite::params![id, motivo_str],
     )
     .map_err(|e| e.to_string())?;
 
@@ -455,6 +650,13 @@ pub struct PreviewXmlCompra {
     pub iva: f64,
     pub total: f64,
     pub items: Vec<PreviewItemXml>,
+    /// v2.5.30: si el XML viene envuelto en <autorizacion><estado>AUTORIZADO</estado>
+    /// significa que el SRI ya validó esta factura. Si no, es un XML sin firma o no autorizada.
+    pub autorizada: bool,
+    /// v2.5.30: estado SRI exacto leido del XML ("AUTORIZADO", "PPR", "RECHAZADO", etc.)
+    pub estado_sri: Option<String>,
+    /// v2.5.30: si la clave_acceso ya existe en otra compra registrada, devuelve su id
+    pub compra_duplicada_id: Option<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -477,6 +679,45 @@ pub fn preview_xml_compra(
 ) -> Result<PreviewXmlCompra, String> {
     use quick_xml::events::Event;
     use quick_xml::reader::Reader;
+
+    // v2.5.30: detectar si el XML viene envuelto en <autorizacion><estado>AUTORIZADO</estado>
+    // (formato de autorización del SRI). Si sí → factura autorizada legítima.
+    // Si no → puede ser un XML sin autorizar / generado / manipulado → tratar como NOTA_VENTA.
+    let estado_sri_xml: Option<String> = {
+        let bytes = xml_contenido.as_bytes();
+        let mut reader = Reader::from_reader(bytes);
+        reader.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+        let mut inside_estado = false;
+        let mut inside_autorizacion = false;
+        let mut estado_text = String::new();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "autorizacion" { inside_autorizacion = true; }
+                    if name == "estado" && inside_autorizacion { inside_estado = true; }
+                }
+                Ok(Event::End(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "estado" { inside_estado = false; }
+                    if name == "autorizacion" { inside_autorizacion = false; }
+                }
+                Ok(Event::Text(t)) => {
+                    if inside_estado {
+                        if let Ok(s) = t.unescape() { estado_text.push_str(&s); }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+        let t = estado_text.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    };
+    let autorizada = estado_sri_xml.as_deref().map(|s| s.eq_ignore_ascii_case("AUTORIZADO")).unwrap_or(false);
 
     // Algunos XMLs del SRI envuelven la factura dentro de <autorizacion><comprobante><![CDATA[...]]></comprobante>
     // Intentamos detectar esto y desenrollar el contenido real de la factura.
@@ -751,6 +992,14 @@ pub fn preview_xml_compra(
         )
         .ok();
 
+    // v2.5.30: chequear si esta clave_acceso ya fue importada previamente
+    let compra_duplicada_id: Option<i64> = if !clave_acceso.is_empty() {
+        conn.query_row(
+            "SELECT id FROM compras WHERE clave_acceso = ?1 AND estado != 'ANULADA' LIMIT 1",
+            rusqlite::params![&clave_acceso], |r| r.get(0),
+        ).ok()
+    } else { None };
+
     Ok(PreviewXmlCompra {
         proveedor_ruc,
         proveedor_nombre,
@@ -764,6 +1013,9 @@ pub fn preview_xml_compra(
         iva: iva_total,
         total,
         items,
+        autorizada,
+        estado_sri: estado_sri_xml,
+        compra_duplicada_id,
     })
 }
 
@@ -800,15 +1052,39 @@ pub struct ImportarXmlInput {
     pub banco_id: Option<i64>,
     #[serde(default)]
     pub referencia_pago: Option<String>,
+    /// v2.5.30: del XML — si vino dentro de <autorizacion><estado>AUTORIZADO</estado>
+    /// el frontend lo pasa como true y se registra como FACTURA + estado_sri=AUTORIZADA.
+    /// Si false → NOTA_VENTA (sin validez tributaria de soporte).
+    #[serde(default)]
+    pub autorizada: bool,
+    /// Clave de acceso SRI (49 dig) — clave única que evita doble importación
+    #[serde(default)]
+    pub clave_acceso: Option<String>,
 }
 
 #[tauri::command]
 pub fn importar_xml_compra(
     db: State<Database>,
-    _sesion: State<SesionState>,
+    sesion: State<SesionState>,
     input: ImportarXmlInput,
 ) -> Result<serde_json::Value, String> {
     let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let usuario = usuario_actual(&sesion);
+
+    // v2.5.30: determinar tipo_documento por estado de autorización del XML
+    let tipo_doc_xml = if input.autorizada { "FACTURA" } else { "NOTA_VENTA" };
+    let estado_sri_xml = if input.autorizada { Some("AUTORIZADA".to_string()) } else { None };
+    let clave_acceso_norm: Option<String> = input.clave_acceso.as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    // v2.5.30: validar duplicado ANTES de empezar la transacción
+    validar_factura_unica(
+        &conn, input.proveedor_id,
+        Some(input.numero_factura.trim()), tipo_doc_xml,
+        clave_acceso_norm.as_deref(), None,
+    )?;
+
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // (producto_id, cantidad, precio_unitario, iva_porcentaje, subtotal, descripcion)
@@ -908,20 +1184,8 @@ pub fn importar_xml_compra(
 
     // Crear compra solo si hay items de producto
     let compra_id: Option<i64> = if !items_compra.is_empty() {
-        // Usar el mismo mecanismo que registrar_compra: secuencial en config
-        let secuencial: i64 = tx
-            .query_row(
-                "SELECT CAST(value AS INTEGER) FROM config WHERE key = 'secuencial_compra'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(1);
-        let numero_compra = format!("CMP-{:06}", secuencial);
-        tx.execute(
-            "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = 'secuencial_compra'",
-            rusqlite::params![secuencial + 1],
-        )
-        .map_err(|e| e.to_string())?;
+        // v2.5.30: usar el mismo helper (formato COMP-XXXXXXXXX)
+        let numero_compra = proximo_numero_compra(&tx);
 
         let subtotal: f64 = items_compra.iter().map(|i| i.4).sum();
         let iva_total: f64 = items_compra
@@ -946,9 +1210,17 @@ pub fn importar_xml_compra(
             return Err("Debe seleccionar una cuenta bancaria para esta forma de pago".into());
         }
 
+        let observacion_xml = if input.autorizada {
+            "Importado desde XML SRI autorizado"
+        } else {
+            "Importado desde XML (no autorizado por SRI)"
+        };
         tx.execute(
-            "INSERT INTO compras (numero, proveedor_id, fecha, numero_factura, subtotal, iva, total, estado, forma_pago, es_credito, observacion, banco_id, referencia_pago) \
-             VALUES (?1, ?2, COALESCE(?3, datetime('now','localtime')), ?4, ?5, ?6, ?7, 'REGISTRADA', ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO compras (numero, proveedor_id, fecha, numero_factura, subtotal, iva, total, estado,
+                                  forma_pago, es_credito, observacion, banco_id, referencia_pago,
+                                  tipo_documento, estado_sri, clave_acceso, fecha_emision, usuario) \
+             VALUES (?1, ?2, COALESCE(?3, datetime('now','localtime')), ?4, ?5, ?6, ?7, 'REGISTRADA',
+                     ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             rusqlite::params![
                 numero_compra,
                 input.proveedor_id,
@@ -959,12 +1231,24 @@ pub fn importar_xml_compra(
                 total,
                 forma_pago_db,
                 es_credito as i64,
-                "Importado desde XML",
+                observacion_xml,
                 input.banco_id,
                 input.referencia_pago,
+                tipo_doc_xml,
+                estado_sri_xml,
+                clave_acceso_norm,
+                fecha_iso,
+                usuario,
             ],
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("UNIQUE") && msg.contains("clave_acceso") {
+                "Esta factura ya fue importada (clave de acceso SRI duplicada)".to_string()
+            } else if msg.contains("UNIQUE") {
+                format!("Ya existe una compra de este proveedor con ese numero de factura: {}", input.numero_factura)
+            } else { msg }
+        })?;
         let cid = tx.last_insert_rowid();
 
         // Insertar detalles y actualizar stock/costo
@@ -996,6 +1280,14 @@ pub fn importar_xml_compra(
                 rusqlite::params![cant, precio, nuevo_pmp, pid],
             )
             .ok();
+            // v2.5.30: registrar kardex INGRESO_COMPRA tambien para importacion XML
+            let motivo_xml = format!("Compra {} - {} (XML SRI {})", numero_compra, desc,
+                if input.autorizada { "autorizada" } else { "sin autorizar" });
+            let _ = tx.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+                 VALUES (?1, 'INGRESO_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![pid, cant, stock_actual_pmp, stock_actual_pmp + cant, precio, cid, usuario, motivo_xml],
+            );
         }
 
         // Cuenta por pagar si crédito
@@ -1041,4 +1333,230 @@ fn convertir_fecha_sri(fecha: &str) -> Option<String> {
         }
     }
     Some(f.to_string())
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v2.5.30: Devoluciones de Compra (parcial o total)
+// ════════════════════════════════════════════════════════════════════
+
+#[derive(serde::Deserialize)]
+pub struct ItemDevolucion {
+    pub compra_detalle_id: i64,
+    pub cantidad: f64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct NuevaDevolucionCompra {
+    pub compra_id: i64,
+    pub items: Vec<ItemDevolucion>,
+    #[serde(default)]
+    pub motivo: Option<String>,
+    #[serde(default)]
+    pub observacion: Option<String>,
+    /// Si true, ignora items y devuelve TODO lo restante (devolucion total)
+    #[serde(default)]
+    pub devolver_todo: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct DevolucionCompraInfo {
+    pub id: i64,
+    pub compra_id: i64,
+    pub numero: String,
+    pub fecha: String,
+    pub motivo: Option<String>,
+    pub subtotal: f64,
+    pub iva: f64,
+    pub total: f64,
+    pub es_total: bool,
+    pub usuario: Option<String>,
+    pub observacion: Option<String>,
+}
+
+#[tauri::command]
+pub fn registrar_devolucion_compra(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    input: NuevaDevolucionCompra,
+) -> Result<serde_json::Value, String> {
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let usuario = usuario_actual(&sesion);
+
+    // Validar compra existente y no anulada
+    let (compra_numero, compra_estado): (String, String) = conn.query_row(
+        "SELECT numero, estado FROM compras WHERE id = ?1",
+        rusqlite::params![input.compra_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| "Compra no encontrada".to_string())?;
+    if compra_estado == "ANULADA" {
+        return Err("No se puede devolver una compra anulada".into());
+    }
+
+    // Cargar detalles con cantidad_devuelta acumulada para validacion
+    let detalles_db: Vec<(i64, Option<i64>, Option<String>, f64, f64, f64, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT cd.id, cd.producto_id, COALESCE(cd.descripcion, p.nombre), cd.cantidad,
+                    cd.precio_unitario, cd.subtotal, COALESCE(cd.cantidad_devuelta, 0)
+             FROM compra_detalles cd
+             LEFT JOIN productos p ON cd.producto_id = p.id
+             WHERE cd.compra_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map(rusqlite::params![input.compra_id], |r| {
+            Ok((r.get(0)?, r.get(1).ok(), r.get(2).ok(), r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+        }).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        rows
+    };
+
+    // Construir lista de items efectivos a devolver
+    // (cd_id, producto_id, desc, cantidad_devolver, precio_unit)
+    let items_efectivos: Vec<(i64, Option<i64>, Option<String>, f64, f64)> = if input.devolver_todo {
+        detalles_db.iter()
+            .map(|(cd_id, pid, desc, cant_orig, pu, _sub, cant_dev)| {
+                let pendiente = (cant_orig - cant_dev).max(0.0);
+                (*cd_id, *pid, desc.clone(), pendiente, *pu)
+            })
+            .filter(|(_, _, _, c, _)| *c > 0.0)
+            .collect()
+    } else {
+        let mut out = Vec::new();
+        for it in &input.items {
+            let row = detalles_db.iter().find(|(id, _, _, _, _, _, _)| *id == it.compra_detalle_id)
+                .ok_or_else(|| format!("Item de devolucion invalido (detalle {})", it.compra_detalle_id))?;
+            let pendiente = (row.3 - row.6).max(0.0);
+            if it.cantidad <= 0.0 { continue; }
+            if it.cantidad > pendiente + 0.0001 {
+                return Err(format!(
+                    "Cantidad a devolver ({}) excede lo pendiente ({}) en '{}'",
+                    it.cantidad, pendiente, row.2.clone().unwrap_or_default()
+                ));
+            }
+            out.push((row.0, row.1, row.2.clone(), it.cantidad, row.4));
+        }
+        out
+    };
+
+    if items_efectivos.is_empty() {
+        return Err("No hay items para devolver".into());
+    }
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // numero de devolucion: ND-CMP-XXXXXXXXX-N (N = consecutivo por compra)
+    let n_prev: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM compra_devoluciones WHERE compra_id = ?1",
+        rusqlite::params![input.compra_id], |r| r.get(0),
+    ).unwrap_or(0);
+    let numero_dev = format!("ND-{}-{}", compra_numero, n_prev + 1);
+
+    // Calcular subtotal e IVA proporcional segun cada compra_detalle (usar tarifa original de la compra)
+    // Para esto, leemos el IVA implícito de la compra (iva / subtotal) si no podemos saber por linea.
+    // Simplificación: subtotal = sum(cant * precio), IVA = ratio_iva_global * subtotal.
+    let (compra_sub, compra_iva): (f64, f64) = tx.query_row(
+        "SELECT subtotal, iva FROM compras WHERE id = ?1",
+        rusqlite::params![input.compra_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0.0, 0.0));
+    let ratio_iva = if compra_sub > 0.0 { compra_iva / compra_sub } else { 0.0 };
+
+    let subtotal_dev: f64 = items_efectivos.iter().map(|(_, _, _, c, p)| c * p).sum();
+    let iva_dev = subtotal_dev * ratio_iva;
+    let total_dev = subtotal_dev + iva_dev;
+
+    // Insertar cabecera de devolucion
+    let es_total_calculado: bool = input.devolver_todo || {
+        // Si la suma de todos los items devueltos despues de esta operación = total de la compra
+        let dev_total_actual: f64 = tx.query_row(
+            "SELECT COALESCE(SUM(total),0) FROM compra_devoluciones WHERE compra_id = ?1",
+            rusqlite::params![input.compra_id], |r| r.get(0),
+        ).unwrap_or(0.0);
+        (dev_total_actual + total_dev) >= (compra_sub + compra_iva) - 0.01
+    };
+
+    tx.execute(
+        "INSERT INTO compra_devoluciones (compra_id, numero, motivo, subtotal, iva, total, es_total, usuario, observacion)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![input.compra_id, numero_dev, input.motivo, subtotal_dev, iva_dev, total_dev, es_total_calculado as i64, usuario, input.observacion],
+    ).map_err(|e| e.to_string())?;
+    let dev_id = tx.last_insert_rowid();
+
+    // Insertar detalles, actualizar cantidad_devuelta en compra_detalles, revertir stock, kardex
+    let motivo_str = input.motivo.clone().unwrap_or_else(|| "Sin motivo".to_string());
+    for (cd_id, pid_opt, desc, cant, precio) in &items_efectivos {
+        let sub_item = cant * precio;
+        tx.execute(
+            "INSERT INTO compra_devolucion_detalles (devolucion_id, compra_detalle_id, producto_id, cantidad, precio_unitario, subtotal)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![dev_id, cd_id, pid_opt, cant, precio, sub_item],
+        ).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE compra_detalles SET cantidad_devuelta = COALESCE(cantidad_devuelta,0) + ?1 WHERE id = ?2",
+            rusqlite::params![cant, cd_id],
+        ).ok();
+        // Revertir stock + kardex (solo si hay producto)
+        if let Some(pid) = pid_opt {
+            let stock_antes: f64 = tx.query_row(
+                "SELECT stock_actual FROM productos WHERE id = ?1",
+                rusqlite::params![pid], |r| r.get(0),
+            ).unwrap_or(0.0);
+            tx.execute(
+                "UPDATE productos SET stock_actual = stock_actual - ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+                rusqlite::params![cant, pid],
+            ).ok();
+            let motivo_kardex = format!("Devolucion compra {} - {} (motivo: {})", numero_dev,
+                desc.clone().unwrap_or_default(), motivo_str);
+            let _ = tx.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+                 VALUES (?1, 'DEVOLUCION_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![pid, -cant, stock_antes, stock_antes - cant, precio, input.compra_id, usuario, motivo_kardex],
+            );
+        }
+    }
+
+    // Si es devolucion total, marcar compra como DEVUELTA (estado nuevo)
+    if es_total_calculado {
+        tx.execute(
+            "UPDATE compras SET estado = 'DEVUELTA' WHERE id = ?1 AND estado != 'ANULADA'",
+            rusqlite::params![input.compra_id],
+        ).ok();
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "devolucion_id": dev_id,
+        "numero": numero_dev,
+        "subtotal": subtotal_dev,
+        "iva": iva_dev,
+        "total": total_dev,
+        "es_total": es_total_calculado,
+        "items": items_efectivos.len(),
+    }))
+}
+
+#[tauri::command]
+pub fn listar_devoluciones_compra(
+    db: State<Database>,
+    compra_id: i64,
+) -> Result<Vec<DevolucionCompraInfo>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, compra_id, numero, fecha, motivo, subtotal, iva, total, es_total, usuario, observacion
+         FROM compra_devoluciones WHERE compra_id = ?1 ORDER BY id DESC"
+    ).map_err(|e| e.to_string())?;
+    let lista = stmt.query_map(rusqlite::params![compra_id], |r| {
+        Ok(DevolucionCompraInfo {
+            id: r.get(0)?,
+            compra_id: r.get(1)?,
+            numero: r.get(2)?,
+            fecha: r.get(3)?,
+            motivo: r.get(4).ok(),
+            subtotal: r.get(5)?,
+            iva: r.get(6)?,
+            total: r.get(7)?,
+            es_total: r.get::<_, i64>(8)? != 0,
+            usuario: r.get(9).ok(),
+            observacion: r.get(10).ok(),
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(lista)
 }

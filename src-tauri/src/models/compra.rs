@@ -21,6 +21,21 @@ pub struct Compra {
     pub referencia_pago: Option<String>,
     #[serde(default)]
     pub banco_nombre: Option<String>,
+    /// v2.5.30: FACTURA (autorizada o no) / NOTA_VENTA / INFORMAL
+    #[serde(default)]
+    pub tipo_documento: Option<String>,
+    /// AUTORIZADA (factura validada en SRI) / NULL (no autorizada o no aplica)
+    #[serde(default)]
+    pub estado_sri: Option<String>,
+    /// Clave de acceso de 49 dígitos del SRI (solo facturas autorizadas)
+    #[serde(default)]
+    pub clave_acceso: Option<String>,
+    /// Fecha que aparece en el documento del proveedor (puede diferir de created_at)
+    #[serde(default)]
+    pub fecha_emision: Option<String>,
+    /// Total devuelto al proveedor (suma de notas de débito/devoluciones)
+    #[serde(default)]
+    pub total_devuelto: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -33,6 +48,9 @@ pub struct CompraDetalle {
     pub precio_unitario: f64,
     pub subtotal: f64,
     pub nombre_producto: Option<String>,
+    /// v2.5.30: cantidad ya devuelta al proveedor en notas de débito acumuladas
+    #[serde(default)]
+    pub cantidad_devuelta: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -54,6 +72,15 @@ pub struct NuevaCompra {
     pub banco_id: Option<i64>,
     #[serde(default)]
     pub referencia_pago: Option<String>,
+    /// v2.5.30: FACTURA | NOTA_VENTA | INFORMAL. Default INFORMAL si no se especifica.
+    #[serde(default)]
+    pub tipo_documento: Option<String>,
+    /// Fecha de emisión del documento (si difiere de la fecha de registro)
+    #[serde(default)]
+    pub fecha_emision: Option<String>,
+    /// Clave de acceso (49 dig) si proviene de XML SRI autorizado
+    #[serde(default)]
+    pub clave_acceso: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

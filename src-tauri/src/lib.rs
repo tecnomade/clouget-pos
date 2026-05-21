@@ -505,6 +505,8 @@ pub fn run() {
             commands::compras::anular_compra,
             commands::compras::preview_xml_compra,
             commands::compras::importar_xml_compra,
+            commands::compras::registrar_devolucion_compra,
+            commands::compras::listar_devoluciones_compra,
             // Cuentas por pagar
             commands::cuentas_pagar::alertas_pagos_vencidos,
             commands::cuentas_pagar::resumen_acreedores,

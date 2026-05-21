@@ -1404,5 +1404,80 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
     }
 
+    // ─── v2.5.30: Mejoras al módulo de Compras ───────────────────────────────
+    // 1. tipo_documento (FACTURA / NOTA_VENTA / INFORMAL) — distingue tipo SRI
+    // 2. estado_sri (AUTORIZADA / NULL) y clave_acceso — para facturas validadas
+    // 3. UNIQUE INDEX para evitar duplicados por proveedor+tipo+numero_factura
+    // 4. cantidad_devuelta en compra_detalles + tabla compra_devoluciones
+    let _ = conn.execute(
+        "ALTER TABLE compras ADD COLUMN tipo_documento TEXT NOT NULL DEFAULT 'INFORMAL'",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN estado_sri TEXT", []);
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN clave_acceso TEXT", []);
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN fecha_emision TEXT", []);
+    let _ = conn.execute("ALTER TABLE compras ADD COLUMN usuario TEXT", []);
+
+    // Migrar compras viejas — si tiene numero_factura → asume FACTURA (sin autorizar),
+    // si no → queda como INFORMAL (default). El usuario puede editar después.
+    let _ = conn.execute(
+        "UPDATE compras SET tipo_documento = 'FACTURA' WHERE tipo_documento = 'INFORMAL' AND numero_factura IS NOT NULL AND TRIM(numero_factura) != ''",
+        [],
+    );
+
+    // UNIQUE INDEX parcial: solo aplica cuando numero_factura y clave_acceso no son NULL
+    // Para clave_acceso es unique global (jamas pueden repetirse — son las 49 digit del SRI)
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_compras_clave_acceso_unique
+         ON compras(clave_acceso) WHERE clave_acceso IS NOT NULL AND clave_acceso != ''",
+        [],
+    );
+    // Para numero_factura: unique por proveedor+tipo (un proveedor no puede tener dos facturas con mismo numero)
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_compras_factura_proveedor_unique
+         ON compras(proveedor_id, tipo_documento, numero_factura)
+         WHERE numero_factura IS NOT NULL AND numero_factura != '' AND estado != 'ANULADA'",
+        [],
+    );
+
+    // cantidad_devuelta en compra_detalles para tracking de devoluciones parciales
+    let _ = conn.execute(
+        "ALTER TABLE compra_detalles ADD COLUMN cantidad_devuelta REAL NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // Tabla de devoluciones de compra (notas de crédito de proveedor)
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS compra_devoluciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            compra_id INTEGER NOT NULL,
+            numero TEXT NOT NULL,
+            fecha TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            motivo TEXT,
+            subtotal REAL NOT NULL DEFAULT 0,
+            iva REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            es_total INTEGER NOT NULL DEFAULT 0,
+            usuario TEXT,
+            observacion TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (compra_id) REFERENCES compras(id)
+        );
+        CREATE TABLE IF NOT EXISTS compra_devolucion_detalles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            devolucion_id INTEGER NOT NULL,
+            compra_detalle_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            cantidad REAL NOT NULL,
+            precio_unitario REAL NOT NULL,
+            subtotal REAL NOT NULL,
+            FOREIGN KEY (devolucion_id) REFERENCES compra_devoluciones(id) ON DELETE CASCADE,
+            FOREIGN KEY (compra_detalle_id) REFERENCES compra_detalles(id),
+            FOREIGN KEY (producto_id) REFERENCES productos(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_compra_dev_compra ON compra_devoluciones(compra_id);
+        CREATE INDEX IF NOT EXISTS idx_compra_dev_det_dev ON compra_devolucion_detalles(devolucion_id);
+    ");
+
     Ok(())
 }

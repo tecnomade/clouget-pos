@@ -15,6 +15,7 @@ import {
   importarXmlCompra,
   listarCategorias,
   listarCuentasBanco,
+  registrarDevolucionCompra,
 } from "../services/api";
 import type { CuentaBanco } from "../types";
 import type { PreviewXmlCompra, ItemMapeadoXml } from "../services/api";
@@ -145,11 +146,23 @@ export default function ComprasPage() {
   const [mostrarFormCompra, setMostrarFormCompra] = useState(false);
   const [verCompra, setVerCompra] = useState<CompraCompleta | null>(null);
   const [confirmarAnular, setConfirmarAnular] = useState<number | null>(null);
+  // v2.5.30: motivo de anulacion
+  const [motivoAnular, setMotivoAnular] = useState("");
+  // v2.5.30: modal de devolución de compra
+  const [devolverCompra, setDevolverCompra] = useState<CompraCompleta | null>(null);
+  const [devolverItems, setDevolverItems] = useState<Record<number, number>>({}); // compra_detalle_id -> cantidad a devolver
+  const [devolverMotivo, setDevolverMotivo] = useState("");
+  const [devolverObs, setDevolverObs] = useState("");
+  const [devolverProcesando, setDevolverProcesando] = useState(false);
 
   // Form compra
   const [proveedoresLista, setProveedoresLista] = useState<Proveedor[]>([]);
   const [proveedorId, setProveedorId] = useState<number | "">("");
   const [numeroFactura, setNumeroFactura] = useState("");
+  // v2.5.30: tipo de documento — FACTURA / NOTA_VENTA / INFORMAL
+  const [tipoDocCompra, setTipoDocCompra] = useState<"FACTURA" | "NOTA_VENTA" | "INFORMAL">("INFORMAL");
+  // v2.5.30: fecha de emisión (puede diferir de la fecha de registro)
+  const [fechaEmisionCompra, setFechaEmisionCompra] = useState<string>("");
   const [formaPago, setFormaPago] = useState("EFECTIVO");
   const [esCredito, setEsCredito] = useState(false);
   const [diasCredito, setDiasCredito] = useState("30");
@@ -338,6 +351,9 @@ export default function ComprasPage() {
         toastError("Seleccione una cuenta bancaria para esta forma de pago");
         return;
       }
+      // v2.5.30: si el preview detectó que el XML es factura AUTORIZADA por SRI,
+      // se registra como FACTURA; si no (XML sin firma o pendiente), como NOTA_VENTA.
+      // El backend además bloquea duplicados via clave_acceso.
       const res = await importarXmlCompra({
         proveedor_id: xmlProveedorId as number,
         numero_factura: xmlPreview.numero_factura,
@@ -347,6 +363,8 @@ export default function ComprasPage() {
         dias_credito: xmlFormaPago === "CREDITO" ? parseInt(xmlDiasCredito) || 30 : null,
         banco_id: reqBanco ? (xmlBancoId as number) : null,
         referencia_pago: reqBanco && xmlReferencia.trim() ? xmlReferencia.trim() : null,
+        autorizada: xmlPreview.autorizada,
+        clave_acceso: xmlPreview.clave_acceso || null,
       });
       const partes: string[] = [];
       if (res.productos_creados > 0) partes.push(`${res.productos_creados} producto(s) creado(s)`);
@@ -484,9 +502,16 @@ export default function ComprasPage() {
       return;
     }
     try {
-      await registrarCompra({
+      // v2.5.30: validación frontend del tipo de documento
+      if ((tipoDocCompra === "FACTURA" || tipoDocCompra === "NOTA_VENTA") && !numeroFactura.trim()) {
+        toastError(`Ingrese el número de ${tipoDocCompra === "FACTURA" ? "factura" : "nota de venta"} del proveedor`);
+        return;
+      }
+      const res = await registrarCompra({
         proveedor_id: proveedorId as number,
         numero_factura: numeroFactura.trim() || undefined,
+        tipo_documento: tipoDocCompra,
+        fecha_emision: fechaEmisionCompra || undefined,
         items: items.map(({ producto_id, descripcion, cantidad, precio_unitario, iva_porcentaje, lote_numero, lote_fecha_caducidad, lote_fecha_elaboracion }) => ({
           producto_id,
           descripcion: descripcion?.trim() || undefined,
@@ -502,10 +527,12 @@ export default function ComprasPage() {
         banco_id: reqBanco ? bancoIdCompra! : null,
         referencia_pago: reqBanco && referenciaCompra.trim() ? referenciaCompra.trim() : null,
       } as any);
-      toastExito("Compra registrada exitosamente");
+      toastExito(`Compra ${res?.compra?.numero || "registrada"} exitosamente`);
       setMostrarFormCompra(false);
       setProveedorId("");
       setNumeroFactura("");
+      setTipoDocCompra("INFORMAL");
+      setFechaEmisionCompra("");
       setFormaPago("EFECTIVO");
       setEsCredito(false);
       setDiasCredito("30");
@@ -530,12 +557,63 @@ export default function ComprasPage() {
   const handleAnularCompra = async () => {
     if (confirmarAnular === null) return;
     try {
-      await anularCompra(confirmarAnular);
+      await anularCompra(confirmarAnular, motivoAnular.trim() || undefined);
       toastExito("Compra anulada");
       setConfirmarAnular(null);
+      setMotivoAnular("");
       cargarCompras();
     } catch (err) {
       toastError("Error: " + err);
+    }
+  };
+
+  // v2.5.30: abrir modal de devolución cargando los detalles de la compra
+  const abrirModalDevolverCompra = async (compraId: number) => {
+    try {
+      const compraCompleta = await obtenerCompra(compraId);
+      setDevolverCompra(compraCompleta);
+      // Pre-cargar cantidades a 0 (usuario decide cuanto devolver de cada uno)
+      const init: Record<number, number> = {};
+      for (const d of compraCompleta.detalles) {
+        if (d.id) init[d.id] = 0;
+      }
+      setDevolverItems(init);
+      setDevolverMotivo("");
+      setDevolverObs("");
+    } catch (err) {
+      toastError("Error cargando compra: " + err);
+    }
+  };
+
+  const handleProcesarDevolucion = async (devolverTodo: boolean) => {
+    if (!devolverCompra?.compra.id) return;
+    // Si no es total, validar que al menos un item tenga cantidad > 0
+    if (!devolverTodo) {
+      const itemsSeleccionados = Object.entries(devolverItems).filter(([, c]) => c > 0);
+      if (itemsSeleccionados.length === 0) {
+        toastError("Indique cuanto devolver de al menos un item, o use 'Devolver todo'");
+        return;
+      }
+    }
+    try {
+      setDevolverProcesando(true);
+      const res = await registrarDevolucionCompra({
+        compra_id: devolverCompra.compra.id,
+        items: Object.entries(devolverItems)
+          .filter(([, c]) => c > 0)
+          .map(([id, cantidad]) => ({ compra_detalle_id: Number(id), cantidad })),
+        motivo: devolverMotivo.trim() || null,
+        observacion: devolverObs.trim() || null,
+        devolver_todo: devolverTodo,
+      });
+      toastExito(`Devolucion ${res.numero} registrada por $${res.total.toFixed(2)}${res.es_total ? " (TOTAL)" : ""}`);
+      setDevolverCompra(null);
+      setDevolverItems({});
+      cargarCompras();
+    } catch (err) {
+      toastError("Error: " + err);
+    } finally {
+      setDevolverProcesando(false);
     }
   };
 
@@ -609,6 +687,28 @@ export default function ComprasPage() {
               <div className="card mb-4">
                 <div className="card-header">Registrar Compra</div>
                 <div className="card-body">
+                  {/* v2.5.30: Tipo de documento — Factura SRI, Nota de Venta, Informal */}
+                  <div style={{ marginBottom: 12, padding: 10, background: "rgba(245, 158, 11, 0.06)", borderRadius: 6, border: "1px solid rgba(245, 158, 11, 0.25)" }}>
+                    <label className="text-secondary" style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 6 }}>
+                      Tipo de documento del proveedor *
+                    </label>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {([
+                        { v: "FACTURA",    label: "📄 Factura SRI",  desc: "Factura electrónica del SRI con clave de acceso" },
+                        { v: "NOTA_VENTA", label: "📋 Nota de venta", desc: "Nota de venta (RIMPE) sin autorización SRI completa" },
+                        { v: "INFORMAL",   label: "🧾 Compra informal", desc: "Sin documento tributario formal — recibo, ticket o nada" },
+                      ] as const).map(opt => (
+                        <button key={opt.v} type="button"
+                          className={`btn ${tipoDocCompra === opt.v ? "btn-primary" : "btn-outline"}`}
+                          style={{ fontSize: 12, padding: "5px 10px" }}
+                          title={opt.desc}
+                          onClick={() => setTipoDocCompra(opt.v as any)}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Fila 1: Proveedor + Factura + Forma pago */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                     <div>
@@ -625,13 +725,23 @@ export default function ComprasPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-secondary" style={{ fontSize: 12 }}>N. Factura proveedor</label>
+                      <label className="text-secondary" style={{ fontSize: 12 }}>
+                        {tipoDocCompra === "INFORMAL"
+                          ? "Referencia / Nota (opcional)"
+                          : `N° ${tipoDocCompra === "FACTURA" ? "factura" : "nota de venta"} del proveedor *`}
+                      </label>
                       <input
                         className="input"
-                        placeholder="001-001-000000001"
+                        placeholder={tipoDocCompra === "INFORMAL" ? "Ticket #12, sin documento, etc." : "001-001-000000001"}
                         value={numeroFactura}
+                        disabled={tipoDocCompra === "INFORMAL"}
                         onChange={(e) => setNumeroFactura(e.target.value)}
                       />
+                      {tipoDocCompra !== "INFORMAL" && (
+                        <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                          🔒 No se permiten duplicados para este proveedor
+                        </div>
+                      )}
                     </div>
                     <div>
                       <label className="text-secondary" style={{ fontSize: 12 }}>
@@ -935,54 +1045,93 @@ export default function ComprasPage() {
                     <th>Numero</th>
                     <th>Fecha</th>
                     <th>Proveedor</th>
+                    <th>Tipo</th>
                     <th>Factura #</th>
                     <th className="text-right">Total</th>
                     <th>Estado</th>
-                    <th style={{ width: 140 }}></th>
+                    <th style={{ width: 220 }}></th>
                   </tr>
                 </thead>
                 <tbody>
                   {compras.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center text-secondary" style={{ padding: 40 }}>
+                      <td colSpan={8} className="text-center text-secondary" style={{ padding: 40 }}>
                         No hay compras registradas en este periodo
                       </td>
                     </tr>
                   ) : (
-                    compras.map((c) => (
-                      <tr key={c.id}>
-                        <td><strong>{c.numero}</strong></td>
-                        <td className="text-secondary" style={{ fontSize: 12 }}>
-                          {c.fecha ? new Date(c.fecha).toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit", year: "numeric" }) : "-"}
-                        </td>
-                        <td>{c.proveedor_nombre || "-"}</td>
-                        <td className="text-secondary">{c.numero_factura || "-"}</td>
-                        <td className="text-right font-bold">${c.total.toFixed(2)}</td>
-                        <td>
-                          <span style={{
-                            padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                            background: c.estado === "COMPLETADA" ? "rgba(34,197,94,0.15)" : c.estado === "ANULADA" ? "rgba(239,68,68,0.15)" : "rgba(250,204,21,0.15)",
-                            color: c.estado === "COMPLETADA" ? "var(--color-success)" : c.estado === "ANULADA" ? "var(--color-danger)" : "var(--color-warning)",
-                          }}>
-                            {c.estado}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="flex gap-1">
-                            <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
-                              onClick={() => handleVerCompra(c.id!)}>
-                              Ver
-                            </button>
-                            {c.estado === "COMPLETADA" && (
-                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
-                                onClick={() => setConfirmarAnular(c.id!)}>
-                                Anular
-                              </button>
+                    compras.map((c) => {
+                      const tipo = c.tipo_documento || "INFORMAL";
+                      const esAutorizada = c.estado_sri === "AUTORIZADA";
+                      // v2.5.30: badge según tipo
+                      const tipoBadge = tipo === "FACTURA"
+                        ? { txt: esAutorizada ? "📄 Factura SRI ✓" : "📄 Factura",
+                            bg: esAutorizada ? "rgba(34,197,94,0.18)" : "rgba(59,130,246,0.15)",
+                            fg: esAutorizada ? "var(--color-success)" : "var(--color-primary)" }
+                        : tipo === "NOTA_VENTA"
+                        ? { txt: "📋 Nota venta", bg: "rgba(250,204,21,0.18)", fg: "var(--color-warning)" }
+                        : { txt: "🧾 Informal",   bg: "rgba(148,163,184,0.20)", fg: "var(--color-text-secondary)" };
+                      // Estado: COMPLETADA/REGISTRADA/DEVUELTA/ANULADA
+                      const estadoBadge = c.estado === "ANULADA"
+                        ? { bg: "rgba(239,68,68,0.15)", fg: "var(--color-danger)" }
+                        : c.estado === "DEVUELTA"
+                        ? { bg: "rgba(167,139,250,0.18)", fg: "#a78bfa" }
+                        : c.estado === "REGISTRADA" || c.estado === "COMPLETADA"
+                        ? { bg: "rgba(34,197,94,0.15)", fg: "var(--color-success)" }
+                        : { bg: "rgba(250,204,21,0.15)", fg: "var(--color-warning)" };
+                      const tieneDevolucionesParciales = (c.total_devuelto ?? 0) > 0 && c.estado !== "DEVUELTA";
+                      const puedeDevolver = c.estado !== "ANULADA" && c.estado !== "DEVUELTA";
+                      const puedeAnular = c.estado !== "ANULADA" && (c.total_devuelto ?? 0) === 0;
+                      return (
+                        <tr key={c.id}>
+                          <td><strong>{c.numero}</strong></td>
+                          <td className="text-secondary" style={{ fontSize: 12 }}>
+                            {c.fecha ? new Date(c.fecha).toLocaleDateString("es-EC", { day: "2-digit", month: "2-digit", year: "numeric" }) : "-"}
+                          </td>
+                          <td>{c.proveedor_nombre || "-"}</td>
+                          <td>
+                            <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: tipoBadge.bg, color: tipoBadge.fg, whiteSpace: "nowrap" }}>
+                              {tipoBadge.txt}
+                            </span>
+                          </td>
+                          <td className="text-secondary" style={{ fontSize: 12 }}>{c.numero_factura || "-"}</td>
+                          <td className="text-right font-bold">
+                            ${c.total.toFixed(2)}
+                            {tieneDevolucionesParciales && (
+                              <div style={{ fontSize: 10, color: "var(--color-danger)", fontWeight: 500 }}>
+                                -${(c.total_devuelto ?? 0).toFixed(2)} devuelto
+                              </div>
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                          <td>
+                            <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                                           background: estadoBadge.bg, color: estadoBadge.fg }}>
+                              {c.estado}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="flex gap-1">
+                              <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
+                                onClick={() => handleVerCompra(c.id!)}>
+                                Ver
+                              </button>
+                              {puedeDevolver && (
+                                <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "#a78bfa" }}
+                                  onClick={() => abrirModalDevolverCompra(c.id!)} title="Devolver al proveedor (total o parcial)">
+                                  Devolver
+                                </button>
+                              )}
+                              {puedeAnular && (
+                                <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
+                                  onClick={() => setConfirmarAnular(c.id!)}>
+                                  Anular
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1236,6 +1385,25 @@ export default function ComprasPage() {
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setXmlPreview(null)} disabled={xmlProcesando}>x</button>
             </div>
             <div className="card-body">
+              {/* v2.5.30: badge de autorización SRI + alerta de duplicado */}
+              <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
+                background: xmlPreview.autorizada ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)",
+                border: `1px solid ${xmlPreview.autorizada ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.35)"}` }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                  {xmlPreview.autorizada
+                    ? "✅ Factura SRI AUTORIZADA — se registrará como FACTURA con clave de acceso"
+                    : "⚠ XML NO autorizado por SRI — se registrará como NOTA DE VENTA"}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  Estado XML: {xmlPreview.estado_sri || "no detectado"} · Clave de acceso: {xmlPreview.clave_acceso ? `${xmlPreview.clave_acceso.length} dig` : "ninguna"}
+                </div>
+                {xmlPreview.compra_duplicada_id && (
+                  <div style={{ marginTop: 6, padding: 8, background: "rgba(239,68,68,0.15)",
+                    border: "1px solid rgba(239,68,68,0.45)", borderRadius: 4, fontSize: 12, fontWeight: 600, color: "var(--color-danger)" }}>
+                    🚫 Esta factura ya fue importada previamente (compra interna #{xmlPreview.compra_duplicada_id}). No se puede registrar de nuevo.
+                  </div>
+                )}
+              </div>
               {/* Proveedor */}
               <div className="card mb-4" style={{ background: "rgba(255,255,255,0.03)" }}>
                 <div className="card-body" style={{ padding: 12 }}>
@@ -1518,8 +1686,12 @@ export default function ComprasPage() {
                 <button className="btn btn-outline" onClick={() => setXmlPreview(null)} disabled={xmlProcesando}>
                   Cancelar
                 </button>
-                <button className="btn btn-primary" onClick={handleProcesarXml} disabled={xmlProcesando}>
-                  {xmlProcesando ? "Procesando..." : "Procesar Importacion"}
+                <button className="btn btn-primary" onClick={handleProcesarXml}
+                  disabled={xmlProcesando || !!xmlPreview.compra_duplicada_id}
+                  title={xmlPreview.compra_duplicada_id ? "Esta factura ya fue importada" : ""}>
+                  {xmlProcesando ? "Procesando..." :
+                    xmlPreview.compra_duplicada_id ? "Factura duplicada — no se puede importar" :
+                    "Procesar Importacion"}
                 </button>
               </div>
             </div>
@@ -1527,16 +1699,133 @@ export default function ComprasPage() {
         </div>
       )}
 
-      {/* Modales de confirmacion */}
-      <Modal
-        abierto={confirmarAnular !== null}
-        titulo="Anular Compra"
-        mensaje="¿Esta seguro que desea anular esta compra? Se revertira el stock de los productos."
-        tipo="peligro"
-        textoConfirmar="Si, anular"
-        onConfirmar={handleAnularCompra}
-        onCancelar={() => setConfirmarAnular(null)}
-      />
+      {/* v2.5.30: Modal anular con motivo obligatorio */}
+      {confirmarAnular !== null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000,
+                      display: "flex", justifyContent: "center", alignItems: "center" }}
+             onClick={() => { setConfirmarAnular(null); setMotivoAnular(""); }}>
+          <div className="card" style={{ width: "min(480px, 92vw)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="card-header">Anular compra</div>
+            <div className="card-body">
+              <p style={{ marginBottom: 12, fontSize: 13 }}>
+                Esta acción revertirá el stock de los productos y marcará la compra como anulada.
+                <br /><strong>Solo se puede anular si no tiene devoluciones aplicadas.</strong>
+              </p>
+              <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                Motivo de anulación
+              </label>
+              <input className="input" style={{ width: "100%" }} placeholder="Ej: error de digitación, factura repetida..."
+                value={motivoAnular} onChange={(e) => setMotivoAnular(e.target.value)} autoFocus />
+              <div className="flex gap-2 justify-end" style={{ marginTop: 16 }}>
+                <button className="btn btn-outline" onClick={() => { setConfirmarAnular(null); setMotivoAnular(""); }}>
+                  Cancelar
+                </button>
+                <button className="btn btn-danger" onClick={handleAnularCompra}>
+                  Sí, anular
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v2.5.30: Modal de devolución de compra (parcial o total) */}
+      {devolverCompra && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000,
+                      display: "flex", justifyContent: "center", alignItems: "center" }}
+             onClick={() => !devolverProcesando && setDevolverCompra(null)}>
+          <div className="card" style={{ width: "min(900px, 95vw)", maxHeight: "90vh", overflow: "auto" }}
+               onClick={(e) => e.stopPropagation()}>
+            <div className="card-header flex justify-between items-center">
+              <span>Devolver compra {devolverCompra.compra.numero} — {devolverCompra.compra.proveedor_nombre}</span>
+              <button className="btn btn-outline" style={{ padding: "2px 8px" }}
+                onClick={() => setDevolverCompra(null)} disabled={devolverProcesando}>x</button>
+            </div>
+            <div className="card-body">
+              <div style={{ marginBottom: 12, padding: 10, background: "rgba(167,139,250,0.10)",
+                            border: "1px solid rgba(167,139,250,0.35)", borderRadius: 6, fontSize: 12 }}>
+                <strong>Nota de débito al proveedor.</strong> Indica cuánto devolver de cada item.
+                Se revertirá el stock y se generará un movimiento <code>DEVOLUCION_COMPRA</code> en el kardex.
+                Si devuelves <strong>todo</strong>, la compra queda en estado <code>DEVUELTA</code>.
+              </div>
+              <table className="table" style={{ fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th className="text-right">Comprado</th>
+                    <th className="text-right">Ya devuelto</th>
+                    <th className="text-right">Pendiente</th>
+                    <th className="text-right" style={{ width: 120 }}>A devolver</th>
+                    <th className="text-right">Precio</th>
+                    <th className="text-right">Subtotal devolución</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {devolverCompra.detalles.map((d) => {
+                    const yaDev = d.cantidad_devuelta ?? 0;
+                    const pendiente = Math.max(0, d.cantidad - yaDev);
+                    const cantDev = devolverItems[d.id ?? 0] ?? 0;
+                    const sub = cantDev * d.precio_unitario;
+                    return (
+                      <tr key={d.id} style={{ opacity: pendiente <= 0 ? 0.5 : 1 }}>
+                        <td>
+                          <div style={{ fontWeight: 500 }}>{d.nombre_producto || d.descripcion || "-"}</div>
+                          {!d.producto_id && <div className="text-secondary" style={{ fontSize: 10 }}>(sin producto vinculado — no afecta stock)</div>}
+                        </td>
+                        <td className="text-right">{d.cantidad}</td>
+                        <td className="text-right text-secondary">{yaDev}</td>
+                        <td className="text-right font-bold">{pendiente}</td>
+                        <td className="text-right">
+                          <input type="number" className="input" style={{ textAlign: "right", fontSize: 12, padding: "2px 6px" }}
+                            min="0" max={pendiente} step="0.01" value={cantDev}
+                            disabled={pendiente <= 0}
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(pendiente, parseFloat(e.target.value) || 0));
+                              setDevolverItems((prev) => ({ ...prev, [d.id ?? 0]: v }));
+                            }} />
+                        </td>
+                        <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
+                        <td className="text-right font-bold">${sub.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Motivo</label>
+                  <input className="input" placeholder="Ej: producto defectuoso, exceso de stock..."
+                    value={devolverMotivo} onChange={(e) => setDevolverMotivo(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Observación (opcional)</label>
+                  <input className="input" placeholder="N° de nota de débito del proveedor, etc."
+                    value={devolverObs} onChange={(e) => setDevolverObs(e.target.value)} />
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600 }}>
+                Subtotal: ${Object.entries(devolverItems).reduce((s, [id, c]) => {
+                  const det = devolverCompra.detalles.find(d => d.id === Number(id));
+                  return s + (det ? c * det.precio_unitario : 0);
+                }, 0).toFixed(2)}
+              </div>
+            </div>
+            <div className="card-footer flex justify-end gap-2" style={{ padding: 12, borderTop: "1px solid var(--color-border)" }}>
+              <button className="btn btn-outline" onClick={() => setDevolverCompra(null)} disabled={devolverProcesando}>
+                Cancelar
+              </button>
+              <button className="btn btn-outline" style={{ color: "#a78bfa", borderColor: "#a78bfa" }}
+                onClick={() => handleProcesarDevolucion(true)} disabled={devolverProcesando}
+                title="Devuelve TODO lo pendiente de cada item — la compra queda DEVUELTA">
+                Devolver todo
+              </button>
+              <button className="btn btn-primary" onClick={() => handleProcesarDevolucion(false)} disabled={devolverProcesando}>
+                {devolverProcesando ? "Procesando..." : "Devolver seleccionados"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <Modal
         abierto={confirmarEliminarProv !== null}
         titulo="Eliminar Proveedor"

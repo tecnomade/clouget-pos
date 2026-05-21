@@ -524,6 +524,19 @@ export interface Compra {
   es_credito: boolean;
   observacion?: string;
   proveedor_nombre?: string;
+  banco_id?: number | null;
+  referencia_pago?: string | null;
+  banco_nombre?: string | null;
+  /** v2.5.30: FACTURA | NOTA_VENTA | INFORMAL */
+  tipo_documento?: string | null;
+  /** AUTORIZADA (factura SRI validada) | null */
+  estado_sri?: string | null;
+  /** Clave de acceso SRI 49 dig (solo facturas autorizadas) */
+  clave_acceso?: string | null;
+  /** Fecha de emisión del documento del proveedor */
+  fecha_emision?: string | null;
+  /** Total ya devuelto al proveedor */
+  total_devuelto?: number;
 }
 
 export interface CompraDetalle {
@@ -535,6 +548,8 @@ export interface CompraDetalle {
   precio_unitario: number;
   subtotal: number;
   nombre_producto?: string;
+  /** v2.5.30: cantidad ya devuelta en notas de débito */
+  cantidad_devuelta?: number;
 }
 
 export interface CompraCompleta {
@@ -564,6 +579,12 @@ export interface NuevaCompra {
   dias_credito?: number;
   banco_id?: number | null;
   referencia_pago?: string | null;
+  /** v2.5.30: FACTURA | NOTA_VENTA | INFORMAL. Default INFORMAL si no se especifica */
+  tipo_documento?: string;
+  /** Fecha de emisión del documento (puede diferir de la fecha de registro) */
+  fecha_emision?: string;
+  /** Clave de acceso SRI (49 dig) si proviene de XML autorizado */
+  clave_acceso?: string | null;
 }
 
 // Cuentas por Pagar

@@ -1360,7 +1360,39 @@ export const eliminarProveedor = (id: number) => smartInvoke<void>("eliminar_pro
 export const registrarCompra = (compra: NuevaCompra) => smartInvoke<CompraCompleta>("registrar_compra", { compra });
 export const listarCompras = (fechaDesde: string, fechaHasta: string) => smartInvoke<Compra[]>("listar_compras", { fechaDesde, fechaHasta });
 export const obtenerCompra = (id: number) => smartInvoke<CompraCompleta>("obtener_compra", { id });
-export const anularCompra = (id: number) => smartInvoke<void>("anular_compra", { id });
+export const anularCompra = (id: number, motivo?: string) => smartInvoke<void>("anular_compra", { id, motivo });
+
+// v2.5.30: devoluciones de compra
+export interface ItemDevolucionCompra {
+  compra_detalle_id: number;
+  cantidad: number;
+}
+export interface NuevaDevolucionCompra {
+  compra_id: number;
+  items: ItemDevolucionCompra[];
+  motivo?: string | null;
+  observacion?: string | null;
+  devolver_todo?: boolean;
+}
+export interface DevolucionCompraInfo {
+  id: number;
+  compra_id: number;
+  numero: string;
+  fecha: string;
+  motivo?: string | null;
+  subtotal: number;
+  iva: number;
+  total: number;
+  es_total: boolean;
+  usuario?: string | null;
+  observacion?: string | null;
+}
+export const registrarDevolucionCompra = (input: NuevaDevolucionCompra) =>
+  smartInvoke<{ devolucion_id: number; numero: string; subtotal: number; iva: number; total: number; es_total: boolean; items: number }>(
+    "registrar_devolucion_compra", { input },
+  );
+export const listarDevolucionesCompra = (compraId: number) =>
+  smartInvoke<DevolucionCompraInfo[]>("listar_devoluciones_compra", { compraId });
 
 // --- Importacion XML Factura Electronica (SRI) ---
 
@@ -1389,6 +1421,12 @@ export interface PreviewXmlCompra {
   iva: number;
   total: number;
   items: PreviewItemXml[];
+  /** v2.5.30: true si el XML viene dentro de <autorizacion><estado>AUTORIZADO</estado> */
+  autorizada: boolean;
+  /** Estado exacto leido del XML ("AUTORIZADO", "RECHAZADO", etc.) */
+  estado_sri?: string | null;
+  /** Si la clave_acceso ya fue importada antes, devuelve el id de la compra duplicada */
+  compra_duplicada_id?: number | null;
 }
 
 export interface NuevoProductoSimple {
@@ -1419,6 +1457,10 @@ export interface ImportarXmlInput {
   dias_credito?: number | null;
   banco_id?: number | null;
   referencia_pago?: string | null;
+  /** v2.5.30: si el XML estaba <estado>AUTORIZADO</estado> → registrar como FACTURA SRI */
+  autorizada?: boolean;
+  /** Clave de acceso (49 dig) — clave única antiduplicado */
+  clave_acceso?: string | null;
 }
 
 export const previewXmlCompra = (xmlContenido: string) =>

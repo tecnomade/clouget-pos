@@ -6,6 +6,71 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.30 — 2026-05-21 🛒 Compras: tipo de documento + antiduplicado + devoluciones + kardex + anulación con motivo
+
+Renovación importante del módulo de Compras. Cinco mejoras vinculadas:
+
+### 1. 🆕 Tipo de documento del proveedor (Factura / Nota de venta / Compra informal)
+
+Antes todas las compras eran iguales. Ahora se distinguen tres tipos:
+- **📄 Factura SRI** — comprobante autorizado por el SRI (con clave de acceso de 49 dig). Soporte tributario válido.
+- **📋 Nota de venta** — comprobante simplificado RIMPE / sin autorización electrónica completa.
+- **🧾 Compra informal** — sin documento tributario formal (ticket, recibo, mercado).
+
+UI: selector con 3 botones en el formulario "Nueva Compra"; badge visible en la lista. Si el tipo es `INFORMAL`, el campo "número de factura" queda deshabilitado (no aplica).
+
+### 2. 🔒 Antiduplicado de facturas (bloqueado en BD)
+
+Antes era posible registrar la misma factura del mismo proveedor varias veces — riesgo de doble pago e inflar inventario. Ahora:
+- **UNIQUE INDEX en BD** `(proveedor_id, tipo_documento, numero_factura)` cuando no es NULL ni anulada
+- **UNIQUE INDEX global en `clave_acceso`** SRI (49 dig) — impide importar el mismo XML dos veces
+- Validación temprana en backend con mensaje amigable: "Ya existe una compra de este proveedor con número de factura '001-001-...' (compra interna COMP-XXXXXXXXX)"
+- Frontend muestra alerta roja en el preview XML si la clave de acceso ya fue importada y deshabilita el botón "Procesar"
+
+### 3. 📡 Importación XML SRI ahora distingue autorizadas vs no-autorizadas
+
+El XML del SRI viene envuelto en `<autorizacion><estado>AUTORIZADO</estado>...<comprobante>...`. Antes el sistema ignoraba el estado y registraba todo como compra genérica.
+
+Ahora `preview_xml_compra`:
+- Detecta el `<estado>` exacto del XML (AUTORIZADO / PPR / RECHAZADO / etc.)
+- Si `AUTORIZADO` → se registra como **FACTURA con `estado_sri = AUTORIZADA`** y guarda la clave de acceso
+- Si no → se registra como **NOTA_VENTA** (con observación "XML no autorizado por SRI")
+
+UI: banner verde 🟢 o amarillo 🟡 en el preview según el estado detectado.
+
+### 4. 🔄 Devolución de compras (parcial o total) — nueva funcionalidad
+
+Nueva tabla `compra_devoluciones` + `compra_devolucion_detalles`. Nuevo botón **"Devolver"** en la lista de compras. Modal con:
+- Lista de items con columnas: Comprado / Ya devuelto / Pendiente / **A devolver** / Subtotal devolución
+- Campo de motivo y observación opcional
+- Dos botones: **"Devolver seleccionados"** (parcial) o **"Devolver todo"** (total)
+
+Efectos al devolver:
+- Stock se revierte (UPDATE productos)
+- Movimiento `DEVOLUCION_COMPRA` en kardex con motivo trazable
+- `cantidad_devuelta` se acumula en `compra_detalles`
+- Si es total → compra pasa a estado `DEVUELTA`
+- Número auto-generado: `ND-COMP-XXXXXXXXX-N`
+
+### 5. 📊 Kardex completo para compras (antes faltaba)
+
+Antes las compras solo hacían `UPDATE stock_actual` — no quedaba rastro en el kardex. Ahora cada compra inserta:
+- `INGRESO_COMPRA` con motivo `"Compra COMP-XXXXXXXXX - <producto>"`
+- `ANULACION_COMPRA` cuando se anula con motivo `"Anulacion compra COMP-XXX - <motivo>"`
+- `DEVOLUCION_COMPRA` con motivo trazable
+
+Resultado: el kardex multi y el kardex de cada producto ahora muestran TODOS los movimientos de compra con su origen claro.
+
+### Cambios adicionales:
+
+- **Anulación con motivo obligatorio**: nuevo modal que pide motivo (antes era confirmación seca). Si la compra tiene devoluciones parciales, NO se permite anular — se debe usar Devolver Total primero.
+- **Numero interno autogenerado**: ahora siempre se autogenera con formato `COMP-XXXXXXXXX` (9 dígitos, antes era `CMP-000001` de 6 dígitos). El usuario no puede setearlo manualmente.
+- **Fecha de emisión separada**: nuevo campo `fecha_emision` que puede diferir de la fecha de registro (útil cuando registras una compra antigua).
+- **Botón Devolver visible solo si aplica** (no anulada, no completamente devuelta).
+- **Indicador de devoluciones parciales** en la tabla: muestra `-$X.XX devuelto` debajo del total.
+
+---
+
 ## v2.5.29 — 2026-05-21 📐 Tabs de Reportes no se desbordan
 
 ### 📐 Tabs de Reportes ahora fluyen a 2da línea en pantallas angostas
