@@ -177,11 +177,11 @@ export default function DashboardPage() {
               </p>
               {cajaAbierta ? (
                 <button className="btn btn-primary btn-lg" onClick={() => navigate("/pos")}>
-                  Ir a Vender (F1)
+                  Ir a Vender <span className="kbd">F1</span>
                 </button>
               ) : (
                 <button className="btn btn-primary btn-lg" onClick={() => navigate("/caja")}>
-                  Abrir Caja (F5)
+                  Abrir Caja <span className="kbd">F5</span>
                 </button>
               )}
             </div>

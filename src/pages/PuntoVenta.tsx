@@ -1372,7 +1372,7 @@ export default function PuntoVenta() {
                   </>
                 )}
                 <button className="btn btn-primary btn-lg" data-action="nueva-venta" onClick={nuevaVentaClick}>
-                  Nueva Venta (F10)
+                  Nueva Venta <span className="kbd">F10</span>
                 </button>
               </div>
             </div>
@@ -1410,7 +1410,7 @@ export default function PuntoVenta() {
                 className="btn btn-primary btn-lg mt-4"
                 onClick={() => navigate("/caja")}
               >
-                Abrir Caja (F5)
+                Abrir Caja <span className="kbd">F5</span>
               </button>
             </div>
           </div>
@@ -2139,7 +2139,7 @@ export default function PuntoVenta() {
                     }}
                     disabled={carrito.length === 0}
                   >
-                    Exacto <span style={{ fontSize: 9, fontWeight: 600, opacity: 0.85, marginLeft: 2 }}>F8</span>
+                    Exacto <span className="kbd">F8</span>
                   </button>
                 </div>
               </div>
@@ -2171,7 +2171,8 @@ export default function PuntoVenta() {
                 onClick={procesarVenta}>
                 {modoPagoMixto
                   ? `Cobrar mixto $${total.toFixed(2)}`
-                  : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)} (F9)
+                  : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)}
+                <span className="kbd">F9</span>
               </button>
             </div>
 

@@ -6,6 +6,24 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.26 — 2026-05-21 ⌨️ Atajos de teclado visibles como badges
+
+### ⌨️ Comandos de teclado destacados en los botones del POS
+
+Los atajos `F5`, `F8`, `F9`, `F10` y `F1` que aparecían como texto plano entre paréntesis (`(F9)`, `(F10)`, etc.) ahora se muestran como **badges tipo "kbd"** dentro de los botones: chip pequeño con fondo contrastado, borde inferior tipo tecla, mayúsculas y tipografía monoespaciada.
+
+Cambios:
+- Nuevo estilo reutilizable `.kbd` en `global.css` (chip de 26×20px, fondo translúcido, borde con efecto de tecla)
+- Aplicado en **Punto de Venta**: botones `Nueva Venta F10`, `Cobrar $… F9`, `Exacto F8`, `Abrir Caja F5`
+- Aplicado en **Dashboard** (vista cajero): botones `Ir a Vender F1` y `Abrir Caja F5`
+- Variante automática `.kbd.kbd-dark` para botones outline / fondo claro
+- Diseño sutil — no grotesco — mantiene la jerarquía visual del botón
+
+Antes: `Cobrar $5.20 (F9)` (texto plano, fácil de pasar por alto)
+Ahora: `Cobrar $5.20 [F9]` (badge contrastado, lectura inmediata)
+
+---
+
 ## v2.5.25 — 2026-05-21 🚨 Combos en Servicio Técnico + buscadores + sidebar más grande
 
 ### 🚨 BUG CRÍTICO: combos vendidos desde Servicio Técnico no descontaban stock
