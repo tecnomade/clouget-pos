@@ -6,6 +6,22 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.29 — 2026-05-21 📐 Tabs de Reportes no se desbordan
+
+### 📐 Tabs de Reportes ahora fluyen a 2da línea en pantallas angostas
+
+Con el módulo de Servicio Técnico activo, los tabs llegan a 13 (Estado de Resultados, Balance, Ventas detalladas, …, Cancelaciones ST, Garantías ST) y se desbordaban del contenedor — los últimos 1-2 quedaban cortados u ocultos detrás de la sidebar expandida.
+
+Fix:
+- Tabs contenedor pasa de `flex` a `flex-wrap: wrap` → si no caben, fluyen a una segunda fila
+- Padding reducido (`6px 16px` → `5px 10px`) y fuente 13 → 12 para que entren más por fila
+- `whiteSpace: nowrap` por tab para que el texto no se parta en medio
+- Gap reducido (8px → 6px) entre tabs
+
+Resultado: todos los reportes (incluyendo `🚫 Cancelaciones ST` y `🛡 Garantías ST`) son accesibles sin importar el ancho de ventana o el estado del sidebar.
+
+---
+
 ## v2.5.28 — 2026-05-21 🔧 Kardex muestra número visible (NV-XXXX) en lugar de id interno
 
 ### 🐛 Bug: el motivo del kardex mostraba "Venta #233" pero solo había 93 ventas

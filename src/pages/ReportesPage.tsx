@@ -612,8 +612,10 @@ export default function ReportesPage() {
       </div>
 
       <div className="page-body" style={{ padding: 16 }}>
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4">
+        {/* Tabs — v2.5.29: flex-wrap + padding reducido para que entren todos
+            los tabs (incluyendo Cancelaciones ST / Garantías ST) sin desbordarse
+            cuando el módulo de Servicio Técnico está activo. */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
           {/* v2.4.15: tabs de Servicio Tecnico solo si el modulo esta activo */}
           {(([
             ["utilidad", "Estado de Resultados"],
@@ -633,7 +635,7 @@ export default function ReportesPage() {
             ] : []),
           ] as const) as ReadonlyArray<readonly [typeof tab, string]>).map(([key, label]) => (
             <button key={key} className={`btn ${tab === key ? "btn-primary" : "btn-outline"}`}
-              style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => setTab(key)}>
+              style={{ fontSize: 12, padding: "5px 10px", whiteSpace: "nowrap" }} onClick={() => setTab(key)}>
               {label}
             </button>
           ))}
