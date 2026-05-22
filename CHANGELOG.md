@@ -6,6 +6,35 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.32 — 2026-05-22 🐛 Bugs reportados de Compras (BETA testing)
+
+Fixes encontrados durante testing de v2.5.30 (compras renovadas):
+
+### 🐛 Bug A — XML importado como gasto no aparecía en la lista de gastos
+
+`importar_xml_compra` rama "gasto" insertaba la fecha del XML en formato `dd/mm/yyyy` directamente. Luego `listar_gastos_dia` filtra con `WHERE date(g.fecha) = date(?1)` y SQLite no parsea `dd/mm/yyyy` → siempre retornaba NULL → el gasto era invisible.
+
+**Fix**: convertir `fecha_emision` a ISO (`yyyy-mm-dd hh:mm:ss`) usando el helper `convertir_fecha_sri()` antes de insertar.
+
+### 🐛 Bug B — Permite duplicar XML cuando la primera importación fue como gasto
+
+Si todos los items del XML se mapeaban a gastos, no se creaba ninguna compra → la `clave_acceso` SRI nunca se guardaba en ninguna tabla → la siguiente importación del mismo XML pasaba la validación de duplicados.
+
+**Fix**:
+- Agregadas columnas `clave_acceso`, `numero_factura_xml`, `proveedor_id` a tabla `gastos` (migración self-healing)
+- UNIQUE INDEX parcial sobre `gastos.clave_acceso` (no NULL/vacío)
+- `validar_factura_unica` ahora chequea también contra `gastos` — si existe un gasto con esa clave devuelve error claro: *"Esta factura ya fue importada anteriormente como GASTO. Elimine el gasto primero si necesita re-importarla como compra"*
+
+### 🐛 Bugs D y E — ProductosPage e InventarioPage no refrescan tras cambios de compras
+
+Al anular compra o registrar devolución (nota de crédito de proveedor), el stock del producto se actualizaba en BD pero las pestañas abiertas de Productos / Inventario no lo reflejaban hasta cerrar y reabrir la tab.
+
+**Fix**: event bus `clouget:compra-cambio` (sigue el patrón de `clouget:venta-completada`).
+- `ComprasPage` dispatcha el evento al crear, anular, devolver o importar XML
+- `Productos` e `InventarioPage` escuchan el evento y recargan datos automáticamente
+
+---
+
 ## v2.5.31 — 2026-05-21 💰 Retenciones SRI ahora cruzan saldo de CXC (bug crítico)
 
 ### 🐛 Bug: retenciones recibidas no reducían el saldo pendiente de la factura

@@ -38,6 +38,19 @@ fn validar_factura_unica(
                     &ca.trim()[..ca.trim().len().min(20)]
                 ));
             }
+            // v2.5.32: también chequear si la clave fue importada como GASTO
+            // (cuando todos los items del XML se mapearon a gastos, no se crea
+            // ninguna compra, pero la clave_acceso queda registrada en gastos)
+            let exists_gasto: Option<i64> = conn.query_row(
+                "SELECT id FROM gastos WHERE clave_acceso = ?1 LIMIT 1",
+                rusqlite::params![ca.trim()], |r| r.get(0),
+            ).ok();
+            if exists_gasto.is_some() {
+                return Err(format!(
+                    "Esta factura ya fue importada anteriormente como GASTO (clave SRI: {}…). Si necesitas re-importarla como compra, primero elimina el gasto.",
+                    &ca.trim()[..ca.trim().len().min(20)]
+                ));
+            }
         }
     }
     // Validar numero_factura + tipo + proveedor — solo si viene numero_factura
@@ -1158,24 +1171,35 @@ pub fn importar_xml_compra(
                     .unwrap_or_else(|| "Compra proveedor".to_string());
                 let monto_gasto =
                     item.subtotal + (item.subtotal * item.iva_porcentaje / 100.0);
-                // Usar fecha de emisión del XML (no la fecha actual)
-                let fecha_gasto = if !input.fecha_emision.is_empty() {
-                    input.fecha_emision.clone()
-                } else {
-                    chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
-                };
+                // v2.5.32 BUG FIX: convertir fecha SRI (dd/mm/yyyy) a ISO antes
+                // de insertar. Sin esto el listar_gastos_dia filtraba por
+                // date(g.fecha) y SQLite no parseaba dd/mm/yyyy → gasto invisible.
+                let fecha_gasto = convertir_fecha_sri(&input.fecha_emision)
+                    .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+                // v2.5.32: grabar clave_acceso + numero_factura_xml + proveedor_id en gastos
+                // para que validar_factura_unica detecte reimportación del mismo XML
+                // aunque la primera vez haya sido como gasto (sin compra creada).
                 tx.execute(
-                    "INSERT INTO gastos (descripcion, monto, categoria, observacion, fecha) \
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO gastos (descripcion, monto, categoria, observacion, fecha,
+                                         clave_acceso, numero_factura_xml, proveedor_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     rusqlite::params![
                         item.descripcion,
                         monto_gasto,
                         cat,
                         format!("Importado de XML factura: {}", input.numero_factura),
-                        fecha_gasto
+                        fecha_gasto,
+                        clave_acceso_norm,
+                        input.numero_factura.trim(),
+                        input.proveedor_id,
                     ],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("UNIQUE") && msg.contains("clave_acceso") {
+                        "Este XML ya fue importado anteriormente como gasto".to_string()
+                    } else { msg }
+                })?;
                 gastos_creados += 1;
             }
             _ => {}

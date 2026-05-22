@@ -374,6 +374,8 @@ export default function ComprasPage() {
       setXmlPreview(null);
       setXmlItems([]);
       cargarCompras();
+      // v2.5.32: avisar a Productos / Inventario / Kardex para refresh automático
+      window.dispatchEvent(new CustomEvent("clouget:compra-cambio", { detail: { tipo: "importar_xml" } }));
     } catch (err) {
       toastError("Error: " + err);
     } finally {
@@ -541,6 +543,8 @@ export default function ComprasPage() {
       setReferenciaCompra("");
       setItems([]);
       cargarCompras();
+      // v2.5.32: avisar a Productos / Inventario / Kardex
+      window.dispatchEvent(new CustomEvent("clouget:compra-cambio", { detail: { tipo: "crear" } }));
     } catch (err) {
       toastError("Error: " + err);
     }
@@ -562,6 +566,8 @@ export default function ComprasPage() {
       setConfirmarAnular(null);
       setMotivoAnular("");
       cargarCompras();
+      // v2.5.32: avisar a Productos / Inventario / Kardex (stock revertido)
+      window.dispatchEvent(new CustomEvent("clouget:compra-cambio", { detail: { tipo: "anular" } }));
     } catch (err) {
       toastError("Error: " + err);
     }
@@ -610,6 +616,8 @@ export default function ComprasPage() {
       setDevolverCompra(null);
       setDevolverItems({});
       cargarCompras();
+      // v2.5.32: avisar a Productos / Inventario / Kardex (stock devuelto al proveedor)
+      window.dispatchEvent(new CustomEvent("clouget:compra-cambio", { detail: { tipo: "devolucion" } }));
     } catch (err) {
       toastError("Error: " + err);
     } finally {

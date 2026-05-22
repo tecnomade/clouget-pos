@@ -1675,6 +1675,19 @@ export default function Productos() {
   // productos desde Excel, hecho ventas que cambian stock, etc. desde otra tab).
   useTabActivated("/productos", () => { cargarDatos(); });
 
+  // v2.5.32: refrescar tambien al detectar cambios de compras/ventas en otras tabs
+  // (anular compra, devolucion, importar XML, NC venta) — el stock pudo haberse
+  // modificado y la lista quedaba stale hasta cerrar/abrir la pestaña.
+  useEffect(() => {
+    const handler = () => { cargarDatos(); };
+    window.addEventListener("clouget:compra-cambio", handler);
+    window.addEventListener("clouget:venta-completada", handler);
+    return () => {
+      window.removeEventListener("clouget:compra-cambio", handler);
+      window.removeEventListener("clouget:venta-completada", handler);
+    };
+  }, []);
+
   const handleEditar = async (id: number) => {
     const prod = await obtenerProducto(id);
     setProductoEditar(prod);

@@ -64,6 +64,19 @@ export default function InventarioPage() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // v2.5.32: refrescar kardex automaticamente cuando hay cambios de compras/ventas
+  // en otras tabs (anular compra, devolucion, importar XML, NC venta). Antes el
+  // usuario tenia que cerrar y abrir la pestaña para ver los nuevos movimientos.
+  useEffect(() => {
+    const handler = () => { cargar(); };
+    window.addEventListener("clouget:compra-cambio", handler);
+    window.addEventListener("clouget:venta-completada", handler);
+    return () => {
+      window.removeEventListener("clouget:compra-cambio", handler);
+      window.removeEventListener("clouget:venta-completada", handler);
+    };
+  }, [cargar]);
+
   const handleBuscarProductoModal = async (termino: string) => {
     setModalBusqueda(termino);
     if (termino.length >= 1) {

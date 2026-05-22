@@ -1479,6 +1479,19 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_compra_dev_det_dev ON compra_devolucion_detalles(devolucion_id);
     ");
 
+    // ─── v2.5.32: Gastos importados desde XML SRI ────────────────────────────
+    // Para evitar duplicar la importación de un mismo XML cuando TODO el contenido
+    // va como gasto (sin crear compra). También trazar el origen.
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN clave_acceso TEXT", []);
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN numero_factura_xml TEXT", []);
+    let _ = conn.execute("ALTER TABLE gastos ADD COLUMN proveedor_id INTEGER", []);
+    // UNIQUE INDEX parcial sobre clave_acceso del gasto — bloquea reimportación XML
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_gastos_clave_acceso_unique
+         ON gastos(clave_acceso) WHERE clave_acceso IS NOT NULL AND clave_acceso != ''",
+        [],
+    );
+
     // ─── v2.5.31: One-shot migration — recalcular CXC con retenciones ────────
     // Las versiones anteriores registraban retenciones recibidas en
     // `retenciones_recibidas` pero NO actualizaban `cuentas_por_cobrar.saldo`.
