@@ -299,12 +299,43 @@ pub async fn emitir_factura_sri(
             },
         ).map_err(|e| format!("Venta no encontrada: {}", e))?;
 
-        if venta.tipo_documento != "FACTURA" {
-            return Err("Solo se pueden emitir facturas electronicas".to_string());
+        // v2.5.33: permitir promover NOTA_VENTA → FACTURA al emitir SRI.
+        // Antes bloqueaba si tipo_documento != "FACTURA" — esto impedía que
+        // negocios RIMPE Popular (que por default emiten NV) facturaran
+        // voluntariamente desde la lista de ventas o la pantalla post-venta.
+        //
+        // Ahora: si la venta es NOTA_VENTA y se intenta emitir SRI, se
+        // convierte a FACTURA en sitio (UPDATE atómico). Si la emisión SRI
+        // falla más adelante, queda como FACTURA con estado PENDIENTE — el
+        // usuario puede reintentar con el mismo botón.
+        if venta.tipo_documento != "FACTURA" && venta.tipo_documento != "NOTA_VENTA" {
+            return Err(format!("Tipo de documento '{}' no soporta emisión SRI", venta.tipo_documento));
         }
 
         if venta.estado_sri == "AUTORIZADA" {
             return Err("Esta factura ya fue autorizada por el SRI".to_string());
+        }
+
+        let mut venta = venta;
+        if venta.tipo_documento == "NOTA_VENTA" {
+            // Promover a FACTURA. La venta mantiene su `numero` (NV-XXX) como
+            // identificador interno, pero ahora es factura electrónica.
+            // estado_sri pasa de NO_APLICA / NULL a PENDIENTE para que el
+            // flujo siguiente lo trate como factura nueva.
+            conn.execute(
+                "UPDATE ventas SET tipo_documento = 'FACTURA',
+                                   estado_sri = 'PENDIENTE',
+                                   updated_at = datetime('now','localtime')
+                 WHERE id = ?1 AND tipo_documento = 'NOTA_VENTA'",
+                rusqlite::params![venta_id],
+            ).map_err(|e| format!("Error promoviendo NV a Factura: {}", e))?;
+            eprintln!("[SRI] Venta {} ({}) promovida de NOTA_VENTA a FACTURA", venta_id, venta.numero);
+            // Reset en memoria: primera emisión (no reenvío)
+            venta.tipo_documento = "FACTURA".to_string();
+            venta.estado_sri = "PENDIENTE".to_string();
+            venta.clave_acceso_previa = None;
+            venta.xml_firmado_previo = None;
+            venta.numero_factura = None;
         }
 
         // Leer detalles

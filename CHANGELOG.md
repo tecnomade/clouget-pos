@@ -6,6 +6,40 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.33 — 2026-05-22 📄 Emitir factura SRI desde notas de venta (RIMPE Popular voluntario)
+
+### 🆕 Botón "Emitir SRI" ahora aparece también en Notas de Venta
+
+**Antes:** El botón "SRI" / "Autorizar SRI" solo se mostraba para ventas con `tipo_documento = FACTURA`. Negocios RIMPE Popular (que por default emiten Notas de Venta) no podían facturar voluntariamente desde las pantallas de Ventas o pantalla post-venta — el botón simplemente no existía.
+
+**Ahora:** si tienes certificado SRI cargado y módulo activo, el botón aparece también para Notas de Venta. Al hacer click, la NV se **promueve a Factura electrónica** y se envía al SRI para autorización.
+
+### Cambios
+
+**Backend (`sri.rs` `emitir_factura_sri`):**
+- Acepta `tipo_documento = NOTA_VENTA` (antes solo FACTURA)
+- Si la venta es NV, hace `UPDATE` atómico convirtiéndola a FACTURA + `estado_sri = PENDIENTE` antes de generar el XML
+- Si la emisión al SRI falla, la venta queda como FACTURA PENDIENTE → el usuario puede reintentar con el mismo botón
+- La venta mantiene su `numero` interno (NV-XXX); cuando se autoriza, el SRI le asigna su propio `numero_factura` (001-001-XXXXX)
+
+**Frontend `VentasDia.tsx`:**
+- Botón "SRI" ahora visible para NV si `sri_certificado_cargado = "1"` y `sri_modulo_activo = "1"`
+- Confirmación previa: "¿Convertir esta nota de venta en factura electrónica?"
+- Tooltip explicativo del comportamiento
+
+**Frontend `PuntoVenta.tsx` (pantalla post-venta OK):**
+- Botón "Emitir Factura SRI" entre "Ver Ticket" y "Nueva Venta" si la venta no está autorizada y hay SRI activo
+- Texto del botón cambia: "Autorizar SRI" para FACTURA existente, "Emitir Factura SRI" para NV
+- Mismo flujo de confirmación + email opcional al cliente
+
+### Útil para
+
+- **RIMPE Popular voluntario:** emiten NV por default pero ocasionalmente piden factura
+- **Reintento manual:** facturas que el SRI rechazó por temas temporales
+- **Backoffice:** convertir ventas del día anterior cuando un cliente pide factura a posteriori
+
+---
+
 ## v2.5.32 — 2026-05-22 🐛 Bugs reportados de Compras (BETA testing)
 
 Fixes encontrados durante testing de v2.5.30 (compras renovadas):

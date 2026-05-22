@@ -1289,11 +1289,23 @@ export default function PuntoVenta() {
                   {ticketUsarPdf ? "Ver Ticket" : "Imprimir Ticket"}
                 </button>
 
-                {/* Botón Autorizar SRI - solo si es factura, SRI activo, y aún no autorizada */}
-                {ventaCompletada.venta.tipo_documento === "FACTURA" && sriModuloActivo && !esFacturaAutorizada && !emitiendo && (
+                {/* Botón Autorizar SRI - v2.5.33: ahora tambien para NOTA_VENTA si hay
+                    SRI activo. Al click, las NV se promueven a Factura electronica.
+                    Util para RIMPE Popular u otros regimenes que emiten NV por default. */}
+                {sriModuloActivo && !esFacturaAutorizada && !emitiendo && ventaCompletada.venta.estado_sri !== "AUTORIZADA" && (
+                  ventaCompletada.venta.tipo_documento === "FACTURA"
+                  || ventaCompletada.venta.tipo_documento === "NOTA_VENTA"
+                ) && (
                   <button className="btn btn-outline btn-lg" style={{ color: "var(--color-primary)", borderColor: "var(--color-primary)" }}
+                    title={ventaCompletada.venta.tipo_documento === "NOTA_VENTA"
+                      ? "Convertir esta nota de venta en factura electronica autorizada por el SRI"
+                      : "Enviar la factura al SRI para autorizacion"}
                     onClick={async () => {
                       if (!ventaCompletada.venta.id) return;
+                      // Si es NV, confirmar la conversion
+                      if (ventaCompletada.venta.tipo_documento === "NOTA_VENTA") {
+                        if (!confirm("¿Convertir esta nota de venta en factura electronica y enviarla al SRI? La venta cambiara de tipo Nota de Venta a Factura.")) return;
+                      }
                       // Si no tiene email y no es consumidor final, pedir email primero
                       if (clienteSeleccionado && clienteSeleccionado.id !== 1 && !clienteSeleccionado.email?.trim()) {
                         setMostrarModalEmail(true);
@@ -1307,7 +1319,7 @@ export default function PuntoVenta() {
                           toastExito("Factura autorizada por el SRI");
                           setVentaCompletada(prev => prev ? {
                             ...prev,
-                            venta: { ...prev.venta, estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
+                            venta: { ...prev.venta, tipo_documento: "FACTURA", estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
                           } : prev);
                           window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
                           // Auto-enviar email
@@ -1325,7 +1337,7 @@ export default function PuntoVenta() {
                         setEmitiendo(false);
                       }
                     }}>
-                    Autorizar SRI
+                    {ventaCompletada.venta.tipo_documento === "NOTA_VENTA" ? "Emitir Factura SRI" : "Autorizar SRI"}
                   </button>
                 )}
 

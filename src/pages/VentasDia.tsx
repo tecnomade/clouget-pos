@@ -82,6 +82,9 @@ export default function VentasDia() {
   // Filtrar solo ventas de la sesion de caja actualmente abierta (si hay una)
   const [soloSesionActual, setSoloSesionActual] = useState(false);
   const [cajaActualId, setCajaActualId] = useState<number | null>(null);
+  // v2.5.33: detectar si hay certificado SRI cargado para mostrar boton SRI
+  // tambien en notas de venta (RIMPE Popular puede facturar voluntariamente)
+  const [certificadoSriCargado, setCertificadoSriCargado] = useState(false);
 
   const abrirDetalle = async (ventaId: number) => {
     try {
@@ -208,7 +211,11 @@ export default function VentasDia() {
     return tipoOk && sesionOk;
   });
   useEffect(() => {
-    obtenerConfig().then((cfg) => setTicketUsarPdf(cfg.ticket_usar_pdf === "1")).catch(() => {});
+    obtenerConfig().then((cfg) => {
+      setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
+      // v2.5.33: si hay certificado cargado, habilitar boton SRI en NV tambien
+      setCertificadoSriCargado(cfg.sri_certificado_cargado === "1" && cfg.sri_modulo_activo === "1");
+    }).catch(() => {});
   }, []);
 
   // Cargar notas de crédito cuando se selecciona la pestaña NC
@@ -708,14 +715,27 @@ export default function VentasDia() {
                       <td className="text-right font-bold">${v.total.toFixed(2)}</td>
                       <td>
                         <div className="flex gap-1">
-                          {v.tipo_documento === "FACTURA" && (v.estado_sri === "PENDIENTE" || v.estado_sri === "RECHAZADA") && (
+                          {/* v2.5.33: mostrar boton SRI tambien para NOTA_VENTA si hay certificado cargado.
+                              Al hacer click, la NV se promueve a FACTURA y se emite al SRI. RIMPE Popular y
+                              otros regimenes que emiten NV por default pueden facturar voluntariamente desde aqui. */}
+                          {(
+                            (v.tipo_documento === "FACTURA" && (v.estado_sri === "PENDIENTE" || v.estado_sri === "RECHAZADA"))
+                            || (v.tipo_documento === "NOTA_VENTA" && certificadoSriCargado && v.estado !== "ANULADA")
+                          ) && (
                             <button className="btn btn-outline" style={{
                               padding: "2px 6px", fontSize: 10,
                               color: "var(--color-primary)", borderColor: "rgba(59, 130, 246, 0.3)",
                             }}
+                              title={v.tipo_documento === "NOTA_VENTA"
+                                ? "Convertir esta nota de venta en factura electronica autorizada por el SRI"
+                                : "Reenviar al SRI"}
                               disabled={reintentandoSri === v.id}
                               onClick={async () => {
                                 if (!v.id) return;
+                                // Si la venta es NV, confirmar conversion a factura
+                                if (v.tipo_documento === "NOTA_VENTA") {
+                                  if (!confirm(`¿Convertir la nota de venta ${v.numero} en factura electronica y enviarla al SRI?\n\nLa venta cambiara de tipo Nota de Venta a Factura. Esta accion no se puede deshacer.`)) return;
+                                }
                                 // Si la venta es a credito o mixto, preguntar forma de pago para SRI/RIDE
                                 const esCreditoOMixto = v.forma_pago?.toUpperCase() === "CREDITO"
                                   || v.forma_pago?.toUpperCase() === "MIXTO";
