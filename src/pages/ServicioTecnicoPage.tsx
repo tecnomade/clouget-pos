@@ -24,6 +24,9 @@ import SeccionItemsAbonosOrden from "../components/SeccionItemsAbonosOrden";
 import { stCancelarOrden, listarCuentasBanco } from "../services/api";
 import type { TotalOrden, AbonoServicio, PagoOrden } from "../services/api";
 import type { CuentaBanco } from "../types";
+// v2.5.36: post-cobro con SRI + retenciones
+import { obtenerVenta, emitirFacturaSri, enviarNotificacionSri } from "../services/api";
+import ModalRetenciones from "../components/ModalRetenciones";
 
 const ESTADOS = ["RECIBIDO", "DIAGNOSTICANDO", "EN_REPARACION", "ESPERANDO_REPUESTOS", "LISTO", "ENTREGADO"];
 // v2.4.22: estados "cerrados" — no permiten cambiar a otro estado porque
@@ -142,6 +145,12 @@ export default function ServicioTecnicoPage() {
   const [bancosCobro, setBancosCobro] = useState<CuentaBanco[]>([]);
   // Pago mixto en cobro: lista de pagos (forma + monto + banco/ref opcionales)
   const [cobroPagos, setCobroPagos] = useState<PagoOrden[]>([{ forma_pago: "EFECTIVO", monto: 0 }]);
+  // v2.5.36: post-cobro — permite emitir Factura SRI / aplicar retenciones a la venta recién creada
+  const [postCobro, setPostCobro] = useState<{ ventaId: number; numero: string; total: number; subtotal: number; iva: number; clienteEsConsumidorFinal: boolean } | null>(null);
+  const [postCobroEmitiendo, setPostCobroEmitiendo] = useState(false);
+  const [postCobroEstadoSri, setPostCobroEstadoSri] = useState<string | null>(null);
+  const [postCobroMostrarRet, setPostCobroMostrarRet] = useState(false);
+  const [certificadoSriCargado, setCertificadoSriCargado] = useState(false);
   // v2.4.14: cobranza parcial — permitir entregar el equipo aunque no se cubra todo el saldo
   const [permitirSaldoPendiente, setPermitirSaldoPendiente] = useState(false);
 
@@ -184,6 +193,8 @@ export default function ServicioTecnicoPage() {
       const acc = (cfg.st_accesorios_comunes || "").split(",")
         .map((s: string) => s.trim()).filter((s: string) => s.length > 0);
       setAccesoriosComunes(acc);
+      // v2.5.36: detectar si hay certificado SRI cargado para mostrar boton "Emitir Factura SRI"
+      setCertificadoSriCargado(cfg.sri_certificado_cargado === "1" && cfg.sri_modulo_activo === "1");
     }).catch(() => {});
     // v2.4.10 ST-2.5: cargar catálogo de tipos al montar
     stListarTiposEquipo().then(setStTipos).catch(() => {});
@@ -330,15 +341,17 @@ export default function ServicioTecnicoPage() {
       if (kmSalida && detalle) {
         await actualizarOrdenServicio({ ...detalle, equipo_kilometraje_salida: kmSalida });
       }
+      // v2.5.36: capturar venta_id retornada para permitir Emitir Factura SRI + retenciones
+      let ventaIdCreada: number = 0;
       if (pagosFiltrados.length > 0) {
-        await cobrarOrdenServicio(detalleId, {
+        ventaIdCreada = await cobrarOrdenServicio(detalleId, {
           pagos: pagosFiltrados,
           garantiaDias: garantia,
           permitirSaldoPendiente: permitirSaldoPendiente,
         });
       } else {
         const monto = parseFloat(cobroMontoRecibido) || 0;
-        await cobrarOrdenServicio(detalleId, {
+        ventaIdCreada = await cobrarOrdenServicio(detalleId, {
           formaPago: cobroFormaPago,
           montoRecibido: monto,
           itemsRepuestos: cobroRepuestos,
@@ -349,6 +362,27 @@ export default function ServicioTecnicoPage() {
       const msgGarantia = garantia > 0 ? ` · 🛡 Garantía ${garantia} días` : "";
       const msgSaldo = saldoPend > 0.001 && permitirSaldoPendiente ? ` · 💰 Saldo pendiente $${saldoPend.toFixed(2)}` : "";
       toastExito(`Entregado${msgGarantia}${msgSaldo}`);
+
+      // v2.5.36: si hay certificado SRI cargado, abrir post-cobro con opciones de SRI/retenciones
+      if (ventaIdCreada && certificadoSriCargado) {
+        try {
+          const ventaCompleta = await obtenerVenta(ventaIdCreada);
+          const cliId = ventaCompleta.venta.cliente_id;
+          setPostCobro({
+            ventaId: ventaIdCreada,
+            numero: ventaCompleta.venta.numero,
+            total: ventaCompleta.venta.total,
+            subtotal: ventaCompleta.venta.subtotal_con_iva + ventaCompleta.venta.subtotal_sin_iva,
+            iva: ventaCompleta.venta.iva,
+            clienteEsConsumidorFinal: cliId === 1,
+          });
+          setPostCobroEstadoSri(null);
+          setMostrarCobrar(false);
+          // Mantener detalleId/detalle hasta que cierre post-cobro para refrescar
+          return;
+        } catch { /* si falla solo cierra modal normal */ }
+      }
+
       setMostrarCobrar(false);
       setDetalleId(null);
       setDetalle(null);
@@ -1447,6 +1481,112 @@ export default function ServicioTecnicoPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* v2.5.36: Modal post-cobro — opciones de Emitir Factura SRI / Retenciones */}
+      {postCobro && (
+        <div className="modal-overlay" onClick={() => {
+          if (postCobroEmitiendo) return;
+          setPostCobro(null); setDetalleId(null); setDetalle(null); cargar();
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h3>Cobro completado</h3>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center", padding: 20 }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+              <h3 style={{ marginBottom: 4 }}>
+                {postCobroEstadoSri === "AUTORIZADA"
+                  ? "Factura electrónica autorizada"
+                  : `Nota de Venta ${postCobro.numero}`}
+              </h3>
+              <div className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                Total: ${postCobro.total.toFixed(2)}
+              </div>
+
+              {postCobroEstadoSri === "AUTORIZADA" && (
+                <div style={{
+                  padding: "8px 12px", borderRadius: 6, marginBottom: 12,
+                  background: "rgba(34,197,94,0.15)", color: "var(--color-success)", fontSize: 12,
+                }}>
+                  ✓ Factura electrónica autorizada por el SRI
+                </div>
+              )}
+              {postCobroEmitiendo && (
+                <div style={{ color: "var(--color-primary)", fontSize: 13, marginBottom: 12 }}>
+                  Enviando al SRI...
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+                {/* Emitir Factura SRI — solo si no autorizada todavía y hay certificado */}
+                {certificadoSriCargado && postCobroEstadoSri !== "AUTORIZADA" && !postCobroEmitiendo && (
+                  <button className="btn btn-primary"
+                    title={postCobro.clienteEsConsumidorFinal
+                      ? "El cliente es Consumidor Final — el SRI puede rechazar facturas grandes a CF"
+                      : "Convertir esta nota de venta en factura electrónica y autorizarla en el SRI"}
+                    onClick={async () => {
+                      if (!confirm(`¿Emitir factura electrónica para ${postCobro.numero}?\n\nSi el SRI autoriza, la nota de venta pasa a ser Factura.`)) return;
+                      setPostCobroEmitiendo(true);
+                      try {
+                        const res = await emitirFacturaSri(postCobro.ventaId);
+                        if (res.exito) {
+                          toastExito("Factura autorizada por el SRI");
+                          setPostCobroEstadoSri("AUTORIZADA");
+                          window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+                          // Auto-enviar email si tiene
+                          try {
+                            const v = await obtenerVenta(postCobro.ventaId);
+                            const cli: any = (v as any).cliente;
+                            if (cli?.email?.trim()) {
+                              await enviarNotificacionSri(postCobro.ventaId, cli.email);
+                              toastExito(`Email enviado a ${cli.email}`);
+                            }
+                          } catch { /* ignore */ }
+                        } else {
+                          toastError(`SRI: ${res.mensaje}`);
+                        }
+                      } catch (err) {
+                        toastError("Error SRI: " + err);
+                      } finally {
+                        setPostCobroEmitiendo(false);
+                      }
+                    }}>
+                    📄 Emitir Factura SRI
+                  </button>
+                )}
+
+                {/* Aplicar retenciones — solo si ya hay factura autorizada (cliente puede retener IVA/Renta) */}
+                {postCobroEstadoSri === "AUTORIZADA" && (
+                  <button className="btn btn-outline" style={{ color: "#a855f7", borderColor: "#a855f7" }}
+                    onClick={() => setPostCobroMostrarRet(true)}>
+                    📋 Aplicar Retenciones SRI
+                  </button>
+                )}
+
+                <button className="btn btn-outline" onClick={() => {
+                  setPostCobro(null); setDetalleId(null); setDetalle(null); cargar();
+                }}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v2.5.36: Modal de retenciones para la venta recién creada en ST */}
+      {postCobro && postCobroMostrarRet && (
+        <ModalRetenciones
+          ventaId={postCobro.ventaId}
+          numero={postCobro.numero}
+          subtotal={postCobro.subtotal}
+          iva={postCobro.iva}
+          total={postCobro.total}
+          totalCobrado={postCobro.total}
+          onClose={() => setPostCobroMostrarRet(false)}
+          onChanged={() => { /* refresh no necesario aquí */ }}
+        />
       )}
 
       {/* v2.4.9 ST-2: modales nuevos */}

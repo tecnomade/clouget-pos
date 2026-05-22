@@ -16,6 +16,7 @@ import {
   listarCategorias,
   listarCuentasBanco,
   registrarDevolucionCompra,
+  previewXmlNcCompra,
 } from "../services/api";
 import type { CuentaBanco } from "../types";
 import type { PreviewXmlCompra, ItemMapeadoXml } from "../services/api";
@@ -61,7 +62,7 @@ function fechaHace(dias: number): string {
 }
 
 export default function ComprasPage() {
-  const { toastExito, toastError } = useToast();
+  const { toastExito, toastError, toastWarning } = useToast();
   const [tab, setTab] = useState<"compras" | "proveedores">("compras");
 
   // ==================== PROVEEDORES TAB ====================
@@ -154,6 +155,14 @@ export default function ComprasPage() {
   const [devolverMotivo, setDevolverMotivo] = useState("");
   const [devolverObs, setDevolverObs] = useState("");
   const [devolverProcesando, setDevolverProcesando] = useState(false);
+  // v2.5.35: datos del comprobante NC del proveedor (opcional)
+  const [ncNumero, setNcNumero] = useState("");
+  const [ncClaveAcceso, setNcClaveAcceso] = useState("");
+  const [ncFechaEmision, setNcFechaEmision] = useState("");
+  const [ncEstadoSri, setNcEstadoSri] = useState<string | null>(null); // AUTORIZADA si vino de XML
+  const [ncXmlFirmado, setNcXmlFirmado] = useState<string | null>(null);
+  const [ncImportandoXml, setNcImportandoXml] = useState(false);
+  const [ncDatosVisibles, setNcDatosVisibles] = useState(false); // colapsado por default
 
   // Form compra
   const [proveedoresLista, setProveedoresLista] = useState<Proveedor[]>([]);
@@ -586,8 +595,55 @@ export default function ComprasPage() {
       setDevolverItems(init);
       setDevolverMotivo("");
       setDevolverObs("");
+      // v2.5.35: limpiar campos NC
+      setNcNumero("");
+      setNcClaveAcceso("");
+      setNcFechaEmision("");
+      setNcEstadoSri(null);
+      setNcXmlFirmado(null);
+      setNcDatosVisibles(false);
     } catch (err) {
       toastError("Error cargando compra: " + err);
+    }
+  };
+
+  // v2.5.35: importar XML de NC del proveedor — autorrellena campos NC
+  // (usa el patrón input type=file invisible, igual que importar XML de compra)
+  const ncXmlFileRef = useRef<HTMLInputElement>(null);
+  const handleImportarXmlNcChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setNcImportandoXml(true);
+      const texto = await file.text();
+      const preview = await previewXmlNcCompra(texto);
+
+      // Si el preview encontró una compra distinta a la que estamos devolviendo, advertir
+      if (preview.compra_id_sugerida && devolverCompra?.compra.id && preview.compra_id_sugerida !== devolverCompra.compra.id) {
+        if (!confirm(
+          `La NC del XML referencia la compra ${preview.compra_numero_sugerida} pero estás devolviendo la compra ${devolverCompra.compra.numero}.\n\n¿Continuar de todos modos?`,
+        )) return;
+      }
+      if (!preview.compra_id_sugerida) {
+        toastWarning("La factura referenciada en el XML no se encontró en compras registradas. Revisa que coincida.");
+      }
+
+      setNcNumero(preview.numero);
+      setNcClaveAcceso(preview.clave_acceso);
+      setNcFechaEmision(preview.fecha_emision);
+      setNcEstadoSri(preview.autorizada ? "AUTORIZADA" : null);
+      setNcXmlFirmado(preview.xml_firmado);
+      setNcDatosVisibles(true);
+      // Si vino motivo, prellenar
+      if (preview.razon_modificacion && !devolverMotivo) {
+        setDevolverMotivo(preview.razon_modificacion);
+      }
+      toastExito(`NC ${preview.numero}${preview.autorizada ? " (AUTORIZADA)" : ""} importada del XML`);
+    } catch (err) {
+      toastError("Error importando XML NC: " + err);
+    } finally {
+      setNcImportandoXml(false);
+      if (ncXmlFileRef.current) ncXmlFileRef.current.value = "";
     }
   };
 
@@ -611,6 +667,12 @@ export default function ComprasPage() {
         motivo: devolverMotivo.trim() || null,
         observacion: devolverObs.trim() || null,
         devolver_todo: devolverTodo,
+        // v2.5.35: datos del comprobante NC del proveedor (si fueron ingresados)
+        numero_nc: ncNumero.trim() || null,
+        clave_acceso_nc: ncClaveAcceso.trim() || null,
+        fecha_emision_nc: ncFechaEmision.trim() || null,
+        estado_sri_nc: ncEstadoSri,
+        xml_nc_firmado: ncXmlFirmado,
       });
       toastExito(`Devolucion ${res.numero} registrada por $${res.total.toFixed(2)}${res.es_total ? " (TOTAL)" : ""}`);
       setDevolverCompra(null);
@@ -1816,6 +1878,88 @@ export default function ComprasPage() {
                   const det = devolverCompra.detalles.find(d => d.id === Number(id));
                   return s + (det ? c * det.precio_unitario : 0);
                 }, 0).toFixed(2)}
+              </div>
+
+              {/* v2.5.35: Sección colapsable con datos del comprobante NC del proveedor */}
+              <div style={{ marginTop: 16, border: "1px solid var(--color-border)", borderRadius: 6, padding: 10 }}>
+                <div
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+                  onClick={() => setNcDatosVisibles(v => !v)}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    {ncDatosVisibles ? "▼" : "▶"} Comprobante NC del proveedor (opcional)
+                    {ncEstadoSri === "AUTORIZADA" && (
+                      <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "rgba(34,197,94,0.15)", color: "var(--color-success)", fontWeight: 600 }}>
+                        AUTORIZADA SRI
+                      </span>
+                    )}
+                    {ncNumero && !ncEstadoSri && (
+                      <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 6px", borderRadius: 3, background: "var(--color-surface-alt)", color: "var(--color-text-secondary)", fontWeight: 600 }}>
+                        manual: {ncNumero}
+                      </span>
+                    )}
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <input ref={ncXmlFileRef} type="file" accept=".xml"
+                      style={{ display: "none" }}
+                      onChange={handleImportarXmlNcChange} />
+                    <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 8px" }}
+                      disabled={ncImportandoXml}
+                      onClick={() => ncXmlFileRef.current?.click()}>
+                      {ncImportandoXml ? "Importando..." : "📄 Importar XML NC"}
+                    </button>
+                  </div>
+                </div>
+                {ncDatosVisibles && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                      Si el proveedor te entregó una Nota de Crédito SRI (autorizada o no), ingresa los datos del comprobante para trazabilidad fiscal. Es opcional.
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div>
+                        <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>
+                          Número NC (estab-pto-sec)
+                        </label>
+                        <input className="input" placeholder="001-001-000000123"
+                          value={ncNumero} onChange={(e) => setNcNumero(e.target.value)}
+                          style={{ fontSize: 12 }} />
+                      </div>
+                      <div>
+                        <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>
+                          Fecha emisión NC
+                        </label>
+                        <input className="input" type="date"
+                          value={ncFechaEmision.slice(0, 10)}
+                          onChange={(e) => setNcFechaEmision(e.target.value)}
+                          style={{ fontSize: 12 }} />
+                      </div>
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>
+                          Clave de acceso SRI (49 dígitos)
+                        </label>
+                        <input className="input" placeholder="49 dígitos del comprobante autorizado"
+                          value={ncClaveAcceso}
+                          onChange={(e) => setNcClaveAcceso(e.target.value.replace(/\s/g, ""))}
+                          maxLength={49}
+                          style={{ fontSize: 11, fontFamily: "monospace" }} />
+                        {ncClaveAcceso.length > 0 && ncClaveAcceso.length !== 49 && (
+                          <div style={{ fontSize: 10, color: "var(--color-warning)", marginTop: 2 }}>
+                            La clave debe tener exactamente 49 dígitos ({ncClaveAcceso.length} actualmente)
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {(ncNumero || ncClaveAcceso) && (
+                      <button className="btn btn-outline" style={{ marginTop: 8, fontSize: 11, padding: "4px 10px" }}
+                        onClick={() => {
+                          setNcNumero(""); setNcClaveAcceso(""); setNcFechaEmision("");
+                          setNcEstadoSri(null); setNcXmlFirmado(null);
+                        }}>
+                        Limpiar datos NC
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="card-footer flex justify-end gap-2" style={{ padding: 12, borderTop: "1px solid var(--color-border)" }}>

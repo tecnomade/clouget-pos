@@ -1479,6 +1479,24 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_compra_dev_det_dev ON compra_devolucion_detalles(devolucion_id);
     ");
 
+    // ─── v2.5.35: Datos del comprobante NC del proveedor ─────────────────────
+    // La tabla compra_devoluciones almacena devoluciones internas. Ahora también
+    // puede guardar los datos del comprobante NC SRI que el proveedor emitió
+    // (importado por XML o ingresado manualmente). Esto da trazabilidad fiscal
+    // completa: la devolución contable está respaldada por el documento del SRI.
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN numero_nc TEXT", []);
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN clave_acceso_nc TEXT", []);
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN estado_sri_nc TEXT", []);
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN fecha_emision_nc TEXT", []);
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN xml_nc_firmado TEXT", []);
+    // UNIQUE INDEX parcial sobre clave_acceso_nc (49 dig SRI) — evita re-importar misma NC
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_compra_dev_clave_nc_unique
+         ON compra_devoluciones(clave_acceso_nc)
+         WHERE clave_acceso_nc IS NOT NULL AND clave_acceso_nc != ''",
+        [],
+    );
+
     // ─── v2.5.32: Gastos importados desde XML SRI ────────────────────────────
     // Para evitar duplicar la importación de un mismo XML cuando TODO el contenido
     // va como gasto (sin crear compra). También trazar el origen.

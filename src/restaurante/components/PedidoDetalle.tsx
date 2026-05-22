@@ -31,7 +31,9 @@ import {
   marcarSubcuentaCobrada,
   productoDivisionId,
 } from "../api";
-import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig } from "../../services/api";
+import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig, emitirFacturaSri, enviarNotificacionSri } from "../../services/api";
+// v2.5.36: post-cobro con SRI + retenciones
+import ModalRetenciones from "../../components/ModalRetenciones";
 // v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
 // Ya está implementado en POS normal (v2.3.63). Aquí se agregará en próxima
 // iteración para mantener este release manejable.
@@ -62,6 +64,12 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const [mostrarDividir, setMostrarDividir] = useState(false);
   /** sub-cuenta que se está cobrando (modal de forma de pago) */
   const [cobrandoSubcuenta, setCobrandoSubcuenta] = useState<Subcuenta | null>(null);
+  // v2.5.36: post-cobro — permite emitir Factura SRI y aplicar retenciones a la venta de restaurante
+  const [postCobro, setPostCobro] = useState<{ ventaId: number; numero: string; total: number; subtotal: number; iva: number } | null>(null);
+  const [postCobroEmitiendo, setPostCobroEmitiendo] = useState(false);
+  const [postCobroEstadoSri, setPostCobroEstadoSri] = useState<string | null>(null);
+  const [postCobroMostrarRet, setPostCobroMostrarRet] = useState(false);
+  const [certificadoSriCargado, setCertificadoSriCargado] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -82,6 +90,13 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // v2.5.36: detectar si hay certificado SRI cargado para mostrar boton "Emitir Factura SRI"
+  useEffect(() => {
+    obtenerConfig().then((cfg: any) => {
+      setCertificadoSriCargado(cfg.sri_certificado_cargado === "1" && cfg.sri_modulo_activo === "1");
+    }).catch(() => {});
+  }, []);
 
   // ─── Acciones ──────────────────────────────────────────────────────────
 
@@ -371,6 +386,21 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
       // Vincular venta con pedido y liberar mesa
       await cerrarPedido(pedidoId, resultado.venta.id!);
       toastExito(`Venta ${resultado.venta.numero} registrada · Mesa liberada`);
+
+      // v2.5.36: si hay certificado SRI cargado, abrir post-cobro con opciones SRI/retenciones
+      if (resultado.venta.id && certificadoSriCargado) {
+        setPostCobro({
+          ventaId: resultado.venta.id,
+          numero: resultado.venta.numero,
+          total: resultado.venta.total,
+          subtotal: resultado.venta.subtotal_con_iva + resultado.venta.subtotal_sin_iva,
+          iva: resultado.venta.iva,
+        });
+        setPostCobroEstadoSri(null);
+        // NO cerrar aún — el modal post-cobro maneja el cierre
+        return;
+      }
+
       onCerrar(true);
     } catch (err: any) {
       toastError("No se pudo cobrar: " + (err?.message || err));
@@ -923,6 +953,114 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
             handleCobrarSubcuenta(sub, forma, fiado, extras);
           }}
           onCancelar={() => setCobrandoSubcuenta(null)}
+        />
+      )}
+
+      {/* v2.5.36: Modal post-cobro restaurante — emitir Factura SRI / aplicar retenciones */}
+      {postCobro && (
+        <div className="modal-overlay" onClick={() => {
+          if (postCobroEmitiendo) return;
+          setPostCobro(null);
+          onCerrar(true);
+        }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h3>Mesa cobrada</h3>
+            </div>
+            <div className="modal-body" style={{ textAlign: "center", padding: 20 }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+              <h3 style={{ marginBottom: 4 }}>
+                {postCobroEstadoSri === "AUTORIZADA"
+                  ? "Factura electrónica autorizada"
+                  : `Nota de Venta ${postCobro.numero}`}
+              </h3>
+              <div className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                Total: ${postCobro.total.toFixed(2)}
+              </div>
+
+              {postCobroEstadoSri === "AUTORIZADA" && (
+                <div style={{
+                  padding: "8px 12px", borderRadius: 6, marginBottom: 12,
+                  background: "rgba(34,197,94,0.15)", color: "var(--color-success)", fontSize: 12,
+                }}>
+                  ✓ Factura electrónica autorizada por el SRI
+                </div>
+              )}
+              {postCobroEmitiendo && (
+                <div style={{ color: "var(--color-primary)", fontSize: 13, marginBottom: 12 }}>
+                  Enviando al SRI...
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16 }}>
+                {certificadoSriCargado && postCobroEstadoSri !== "AUTORIZADA" && !postCobroEmitiendo && (
+                  <button className="btn btn-primary"
+                    onClick={async () => {
+                      if (!confirm(`¿Emitir factura electrónica para ${postCobro.numero}?\n\nSi el SRI autoriza, la nota de venta pasa a ser Factura.`)) return;
+                      setPostCobroEmitiendo(true);
+                      try {
+                        const res = await emitirFacturaSri(postCobro.ventaId);
+                        if (res.exito) {
+                          toastExito("Factura autorizada por el SRI");
+                          setPostCobroEstadoSri("AUTORIZADA");
+                          window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+                        } else {
+                          toastError(`SRI: ${res.mensaje}`);
+                        }
+                      } catch (err) {
+                        toastError("Error SRI: " + err);
+                      } finally {
+                        setPostCobroEmitiendo(false);
+                      }
+                    }}>
+                    📄 Emitir Factura SRI
+                  </button>
+                )}
+
+                {postCobroEstadoSri === "AUTORIZADA" && (
+                  <button className="btn btn-outline" style={{ color: "#a855f7", borderColor: "#a855f7" }}
+                    onClick={() => setPostCobroMostrarRet(true)}>
+                    📋 Aplicar Retenciones SRI
+                  </button>
+                )}
+
+                {postCobroEstadoSri === "AUTORIZADA" && (
+                  <button className="btn btn-outline"
+                    onClick={async () => {
+                      try {
+                        // intentar enviar al email del cliente si tiene
+                        await enviarNotificacionSri(postCobro.ventaId, "");
+                        toastExito("Email enviado");
+                      } catch (err: any) {
+                        toastError("No se pudo enviar email: " + (err?.message || err));
+                      }
+                    }}>
+                    ✉ Notificar al cliente
+                  </button>
+                )}
+
+                <button className="btn btn-outline" onClick={() => {
+                  setPostCobro(null);
+                  onCerrar(true);
+                }}>
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v2.5.36: Modal de retenciones para la venta de restaurante */}
+      {postCobro && postCobroMostrarRet && (
+        <ModalRetenciones
+          ventaId={postCobro.ventaId}
+          numero={postCobro.numero}
+          subtotal={postCobro.subtotal}
+          iva={postCobro.iva}
+          total={postCobro.total}
+          totalCobrado={postCobro.total}
+          onClose={() => setPostCobroMostrarRet(false)}
         />
       )}
     </>

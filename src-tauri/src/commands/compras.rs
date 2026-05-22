@@ -1380,6 +1380,20 @@ pub struct NuevaDevolucionCompra {
     /// Si true, ignora items y devuelve TODO lo restante (devolucion total)
     #[serde(default)]
     pub devolver_todo: bool,
+    /// v2.5.35: datos del comprobante NC del proveedor (opcionales)
+    /// Si el proveedor emitio NC SRI, se ingresan aqui (manualmente o via XML import)
+    #[serde(default)]
+    pub numero_nc: Option<String>,
+    #[serde(default)]
+    pub clave_acceso_nc: Option<String>,
+    #[serde(default)]
+    pub fecha_emision_nc: Option<String>,
+    /// Si la NC fue importada desde XML SRI autorizado, set "AUTORIZADA". Sino None.
+    #[serde(default)]
+    pub estado_sri_nc: Option<String>,
+    /// XML firmado original (solo si vino de import_xml_nc_compra)
+    #[serde(default)]
+    pub xml_nc_firmado: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -1395,6 +1409,11 @@ pub struct DevolucionCompraInfo {
     pub es_total: bool,
     pub usuario: Option<String>,
     pub observacion: Option<String>,
+    /// v2.5.35: datos del comprobante NC del proveedor (si vinieron)
+    pub numero_nc: Option<String>,
+    pub clave_acceso_nc: Option<String>,
+    pub estado_sri_nc: Option<String>,
+    pub fecha_emision_nc: Option<String>,
 }
 
 #[tauri::command]
@@ -1463,6 +1482,25 @@ pub fn registrar_devolucion_compra(
         return Err("No hay items para devolver".into());
     }
 
+    // v2.5.35: validar clave_acceso_nc unica si viene (para evitar re-importar la misma NC)
+    let clave_nc_norm: Option<String> = input.clave_acceso_nc.as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(ca) = &clave_nc_norm {
+        if ca.len() == 49 {
+            let exists: Option<i64> = conn.query_row(
+                "SELECT id FROM compra_devoluciones WHERE clave_acceso_nc = ?1 LIMIT 1",
+                rusqlite::params![ca], |r| r.get(0),
+            ).ok();
+            if exists.is_some() {
+                return Err(format!(
+                    "Esta NC ya fue importada anteriormente (clave SRI: {}…)",
+                    &ca[..20]
+                ));
+            }
+        }
+    }
+
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
     // numero de devolucion: ND-CMP-XXXXXXXXX-N (N = consecutivo por compra)
@@ -1495,11 +1533,28 @@ pub fn registrar_devolucion_compra(
         (dev_total_actual + total_dev) >= (compra_sub + compra_iva) - 0.01
     };
 
+    // v2.5.35: incluir datos del comprobante NC del proveedor si vinieron
+    let fecha_nc_norm = input.fecha_emision_nc.as_ref()
+        .and_then(|f| convertir_fecha_sri(f));
     tx.execute(
-        "INSERT INTO compra_devoluciones (compra_id, numero, motivo, subtotal, iva, total, es_total, usuario, observacion)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![input.compra_id, numero_dev, input.motivo, subtotal_dev, iva_dev, total_dev, es_total_calculado as i64, usuario, input.observacion],
-    ).map_err(|e| e.to_string())?;
+        "INSERT INTO compra_devoluciones (compra_id, numero, motivo, subtotal, iva, total, es_total, usuario, observacion,
+                                          numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc, xml_nc_firmado)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        rusqlite::params![
+            input.compra_id, numero_dev, input.motivo, subtotal_dev, iva_dev, total_dev,
+            es_total_calculado as i64, usuario, input.observacion,
+            input.numero_nc.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+            clave_nc_norm,
+            input.estado_sri_nc,
+            fecha_nc_norm,
+            input.xml_nc_firmado,
+        ],
+    ).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("UNIQUE") && msg.contains("clave_acceso_nc") {
+            "Esta NC ya fue registrada anteriormente (clave SRI duplicada)".to_string()
+        } else { msg }
+    })?;
     let dev_id = tx.last_insert_rowid();
 
     // Insertar detalles, actualizar cantidad_devuelta en compra_detalles, revertir stock, kardex
@@ -1563,7 +1618,8 @@ pub fn listar_devoluciones_compra(
 ) -> Result<Vec<DevolucionCompraInfo>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, compra_id, numero, fecha, motivo, subtotal, iva, total, es_total, usuario, observacion
+        "SELECT id, compra_id, numero, fecha, motivo, subtotal, iva, total, es_total, usuario, observacion,
+                numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc
          FROM compra_devoluciones WHERE compra_id = ?1 ORDER BY id DESC"
     ).map_err(|e| e.to_string())?;
     let lista = stmt.query_map(rusqlite::params![compra_id], |r| {
@@ -1579,8 +1635,318 @@ pub fn listar_devoluciones_compra(
             es_total: r.get::<_, i64>(8)? != 0,
             usuario: r.get(9).ok(),
             observacion: r.get(10).ok(),
+            numero_nc: r.get(11).ok(),
+            clave_acceso_nc: r.get(12).ok(),
+            estado_sri_nc: r.get(13).ok(),
+            fecha_emision_nc: r.get(14).ok(),
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
     Ok(lista)
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v2.5.35: Importar XML de NC del proveedor
+// ════════════════════════════════════════════════════════════════════
+//
+// Parsea un XML SRI de tipo notaCredito (con o sin wrapping <autorizacion>)
+// y extrae los datos clave: numero (estab-pto-sec), clave_acceso, fecha emision,
+// motivo, total, autorizado o no, y la clave_acceso de la factura referenciada
+// (numDocModificado). Esto permite auto-rellenar la sección "Comprobante NC" del
+// modal de devolución de compra en frontend.
+//
+// El detalle (items) se mantiene seleccionable manualmente desde la compra
+// original — la NC del proveedor referencia esa compra y no siempre coincide
+// 1:1 con sus items.
+
+#[derive(serde::Serialize, Debug)]
+pub struct PreviewXmlNcCompra {
+    /// Número visible (estab-pto-sec, ej: 001-001-000000123)
+    pub numero: String,
+    pub clave_acceso: String,
+    pub fecha_emision: String,
+    /// Clave de la factura referenciada (numDocModificado). Permite ubicar
+    /// la compra original en BD automáticamente.
+    pub clave_factura_referenciada: Option<String>,
+    /// Número de la factura referenciada (estab-pto-sec del codDocModificado)
+    pub numero_factura_referenciada: Option<String>,
+    pub razon_modificacion: Option<String>,
+    pub total: f64,
+    pub autorizada: bool,
+    pub proveedor_ruc: String,
+    pub proveedor_nombre: String,
+    /// Si encontramos compra en BD con esa clave de factura referenciada
+    pub compra_id_sugerida: Option<i64>,
+    pub compra_numero_sugerida: Option<String>,
+    /// XML firmado original (para guardar en compra_devoluciones.xml_nc_firmado)
+    pub xml_firmado: String,
+}
+
+#[tauri::command]
+pub fn preview_xml_nc_compra(
+    db: State<Database>,
+    xml_contenido: String,
+) -> Result<PreviewXmlNcCompra, String> {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    // 1. Detectar si XML viene envuelto en <autorizacion><estado>AUTORIZADO</estado>
+    let estado_sri_xml: Option<String> = {
+        let bytes = xml_contenido.as_bytes();
+        let mut reader = Reader::from_reader(bytes);
+        reader.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+        let mut inside_estado = false;
+        let mut inside_autorizacion = false;
+        let mut estado_text = String::new();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "autorizacion" { inside_autorizacion = true; }
+                    if name == "estado" && inside_autorizacion { inside_estado = true; }
+                }
+                Ok(Event::End(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if name == "estado" { inside_estado = false; }
+                    if name == "autorizacion" { inside_autorizacion = false; }
+                }
+                Ok(Event::Text(t)) => {
+                    if inside_estado {
+                        if let Ok(s) = t.unescape() { estado_text.push_str(&s); }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+        let t = estado_text.trim().to_string();
+        if t.is_empty() { None } else { Some(t) }
+    };
+    let autorizada = estado_sri_xml.as_deref().map(|s| s.eq_ignore_ascii_case("AUTORIZADO")).unwrap_or(false);
+
+    // 2. Desenrollar <comprobante><![CDATA[<notaCredito>...]]></comprobante> si aplica
+    let xml_real: String = {
+        let bytes = xml_contenido.as_bytes();
+        let mut reader = Reader::from_reader(bytes);
+        reader.config_mut().trim_text(true);
+        let mut buf = Vec::new();
+        let mut inside_comprobante = false;
+        let mut found: Option<String> = None;
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    if e.name().as_ref() == b"comprobante" { inside_comprobante = true; }
+                }
+                Ok(Event::End(e)) => {
+                    if e.name().as_ref() == b"comprobante" { inside_comprobante = false; }
+                }
+                Ok(Event::CData(c)) => {
+                    if inside_comprobante {
+                        if let Ok(s) = std::str::from_utf8(c.as_ref()) {
+                            found = Some(s.to_string());
+                            break;
+                        }
+                    }
+                }
+                Ok(Event::Text(t)) => {
+                    if inside_comprobante {
+                        if let Ok(s) = t.unescape() {
+                            let trimmed = s.trim();
+                            if trimmed.starts_with("<notaCredito") || trimmed.starts_with("<?xml") {
+                                found = Some(trimmed.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+        found.unwrap_or(xml_contenido.clone())
+    };
+
+    // 3. Parsear la <notaCredito>
+    let mut reader = Reader::from_str(&xml_real);
+    reader.config_mut().trim_text(true);
+    let mut buf = Vec::new();
+    let mut path_stack: Vec<String> = Vec::new();
+    let mut current_text = String::new();
+
+    let mut ruc = String::new();
+    let mut razon_social = String::new();
+    let mut estab = String::new();
+    let mut pto_emi = String::new();
+    let mut secuencial = String::new();
+    let mut fecha_emision = String::new();
+    let mut clave_acceso = String::new();
+    let mut cod_doc_mod = String::new();
+    let mut num_doc_mod = String::new();
+    let mut razon_modificacion = String::new();
+    let mut clave_factura_ref: Option<String> = None;
+    let mut total_nc = 0.0_f64;
+
+    let mut tipo_doc_es_nc = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                path_stack.push(name);
+                current_text.clear();
+            }
+            Ok(Event::Text(t)) => {
+                if let Ok(s) = t.unescape() { current_text.push_str(&s); }
+            }
+            Ok(Event::End(e)) => {
+                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let path = path_stack.join("/");
+                let v = current_text.trim().to_string();
+
+                match name.as_str() {
+                    "ruc" if path.contains("infoTributaria") => ruc = v.clone(),
+                    "razonSocial" if path.contains("infoTributaria") => razon_social = v.clone(),
+                    "estab" if path.contains("infoTributaria") => estab = v.clone(),
+                    "ptoEmi" if path.contains("infoTributaria") => pto_emi = v.clone(),
+                    "secuencial" if path.contains("infoTributaria") => secuencial = v.clone(),
+                    "claveAcceso" if path.contains("infoTributaria") => clave_acceso = v.clone(),
+                    "codDoc" if path.contains("infoTributaria") => {
+                        if v == "04" { tipo_doc_es_nc = true; }
+                    }
+                    "fechaEmision" if path.contains("infoNotaCredito") => fecha_emision = v.clone(),
+                    "codDocModificado" if path.contains("infoNotaCredito") => cod_doc_mod = v.clone(),
+                    "numDocModificado" if path.contains("infoNotaCredito") => num_doc_mod = v.clone(),
+                    "motivo" if path.contains("infoNotaCredito") => razon_modificacion = v.clone(),
+                    "valorModificacion" if path.contains("infoNotaCredito") => {
+                        total_nc = v.parse::<f64>().unwrap_or(0.0);
+                    }
+                    _ => {}
+                }
+
+                if !path_stack.is_empty() { path_stack.pop(); }
+                current_text.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    if !tipo_doc_es_nc && clave_acceso.is_empty() {
+        return Err("El XML no parece ser una Nota de Crédito SRI (codDoc != 04)".into());
+    }
+
+    // numDocModificado en SRI viene formato "001-001-000000123"
+    // No tenemos la claveAcceso de la factura modificada en infoNotaCredito directamente,
+    // pero a veces viene en un nodo separado <docModificado><claveAcceso>...
+    // De cualquier forma, podemos buscar la compra por numero_factura o por la clave de acceso
+    // de la factura referenciada si la incluyeron.
+
+    // Buscar la clave_acceso de la factura modificada (algunos XML la traen)
+    {
+        let mut r2 = Reader::from_str(&xml_real);
+        r2.config_mut().trim_text(true);
+        let mut buf2 = Vec::new();
+        let mut path: Vec<String> = Vec::new();
+        let mut text = String::new();
+        loop {
+            match r2.read_event_into(&mut buf2) {
+                Ok(Event::Start(e)) => {
+                    path.push(String::from_utf8_lossy(e.name().as_ref()).to_string());
+                    text.clear();
+                }
+                Ok(Event::Text(t)) => {
+                    if let Ok(s) = t.unescape() { text.push_str(&s); }
+                }
+                Ok(Event::End(e)) => {
+                    let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let full = path.join("/");
+                    if name == "claveAccesoModificado" || (name == "claveAcceso" && full.contains("docModificado")) {
+                        let t = text.trim();
+                        if t.len() == 49 { clave_factura_ref = Some(t.to_string()); }
+                    }
+                    if !path.is_empty() { path.pop(); }
+                    text.clear();
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => break,
+                _ => {}
+            }
+            buf2.clear();
+        }
+    }
+
+    // 4. Sugerir compra de la BD: primero por clave de acceso de factura modificada,
+    //    si no por (proveedor_ruc + numero_factura = num_doc_mod)
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let (compra_id_sugerida, compra_numero_sugerida): (Option<i64>, Option<String>) = {
+        let mut id: Option<i64> = None;
+        let mut nro: Option<String> = None;
+        if let Some(ca) = &clave_factura_ref {
+            if let Ok((cid, cnum)) = conn.query_row(
+                "SELECT id, numero FROM compras WHERE clave_acceso = ?1 AND estado != 'ANULADA' LIMIT 1",
+                rusqlite::params![ca], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            ) {
+                id = Some(cid); nro = Some(cnum);
+            }
+        }
+        if id.is_none() && !num_doc_mod.is_empty() && !ruc.is_empty() {
+            // buscar por (proveedor.ruc + numero_factura)
+            if let Ok((cid, cnum)) = conn.query_row(
+                "SELECT c.id, c.numero FROM compras c
+                 JOIN proveedores p ON c.proveedor_id = p.id
+                 WHERE p.ruc = ?1 AND c.numero_factura = ?2 AND c.estado != 'ANULADA' LIMIT 1",
+                rusqlite::params![ruc, num_doc_mod],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            ) { id = Some(cid); nro = Some(cnum); }
+        }
+        (id, nro)
+    };
+
+    // 5. Verificar que la NC no haya sido importada antes
+    if !clave_acceso.is_empty() {
+        let existe: Option<i64> = conn.query_row(
+            "SELECT id FROM compra_devoluciones WHERE clave_acceso_nc = ?1 LIMIT 1",
+            rusqlite::params![&clave_acceso], |r| r.get(0),
+        ).ok();
+        if existe.is_some() {
+            return Err(format!(
+                "Esta NC ya fue importada anteriormente (clave SRI: {}…)",
+                &clave_acceso[..20.min(clave_acceso.len())]
+            ));
+        }
+    }
+
+    let numero = if !estab.is_empty() {
+        format!("{}-{}-{}", estab, pto_emi, secuencial)
+    } else { String::new() };
+
+    Ok(PreviewXmlNcCompra {
+        numero,
+        clave_acceso,
+        fecha_emision,
+        clave_factura_referenciada: clave_factura_ref,
+        numero_factura_referenciada: if num_doc_mod.is_empty() { None } else { Some(num_doc_mod) },
+        razon_modificacion: if razon_modificacion.is_empty() { None } else { Some(razon_modificacion) },
+        total: total_nc,
+        autorizada,
+        proveedor_ruc: ruc,
+        proveedor_nombre: razon_social,
+        compra_id_sugerida,
+        compra_numero_sugerida,
+        xml_firmado: xml_contenido,
+    })
+}
+
+// Sufijo: ignorar use unused warning porque cod_doc_mod se setea pero no se lee
+// (lo usaremos en futuras versiones para diferenciar tipos de doc modificados)
+#[allow(dead_code)]
+fn _placeholder_cod_doc_mod() {
+    let _ = "01"; // FACTURA modificada
 }

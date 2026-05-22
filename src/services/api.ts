@@ -1373,6 +1373,12 @@ export interface NuevaDevolucionCompra {
   motivo?: string | null;
   observacion?: string | null;
   devolver_todo?: boolean;
+  // v2.5.35: datos del comprobante NC del proveedor (opcionales)
+  numero_nc?: string | null;
+  clave_acceso_nc?: string | null;
+  fecha_emision_nc?: string | null;
+  estado_sri_nc?: string | null;
+  xml_nc_firmado?: string | null;
 }
 export interface DevolucionCompraInfo {
   id: number;
@@ -1386,6 +1392,11 @@ export interface DevolucionCompraInfo {
   es_total: boolean;
   usuario?: string | null;
   observacion?: string | null;
+  // v2.5.35
+  numero_nc?: string | null;
+  clave_acceso_nc?: string | null;
+  estado_sri_nc?: string | null;
+  fecha_emision_nc?: string | null;
 }
 export const registrarDevolucionCompra = (input: NuevaDevolucionCompra) =>
   smartInvoke<{ devolucion_id: number; numero: string; subtotal: number; iva: number; total: number; es_total: boolean; items: number }>(
@@ -1393,6 +1404,26 @@ export const registrarDevolucionCompra = (input: NuevaDevolucionCompra) =>
   );
 export const listarDevolucionesCompra = (compraId: number) =>
   smartInvoke<DevolucionCompraInfo[]>("listar_devoluciones_compra", { compraId });
+
+// v2.5.35: Preview XML de NC del proveedor — extrae datos para auto-rellenar
+// el modal de devolución de compra
+export interface PreviewXmlNcCompra {
+  numero: string;
+  clave_acceso: string;
+  fecha_emision: string;
+  clave_factura_referenciada?: string | null;
+  numero_factura_referenciada?: string | null;
+  razon_modificacion?: string | null;
+  total: number;
+  autorizada: boolean;
+  proveedor_ruc: string;
+  proveedor_nombre: string;
+  compra_id_sugerida?: number | null;
+  compra_numero_sugerida?: string | null;
+  xml_firmado: string;
+}
+export const previewXmlNcCompra = (xmlContenido: string) =>
+  smartInvoke<PreviewXmlNcCompra>("preview_xml_nc_compra", { xmlContenido });
 
 // --- Importacion XML Factura Electronica (SRI) ---
 

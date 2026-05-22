@@ -6,6 +6,60 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.35 — 2026-05-22 📄 NC de proveedor + Integración SRI/retenciones en ST y Restaurante
+
+### 📄 NC de proveedor en compras (manual o importando XML SRI)
+
+Cuando le devuelves mercadería a un proveedor y él emite una Nota de Crédito SRI, ahora puedes registrar el comprobante junto con la devolución para trazabilidad fiscal completa.
+
+**Schema:**
+- Extendida `compra_devoluciones` con `numero_nc`, `clave_acceso_nc`, `estado_sri_nc`, `fecha_emision_nc`, `xml_nc_firmado`
+- UNIQUE INDEX parcial sobre `clave_acceso_nc` — evita re-importar la misma NC
+
+**Backend:**
+- `registrar_devolucion_compra` ahora acepta opcionalmente los campos NC del proveedor
+- Nuevo comando `preview_xml_nc_compra(xml)` que:
+  - Detecta si el XML tiene autorización SRI envuelto (`<autorizacion><estado>AUTORIZADO`)
+  - Desenrolla el `<comprobante><![CDATA[<notaCredito>...]]>` si aplica
+  - Extrae número, clave de acceso, fecha, motivo, total
+  - Lee la clave de la factura modificada y busca la compra correspondiente en BD
+  - Valida que la NC no haya sido importada antes (UNIQUE de clave_acceso_nc)
+- Validación: clave NC duplicada bloqueada en BD + frontend
+
+**Frontend `ComprasPage` modal "Devolver compra":**
+- Nueva sección colapsable **"Comprobante NC del proveedor (opcional)"**
+- Botón **📄 Importar XML NC** que rellena automáticamente los campos del comprobante
+- Si la NC del XML referencia una compra distinta a la que estás devolviendo, te advierte
+- Si la NC autoriza pre-cargas el motivo del XML (`razonModificacion`)
+- Badge `AUTORIZADA SRI` (verde) o `manual: NUMERO` (gris) en el header
+- Validación visual: clave de acceso debe tener exactamente 49 dígitos
+
+### 🔧 Integración SRI / retenciones en Servicio Técnico
+
+Hasta v2.5.34, las ventas creadas al cobrar una orden de servicio no tenían forma directa de emitirse como Factura SRI ni de aplicar retenciones — había que ir a VentasDia a posteriori. Ahora:
+
+- **Tras cobrar una orden ST**, si hay certificado SRI cargado, aparece un **modal post-cobro** con:
+  - 📄 **Emitir Factura SRI**: convierte la NV recién creada en Factura electrónica
+  - 📋 **Aplicar Retenciones SRI**: abre el modal de retenciones reusable (mismo de VentasDia/CuentasPage)
+  - Estado visual igual al de PuntoVenta post-venta: badge AUTORIZADA verde + email auto-enviado al cliente
+- Si no hay certificado, el flujo es transparente (cierra el modal sin cambios)
+
+### 🍽 Integración SRI / retenciones en Restaurante
+
+Mismo flujo en `PedidoDetalle.tsx` (mesa cobrada):
+- Tras cobrar la mesa (que ya cierra el pedido y libera la mesa), si hay certificado SRI cargado, aparece el modal post-cobro
+- Permite emitir Factura SRI / aplicar retenciones / notificar al cliente
+- Si no hay certificado, comportamiento sin cambios (cierra modal directo)
+
+### Resultado
+
+Los **3 puntos de venta** (POS, Servicio Técnico, Restaurante) tienen ahora la misma UX consistente:
+1. Cobras → se genera NV
+2. Si hay SRI activo → ofrece "Emitir Factura SRI" + retenciones
+3. Si autoriza → toda la trazabilidad fiscal queda registrada (Factura + clave_acceso + retenciones cruzando CXC)
+
+---
+
 ## v2.5.34 — 2026-05-22 📐 Convención semántica: NV ↔ Factura solo cuando SRI autoriza
 
 ### 🎯 Regla clara
