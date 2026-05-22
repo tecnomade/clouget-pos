@@ -896,11 +896,12 @@ export default function PuntoVenta() {
           if (res.exito) {
             ventaAutorizada = true;
             toastExito("Factura autorizada por el SRI");
-            // Actualizar ventaCompletada con numero_factura y estado SRI
+            // v2.5.34: convención semántica — autorizado → FACTURA
             setVentaCompletada(prev => prev ? {
               ...prev,
               venta: {
                 ...prev.venta,
+                tipo_documento: "FACTURA",
                 estado_sri: "AUTORIZADA",
                 numero_factura: res.numero_factura,
                 clave_acceso: res.clave_acceso,
@@ -1208,9 +1209,10 @@ export default function PuntoVenta() {
           setResultadoSri(res);
           if (res.exito) {
             toastExito("Factura autorizada por el SRI");
+            // v2.5.34: convención semántica — promover a FACTURA en estado local
             setVentaCompletada(prev => prev ? {
               ...prev,
-              venta: { ...prev.venta, estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
+              venta: { ...prev.venta, tipo_documento: "FACTURA", estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
             } : prev);
             window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
             // Enviar notificación con el email recién guardado
@@ -1239,18 +1241,28 @@ export default function PuntoVenta() {
 
   // Vista de venta completada
   if (ventaCompletada) {
-    const esFacturaAutorizada = resultadoSri?.exito && ventaCompletada.venta.tipo_documento === "FACTURA";
+    // v2.5.34: convención semántica — Factura = tipo_documento FACTURA (siempre AUTORIZADA)
+    const esFacturaAutorizada = ventaCompletada.venta.tipo_documento === "FACTURA"
+      && ventaCompletada.venta.estado_sri === "AUTORIZADA";
+    const tituloDoc = esFacturaAutorizada
+      ? `Factura ${ventaCompletada.venta.numero_factura || ventaCompletada.venta.numero}`
+      : `Nota de Venta ${ventaCompletada.venta.numero}`;
 
     return (
       <>
         <div className="page-header">
-          <h2>Venta Completada</h2>
+          <h2>{esFacturaAutorizada ? "Factura Emitida" : "Venta Completada"}</h2>
         </div>
         <div className="page-body">
           <div className="card" style={{ maxWidth: 500, margin: "0 auto", textAlign: "center" }}>
             <div className="card-body">
               <div style={{ fontSize: 48, marginBottom: 16 }}>OK</div>
-              <h3>Venta #{ventaCompletada.venta.numero}{ventaCompletada.venta.numero_factura && ` | Factura ${ventaCompletada.venta.numero_factura}`}</h3>
+              <h3>{tituloDoc}</h3>
+              {esFacturaAutorizada && (
+                <div className="text-secondary" style={{ fontSize: 11, marginTop: 4 }}>
+                  Interna: {ventaCompletada.venta.numero}
+                </div>
+              )}
               <p className="text-secondary mt-2">
                 {ventaCompletada.detalles.length} producto(s)
                 {ventaCompletada.cliente_nombre && ` - ${ventaCompletada.cliente_nombre}`}
@@ -1265,7 +1277,7 @@ export default function PuntoVenta() {
               )}
               {emitiendo && (
                 <div style={{ marginTop: 12, color: "var(--color-primary)", fontSize: 13 }}>
-                  Enviando factura al SRI...
+                  Enviando al SRI...
                 </div>
               )}
               {esFacturaAutorizada && (
@@ -1273,7 +1285,16 @@ export default function PuntoVenta() {
                   marginTop: 12, padding: "8px 12px", borderRadius: "var(--radius)",
                   background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)", fontSize: 13,
                 }}>
-                  Factura autorizada por el SRI
+                  ✓ Factura electrónica autorizada por el SRI
+                </div>
+              )}
+              {/* v2.5.34: si intentamos emitir pero SRI rechazó/quedó pendiente, sigue siendo NV */}
+              {!esFacturaAutorizada && resultadoSri && !resultadoSri.exito && (
+                <div style={{
+                  marginTop: 12, padding: "8px 12px", borderRadius: "var(--radius)",
+                  background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)", fontSize: 12,
+                }}>
+                  ⚠ El SRI no autorizó. Sigue siendo Nota de Venta. Puedes reintentar con el botón "Emitir Factura SRI".
                 </div>
               )}
               <div className="flex gap-2 mt-4" style={{ justifyContent: "center", flexWrap: "wrap" }}>

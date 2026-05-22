@@ -679,6 +679,10 @@ export default function VentasDia() {
                           : "-"}
                       </td>
                       <td>
+                        {/* v2.5.34: convención semántica clara
+                            - tipo_documento=FACTURA → SIEMPRE AUTORIZADA (azul/verde)
+                            - tipo_documento=NOTA_VENTA → puede tener estado_sri PENDIENTE/RECHAZADA
+                              o ningún intento SRI (NO_APLICA/NULL) */}
                         <span style={{
                           fontSize: 10,
                           padding: "2px 6px",
@@ -686,28 +690,37 @@ export default function VentasDia() {
                           fontWeight: 600,
                           background: v.tipo_documento === "FACTURA" ? "rgba(59, 130, 246, 0.15)" : "var(--color-surface-alt)",
                           color: v.tipo_documento === "FACTURA" ? "var(--color-primary)" : "var(--color-text-secondary)",
-                        }}>
+                        }}
+                        title={v.tipo_documento === "FACTURA" ? "Factura electrónica autorizada por el SRI" : "Nota de Venta (sin autorización SRI)"}>
                           {v.tipo_documento === "FACTURA" ? "FAC" : "NV"}
                         </span>
-                        {v.tipo_documento === "FACTURA" && (
-                          <span title={v.clave_acceso ? `Clave: ${v.clave_acceso}` : undefined}
+                        {v.tipo_documento === "FACTURA" && v.clave_acceso && (
+                          <span title={`Clave: ${v.clave_acceso}`}
                             style={{
-                            fontSize: 9,
-                            padding: "1px 4px",
-                            borderRadius: 3,
-                            marginLeft: 4,
-                            fontWeight: 600,
-                            cursor: v.clave_acceso ? "help" : undefined,
-                            background: v.estado_sri === "AUTORIZADA" ? "rgba(34, 197, 94, 0.15)"
-                              : v.estado_sri === "PENDIENTE" ? "rgba(245, 158, 11, 0.15)"
-                              : v.estado_sri === "RECHAZADA" ? "rgba(239, 68, 68, 0.1)"
-                              : "var(--color-surface-alt)",
-                            color: v.estado_sri === "AUTORIZADA" ? "var(--color-success)"
-                              : v.estado_sri === "PENDIENTE" ? "var(--color-warning)"
-                              : v.estado_sri === "RECHAZADA" ? "var(--color-danger)"
-                              : "var(--color-text-secondary)",
-                          }}>
-                            {v.estado_sri}
+                              fontSize: 9, padding: "1px 4px", borderRadius: 3, marginLeft: 4, fontWeight: 600,
+                              cursor: "help",
+                              background: "rgba(34, 197, 94, 0.15)", color: "var(--color-success)",
+                            }}>
+                            AUTORIZADA
+                          </span>
+                        )}
+                        {/* v2.5.34: NV con intento SRI fallido o en proceso */}
+                        {v.tipo_documento === "NOTA_VENTA" && v.estado_sri === "PENDIENTE" && (
+                          <span title="Esperando respuesta del SRI — usar botón SRI para reintentar"
+                            style={{
+                              fontSize: 9, padding: "1px 4px", borderRadius: 3, marginLeft: 4, fontWeight: 600,
+                              background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)",
+                            }}>
+                            SRI PENDIENTE
+                          </span>
+                        )}
+                        {v.tipo_documento === "NOTA_VENTA" && v.estado_sri === "RECHAZADA" && (
+                          <span title="SRI rechazó la emisión — revisa los datos del cliente"
+                            style={{
+                              fontSize: 9, padding: "1px 4px", borderRadius: 3, marginLeft: 4, fontWeight: 600,
+                              background: "rgba(239, 68, 68, 0.15)", color: "var(--color-danger)",
+                            }}>
+                            SRI RECHAZADA
                           </span>
                         )}
                       </td>
@@ -715,26 +728,30 @@ export default function VentasDia() {
                       <td className="text-right font-bold">${v.total.toFixed(2)}</td>
                       <td>
                         <div className="flex gap-1">
-                          {/* v2.5.33: mostrar boton SRI tambien para NOTA_VENTA si hay certificado cargado.
-                              Al hacer click, la NV se promueve a FACTURA y se emite al SRI. RIMPE Popular y
-                              otros regimenes que emiten NV por default pueden facturar voluntariamente desde aqui. */}
+                          {/* v2.5.34: convención semántica — botón SRI solo aparece para NOTA_VENTA
+                              que no esté autorizada todavía. Una vez SRI autorice, la venta pasa
+                              automáticamente a tipo_documento=FACTURA y el botón desaparece.
+                              Compatibilidad: si por bug histórico hay FACTURA en estado PENDIENTE/RECHAZADA,
+                              también mostramos el botón para que se pueda reintentar. */}
                           {(
-                            (v.tipo_documento === "FACTURA" && (v.estado_sri === "PENDIENTE" || v.estado_sri === "RECHAZADA"))
-                            || (v.tipo_documento === "NOTA_VENTA" && certificadoSriCargado && v.estado !== "ANULADA")
+                            (v.tipo_documento === "NOTA_VENTA" && certificadoSriCargado && v.estado !== "ANULADA")
+                            || (v.tipo_documento === "FACTURA" && (v.estado_sri === "PENDIENTE" || v.estado_sri === "RECHAZADA"))
                           ) && (
                             <button className="btn btn-outline" style={{
                               padding: "2px 6px", fontSize: 10,
                               color: "var(--color-primary)", borderColor: "rgba(59, 130, 246, 0.3)",
                             }}
-                              title={v.tipo_documento === "NOTA_VENTA"
-                                ? "Convertir esta nota de venta en factura electronica autorizada por el SRI"
-                                : "Reenviar al SRI"}
+                              title={v.estado_sri === "RECHAZADA"
+                                ? "Reintentar emisión SRI — el SRI rechazó la última vez"
+                                : v.estado_sri === "PENDIENTE"
+                                ? "Reintentar consulta SRI — emisión en proceso"
+                                : "Emitir factura electrónica autorizada por el SRI"}
                               disabled={reintentandoSri === v.id}
                               onClick={async () => {
                                 if (!v.id) return;
-                                // Si la venta es NV, confirmar conversion a factura
-                                if (v.tipo_documento === "NOTA_VENTA") {
-                                  if (!confirm(`¿Convertir la nota de venta ${v.numero} en factura electronica y enviarla al SRI?\n\nLa venta cambiara de tipo Nota de Venta a Factura. Esta accion no se puede deshacer.`)) return;
+                                // Confirmar solo si es la primera emisión (no reintento)
+                                if (v.tipo_documento === "NOTA_VENTA" && (!v.estado_sri || v.estado_sri === "NO_APLICA")) {
+                                  if (!confirm(`¿Emitir factura electrónica para la nota de venta ${v.numero}?\n\nSi el SRI autoriza, la venta pasará a ser Factura. Si rechaza, seguirá como Nota de Venta y podrás reintentar.`)) return;
                                 }
                                 // Si la venta es a credito o mixto, preguntar forma de pago para SRI/RIDE
                                 const esCreditoOMixto = v.forma_pago?.toUpperCase() === "CREDITO"

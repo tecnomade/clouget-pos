@@ -6,6 +6,37 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.34 — 2026-05-22 📐 Convención semántica: NV ↔ Factura solo cuando SRI autoriza
+
+### 🎯 Regla clara
+
+A partir de esta versión, los nombres reflejan estrictamente el estado fiscal:
+
+| Tipo | Significado |
+|------|-------------|
+| **Nota de Venta** | Venta SIN autorizar por SRI. Tiene secuencia interna `NV-XXXXXXXXX`. Puede tener intentos SRI fallidos (PENDIENTE/RECHAZADA) y sigue siendo NV hasta que el SRI autorice. |
+| **Factura** | Venta YA AUTORIZADA por SRI. Mantiene su secuencia interna NV original + recibe la secuencia oficial SRI `001-001-XXXXXXXXX`. |
+
+### Cambios respecto a v2.5.33
+
+**Backend `sri.rs::emitir_factura_sri`:**
+- Antes (v2.5.33): al hacer click "Emitir Factura SRI", la NV se promovía a FACTURA inmediatamente con estado PENDIENTE; si el SRI rechazaba quedaba como FACTURA RECHAZADA (confusión: aparecía como factura sin estarlo realmente).
+- Ahora (v2.5.34): la venta permanece como NOTA_VENTA durante todo el proceso de emisión. **Solo cuando el SRI devuelve AUTORIZADA**, en el mismo UPDATE final, se promueve `tipo_documento='FACTURA'`. Si SRI rechaza o queda pendiente, sigue siendo NV con `estado_sri='RECHAZADA'`/`'PENDIENTE'` y se puede reintentar.
+
+**Frontend `VentasDia`:**
+- Badge "FAC" solo aparece para ventas realmente autorizadas (siempre con badge verde "AUTORIZADA" al lado)
+- Las NV con intentos SRI fallidos muestran badges adicionales: "SRI PENDIENTE" (amarillo) o "SRI RECHAZADA" (rojo)
+- Confirmación del botón SRI distingue primer intento vs reintento
+
+**Frontend `PuntoVenta` pantalla post-venta:**
+- Título cambia dinámicamente: "Factura Emitida" si autorizó, "Venta Completada" si quedó como NV
+- Header del card muestra "Factura 001-001-XXX" + número interno NV abajo, o solo "Nota de Venta NV-XXX"
+- Si SRI rechaza, banner amarillo: "⚠ El SRI no autorizó. Sigue siendo Nota de Venta. Puedes reintentar."
+- Botón texto: "Autorizar SRI" para reintento, "Emitir Factura SRI" para primer intento
+- `setVentaCompletada` ahora incluye `tipo_documento: "FACTURA"` cuando autoriza (antes solo cambiaba `estado_sri`)
+
+---
+
 ## v2.5.33 — 2026-05-22 📄 Emitir factura SRI desde notas de venta (RIMPE Popular voluntario)
 
 ### 🆕 Botón "Emitir SRI" ahora aparece también en Notas de Venta

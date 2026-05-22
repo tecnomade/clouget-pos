@@ -299,43 +299,21 @@ pub async fn emitir_factura_sri(
             },
         ).map_err(|e| format!("Venta no encontrada: {}", e))?;
 
-        // v2.5.33: permitir promover NOTA_VENTA → FACTURA al emitir SRI.
-        // Antes bloqueaba si tipo_documento != "FACTURA" — esto impedía que
-        // negocios RIMPE Popular (que por default emiten NV) facturaran
-        // voluntariamente desde la lista de ventas o la pantalla post-venta.
+        // v2.5.34: convención semántica clara
+        //   - tipo_documento = NOTA_VENTA → venta sin autorizar (puede estar PENDIENTE/RECHAZADA SRI)
+        //   - tipo_documento = FACTURA → venta YA AUTORIZADA por SRI (es el único estado donde es factura)
         //
-        // Ahora: si la venta es NOTA_VENTA y se intenta emitir SRI, se
-        // convierte a FACTURA en sitio (UPDATE atómico). Si la emisión SRI
-        // falla más adelante, queda como FACTURA con estado PENDIENTE — el
-        // usuario puede reintentar con el mismo botón.
+        // Permitimos emitir desde NOTA_VENTA, pero NO promovemos a FACTURA hasta
+        // que el SRI confirme AUTORIZADA. Mientras tanto la venta sigue siendo
+        // NOTA_VENTA con estado_sri reflejando el progreso (PENDIENTE/RECHAZADA).
+        // El UPDATE a tipo_documento='FACTURA' se hace al final, dentro del bloque
+        // que actualiza estado_sri='AUTORIZADA' (más abajo en esta función).
         if venta.tipo_documento != "FACTURA" && venta.tipo_documento != "NOTA_VENTA" {
             return Err(format!("Tipo de documento '{}' no soporta emisión SRI", venta.tipo_documento));
         }
 
         if venta.estado_sri == "AUTORIZADA" {
-            return Err("Esta factura ya fue autorizada por el SRI".to_string());
-        }
-
-        let mut venta = venta;
-        if venta.tipo_documento == "NOTA_VENTA" {
-            // Promover a FACTURA. La venta mantiene su `numero` (NV-XXX) como
-            // identificador interno, pero ahora es factura electrónica.
-            // estado_sri pasa de NO_APLICA / NULL a PENDIENTE para que el
-            // flujo siguiente lo trate como factura nueva.
-            conn.execute(
-                "UPDATE ventas SET tipo_documento = 'FACTURA',
-                                   estado_sri = 'PENDIENTE',
-                                   updated_at = datetime('now','localtime')
-                 WHERE id = ?1 AND tipo_documento = 'NOTA_VENTA'",
-                rusqlite::params![venta_id],
-            ).map_err(|e| format!("Error promoviendo NV a Factura: {}", e))?;
-            eprintln!("[SRI] Venta {} ({}) promovida de NOTA_VENTA a FACTURA", venta_id, venta.numero);
-            // Reset en memoria: primera emisión (no reenvío)
-            venta.tipo_documento = "FACTURA".to_string();
-            venta.estado_sri = "PENDIENTE".to_string();
-            venta.clave_acceso_previa = None;
-            venta.xml_firmado_previo = None;
-            venta.numero_factura = None;
+            return Err("Esta venta ya fue autorizada por el SRI (es Factura)".to_string());
         }
 
         // Leer detalles
@@ -699,21 +677,45 @@ pub async fn emitir_factura_sri(
             venta_data.numero_factura.clone()
         };
 
-        conn.execute(
-            "UPDATE ventas SET estado_sri = ?1, clave_acceso = ?2,
-             autorizacion_sri = ?3, xml_firmado = ?4, fecha_autorizacion = ?5,
-             numero_factura = ?6
-             WHERE id = ?7",
-            rusqlite::params![
-                nuevo_estado,
-                clave.clone(),
-                resultado_sri.numero_autorizacion,
-                xml_para_guardar,
-                if resultado_sri.exito { resultado_sri.fecha_autorizacion.as_deref() } else { None },
-                nf_para_guardar,
-                venta_id,
-            ],
-        ).map_err(|e| format!("Error actualizando venta: {}", e))?;
+        // v2.5.34: convención semántica — promovemos tipo_documento a 'FACTURA'
+        // SOLO si SRI autorizó. Si quedó PENDIENTE o RECHAZADA, la venta sigue
+        // siendo NOTA_VENTA (con estado_sri reflejando el progreso). Esto evita
+        // que se vea como "factura" sin autorización real.
+        if resultado_sri.exito {
+            conn.execute(
+                "UPDATE ventas SET tipo_documento = 'FACTURA',
+                                   estado_sri = ?1, clave_acceso = ?2,
+                                   autorizacion_sri = ?3, xml_firmado = ?4, fecha_autorizacion = ?5,
+                                   numero_factura = ?6
+                 WHERE id = ?7",
+                rusqlite::params![
+                    nuevo_estado,
+                    clave.clone(),
+                    resultado_sri.numero_autorizacion,
+                    xml_para_guardar,
+                    resultado_sri.fecha_autorizacion.as_deref(),
+                    nf_para_guardar,
+                    venta_id,
+                ],
+            ).map_err(|e| format!("Error actualizando venta: {}", e))?;
+        } else {
+            // PENDIENTE o RECHAZADA — mantener tipo_documento como estaba (NOTA_VENTA)
+            conn.execute(
+                "UPDATE ventas SET estado_sri = ?1, clave_acceso = ?2,
+                                   autorizacion_sri = ?3, xml_firmado = ?4, fecha_autorizacion = ?5,
+                                   numero_factura = ?6
+                 WHERE id = ?7",
+                rusqlite::params![
+                    nuevo_estado,
+                    clave.clone(),
+                    resultado_sri.numero_autorizacion,
+                    xml_para_guardar,
+                    None::<&str>,
+                    nf_para_guardar,
+                    venta_id,
+                ],
+            ).map_err(|e| format!("Error actualizando venta: {}", e))?;
+        }
 
         // Si fue autorizada, incrementar secuencial SRI (solo en primera emision) y contador
         if resultado_sri.exito {
@@ -2252,10 +2254,10 @@ fn emitir_factura_demo(
 
     let fecha_autorizacion = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // Actualizar venta como AUTORIZADA
+    // v2.5.34: promover a FACTURA al autorizar (modo demo igual que producción)
     conn.execute(
-        "UPDATE ventas SET estado_sri = 'AUTORIZADA', clave_acceso = ?1,
-         autorizacion_sri = ?2, numero_factura = ?3, fecha_autorizacion = ?4
+        "UPDATE ventas SET tipo_documento = 'FACTURA', estado_sri = 'AUTORIZADA',
+         clave_acceso = ?1, autorizacion_sri = ?2, numero_factura = ?3, fecha_autorizacion = ?4
          WHERE id = ?5",
         rusqlite::params![clave, clave, numero_factura, fecha_autorizacion, venta_id],
     ).map_err(|e| format!("Error actualizando venta: {}", e))?;
