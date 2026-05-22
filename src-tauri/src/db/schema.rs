@@ -1479,5 +1479,29 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_compra_dev_det_dev ON compra_devolucion_detalles(devolucion_id);
     ");
 
+    // ─── v2.5.31: One-shot migration — recalcular CXC con retenciones ────────
+    // Las versiones anteriores registraban retenciones recibidas en
+    // `retenciones_recibidas` pero NO actualizaban `cuentas_por_cobrar.saldo`.
+    // Esto genera CXC con saldo > 0 que en realidad están saldadas por la retención.
+    // Este UPDATE corrige los registros existentes una sola vez (idempotente: si ya
+    // se ejecutó, el UPDATE no cambia nada porque los saldos ya son correctos).
+    let _ = conn.execute("
+        UPDATE cuentas_por_cobrar
+        SET saldo = MAX(0, monto_total - monto_pagado -
+            COALESCE((SELECT SUM(valor) FROM retenciones_recibidas
+                      WHERE venta_id = cuentas_por_cobrar.venta_id), 0)),
+            estado = CASE
+                WHEN (monto_total - monto_pagado -
+                      COALESCE((SELECT SUM(valor) FROM retenciones_recibidas
+                                WHERE venta_id = cuentas_por_cobrar.venta_id), 0)) <= 0.01
+                THEN 'PAGADA'
+                ELSE estado
+            END,
+            updated_at = datetime('now','localtime')
+        WHERE estado IN ('PENDIENTE', 'PAGADA')
+          AND EXISTS (SELECT 1 FROM retenciones_recibidas
+                      WHERE venta_id = cuentas_por_cobrar.venta_id)
+    ", []);
+
     Ok(())
 }

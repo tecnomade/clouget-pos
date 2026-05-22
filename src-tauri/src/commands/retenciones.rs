@@ -188,7 +188,16 @@ pub fn registrar_retencion(
         ],
     ).map_err(|e| e.to_string())?;
 
-    Ok(conn.last_insert_rowid())
+    let new_id = conn.last_insert_rowid();
+
+    // v2.5.31: cruzar la retención contra la CXC — recalcular saldo + estado.
+    // Si la venta fue al contado (sin CXC) este call es no-op. Si fue a crédito,
+    // el saldo pendiente baja por el valor de la retención y si llega a 0 se marca PAGADA.
+    if let Err(e) = crate::commands::cuentas::recalcular_saldo_cxc(&conn, venta_id) {
+        eprintln!("[registrar_retencion] WARN: no se pudo recalcular saldo CXC: {}", e);
+    }
+
+    Ok(new_id)
 }
 
 // ─── ELIMINAR ─────────────────────────────────────────────────────────────
@@ -199,6 +208,13 @@ pub fn eliminar_retencion(
     retencion_id: i64,
 ) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // v2.5.31: capturar venta_id antes de borrar para recalcular saldo CXC
+    let venta_id: Option<i64> = conn.query_row(
+        "SELECT venta_id FROM retenciones_recibidas WHERE id = ?1",
+        params![retencion_id], |r| r.get(0),
+    ).ok();
+
     let n = conn.execute(
         "DELETE FROM retenciones_recibidas WHERE id = ?1",
         params![retencion_id],
@@ -206,5 +222,14 @@ pub fn eliminar_retencion(
     if n == 0 {
         return Err("Retención no encontrada".to_string());
     }
+
+    // v2.5.31: recalcular saldo CXC — al borrar una retención, el saldo
+    // pendiente sube de nuevo y la cuenta vuelve a PENDIENTE si estaba PAGADA.
+    if let Some(vid) = venta_id {
+        if let Err(e) = crate::commands::cuentas::recalcular_saldo_cxc(&conn, vid) {
+            eprintln!("[eliminar_retencion] WARN: no se pudo recalcular saldo CXC: {}", e);
+        }
+    }
+
     Ok(())
 }

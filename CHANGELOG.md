@@ -6,6 +6,49 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.31 — 2026-05-21 💰 Retenciones SRI ahora cruzan saldo de CXC (bug crítico)
+
+### 🐛 Bug: retenciones recibidas no reducían el saldo pendiente de la factura
+
+Cuando un cliente (agente de retención) paga una factura con retención IVA y/o Renta:
+- Hasta v2.5.30: la retención se registraba en `retenciones_recibidas` pero **`cuentas_por_cobrar.saldo` NO bajaba**
+- Solo la UI calculaba el saldo "real" en vivo restando retenciones
+- Resultado: si registrabas $100 de pago + $5 de retención sobre una factura de $105, la cuenta seguía mostrando $5 pendiente en BD aunque ya estaba saldada
+
+Esto generaba **descuadre contable**, cuentas que parecían PENDIENTE eternamente, y reportes de cobranza con totales inflados.
+
+### Fix
+
+**Nuevo helper backend `recalcular_saldo_cxc(venta_id)`** que aplica la fórmula:
+```
+saldo = monto_total - pagos_confirmados - retenciones_recibidas
+estado = PAGADA si saldo <= 0.01, sino PENDIENTE
+```
+
+Se invoca automáticamente desde:
+- `registrar_retencion` → al agregar una retención, el saldo baja y si queda en 0 → PAGADA
+- `eliminar_retencion` → al borrar una retención (corrección de typo), el saldo sube y vuelve a PENDIENTE
+- `registrar_pago_cuenta` → ahora reusa el helper (antes tenía cálculo inline duplicado)
+- `confirmar_pago_cuenta` → idem, garantiza consistencia al aprobar transferencias
+
+**Migración one-shot al iniciar la app**: recalcula `saldo` y `estado` de TODAS las CXC existentes que tengan retenciones registradas — corrige automáticamente los datos viejos sin necesidad de intervención manual. Idempotente: si ya está correcto no cambia nada.
+
+**Frontend**:
+- `CuentasPage` ahora refresca la lista de pendientes después de cambiar retenciones (si la retención salda 100% del saldo, la cuenta desaparece del listado)
+- Tarjeta "Saldo pendiente" ahora aclara "(ya descontadas retenciones)" cuando hay retenciones aplicadas
+- Indicador especial 🟣 **"✓ Saldado parcial/total por retención"** cuando la cuenta está PAGADA gracias a retenciones aplicadas
+
+### Flujo completo soportado
+
+Ahora puedes:
+1. Emitir factura de $100 (subtotal $86.96 + IVA 15% $13.04)
+2. Cliente paga $96.91 en transferencia
+3. Cliente entrega comprobante de retención: $1.52 (renta 1.75%) + $3.91 (IVA 30%) = $5.43 (al sumar $96.91 + $5.43 = $102.34 vs total $100… ejemplo real depende de los porcentajes pero la lógica es: pago + retenciones = total → saldo $0)
+4. Registras los $96.91 → saldo baja a $3.09
+5. Registras las retenciones → saldo cae a $0 → cuenta marcada PAGADA ✓
+
+---
+
 ## v2.5.30 — 2026-05-21 🛒 Compras: tipo de documento + antiduplicado + devoluciones + kardex + anulación con motivo
 
 Renovación importante del módulo de Compras. Cinco mejoras vinculadas:

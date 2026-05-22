@@ -3,6 +3,60 @@ use crate::models::{CuentaBanco, CuentaConCliente, CuentaDetalle, CuentaPorCobra
 use crate::commands::usuarios::verificar_admin;
 use tauri::State;
 
+/// v2.5.31: Recalcula `saldo` y `estado` de la CXC vinculada a una venta,
+/// considerando pagos CONFIRMADOS + retenciones recibidas SRI.
+///
+/// Fórmula: `saldo = monto_total - pagos_confirmados - retenciones_recibidas`
+///
+/// Se invoca desde:
+/// - `registrar_pago_cuenta` (esta misma función, sustituye el cálculo inline)
+/// - `registrar_retencion` y `eliminar_retencion` (en retenciones.rs)
+/// - `confirmar_pago_cuenta` y `rechazar_pago_cuenta`
+///
+/// Si `saldo <= 0.01` marca la cuenta como `PAGADA`; si no, `PENDIENTE`.
+/// Si no existe CXC para esa venta (porque la venta no fue a crédito), no hace nada.
+pub fn recalcular_saldo_cxc(
+    conn: &rusqlite::Connection,
+    venta_id: i64,
+) -> Result<(), String> {
+    // Buscar CXC activa (no anulada) para esta venta
+    let cxc: Option<(i64, f64)> = conn.query_row(
+        "SELECT id, monto_total FROM cuentas_por_cobrar
+         WHERE venta_id = ?1 AND estado != 'ANULADA' LIMIT 1",
+        rusqlite::params![venta_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).ok();
+
+    let Some((cxc_id, monto_total)) = cxc else { return Ok(()); };
+
+    // Suma de pagos CONFIRMADOS (los PENDIENTES no descuentan saldo hasta aprobación)
+    let pagos_confirmados: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(monto), 0) FROM pagos_cuenta
+         WHERE cuenta_id = ?1 AND estado = 'CONFIRMADO'",
+        rusqlite::params![cxc_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+
+    // Suma de retenciones aplicadas a la factura
+    let retenciones: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(valor), 0) FROM retenciones_recibidas WHERE venta_id = ?1",
+        rusqlite::params![venta_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+
+    let nuevo_saldo = (monto_total - pagos_confirmados - retenciones).max(0.0);
+    let nuevo_estado = if nuevo_saldo <= 0.01 { "PAGADA" } else { "PENDIENTE" };
+
+    // monto_pagado SIGUE siendo solo pagos (no incluye retenciones) para mantener
+    // la semántica "lo que ingresó como cobro". Las retenciones son un crédito
+    // tributario separado, no un pago. El saldo sí las refleja.
+    conn.execute(
+        "UPDATE cuentas_por_cobrar SET monto_pagado = ?1, saldo = ?2, estado = ?3,
+         updated_at = datetime('now','localtime') WHERE id = ?4",
+        rusqlite::params![pagos_confirmados, nuevo_saldo, nuevo_estado, cxc_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn resumen_deudores(db: State<Database>) -> Result<Vec<ResumenCliente>, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -183,12 +237,12 @@ pub fn registrar_pago_cuenta(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Obtener saldo actual
-    let saldo_actual: f64 = conn
+    // Obtener saldo actual y venta_id (v2.5.31: necesario para recalcular con retenciones)
+    let (saldo_actual, venta_id_cxc): (f64, i64) = conn
         .query_row(
-            "SELECT saldo FROM cuentas_por_cobrar WHERE id = ?1 AND estado = 'PENDIENTE'",
+            "SELECT saldo, venta_id FROM cuentas_por_cobrar WHERE id = ?1 AND estado = 'PENDIENTE'",
             rusqlite::params![pago.cuenta_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| "Cuenta no encontrada o ya pagada".to_string())?;
 
@@ -245,17 +299,8 @@ pub fn registrar_pago_cuenta(
     // Caja solo se afecta si el pago es EFECTIVO (transferencias confirmadas por admin
     // van al banco, no a la caja física).
     if estado_pago == "CONFIRMADO" {
-        let nuevo_saldo = saldo_actual - pago.monto;
-        let nuevo_estado = if nuevo_saldo <= 0.01 { "PAGADA" } else { "PENDIENTE" };
-
-        conn.execute(
-            "UPDATE cuentas_por_cobrar
-             SET monto_pagado = monto_pagado + ?1, saldo = ?2, estado = ?3,
-                 updated_at = datetime('now','localtime')
-             WHERE id = ?4",
-            rusqlite::params![pago.monto, nuevo_saldo.max(0.0), nuevo_estado, pago.cuenta_id],
-        )
-        .map_err(|e| e.to_string())?;
+        // v2.5.31: usar helper centralizado que respeta retenciones aplicadas
+        recalcular_saldo_cxc(&conn, venta_id_cxc)?;
 
         if forma_pago == "EFECTIVO" {
             // v2.3.50 FIX: solo sumar al monto_esperado, NO a monto_ventas.
@@ -403,10 +448,12 @@ pub fn confirmar_pago_cuenta(
     verificar_admin(&sesion)?;
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Obtener pago pendiente
-    let (cuenta_id, monto): (i64, f64) = conn
+    // Obtener pago pendiente + venta_id de la cuenta (v2.5.31: necesario para recalcular)
+    let (cuenta_id, venta_id_cxc): (i64, i64) = conn
         .query_row(
-            "SELECT cuenta_id, monto FROM pagos_cuenta WHERE id = ?1 AND estado = 'PENDIENTE'",
+            "SELECT p.cuenta_id, c.venta_id FROM pagos_cuenta p
+             JOIN cuentas_por_cobrar c ON c.id = p.cuenta_id
+             WHERE p.id = ?1 AND p.estado = 'PENDIENTE'",
             rusqlite::params![pago_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -426,24 +473,8 @@ pub fn confirmar_pago_cuenta(
     )
     .map_err(|e| e.to_string())?;
 
-    // Ahora aplicar reducción de saldo
-    let saldo_actual: f64 = conn
-        .query_row(
-            "SELECT saldo FROM cuentas_por_cobrar WHERE id = ?1",
-            rusqlite::params![cuenta_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    let nuevo_saldo = (saldo_actual - monto).max(0.0);
-    let nuevo_estado = if nuevo_saldo <= 0.01 { "PAGADA" } else { "PENDIENTE" };
-
-    conn.execute(
-        "UPDATE cuentas_por_cobrar SET monto_pagado = monto_pagado + ?1, saldo = ?2, estado = ?3,
-         updated_at = datetime('now','localtime') WHERE id = ?4",
-        rusqlite::params![monto, nuevo_saldo, nuevo_estado, cuenta_id],
-    )
-    .map_err(|e| e.to_string())?;
+    // v2.5.31: helper centralizado — respeta retenciones aplicadas
+    recalcular_saldo_cxc(&conn, venta_id_cxc)?;
 
     // Transferencias NO van a caja (no afectan arqueo físico)
     drop(conn);

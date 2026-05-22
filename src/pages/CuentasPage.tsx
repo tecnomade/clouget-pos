@@ -126,7 +126,10 @@ export default function CuentasPage() {
     }
   };
 
-  // v2.5.4: refrescar cuando cambia el modal
+  // v2.5.4 / v2.5.31: refrescar cuando cambia el modal de retenciones.
+  // v2.5.31: ahora el backend cruza la retención contra la CXC (recalcular_saldo_cxc),
+  // por lo que tambien recargamos la lista de pendientes — si la retencion saldo el
+  // 100% del saldo, la cuenta paso a PAGADA y deberia salir del listado.
   const refrescarRetencionesYCuenta = async () => {
     if (!cuentaDetalle) return;
     try {
@@ -136,6 +139,12 @@ export default function CuentasPage() {
       ]);
       setCuentaDetalle(det);
       setRetencionesDetalle(t);
+      // Refrescar lista pendientes (la cuenta puede haber pasado a PAGADA)
+      cargarPendientes();
+      if (clienteId) {
+        const cuentas = await listarCuentasPendientes(clienteId);
+        setCuentasCliente(cuentas);
+      }
     } catch { /* ignore */ }
   };
 
@@ -284,10 +293,21 @@ export default function CuentasPage() {
             </div>
             <div className="card" style={{ flex: 1, maxWidth: 200 }}>
               <div className="card-body text-center">
-                <span className="text-secondary" style={{ fontSize: 12 }}>Saldo</span>
+                <span className="text-secondary" style={{ fontSize: 12 }}>Saldo pendiente</span>
                 <div className="font-bold" style={{ color: cuentaDetalle.cuenta.saldo > 0 ? "var(--color-danger)" : "var(--color-success)" }}>
                   ${cuentaDetalle.cuenta.saldo.toFixed(2)}
                 </div>
+                {/* v2.5.31: aclarar que el saldo ya descontó retenciones */}
+                {(retencionesDetalle?.total ?? 0) > 0 && (
+                  <div style={{ fontSize: 9, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    (ya descontadas retenciones)
+                  </div>
+                )}
+                {cuentaDetalle.cuenta.estado === "PAGADA" && (retencionesDetalle?.total ?? 0) > 0 && cuentaDetalle.cuenta.monto_pagado < cuentaDetalle.cuenta.monto_total - 0.01 && (
+                  <div style={{ fontSize: 10, color: "#a855f7", fontWeight: 600, marginTop: 2 }}>
+                    ✓ Saldado parcial/total por retención
+                  </div>
+                )}
               </div>
             </div>
             {/* v2.5.4: Tarjeta de retenciones + boton para registrar */}
