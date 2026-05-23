@@ -6,6 +6,42 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.38 — 2026-05-23 📤 Envío SRI por lote: autorizar muchas NV en una sola operación
+
+### 🆕 Nuevo tab "🟡 Sin autorizar SRI" en Ventas del día
+
+(Solo aparece si tienes certificado SRI cargado.)
+
+Muestra todas las Notas de Venta del periodo seleccionado que **no son Factura autorizada todavía** (estado_sri NO_APLICA / PENDIENTE / RECHAZADA). Permite seleccionar varias con checkboxes y enviarlas al SRI **por lote** con un solo click.
+
+**Útiles para**:
+- Final del día: emitir todas las facturas pendientes de una vez
+- Después de caída de internet: reintentar todas las que quedaron PENDIENTE
+- Cliente RIMPE Popular que decide al final del mes que sí va a facturar todo voluntariamente
+- Limpiar PENDIENTES viejas con el toggle "Incluir RECHAZADAS"
+
+### Características
+
+- **Selección múltiple** con "Seleccionar todas" / "Deseleccionar todas"
+- **Total acumulado** de lo seleccionado en tiempo real
+- **Límite de 50 ventas por lote** (para evitar timeouts del SRI)
+- **Modal de resultado** con desglose: X autorizadas, Y rechazadas, Z pendientes + detalle por venta
+- Procesamiento secuencial (respeta los rate limits del SRI)
+- Si una falla, sigue con las demás — no rompe el batch
+
+### Cambios técnicos
+
+**Backend nuevo en `sri.rs`**:
+- `emitir_facturas_lote_sri(venta_ids, forma_pago_credito_sri?)` — itera y reutiliza `emitir_factura_sri` por cada ID
+- `listar_ventas_sin_autorizar(fecha_desde, fecha_hasta, incluir_rechazadas)` — filtra ventas COMPLETADAS sin autorizar
+- Tipos `ResultadoLoteSri` y `DetalleLoteItem` con resumen completo
+
+**Frontend**:
+- Nuevo tab condicional (solo si `sri_certificado_cargado === "1"`)
+- Componente `SinAutorizarPanel` con tabla seleccionable + acción batch + modal de resultado
+
+---
+
 ## v2.5.37 — 2026-05-23 📊 Plantilla XLSX inteligente: listas de precios + IVA configurable + incluye_iva
 
 ### 🎯 Tres mejoras al import/export de Productos

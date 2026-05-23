@@ -426,6 +426,8 @@ export default function VentasDia() {
               <div className="flex gap-2 items-center" style={{ flexWrap: "wrap" }}>
                 {[
                   { key: "COMPLETADA", label: "Ventas" },
+                  // v2.5.38: tab para NV sin autorizar + envio SRI por lote
+                  ...(certificadoSriCargado ? [{ key: "sin_autorizar", label: "🟡 Sin autorizar SRI" }] : []),
                   { key: "BORRADOR", label: "Borradores" },
                   { key: "COTIZACION", label: "Cotizaciones" },
                   { key: "GUIA_REMISION", label: "Guías" },
@@ -458,7 +460,14 @@ export default function VentasDia() {
                 }
               </span>
             </div>
-            {filtroTipo === "nc" ? (
+            {filtroTipo === "sin_autorizar" ? (
+              // v2.5.38: NV sin autorizar SRI por periodo + envío por lote
+              <SinAutorizarPanel
+                fechaDesde={fechaDesde}
+                fechaHasta={fechaHasta}
+                onCambio={() => { cargar(); }}
+              />
+            ) : filtroTipo === "nc" ? (
               <>
                 {/* Resumen NC */}
                 {ncResumen && ncResumen.total > 0 && (
@@ -1561,5 +1570,260 @@ export default function VentasDia() {
         </div>
       )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v2.5.38: Panel "Sin autorizar SRI" — lista NV por periodo con envío batch
+// ─────────────────────────────────────────────────────────────────────────
+import { listarVentasSinAutorizar, emitirFacturasLoteSri } from "../services/api";
+import type { VentaSinAutorizar, ResultadoLoteSri } from "../services/api";
+
+function SinAutorizarPanel({ fechaDesde, fechaHasta, onCambio }: {
+  fechaDesde: string;
+  fechaHasta: string;
+  onCambio: () => void;
+}) {
+  const { toastExito, toastError } = useToast();
+  const [items, setItems] = useState<VentaSinAutorizar[]>([]);
+  const [cargando, setCargando] = useState(false);
+  const [seleccionadas, setSeleccionadas] = useState<Set<number>>(new Set());
+  const [incluirRechazadas, setIncluirRechazadas] = useState(false);
+  const [procesando, setProcesando] = useState(false);
+  const [progreso, setProgreso] = useState<{ actual: number; total: number; numero: string } | null>(null);
+  const [resultado, setResultado] = useState<ResultadoLoteSri | null>(null);
+
+  const cargar = async () => {
+    try {
+      setCargando(true);
+      const data = await listarVentasSinAutorizar(fechaDesde, fechaHasta, incluirRechazadas);
+      setItems(data);
+      setSeleccionadas(new Set());
+    } catch (err) {
+      toastError("Error: " + err);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  useEffect(() => { cargar(); /* eslint-disable-next-line */ }, [fechaDesde, fechaHasta, incluirRechazadas]);
+
+  const toggleSel = (id: number) => {
+    const nueva = new Set(seleccionadas);
+    if (nueva.has(id)) nueva.delete(id); else nueva.add(id);
+    setSeleccionadas(nueva);
+  };
+
+  const seleccionarTodas = () => {
+    if (seleccionadas.size === items.length) {
+      setSeleccionadas(new Set());
+    } else {
+      setSeleccionadas(new Set(items.map(i => i.id)));
+    }
+  };
+
+  const enviarLote = async () => {
+    if (seleccionadas.size === 0) {
+      toastError("Selecciona al menos una venta");
+      return;
+    }
+    if (seleccionadas.size > 50) {
+      toastError("Máximo 50 ventas por lote — desmarca algunas");
+      return;
+    }
+    if (!confirm(
+      `¿Enviar ${seleccionadas.size} venta(s) al SRI para autorización?\n\n` +
+      "Las que el SRI autorice pasarán a ser Facturas electrónicas.\n" +
+      "Las que rechace seguirán como Notas de Venta y podrás reintentar.\n\n" +
+      "El proceso es secuencial y puede tardar varios segundos por venta."
+    )) return;
+
+    setProcesando(true);
+    setResultado(null);
+    setProgreso({ actual: 0, total: seleccionadas.size, numero: "" });
+    try {
+      const ids = Array.from(seleccionadas);
+      // Llamada batch — el backend procesa todas y devuelve resumen al final
+      const res = await emitirFacturasLoteSri(ids);
+      setResultado(res);
+      const msg = `Lote terminado: ${res.exitosas} autorizadas, ${res.fallidas} rechazadas` +
+        (res.pendientes > 0 ? `, ${res.pendientes} pendientes` : "");
+      if (res.exitosas > 0) toastExito(msg);
+      else toastError(msg);
+      // Recargar lista y notificar a parent
+      await cargar();
+      onCambio();
+      window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
+    } catch (err) {
+      toastError("Error: " + err);
+    } finally {
+      setProcesando(false);
+      setProgreso(null);
+    }
+  };
+
+  const totalSeleccionado = items.filter(i => seleccionadas.has(i.id)).reduce((s, i) => s + i.total, 0);
+
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ marginBottom: 12, padding: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--color-warning)" }}>
+              🟡 Ventas sin autorizar por el SRI
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+              Notas de Venta del periodo {fechaDesde} a {fechaHasta} que aún no son Facturas autorizadas. Selecciona las que quieras enviar al SRI por lote.
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+            <input type="checkbox" checked={incluirRechazadas}
+              onChange={(e) => setIncluirRechazadas(e.target.checked)} />
+            Incluir RECHAZADAS
+          </label>
+        </div>
+      </div>
+
+      {cargando ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>Cargando...</div>
+      ) : items.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 30, color: "var(--color-text-secondary)" }}>
+          ✓ Todas las ventas del periodo están autorizadas (o no hay ventas).
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+              onClick={seleccionarTodas}>
+              {seleccionadas.size === items.length ? "Deseleccionar todas" : `Seleccionar todas (${items.length})`}
+            </button>
+            <div style={{ fontSize: 12 }}>
+              <span className="text-secondary">Seleccionadas: </span>
+              <strong>{seleccionadas.size}</strong>
+              {seleccionadas.size > 0 && (
+                <span className="text-secondary"> · Total: <strong>${totalSeleccionado.toFixed(2)}</strong></span>
+              )}
+            </div>
+            <button className="btn btn-primary"
+              disabled={seleccionadas.size === 0 || procesando}
+              onClick={enviarLote}
+              style={{ fontSize: 12, padding: "6px 14px" }}>
+              {procesando ? "Enviando..." : `📤 Enviar ${seleccionadas.size} al SRI`}
+            </button>
+          </div>
+
+          {progreso && (
+            <div style={{ marginBottom: 8, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, fontSize: 12 }}>
+              Procesando lote... ({progreso.actual} de {progreso.total})
+            </div>
+          )}
+
+          <table className="table" style={{ width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ width: 30 }}>
+                  <input type="checkbox"
+                    checked={seleccionadas.size === items.length && items.length > 0}
+                    onChange={seleccionarTodas} />
+                </th>
+                <th>NÚMERO</th>
+                <th>FECHA</th>
+                <th>CLIENTE</th>
+                <th>ESTADO SRI</th>
+                <th className="text-right">TOTAL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(v => (
+                <tr key={v.id} style={{ background: seleccionadas.has(v.id) ? "rgba(59,130,246,0.08)" : undefined }}>
+                  <td>
+                    <input type="checkbox"
+                      checked={seleccionadas.has(v.id)}
+                      onChange={() => toggleSel(v.id)} />
+                  </td>
+                  <td><strong>{v.numero}</strong></td>
+                  <td>{v.fecha.slice(0, 16).replace("T", " ")}</td>
+                  <td>{v.cliente_nombre || "—"}</td>
+                  <td>
+                    <span style={{
+                      fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 600,
+                      background: v.estado_sri === "RECHAZADA" ? "rgba(239,68,68,0.15)" :
+                        v.estado_sri === "PENDIENTE" ? "rgba(245,158,11,0.15)" : "var(--color-surface-alt)",
+                      color: v.estado_sri === "RECHAZADA" ? "var(--color-danger)" :
+                        v.estado_sri === "PENDIENTE" ? "var(--color-warning)" : "var(--color-text-secondary)",
+                    }}>
+                      {v.estado_sri === "NO_APLICA" ? "SIN INTENTAR" : v.estado_sri}
+                    </span>
+                  </td>
+                  <td className="text-right"><strong>${v.total.toFixed(2)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {/* Modal de resultado del lote */}
+      {resultado && (
+        <div className="modal-overlay" onClick={() => setResultado(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <div className="modal-header">
+              <h3>Resultado del lote SRI</h3>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
+                <div style={{ padding: 12, background: "var(--color-surface-alt)", borderRadius: 6, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Total</div>
+                  <div style={{ fontSize: 22, fontWeight: 700 }}>{resultado.total}</div>
+                </div>
+                <div style={{ padding: 12, background: "rgba(34,197,94,0.1)", borderRadius: 6, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--color-success)" }}>Autorizadas</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--color-success)" }}>{resultado.exitosas}</div>
+                </div>
+                <div style={{ padding: 12, background: "rgba(245,158,11,0.1)", borderRadius: 6, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--color-warning)" }}>Pendientes</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--color-warning)" }}>{resultado.pendientes}</div>
+                </div>
+                <div style={{ padding: 12, background: "rgba(239,68,68,0.1)", borderRadius: 6, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--color-danger)" }}>Rechazadas</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: "var(--color-danger)" }}>{resultado.fallidas}</div>
+                </div>
+              </div>
+              <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid var(--color-border)", borderRadius: 6 }}>
+                <table className="table" style={{ width: "100%", fontSize: 11 }}>
+                  <thead>
+                    <tr>
+                      <th>Número</th>
+                      <th>Resultado</th>
+                      <th>Mensaje</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultado.detalles.map(d => (
+                      <tr key={d.venta_id}>
+                        <td><strong>{d.numero}</strong></td>
+                        <td>
+                          <span style={{
+                            fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 600,
+                            background: d.exito ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                            color: d.exito ? "var(--color-success)" : "var(--color-danger)",
+                          }}>
+                            {d.exito ? "✓ OK" : "✗ ERROR"}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: 10 }}>{d.mensaje}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={() => setResultado(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

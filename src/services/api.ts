@@ -905,6 +905,37 @@ export async function emitirFacturaSri(ventaId: number, formaPagoCreditoSri?: st
   return smartInvoke("emitir_factura_sri", { ventaId, formaPagoCreditoSri });
 }
 
+// v2.5.38: envio SRI por lote
+export interface DetalleLoteItem {
+  venta_id: number;
+  numero: string;
+  exito: boolean;
+  mensaje: string;
+  clave_acceso?: string | null;
+}
+export interface ResultadoLoteSri {
+  total: number;
+  exitosas: number;
+  fallidas: number;
+  pendientes: number;
+  detalles: DetalleLoteItem[];
+}
+export async function emitirFacturasLoteSri(ventaIds: number[], formaPagoCreditoSri?: string): Promise<ResultadoLoteSri> {
+  return smartInvoke("emitir_facturas_lote_sri", { ventaIds, formaPagoCreditoSri });
+}
+export interface VentaSinAutorizar {
+  id: number;
+  numero: string;
+  fecha: string;
+  total: number;
+  tipo_documento: string;
+  estado_sri: string;
+  cliente_nombre: string;
+}
+export async function listarVentasSinAutorizar(fechaDesde: string, fechaHasta: string, incluirRechazadas: boolean): Promise<VentaSinAutorizar[]> {
+  return smartInvoke("listar_ventas_sin_autorizar", { fechaDesde, fechaHasta, incluirRechazadas });
+}
+
 export async function consultarEstadoSri(): Promise<EstadoSri> {
   return smartInvoke("consultar_estado_sri");
 }

@@ -443,6 +443,8 @@ pub fn run() {
             // SRI - Facturación Electrónica
             commands::sri::cargar_certificado_sri,
             commands::sri::emitir_factura_sri,
+            commands::sri::emitir_facturas_lote_sri,
+            commands::sri::listar_ventas_sin_autorizar,
             commands::sri::consultar_estado_sri,
             commands::sri::cambiar_ambiente_sri,
             commands::sri::validar_suscripcion_sri,

@@ -795,6 +795,157 @@ pub async fn emitir_factura_sri(
     })
 }
 
+// ════════════════════════════════════════════════════════════════════
+// v2.5.38: Envío SRI por lote (batch) — emitir múltiples ventas
+// ════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, serde::Serialize)]
+pub struct ResultadoLoteSri {
+    pub total: usize,
+    pub exitosas: usize,
+    pub fallidas: usize,
+    pub pendientes: usize,
+    pub detalles: Vec<DetalleLoteItem>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct DetalleLoteItem {
+    pub venta_id: i64,
+    pub numero: String,
+    pub exito: bool,
+    pub mensaje: String,
+    pub clave_acceso: Option<String>,
+}
+
+/// Emite al SRI un lote de ventas (típicamente NV no autorizadas).
+/// Procesa secuencialmente (no en paralelo) para no saturar el SRI y respetar
+/// los rate limits. Si una falla, sigue con las siguientes — al final retorna
+/// resumen con detalle por cada una.
+///
+/// Limites: máximo 50 ventas por llamada (evita timeouts del SRI o de Tauri).
+#[tauri::command]
+pub async fn emitir_facturas_lote_sri(
+    db: State<'_, Database>,
+    venta_ids: Vec<i64>,
+    forma_pago_credito_sri: Option<String>,
+) -> Result<ResultadoLoteSri, String> {
+    if venta_ids.is_empty() {
+        return Err("No hay ventas seleccionadas".to_string());
+    }
+    if venta_ids.len() > 50 {
+        return Err(format!(
+            "Máximo 50 ventas por lote (recibidas: {}). Procesa en varios lotes.",
+            venta_ids.len()
+        ));
+    }
+
+    let mut detalles: Vec<DetalleLoteItem> = Vec::new();
+    let mut exitosas = 0usize;
+    let mut fallidas = 0usize;
+    let mut pendientes = 0usize;
+
+    for vid in &venta_ids {
+        // Obtener numero de la venta (para mostrar en el detalle aunque falle)
+        let numero: String = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT numero FROM ventas WHERE id = ?1",
+                rusqlite::params![vid], |r| r.get(0),
+            ).unwrap_or_else(|_| format!("#{}", vid))
+        };
+
+        // Llamar a emitir_factura_sri (reutiliza toda la lógica existente)
+        let resultado = emitir_factura_sri(db.clone(), *vid, forma_pago_credito_sri.clone()).await;
+
+        match resultado {
+            Ok(r) => {
+                if r.exito {
+                    exitosas += 1;
+                } else if r.mensaje.to_lowercase().contains("pendiente")
+                    || r.mensaje.to_lowercase().contains("proceso")
+                {
+                    pendientes += 1;
+                } else {
+                    fallidas += 1;
+                }
+                detalles.push(DetalleLoteItem {
+                    venta_id: *vid,
+                    numero,
+                    exito: r.exito,
+                    mensaje: r.mensaje,
+                    clave_acceso: r.clave_acceso,
+                });
+            }
+            Err(e) => {
+                fallidas += 1;
+                detalles.push(DetalleLoteItem {
+                    venta_id: *vid,
+                    numero,
+                    exito: false,
+                    mensaje: e,
+                    clave_acceso: None,
+                });
+            }
+        }
+    }
+
+    Ok(ResultadoLoteSri {
+        total: venta_ids.len(),
+        exitosas,
+        fallidas,
+        pendientes,
+        detalles,
+    })
+}
+
+/// Lista las ventas NO autorizadas en un periodo (NV con estado_sri NULL/NO_APLICA/PENDIENTE/RECHAZADA).
+/// Útil para mostrar candidatas a envío por lote.
+#[tauri::command]
+pub fn listar_ventas_sin_autorizar(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+    incluir_rechazadas: bool,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    // Filtra ventas COMPLETADAS que no tengan tipo_documento=FACTURA + estado_sri=AUTORIZADA.
+    // Por defecto excluye RECHAZADAS (suelen necesitar corrección manual).
+    let sql = if incluir_rechazadas {
+        "SELECT v.id, v.numero, v.fecha, v.total, COALESCE(v.tipo_documento, 'NOTA_VENTA') as td,
+                COALESCE(v.estado_sri, 'NO_APLICA') as es, COALESCE(c.nombre, '') as cliente
+         FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE v.estado = 'COMPLETADA'
+           AND date(v.fecha) BETWEEN date(?1) AND date(?2)
+           AND NOT (v.tipo_documento = 'FACTURA' AND v.estado_sri = 'AUTORIZADA')
+         ORDER BY v.fecha ASC"
+    } else {
+        "SELECT v.id, v.numero, v.fecha, v.total, COALESCE(v.tipo_documento, 'NOTA_VENTA') as td,
+                COALESCE(v.estado_sri, 'NO_APLICA') as es, COALESCE(c.nombre, '') as cliente
+         FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE v.estado = 'COMPLETADA'
+           AND date(v.fecha) BETWEEN date(?1) AND date(?2)
+           AND NOT (v.tipo_documento = 'FACTURA' AND v.estado_sri = 'AUTORIZADA')
+           AND COALESCE(v.estado_sri, 'NO_APLICA') != 'RECHAZADA'
+         ORDER BY v.fecha ASC"
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "numero": r.get::<_, String>(1)?,
+            "fecha": r.get::<_, String>(2)?,
+            "total": r.get::<_, f64>(3)?,
+            "tipo_documento": r.get::<_, String>(4)?,
+            "estado_sri": r.get::<_, String>(5)?,
+            "cliente_nombre": r.get::<_, String>(6)?,
+        }))
+    }).map_err(|e| e.to_string())?;
+
+    let lista: Vec<serde_json::Value> = rows.filter_map(Result::ok).collect();
+    Ok(lista)
+}
+
 /// Consulta el estado del modulo SRI (para la UI de configuracion)
 #[tauri::command]
 pub fn consultar_estado_sri(db: State<Database>) -> Result<EstadoSri, String> {
