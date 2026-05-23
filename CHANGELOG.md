@@ -6,6 +6,29 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.41 — 2026-05-24 🚀 Promoción consolidada a STABLE (10 versiones beta)
+
+Empaqueta y publica al canal **STABLE** todos los cambios acumulados en BETA desde v2.5.31:
+
+- v2.5.31 — 💰 Retenciones SRI cruzan saldo CXC (bug crítico)
+- v2.5.32 — 🐛 Bugs compras (XML como gasto invisible, antiduplicado, refresh)
+- v2.5.33-34 — 📄 Botón "Emitir Factura SRI" en NV + convención semántica NV ↔ Factura
+- v2.5.35 — 📄 NC proveedor (manual + XML SRI) + integración SRI/retenciones en ST/Restaurante
+- v2.5.36 — 🔧 Mini-modal post-cobro en Servicio Técnico
+- v2.5.37 — 📊 Plantilla XLSX inteligente productos (listas precios + IVA + incluye_iva)
+- v2.5.38 — 📤 Envío SRI por lote (NV sin autorizar)
+- v2.5.39 — 👥 Categorías de Clientes + Import/Export XLSX
+- v2.5.40 — 🛡 Updater robusto: checklist anti-error + delay + manejo antivirus
+
+**Adicionalmente — completada Google Verification**:
+- Privacy Policy + Terms + Limited Use Disclosure publicadas en `pos.clouget.com/{privacidad,terminos,gdrive-disclosure}/`
+- Dominio verificado en Google Search Console
+- OAuth Consent Screen configurada con datos de TECNOMADE S.A.
+- Branding verificado por Google (logo + datos visibles en pantalla de consentimiento)
+- Sin warning "Google no verificó esta app" al conectar Google Drive
+
+---
+
 ## v2.5.40 — 2026-05-23 🛡 Updater más robusto: checklist + manejo de antivirus + delay extendido
 
 ### 🐛 Problema atacado
