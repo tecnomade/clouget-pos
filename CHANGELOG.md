@@ -6,6 +6,22 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.36 — 2026-05-23 🔧 Mini-modal post-cobro en Servicio Técnico (refinamiento)
+
+Refinamiento del flow post-cobro en ServicioTecnicoPage para que sea coherente con PuntoVenta y PedidoDetalle (restaurante):
+
+- Después de cobrar una orden de servicio, si hay certificado SRI cargado, abre un mini-modal con:
+  - **Botón "📄 Emitir Factura SRI"** — convierte la NV en factura electrónica autorizada
+  - **Botón "📋 Aplicar Retenciones SRI"** — abre el modal de retenciones para la venta recién creada
+  - Email automático al cliente si la factura se autorizó y el cliente tiene email registrado
+- Confirmación previa antes de emitir SRI ("¿Convertir esta NV en factura electrónica?")
+- Si el cliente es Consumidor Final, tooltip advierte que el SRI puede rechazar facturas grandes a CF
+- Toda la lógica respeta la convención semántica v2.5.34: NV mientras no autorice, Factura solo cuando SRI confirma
+
+Antes el cobro de ST solo mostraba un toast "Entregado" y cerraba el modal — no había forma de emitir SRI ni retenciones desde ST. Ahora el flow es idéntico al de PuntoVenta y Restaurante.
+
+---
+
 ## v2.5.35 — 2026-05-22 📄 NC de proveedor + Integración SRI/retenciones en ST y Restaurante
 
 ### 📄 NC de proveedor en compras (manual o importando XML SRI)
