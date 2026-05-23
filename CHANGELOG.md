@@ -6,6 +6,52 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.40 — 2026-05-23 🛡 Updater más robusto: checklist + manejo de antivirus + delay extendido
+
+### 🐛 Problema atacado
+
+Algunos clientes (típicamente con 360 Total Security, Norton o McAfee) recibían el error de NSIS:
+> "Error opening file for writing: C:\...\Clouget Punto de Venta\clouget-pos.exe"
+
+Causa: el antivirus aún tiene el `.exe` bloqueado para escaneo cuando el instalador intenta sobrescribirlo. Sin la app cerrada o sin antivirus pausado, Windows rechaza la operación.
+
+### 🆕 Mejoras
+
+**1. Checklist previo a la instalación**
+
+Cuando el usuario clickea "⬆ Actualizar ahora" desde el banner, ahora aparece un modal que exige confirmar 3 puntos antes de descargar:
+
+- ✓ Esta es la única ventana de Clouget abierta (cierra otras en la red/PC)
+- ✓ Pausé mi antivirus por 10 min (instrucciones específicas para 360, Norton, McAfee, AVG)
+- ✓ No tengo ventas a medio cobrar ni formularios abiertos (advertencia de pérdida de datos)
+
+El botón "Comenzar instalación" se mantiene deshabilitado hasta marcar las 3 casillas.
+
+**2. Delay extendido entre instalación y relaunch**
+
+De 1500ms → **4000ms**. Da tiempo a:
+- Windows liberar el `.exe` actual
+- Antivirus completar el scan del `.exe` descargado
+- El proceso cerrar limpiamente
+
+**3. Modal de error específico cuando se detecta el bloqueo**
+
+Si la falla incluye "Error opening file for writing" o errores OS-5/OS-32 (Access Denied / file in use), aparece un modal con instrucciones detalladas en 3 secciones:
+- Pasos para pausar antivirus (con menciones específicas)
+- Cómo cerrar instancias zombies vía Administrador de tareas
+- Opción de ejecutar el instalador manualmente como Admin
+
+Botón **"Reintentar ahora"** para volver a intentar sin cerrar la app.
+
+### Notas técnicas
+
+- Estado nuevo `"checklist"` en `UpdateChecker.tsx`
+- Helper `esErrorArchivoBloqueado()` detecta el patrón típico del problema
+- El startup auto-install NO usa checklist (solo el click manual desde el banner)
+- Los clientes que ya están afectados igual deben aplicar los workarounds manualmente — el fix sólo previene casos futuros una vez instalado
+
+---
+
 ## v2.5.39 — 2026-05-23 👥 Categorías de Clientes + Import/Export XLSX
 
 ### 🆕 Tabla `categorias_clientes`
