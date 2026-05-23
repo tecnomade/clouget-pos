@@ -89,6 +89,12 @@ export interface Cliente {
   activo: boolean;
   lista_precio_id?: number;
   lista_precio_nombre?: string;
+  // v2.5.39: categoria + defaults heredados (overrideables)
+  categoria_id?: number | null;
+  permite_credito?: boolean;
+  dias_credito?: number;
+  limite_credito?: number;
+  descuento_pct?: number;
 }
 
 // Listas de Precios

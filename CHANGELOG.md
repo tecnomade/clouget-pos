@@ -6,6 +6,51 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.39 — 2026-05-23 👥 Categorías de Clientes + Import/Export XLSX
+
+### 🆕 Tabla `categorias_clientes`
+
+Permite agrupar clientes en categorías preconfiguradas (ej "Consumidor Final", "Mayorista", "Empresarial", "VIP") con **defaults heredables**:
+- `permite_credito` (sí/no)
+- `dias_credito` (plazo en días)
+- `limite_credito` ($ máximo de deuda)
+- `descuento_pct` (% descuento por defecto)
+- `lista_precio_id` (lista de precios asociada — Mayorista, Distribuidor, etc.)
+- `requiere_ruc` (bloquea cédula simple, exige RUC)
+- `es_default` (la que se asigna automáticamente si no se elige)
+
+### 🎨 UI nueva en pantalla Clientes
+
+- **Tabs**: "Clientes" / "📋 Categorías"
+- **Tab Categorías** con tabla lateral + form para CRUD completo
+- En el **form de Cliente**: dropdown "Categoría" que al seleccionar **auto-rellena** los defaults (crédito, días, límite, descuento, lista de precios). Cualquier campo se puede overridear individualmente después.
+- Sección "Configuración de crédito" colapsable que muestra los valores heredados de la categoría
+- Marca "DEFAULT" en la tabla para identificar la categoría por defecto del sistema
+
+### 📥 Import / Export de Clientes en XLSX
+
+- Botón **📋 Plantilla** — descarga `plantilla_clientes.xlsx` con columnas obligatorias + opcionales + hoja "Instrucciones" + lista de categorías disponibles en tu sistema
+- Botón **⬇ Exportar** — descarga todos los clientes activos con todos los campos
+- Botón **⬆ Importar** — sube XLSX y crea/actualiza por `identificacion` (UPSERT)
+
+**Columnas soportadas en import**:
+`tipo_identificacion`, `identificacion`, `nombre` (obligatoria), `categoria`, `direccion`, `telefono`, `email`, `permite_credito`, `dias_credito`, `limite_credito`, `descuento_pct`
+
+**Lógica de import**:
+- Si `categoria` viene con nombre de categoría existente → la asigna y hereda sus defaults
+- Si `categoria` viene vacía → asigna la categoría DEFAULT del sistema
+- Si vienen campos explícitos (`dias_credito`, etc.) → overridean los defaults de la categoría
+- Acepta "1", "si", "yes", "true" para campos booleanos
+
+### Migración self-healing
+
+Al iniciar la app:
+- Crea `categorias_clientes` si no existe
+- Agrega columnas a `clientes`: `categoria_id`, `permite_credito`, `dias_credito`, `limite_credito`, `descuento_pct`
+- Inserta categoría seed "General" como default si no hay ninguna
+
+---
+
 ## v2.5.38 — 2026-05-23 📤 Envío SRI por lote: autorizar muchas NV en una sola operación
 
 ### 🆕 Nuevo tab "🟡 Sin autorizar SRI" en Ventas del día

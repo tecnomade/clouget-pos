@@ -1,5 +1,11 @@
-import { useState, useEffect } from "react";
-import { listarClientes, crearCliente, actualizarCliente, listarListasPrecios, consultarIdentificacion } from "../services/api";
+import { useState, useEffect, useRef } from "react";
+import {
+  listarClientes, crearCliente, actualizarCliente, listarListasPrecios, consultarIdentificacion,
+  // v2.5.39
+  listarCategoriasClientes, crearCategoriaCliente, actualizarCategoriaCliente, eliminarCategoriaCliente,
+  exportarPlantillaClientes, exportarClientesExcel, importarClientesExcel,
+} from "../services/api";
+import type { CategoriaCliente } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useTabActivated } from "../contexts/TabsContext";
 import type { Cliente, ListaPrecio } from "../types";
@@ -17,11 +23,25 @@ export default function Clientes() {
   });
   const [consultandoSri, setConsultandoSri] = useState(false);
   const [busqueda, setBusqueda] = useState("");
+  // v2.5.39: categorias + import/export
+  const [categorias, setCategorias] = useState<CategoriaCliente[]>([]);
+  const [tab, setTab] = useState<"clientes" | "categorias">("clientes");
+  const [editandoCat, setEditandoCat] = useState<CategoriaCliente | null>(null);
+  const [formCat, setFormCat] = useState<CategoriaCliente>({
+    nombre: "", descripcion: "", permite_credito: false, dias_credito: 0,
+    limite_credito: 0, descuento_pct: 0, requiere_ruc: false, es_default: false, activo: true,
+  });
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const cargar = async () => {
-    const [cls, listas] = await Promise.all([listarClientes(), listarListasPrecios().catch(() => [])]);
+    const [cls, listas, cats] = await Promise.all([
+      listarClientes(),
+      listarListasPrecios().catch(() => []),
+      listarCategoriasClientes().catch(() => []),
+    ]);
     setClientes(cls);
     setListasPrecios(listas);
+    setCategorias(cats);
   };
 
   useEffect(() => { cargar(); }, []);
@@ -58,14 +78,143 @@ export default function Clientes() {
     }
   };
 
+  // v2.5.39: handlers de import/export + descarga binaria como Productos
+  const descargarExcel = (bytes: number[], nombre: string) => {
+    const blob = new Blob([new Uint8Array(bytes)], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const handlePlantilla = async () => {
+    try {
+      const bytes = await exportarPlantillaClientes();
+      descargarExcel(bytes, "plantilla_clientes.xlsx");
+      toastExito("Plantilla descargada");
+    } catch (err) { toastError("Error: " + err); }
+  };
+  const handleExportar = async () => {
+    try {
+      const bytes = await exportarClientesExcel();
+      descargarExcel(bytes, `clientes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toastExito("Clientes exportados");
+    } catch (err) { toastError("Error: " + err); }
+  };
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const arrBuf = await file.arrayBuffer();
+      const bytes = Array.from(new Uint8Array(arrBuf));
+      const res = await importarClientesExcel(bytes);
+      toastExito(`Importación: ${res.creados} creados, ${res.actualizados} actualizados${res.errores > 0 ? `, ${res.errores} errores` : ""}`);
+      if (res.errores > 0 && res.mensajes.length > 0) {
+        console.warn("Errores de importación:", res.mensajes);
+      }
+      cargar();
+    } catch (err) {
+      toastError("Error: " + err);
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  // v2.5.39: handlers de categorias
+  const abrirNuevaCategoria = () => {
+    setEditandoCat(null);
+    setFormCat({
+      nombre: "", descripcion: "", permite_credito: false, dias_credito: 0,
+      limite_credito: 0, descuento_pct: 0, requiere_ruc: false, es_default: false, activo: true,
+    });
+  };
+  const abrirEditarCategoria = (c: CategoriaCliente) => {
+    setEditandoCat(c);
+    setFormCat({ ...c });
+  };
+  const guardarCategoria = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editandoCat?.id) {
+        await actualizarCategoriaCliente({ ...formCat, id: editandoCat.id });
+        toastExito("Categoría actualizada");
+      } else {
+        await crearCategoriaCliente(formCat);
+        toastExito("Categoría creada");
+      }
+      setEditandoCat(null);
+      cargar();
+    } catch (err) {
+      toastError("Error: " + err);
+    }
+  };
+  const borrarCategoria = async (c: CategoriaCliente) => {
+    if (!c.id) return;
+    if (!confirm(`¿Eliminar categoría "${c.nombre}"?`)) return;
+    try {
+      await eliminarCategoriaCliente(c.id);
+      toastExito("Categoría eliminada");
+      cargar();
+    } catch (err) {
+      toastError("Error: " + err);
+    }
+  };
+
   return (
     <>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={handleImport} />
       <div className="page-header">
-        <h2>Clientes ({clientes.length})</h2>
-        <button className="btn btn-primary" onClick={abrirNuevo}>+ Nuevo Cliente</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+          <h2 style={{ margin: 0 }}>{tab === "categorias" ? "Categorías de Clientes" : `Clientes (${clientes.length})`}</h2>
+          {/* v2.5.39: tabs */}
+          <div className="flex gap-1" style={{ marginLeft: 8 }}>
+            <button className={`btn ${tab === "clientes" ? "btn-primary" : "btn-outline"}`}
+              style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setTab("clientes")}>
+              Clientes
+            </button>
+            <button className={`btn ${tab === "categorias" ? "btn-primary" : "btn-outline"}`}
+              style={{ fontSize: 11, padding: "4px 10px" }} onClick={() => setTab("categorias")}>
+              📋 Categorías ({categorias.length})
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {tab === "clientes" ? (
+            <>
+              <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 10px" }} onClick={handlePlantilla} title="Descargar plantilla XLSX vacía">
+                📋 Plantilla
+              </button>
+              <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 10px" }} onClick={handleExportar} title="Exportar todos los clientes a XLSX">
+                ⬇ Exportar
+              </button>
+              <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 10px" }} onClick={() => fileRef.current?.click()} title="Importar clientes desde XLSX">
+                ⬆ Importar
+              </button>
+              <button className="btn btn-primary" onClick={abrirNuevo}>+ Nuevo Cliente</button>
+            </>
+          ) : (
+            <button className="btn btn-primary" onClick={abrirNuevaCategoria}>+ Nueva Categoría</button>
+          )}
+        </div>
       </div>
       <div className="page-body">
-        {mostrarForm ? (
+        {tab === "categorias" ? (
+          <CategoriaSection
+            categorias={categorias}
+            editando={editandoCat}
+            form={formCat}
+            setForm={setFormCat}
+            listasPrecios={listasPrecios}
+            onGuardar={guardarCategoria}
+            onCancelar={() => setEditandoCat(null)}
+            onEditar={abrirEditarCategoria}
+            onBorrar={borrarCategoria}
+            onNueva={abrirNuevaCategoria}
+          />
+        ) : mostrarForm ? (
           <div className="card">
             <div className="card-header">{editando ? "Editar Cliente" : "Nuevo Cliente"}</div>
             <div className="card-body">
@@ -144,7 +293,78 @@ export default function Clientes() {
                       ))}
                     </select>
                   </div>
+                  {/* v2.5.39: Categoría con auto-fill de defaults */}
+                  <div>
+                    <label className="text-secondary" style={{ fontSize: 12 }}>Categoría</label>
+                    <select className="input" value={form.categoria_id ?? ""}
+                      onChange={(e) => {
+                        const cid = e.target.value ? Number(e.target.value) : undefined;
+                        const cat = categorias.find(c => c.id === cid);
+                        if (cat) {
+                          // Heredar defaults de la categoria seleccionada
+                          setForm({
+                            ...form,
+                            categoria_id: cid,
+                            permite_credito: cat.permite_credito,
+                            dias_credito: cat.dias_credito,
+                            limite_credito: cat.limite_credito,
+                            descuento_pct: cat.descuento_pct,
+                            lista_precio_id: cat.lista_precio_id ?? form.lista_precio_id,
+                          });
+                          toastExito(`Defaults aplicados de "${cat.nombre}"`);
+                        } else {
+                          setForm({ ...form, categoria_id: undefined });
+                        }
+                      }}>
+                      <option value="">— Sin categoría —</option>
+                      {categorias.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nombre}{c.es_default ? " (default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                      Al elegir categoría, se auto-llenan crédito, días, descuento. Puedes overridear abajo.
+                    </div>
+                  </div>
                 </div>
+
+                {/* v2.5.39: Campos de credito (heredables de categoria pero overrideables) */}
+                <div style={{ marginTop: 16, padding: 12, background: "var(--color-surface-alt)", borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>
+                    Configuración de crédito (heredada de categoría — overrideable)
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr", gap: 12, alignItems: "end" }}>
+                    <div>
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                        <input type="checkbox" checked={!!form.permite_credito}
+                          onChange={(e) => setForm({ ...form, permite_credito: e.target.checked })} />
+                        Permite crédito
+                      </label>
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 11 }}>Días crédito</label>
+                      <input className="input" type="number" min="0"
+                        disabled={!form.permite_credito}
+                        value={form.dias_credito ?? 0}
+                        onChange={(e) => setForm({ ...form, dias_credito: Number(e.target.value) || 0 })} />
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 11 }}>Límite crédito ($)</label>
+                      <input className="input" type="number" min="0" step="0.01"
+                        disabled={!form.permite_credito}
+                        value={form.limite_credito ?? 0}
+                        onChange={(e) => setForm({ ...form, limite_credito: Number(e.target.value) || 0 })} />
+                    </div>
+                    <div>
+                      <label className="text-secondary" style={{ fontSize: 11 }}>Descuento (%)</label>
+                      <input className="input" type="number" min="0" max="100" step="0.1"
+                        value={form.descuento_pct ?? 0}
+                        onChange={(e) => setForm({ ...form, descuento_pct: Number(e.target.value) || 0 })} />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex gap-2 mt-4" style={{ justifyContent: "flex-end" }}>
                   <button type="button" className="btn btn-outline" onClick={() => setMostrarForm(false)}>Cancelar</button>
                   <button type="submit" className="btn btn-primary">{editando ? "Actualizar" : "Guardar"}</button>
@@ -211,5 +431,154 @@ export default function Clientes() {
         )}
       </div>
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v2.5.39: Sección de Categorías de Clientes
+// ─────────────────────────────────────────────────────────────────────────
+function CategoriaSection({ categorias, editando, form, setForm, listasPrecios, onGuardar, onCancelar, onEditar, onBorrar, onNueva }: {
+  categorias: CategoriaCliente[];
+  editando: CategoriaCliente | null;
+  form: CategoriaCliente;
+  setForm: (c: CategoriaCliente) => void;
+  listasPrecios: ListaPrecio[];
+  onGuardar: (e: React.FormEvent) => void;
+  onCancelar: () => void;
+  onEditar: (c: CategoriaCliente) => void;
+  onBorrar: (c: CategoriaCliente) => void;
+  onNueva: () => void;
+}) {
+  // Form siempre visible al lado de la tabla
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16 }}>
+      <div className="card">
+        <div className="card-header">Categorías existentes</div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Crédito</th>
+              <th>Días</th>
+              <th>Límite</th>
+              <th>Desc %</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {categorias.length === 0 && (
+              <tr><td colSpan={6} className="text-center text-secondary" style={{ padding: 30 }}>
+                No hay categorías. Crea la primera con "+ Nueva Categoría".
+              </td></tr>
+            )}
+            {categorias.map(c => (
+              <tr key={c.id}>
+                <td>
+                  <strong>{c.nombre}</strong>
+                  {c.es_default && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "rgba(34,197,94,0.15)", color: "var(--color-success)", fontWeight: 600 }}>DEFAULT</span>}
+                  {c.descripcion && <div className="text-secondary" style={{ fontSize: 11 }}>{c.descripcion}</div>}
+                </td>
+                <td>{c.permite_credito ? "✓" : "—"}</td>
+                <td>{c.dias_credito}</td>
+                <td>${c.limite_credito.toFixed(2)}</td>
+                <td>{c.descuento_pct}%</td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }} onClick={() => onEditar(c)}>Editar</button>
+                  {!c.es_default && (
+                    <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", marginLeft: 4, color: "var(--color-danger)", borderColor: "var(--color-danger)" }} onClick={() => onBorrar(c)}>Borrar</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card" style={{ alignSelf: "flex-start" }}>
+        <div className="card-header">{editando ? `Editar: ${editando.nombre}` : "Nueva categoría"}</div>
+        <div className="card-body">
+          <form onSubmit={onGuardar}>
+            <div style={{ marginBottom: 10 }}>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Nombre *</label>
+              <input className="input" required value={form.nombre}
+                onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Descripción</label>
+              <input className="input" value={form.descripcion ?? ""}
+                onChange={(e) => setForm({ ...form, descripcion: e.target.value || null })} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Lista de precios por defecto</label>
+              <select className="input" value={form.lista_precio_id ?? ""}
+                onChange={(e) => setForm({ ...form, lista_precio_id: e.target.value ? Number(e.target.value) : null })}>
+                <option value="">— Default del sistema —</option>
+                {listasPrecios.map(lp => (
+                  <option key={lp.id} value={lp.id}>{lp.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginBottom: 10, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 8 }}>
+                <input type="checkbox" checked={form.permite_credito}
+                  onChange={(e) => setForm({ ...form, permite_credito: e.target.checked })} />
+                Permite crédito por defecto
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 10 }}>Días crédito</label>
+                  <input className="input" type="number" min="0"
+                    disabled={!form.permite_credito}
+                    value={form.dias_credito}
+                    onChange={(e) => setForm({ ...form, dias_credito: Number(e.target.value) || 0 })} />
+                </div>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 10 }}>Límite ($)</label>
+                  <input className="input" type="number" min="0" step="0.01"
+                    disabled={!form.permite_credito}
+                    value={form.limite_credito}
+                    onChange={(e) => setForm({ ...form, limite_credito: Number(e.target.value) || 0 })} />
+                </div>
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label className="text-secondary" style={{ fontSize: 11 }}>Descuento default (%)</label>
+              <input className="input" type="number" min="0" max="100" step="0.1"
+                value={form.descuento_pct}
+                onChange={(e) => setForm({ ...form, descuento_pct: Number(e.target.value) || 0 })} />
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={form.requiere_ruc}
+                  onChange={(e) => setForm({ ...form, requiere_ruc: e.target.checked })} />
+                Requiere RUC (no acepta cédula simple)
+              </label>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                <input type="checkbox" checked={form.es_default}
+                  onChange={(e) => setForm({ ...form, es_default: e.target.checked })} />
+                Categoría por defecto del sistema
+              </label>
+            </div>
+            <div className="flex gap-2" style={{ justifyContent: "flex-end" }}>
+              {editando && (
+                <button type="button" className="btn btn-outline" style={{ fontSize: 11 }} onClick={onCancelar}>
+                  Cancelar
+                </button>
+              )}
+              <button type="submit" className="btn btn-primary" style={{ fontSize: 12 }}>
+                {editando ? "Actualizar" : "Crear"}
+              </button>
+              {!editando && (
+                <button type="button" className="btn btn-outline" style={{ fontSize: 11 }} onClick={onNueva}>
+                  Limpiar
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }

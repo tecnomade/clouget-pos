@@ -342,6 +342,37 @@ export async function consultarIdentificacion(identificacion: string): Promise<C
   return smartInvoke("consultar_identificacion", { identificacion });
 }
 
+// v2.5.39: categorias de clientes
+export interface CategoriaCliente {
+  id?: number;
+  nombre: string;
+  descripcion?: string | null;
+  permite_credito: boolean;
+  dias_credito: number;
+  limite_credito: number;
+  descuento_pct: number;
+  lista_precio_id?: number | null;
+  requiere_ruc: boolean;
+  es_default: boolean;
+  activo: boolean;
+}
+export const listarCategoriasClientes = () => smartInvoke<CategoriaCliente[]>("listar_categorias_clientes");
+export const crearCategoriaCliente = (categoria: CategoriaCliente) => smartInvoke<number>("crear_categoria_cliente", { categoria });
+export const actualizarCategoriaCliente = (categoria: CategoriaCliente) => smartInvoke<void>("actualizar_categoria_cliente", { categoria });
+export const eliminarCategoriaCliente = (id: number) => smartInvoke<void>("eliminar_categoria_cliente", { id });
+
+// v2.5.39: import / export clientes
+export const exportarPlantillaClientes = () => smartInvoke<number[]>("exportar_plantilla_clientes");
+export const exportarClientesExcel = () => smartInvoke<number[]>("exportar_clientes_excel");
+export interface ResultadoImportClientes {
+  creados: number;
+  actualizados: number;
+  errores: number;
+  mensajes: string[];
+}
+export const importarClientesExcel = (archivoBytes: number[]) =>
+  smartInvoke<ResultadoImportClientes>("importar_clientes_excel", { archivoBytes });
+
 // --- Ventas ---
 
 export async function registrarVenta(venta: NuevaVenta): Promise<VentaCompleta> {

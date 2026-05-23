@@ -1479,6 +1479,45 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_compra_dev_det_dev ON compra_devolucion_detalles(devolucion_id);
     ");
 
+    // ─── v2.5.39: Categorías de clientes con defaults preconfigurados ─────────
+    // Permite agrupar clientes (ej "Consumidor Final", "Mayorista", "Empresarial")
+    // y preconfigurar valores que se asignan automáticamente al crear cliente:
+    // dias_credito, limite_credito, descuento_pct, lista_precios por defecto.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS categorias_clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            descripcion TEXT,
+            permite_credito INTEGER NOT NULL DEFAULT 0,
+            dias_credito INTEGER NOT NULL DEFAULT 0,
+            limite_credito REAL NOT NULL DEFAULT 0,
+            descuento_pct REAL NOT NULL DEFAULT 0,
+            lista_precio_id INTEGER,
+            requiere_ruc INTEGER NOT NULL DEFAULT 0,
+            es_default INTEGER NOT NULL DEFAULT 0,
+            activo INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (lista_precio_id) REFERENCES listas_precios(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cat_cli_nombre ON categorias_clientes(nombre);
+    ");
+
+    // Columnas extra en clientes: categoria + valores que overridean el default de su categoria.
+    // OJO: lista_precio_id (singular) ya existe en clientes — no la agregamos de nuevo.
+    let _ = conn.execute("ALTER TABLE clientes ADD COLUMN categoria_id INTEGER REFERENCES categorias_clientes(id)", []);
+    let _ = conn.execute("ALTER TABLE clientes ADD COLUMN permite_credito INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE clientes ADD COLUMN dias_credito INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE clientes ADD COLUMN limite_credito REAL NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE clientes ADD COLUMN descuento_pct REAL NOT NULL DEFAULT 0", []);
+
+    // Seed categoría default "General" si no hay ninguna (idempotente)
+    let _ = conn.execute(
+        "INSERT INTO categorias_clientes (nombre, descripcion, es_default, activo, permite_credito, dias_credito, limite_credito, descuento_pct)
+         SELECT 'General', 'Categoria por defecto', 1, 1, 0, 0, 0, 0
+         WHERE NOT EXISTS (SELECT 1 FROM categorias_clientes WHERE es_default = 1)",
+        [],
+    );
+
     // ─── v2.5.35: Datos del comprobante NC del proveedor ─────────────────────
     // La tabla compra_devoluciones almacena devoluciones internas. Ahora también
     // puede guardar los datos del comprobante NC SRI que el proveedor emitió

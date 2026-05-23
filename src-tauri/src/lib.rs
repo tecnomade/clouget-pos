@@ -303,6 +303,14 @@ pub fn run() {
             commands::clientes::buscar_clientes,
             commands::clientes::listar_clientes,
             commands::clientes::consultar_identificacion,
+            // v2.5.39: categorias clientes + import/export
+            commands::clientes::listar_categorias_clientes,
+            commands::clientes::crear_categoria_cliente,
+            commands::clientes::actualizar_categoria_cliente,
+            commands::clientes::eliminar_categoria_cliente,
+            commands::clientes::exportar_plantilla_clientes,
+            commands::clientes::exportar_clientes_excel,
+            commands::clientes::importar_clientes_excel,
             // Ventas
             commands::ventas::registrar_venta,
             commands::ventas::listar_pagos_venta,

@@ -12,4 +12,15 @@ pub struct Cliente {
     pub activo: bool,
     pub lista_precio_id: Option<i64>,
     pub lista_precio_nombre: Option<String>,
+    // v2.5.39: categoria + defaults heredados (overrideables por cliente individual)
+    #[serde(default)]
+    pub categoria_id: Option<i64>,
+    #[serde(default)]
+    pub permite_credito: Option<bool>,
+    #[serde(default)]
+    pub dias_credito: Option<i64>,
+    #[serde(default)]
+    pub limite_credito: Option<f64>,
+    #[serde(default)]
+    pub descuento_pct: Option<f64>,
 }
