@@ -6,6 +6,47 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.37 — 2026-05-23 📊 Plantilla XLSX inteligente: listas de precios + IVA configurable + incluye_iva
+
+### 🎯 Tres mejoras al import/export de Productos
+
+#### 1. Columnas dinámicas por lista de precios
+
+Si tienes listas adicionales (Mayorista, Distribuidor, VIP, etc.), la plantilla XLSX ahora incluye **una columna verde `precio_<NombreLista>` por cada una**. Llenas el precio que corresponde a cada lista.
+
+**Regla "precio_venta rige sobre las demás"**:
+- Si llenas `precio_venta` y dejas las columnas de listas vacías → ese precio se replica a todas las listas
+- Si llenas una lista específica → ese precio rige solo para esa lista
+- Si llenas ambos → cada uno va a su lugar (precio_venta es la lista DEFAULT, las otras a su lista respectiva)
+
+#### 2. Columna `incluye_iva` (0/1)
+
+Antes el import siempre seteaba `incluye_iva = 0` (precio bruto/sin IVA). Ahora puedes especificar:
+- `0` → precio NO incluye IVA, se suma al cobrar (default)
+- `1` → precio ya trae IVA incluido (típico en supermercados/tiendas Ecuador)
+
+Acepta también: "si", "yes", "true" como sinónimos de 1.
+
+#### 3. `iva_porcentaje` flexible
+
+Si la celda está vacía o la columna no existe → IVA 0% (exento). Acepta valores 0, 5, 12, 15.
+
+### 📋 Hoja "Instrucciones"
+
+La plantilla ahora tiene una segunda hoja con explicación completa de cada columna y las reglas de las listas de precios.
+
+### 🎨 Diferenciación visual
+
+Headers azules para columnas obligatorias/básicas, headers **verdes** para columnas opcionales avanzadas (`incluye_iva`, `precio_<lista>`).
+
+### Cambios técnicos
+- `exportar_plantilla_productos` ahora recibe `State<Database>` para leer las listas de precios
+- `exportar_productos_excel` exporta también las columnas de precios por lista
+- `importar_productos_excel` hace UPSERT en `precios_producto` cuando vienen columnas de listas
+- Sin cambios de schema (todo aprovecha tablas existentes `listas_precios` + `precios_producto`)
+
+---
+
 ## v2.5.36 — 2026-05-23 🔧 Mini-modal post-cobro en Servicio Técnico (refinamiento)
 
 Refinamiento del flow post-cobro en ServicioTecnicoPage para que sea coherente con PuntoVenta y PedidoDetalle (restaurante):

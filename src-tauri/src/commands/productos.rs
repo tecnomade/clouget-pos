@@ -928,41 +928,120 @@ fn eliminar_producto_interno(conn: &rusqlite::Connection, id: i64) -> Result<(),
 // --- Excel Import/Export ---
 
 #[tauri::command]
-pub fn exportar_plantilla_productos() -> Result<Vec<u8>, String> {
+pub fn exportar_plantilla_productos(db: State<Database>) -> Result<Vec<u8>, String> {
     use rust_xlsxwriter::*;
+
+    // v2.5.37: cargar listas de precios para agregar una columna por cada una
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let listas: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT nombre FROM listas_precios WHERE activo = 1 AND es_default = 0 ORDER BY id"
+        ).map_err(|e| e.to_string())?;
+        let rows: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+    drop(conn);
 
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     sheet.set_name("Productos").map_err(|e| e.to_string())?;
 
-    // Header format
     let header_fmt = Format::new().set_bold().set_background_color(Color::RGB(0x2563EB)).set_font_color(Color::White).set_border(FormatBorder::Thin);
+    // Header destacado para columnas opcionales (precio_lista_X, incluye_iva)
+    let header_opt_fmt = Format::new().set_bold().set_background_color(Color::RGB(0x16A34A)).set_font_color(Color::White).set_border(FormatBorder::Thin);
 
-    let headers = ["codigo", "codigo_barras", "nombre", "descripcion", "categoria", "precio_costo", "precio_venta", "iva_porcentaje", "stock_actual", "stock_minimo", "unidad_medida", "es_servicio", "requiere_serie", "requiere_caducidad", "lote", "fecha_caducidad"];
-    for (i, h) in headers.iter().enumerate() {
-        sheet.write_string_with_format(0, i as u16, *h, &header_fmt).map_err(|e| e.to_string())?;
+    // Columnas base (siempre)
+    let headers_base = ["codigo", "codigo_barras", "nombre", "descripcion", "categoria", "precio_costo", "precio_venta", "iva_porcentaje", "incluye_iva", "stock_actual", "stock_minimo", "unidad_medida", "es_servicio", "requiere_serie", "requiere_caducidad", "lote", "fecha_caducidad"];
+    for (i, h) in headers_base.iter().enumerate() {
+        // incluye_iva (idx 8) en color verde como "campo opcional importante"
+        let fmt = if *h == "incluye_iva" { &header_opt_fmt } else { &header_fmt };
+        sheet.write_string_with_format(0, i as u16, *h, fmt).map_err(|e| e.to_string())?;
     }
 
-    // Example row 1: producto normal (sin caducidad)
-    let example1 = ["P0001", "", "Producto ejemplo", "Descripcion", "General", "1.00", "2.50", "15", "100", "5", "UND", "0", "0", "0", "", ""];
+    // v2.5.37: una columna por cada lista de precios adicional
+    // formato: precio_<nombre_lista_normalizado>
+    let base_count = headers_base.len() as u16;
+    for (i, nombre_lista) in listas.iter().enumerate() {
+        let col_name = format!("precio_{}", nombre_lista.replace(' ', "_"));
+        sheet.write_string_with_format(0, base_count + i as u16, &col_name, &header_opt_fmt).map_err(|e| e.to_string())?;
+    }
+
+    // Ejemplo 1: producto normal sin caducidad, precio sin IVA, IVA 15%, NO incluye iva
+    let example1 = ["P0001", "", "Producto ejemplo", "Descripcion", "General", "1.00", "2.50", "15", "0", "100", "5", "UND", "0", "0", "0", "", ""];
     for (i, v) in example1.iter().enumerate() {
         sheet.write_string(1, i as u16, *v).map_err(|e| e.to_string())?;
     }
+    // Para listas adicionales en ejemplo 1: usar 2.30, 2.10, etc.
+    for (i, _) in listas.iter().enumerate() {
+        let precio = format!("{:.2}", 2.50 - 0.20 * (i + 1) as f64);
+        sheet.write_string(1, base_count + i as u16, &precio).ok();
+    }
 
-    // Example row 2: producto CON caducidad
-    let example2 = ["P0002", "", "Yogurt", "Yogurt sabor fresa", "Lacteos", "0.50", "1.00", "15", "20", "5", "UND", "0", "0", "1", "LOT-001", "2026-12-31"];
+    // Ejemplo 2: producto con precio bruto (incluye IVA), IVA 15%
+    let example2 = ["P0002", "", "Producto IVA incluido", "Precio ya trae IVA", "General", "0.87", "1.00", "15", "1", "50", "5", "UND", "0", "0", "0", "", ""];
     for (i, v) in example2.iter().enumerate() {
         sheet.write_string(2, i as u16, *v).map_err(|e| e.to_string())?;
     }
 
-    // Auto-fit columns
-    for i in 0..16u16 {
+    // Ejemplo 3: producto exento de IVA (iva_porcentaje vacío = sin IVA / 0%)
+    let example3 = ["P0003", "", "Producto exento IVA", "Lacteos basicos", "Alimentos", "0.50", "0.80", "0", "0", "100", "10", "UND", "0", "0", "0", "", ""];
+    for (i, v) in example3.iter().enumerate() {
+        sheet.write_string(3, i as u16, *v).map_err(|e| e.to_string())?;
+    }
+
+    // Ejemplo 4: producto CON caducidad
+    let example4 = ["P0004", "", "Yogurt", "Yogurt sabor fresa", "Lacteos", "0.50", "1.00", "15", "0", "20", "5", "UND", "0", "0", "1", "LOT-001", "2026-12-31"];
+    for (i, v) in example4.iter().enumerate() {
+        sheet.write_string(4, i as u16, *v).map_err(|e| e.to_string())?;
+    }
+
+    // Auto-fit columns en plantilla — hacerlo aquí, antes de soltar el borrow de `sheet`
+    let total_cols = base_count + listas.len() as u16;
+    for i in 0..total_cols {
         sheet.set_column_width(i, 15).map_err(|e| e.to_string())?;
     }
-    sheet.set_column_width(2, 30).map_err(|e| e.to_string())?; // nombre wider
-    sheet.set_column_width(3, 25).map_err(|e| e.to_string())?; // descripcion wider
-    sheet.set_column_width(14, 15).map_err(|e| e.to_string())?; // lote
-    sheet.set_column_width(15, 18).map_err(|e| e.to_string())?; // fecha_caducidad
+    sheet.set_column_width(2, 30).map_err(|e| e.to_string())?;
+    sheet.set_column_width(3, 25).map_err(|e| e.to_string())?;
+    sheet.set_column_width(15, 15).map_err(|e| e.to_string())?;
+    sheet.set_column_width(16, 18).map_err(|e| e.to_string())?;
+    // FIN del bloque sheet — necesario para soltar el borrow mutable de workbook
+    let _ = sheet;
+
+    // Hoja de instrucciones (segundo worksheet — requiere que el anterior haya salido de scope)
+    {
+        let inst_sheet = workbook.add_worksheet();
+        inst_sheet.set_name("Instrucciones").map_err(|e| e.to_string())?;
+        let bold_fmt = Format::new().set_bold();
+        inst_sheet.write_string_with_format(0, 0, "Como llenar esta plantilla", &bold_fmt).ok();
+        let instrucciones = vec![
+            "",
+            "COLUMNAS OBLIGATORIAS: nombre",
+            "COLUMNAS RECOMENDADAS: codigo, categoria, precio_costo, precio_venta",
+            "",
+            "iva_porcentaje: 0 (exento), 5, 12, 15. Si dejas vacio = 0 (sin IVA).",
+            "incluye_iva: 0 = el precio NO incluye IVA (se suma al cobrar). 1 = precio ya trae IVA incluido.",
+            "",
+            "LISTAS DE PRECIOS:",
+            "  - Las columnas verdes 'precio_<NombreLista>' permiten poner precio por cada lista.",
+            "  - Si solo llenas precio_venta y dejas las demas vacias, ese precio se replica en todas las listas.",
+            "  - Si llenas una lista especifica, ese precio rige para esa lista (precio_venta se usa para la lista DEFAULT).",
+            "",
+            "es_servicio: 1 = no descuenta stock, 0 = producto fisico.",
+            "requiere_serie: 1 = pide numero de serie al vender (electronicos, vehiculos).",
+            "requiere_caducidad: 1 = el producto vence, se debe controlar por lotes.",
+            "lote / fecha_caducidad: solo si requiere_caducidad=1.",
+            "",
+            "El codigo se autogenera si lo dejas vacio (P0001, P0002, ...).",
+            "Si un codigo ya existe en el sistema, ese producto se ACTUALIZA en vez de duplicarse.",
+        ];
+        for (i, txt) in instrucciones.iter().enumerate() {
+            inst_sheet.write_string((i + 1) as u32, 0, *txt).ok();
+        }
+        inst_sheet.set_column_width(0, 90).ok();
+    }
 
     let buf = workbook.save_to_buffer().map_err(|e| e.to_string())?;
     Ok(buf)
@@ -973,10 +1052,24 @@ pub fn exportar_productos_excel(db: State<Database>) -> Result<Vec<u8>, String> 
     use rust_xlsxwriter::*;
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // v2.5.37: cargar listas de precios adicionales (no la DEFAULT)
+    let listas: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, nombre FROM listas_precios WHERE activo = 1 AND es_default = 0 ORDER BY id"
+        ).map_err(|e| e.to_string())?;
+        let rows: Vec<(i64, String)> = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+
     let mut stmt = conn.prepare(
-        "SELECT p.codigo, p.codigo_barras, p.nombre, p.descripcion,
+        "SELECT p.id, p.codigo, p.codigo_barras, p.nombre, p.descripcion,
                 COALESCE(c.nombre, ''), p.precio_costo, p.precio_venta,
-                p.iva_porcentaje, p.stock_actual, p.stock_minimo,
+                p.iva_porcentaje, COALESCE(p.incluye_iva, 0),
+                p.stock_actual, p.stock_minimo,
                 p.unidad_medida, p.es_servicio,
                 p.requiere_serie, p.requiere_caducidad,
                 (SELECT lote FROM lotes_caducidad WHERE producto_id = p.id AND cantidad > 0 ORDER BY fecha_caducidad ASC LIMIT 1) as lote,
@@ -990,37 +1083,58 @@ pub fn exportar_productos_excel(db: State<Database>) -> Result<Vec<u8>, String> 
     sheet.set_name("Productos").map_err(|e| e.to_string())?;
 
     let header_fmt = Format::new().set_bold().set_background_color(Color::RGB(0x2563EB)).set_font_color(Color::White).set_border(FormatBorder::Thin);
+    let header_opt_fmt = Format::new().set_bold().set_background_color(Color::RGB(0x16A34A)).set_font_color(Color::White).set_border(FormatBorder::Thin);
     let money_fmt = Format::new().set_num_format("$#,##0.00");
 
-    let headers = ["codigo", "codigo_barras", "nombre", "descripcion", "categoria", "precio_costo", "precio_venta", "iva_porcentaje", "stock_actual", "stock_minimo", "unidad_medida", "es_servicio", "requiere_serie", "requiere_caducidad", "lote", "fecha_caducidad"];
-    for (i, h) in headers.iter().enumerate() {
-        sheet.write_string_with_format(0, i as u16, *h, &header_fmt).map_err(|e| e.to_string())?;
+    let headers_base = ["codigo", "codigo_barras", "nombre", "descripcion", "categoria", "precio_costo", "precio_venta", "iva_porcentaje", "incluye_iva", "stock_actual", "stock_minimo", "unidad_medida", "es_servicio", "requiere_serie", "requiere_caducidad", "lote", "fecha_caducidad"];
+    for (i, h) in headers_base.iter().enumerate() {
+        let fmt = if *h == "incluye_iva" { &header_opt_fmt } else { &header_fmt };
+        sheet.write_string_with_format(0, i as u16, *h, fmt).map_err(|e| e.to_string())?;
+    }
+    let base_count = headers_base.len() as u16;
+    for (i, (_, nombre_lista)) in listas.iter().enumerate() {
+        let col_name = format!("precio_{}", nombre_lista.replace(' ', "_"));
+        sheet.write_string_with_format(0, base_count + i as u16, &col_name, &header_opt_fmt).map_err(|e| e.to_string())?;
     }
 
     let mut row = 1u32;
     let rows = stmt.query_map([], |r| {
         Ok((
-            r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+            r.get::<_, i64>(0)?,
             r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            r.get::<_, String>(2)?,
-            r.get::<_, Option<String>>(3)?.unwrap_or_default(),
-            r.get::<_, String>(4)?,
-            r.get::<_, f64>(5)?,
+            r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            r.get::<_, String>(5)?,
             r.get::<_, f64>(6)?,
             r.get::<_, f64>(7)?,
             r.get::<_, f64>(8)?,
-            r.get::<_, f64>(9)?,
-            r.get::<_, Option<String>>(10)?.unwrap_or_default(),
-            r.get::<_, i32>(11)?,
-            r.get::<_, i32>(12)?,
+            r.get::<_, i32>(9)?,
+            r.get::<_, f64>(10)?,
+            r.get::<_, f64>(11)?,
+            r.get::<_, Option<String>>(12)?.unwrap_or_default(),
             r.get::<_, i32>(13)?,
-            r.get::<_, Option<String>>(14)?.unwrap_or_default(),
-            r.get::<_, Option<String>>(15)?.unwrap_or_default(),
+            r.get::<_, i32>(14)?,
+            r.get::<_, i32>(15)?,
+            r.get::<_, Option<String>>(16)?.unwrap_or_default(),
+            r.get::<_, Option<String>>(17)?.unwrap_or_default(),
         ))
     }).map_err(|e| e.to_string())?;
 
+    // Cargar precios por lista en lookup map: (producto_id, lista_id) → precio
+    let precios_map: std::collections::HashMap<(i64, i64), f64> = {
+        let mut stmt2 = conn.prepare(
+            "SELECT producto_id, lista_precio_id, precio FROM precios_producto"
+        ).map_err(|e| e.to_string())?;
+        let mut map = std::collections::HashMap::new();
+        let it = stmt2.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?)))
+            .map_err(|e| e.to_string())?;
+        for x in it.flatten() { map.insert((x.0, x.1), x.2); }
+        map
+    };
+
     for r in rows {
-        let (codigo, barras, nombre, desc, cat, costo, venta, iva, stock, stock_min, unidad, servicio, req_serie, req_caducidad, lote, fecha_cad) = r.map_err(|e| e.to_string())?;
+        let (pid, codigo, barras, nombre, desc, cat, costo, venta, iva, incl_iva, stock, stock_min, unidad, servicio, req_serie, req_caducidad, lote, fecha_cad) = r.map_err(|e| e.to_string())?;
         sheet.write_string(row, 0, &codigo).ok();
         sheet.write_string(row, 1, &barras).ok();
         sheet.write_string(row, 2, &nombre).ok();
@@ -1029,23 +1143,33 @@ pub fn exportar_productos_excel(db: State<Database>) -> Result<Vec<u8>, String> 
         sheet.write_number_with_format(row, 5, costo, &money_fmt).ok();
         sheet.write_number_with_format(row, 6, venta, &money_fmt).ok();
         sheet.write_number(row, 7, iva).ok();
-        sheet.write_number(row, 8, stock).ok();
-        sheet.write_number(row, 9, stock_min).ok();
-        sheet.write_string(row, 10, &unidad).ok();
-        sheet.write_number(row, 11, servicio as f64).ok();
-        sheet.write_number(row, 12, req_serie as f64).ok();
-        sheet.write_number(row, 13, req_caducidad as f64).ok();
-        sheet.write_string(row, 14, &lote).ok();
-        sheet.write_string(row, 15, &fecha_cad).ok();
+        sheet.write_number(row, 8, incl_iva as f64).ok();
+        sheet.write_number(row, 9, stock).ok();
+        sheet.write_number(row, 10, stock_min).ok();
+        sheet.write_string(row, 11, &unidad).ok();
+        sheet.write_number(row, 12, servicio as f64).ok();
+        sheet.write_number(row, 13, req_serie as f64).ok();
+        sheet.write_number(row, 14, req_caducidad as f64).ok();
+        sheet.write_string(row, 15, &lote).ok();
+        sheet.write_string(row, 16, &fecha_cad).ok();
+
+        // Columnas de precios por lista
+        for (i, (lista_id, _)) in listas.iter().enumerate() {
+            if let Some(precio) = precios_map.get(&(pid, *lista_id)) {
+                sheet.write_number_with_format(row, base_count + i as u16, *precio, &money_fmt).ok();
+            }
+        }
+
         row += 1;
     }
 
     // Column widths
-    for i in 0..16u16 { sheet.set_column_width(i, 15).ok(); }
+    let total_cols = base_count + listas.len() as u16;
+    for i in 0..total_cols { sheet.set_column_width(i, 15).ok(); }
     sheet.set_column_width(2, 35).ok();
     sheet.set_column_width(3, 25).ok();
-    sheet.set_column_width(14, 15).ok();
-    sheet.set_column_width(15, 18).ok();
+    sheet.set_column_width(15, 15).ok();
+    sheet.set_column_width(16, 18).ok();
 
     let buf = workbook.save_to_buffer().map_err(|e| e.to_string())?;
     Ok(buf)
@@ -1081,6 +1205,8 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
     let col_precio_costo = find_col("precio_costo");
     let col_precio_venta = find_col("precio_venta");
     let col_iva = find_col("iva_porcentaje");
+    // v2.5.37: incluye_iva opcional. Si vacío en el archivo, se usa el default del producto.
+    let col_incluye_iva = find_col("incluye_iva");
     let col_stock = find_col("stock_actual");
     let col_stock_min = find_col("stock_minimo");
     let col_unidad = find_col("unidad_medida");
@@ -1089,6 +1215,27 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
     let col_requiere_caducidad = find_col("requiere_caducidad");
     let col_lote = find_col("lote");
     let col_fecha_caducidad = find_col("fecha_caducidad");
+
+    // v2.5.37: detectar columnas precio_<NombreLista> y mapearlas a lista_id de la BD
+    // (formato del header: precio_<nombre_normalizado> donde espacios se reemplazaron por _)
+    let listas_db: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, nombre FROM listas_precios WHERE activo = 1 AND es_default = 0"
+        ).map_err(|e| e.to_string())?;
+        let rows: Vec<(i64, String)> = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .collect();
+        rows
+    };
+    // (lista_id, header_normalizado, col_idx)
+    let mut cols_listas: Vec<(i64, String, usize)> = Vec::new();
+    for (lid, nombre) in &listas_db {
+        let header_esperado = format!("precio_{}", nombre.replace(' ', "_").to_lowercase());
+        if let Some(idx) = headers.iter().position(|h| h == &header_esperado) {
+            cols_listas.push((*lid, nombre.clone(), idx));
+        }
+    }
 
     let mut creados = 0i64;
     let mut actualizados = 0i64;
@@ -1168,8 +1315,41 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
         let descripcion = get_str(col_descripcion);
         let categoria_nombre = get_str(col_categoria);
         let precio_costo = get_f64(col_precio_costo, 0.0);
-        let precio_venta = get_f64(col_precio_venta, 0.0);
+
+        // v2.5.37: leer precios por lista ANTES de decidir precio_venta principal
+        // (porque si precio_venta está vacío pero hay precios por lista, usamos el menor de ellos)
+        let precios_por_lista: Vec<(i64, f64)> = cols_listas.iter()
+            .map(|(lid, _, idx)| (*lid, get_f64(Some(*idx), 0.0)))
+            .filter(|(_, p)| *p > 0.0)
+            .collect();
+
+        let precio_venta_raw = get_f64(col_precio_venta, 0.0);
+        // Si precio_venta vacío Y hay al menos una lista llena → usar el primero como precio base
+        let precio_venta = if precio_venta_raw > 0.0 {
+            precio_venta_raw
+        } else if let Some((_, p)) = precios_por_lista.first() {
+            *p
+        } else {
+            0.0
+        };
+
+        // v2.5.37: iva_porcentaje. Si vacío (col existe pero celda blanca) → 0 (sin IVA).
+        // Si la columna no existe en el archivo → 0 también.
         let iva = get_f64(col_iva, 0.0);
+
+        // v2.5.37: incluye_iva. Si vacío en archivo, default = 0 (precio NO incluye IVA).
+        // Si la columna existe y tiene 1 → precio_venta es bruto (ya trae IVA).
+        let incluye_iva: i32 = if col_incluye_iva.is_some() {
+            let s = get_str(col_incluye_iva);
+            if s == "1" || s.to_lowercase() == "si" || s.to_lowercase() == "yes" || s.to_lowercase() == "true" {
+                1
+            } else if get_f64(col_incluye_iva, 0.0) == 1.0 {
+                1
+            } else {
+                0
+            }
+        } else { 0 };
+
         let mut stock = get_f64(col_stock, 0.0);
         let stock_min = get_f64(col_stock_min, 0.0);
         let unidad = get_str(col_unidad);
@@ -1211,9 +1391,10 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
         } else { None };
 
         let producto_id_afectado: Option<i64> = if let Some(id) = existing_id {
+            // v2.5.37: ahora actualiza tambien incluye_iva desde Excel
             match conn.execute(
-                "UPDATE productos SET nombre=?1, descripcion=?2, categoria_id=?3, precio_costo=?4, precio_venta=?5, iva_porcentaje=?6, stock_actual=?7, stock_minimo=?8, unidad_medida=?9, es_servicio=?10, codigo_barras=?11, requiere_serie=?12, requiere_caducidad=?13 WHERE id=?14",
-                rusqlite::params![nombre, descripcion, categoria_id, precio_costo, precio_venta, iva, stock, stock_min, if unidad.is_empty() { "UND" } else { &unidad }, es_servicio as i32, if codigo_barras.is_empty() { None } else { Some(&codigo_barras) }, requiere_serie as i32, requiere_caducidad as i32, id]
+                "UPDATE productos SET nombre=?1, descripcion=?2, categoria_id=?3, precio_costo=?4, precio_venta=?5, iva_porcentaje=?6, incluye_iva=?7, stock_actual=?8, stock_minimo=?9, unidad_medida=?10, es_servicio=?11, codigo_barras=?12, requiere_serie=?13, requiere_caducidad=?14 WHERE id=?15",
+                rusqlite::params![nombre, descripcion, categoria_id, precio_costo, precio_venta, iva, incluye_iva, stock, stock_min, if unidad.is_empty() { "UND" } else { &unidad }, es_servicio as i32, if codigo_barras.is_empty() { None } else { Some(&codigo_barras) }, requiere_serie as i32, requiere_caducidad as i32, id]
             ) {
                 Ok(_) => { actualizados += 1; Some(id) }
                 Err(e) => { errores += 1; msgs.push(format!("Fila {}: {}", line_idx + 2, e)); None }
@@ -1225,13 +1406,36 @@ pub fn importar_productos_excel(db: State<Database>, archivo_bytes: Vec<u8>) -> 
             } else { codigo };
 
             match conn.execute(
-                "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id, precio_costo, precio_venta, iva_porcentaje, stock_actual, stock_minimo, unidad_medida, es_servicio, activo, incluye_iva, requiere_serie, requiere_caducidad) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, 0, ?13, ?14)",
-                rusqlite::params![final_codigo, if codigo_barras.is_empty() { None } else { Some(&codigo_barras) }, nombre, descripcion, categoria_id, precio_costo, precio_venta, iva, stock, stock_min, if unidad.is_empty() { "UND".to_string() } else { unidad }, es_servicio as i32, requiere_serie as i32, requiere_caducidad as i32]
+                "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id, precio_costo, precio_venta, iva_porcentaje, stock_actual, stock_minimo, unidad_medida, es_servicio, activo, incluye_iva, requiere_serie, requiere_caducidad) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14, ?15)",
+                rusqlite::params![final_codigo, if codigo_barras.is_empty() { None } else { Some(&codigo_barras) }, nombre, descripcion, categoria_id, precio_costo, precio_venta, iva, stock, stock_min, if unidad.is_empty() { "UND".to_string() } else { unidad }, es_servicio as i32, incluye_iva, requiere_serie as i32, requiere_caducidad as i32]
             ) {
                 Ok(_) => { creados += 1; Some(conn.last_insert_rowid()) }
                 Err(e) => { errores += 1; msgs.push(format!("Fila {}: {}", line_idx + 2, e)); None }
             }
         };
+
+        // v2.5.37: sync de precios por lista (precios_producto). Para cada columna
+        // precio_<NombreLista> que vino llena, hacer UPSERT en precios_producto.
+        // Si la celda venía vacía pero precio_venta tiene valor, replicar precio_venta
+        // a TODAS las listas que existen pero no fueron llenadas (regla "rige sobre los demas").
+        if let Some(pid) = producto_id_afectado {
+            for (lista_id, _nombre_lista, col_idx) in &cols_listas {
+                let precio_celda = get_f64(Some(*col_idx), 0.0);
+                let precio_final = if precio_celda > 0.0 {
+                    precio_celda
+                } else if precio_venta > 0.0 {
+                    // celda vacía pero precio_venta tiene valor → replicar
+                    precio_venta
+                } else {
+                    continue; // ambos vacíos → no insertar
+                };
+                conn.execute(
+                    "INSERT INTO precios_producto (producto_id, lista_precio_id, precio) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(producto_id, lista_precio_id) DO UPDATE SET precio = excluded.precio",
+                    rusqlite::params![pid, lista_id, precio_final],
+                ).ok();
+            }
+        }
 
         // Manejo de caducidad: si se especificó fecha, crear lote; si no hay fecha, warning.
         if let Some(pid) = producto_id_afectado {
