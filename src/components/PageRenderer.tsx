@@ -24,7 +24,7 @@ import MovimientosBancariosPage from "../pages/MovimientosBancariosPage";
 import SeriesPage from "../pages/SeriesPage";
 import CaducidadPage from "../pages/CaducidadPage";
 import ServicioTecnicoPage from "../pages/ServicioTecnicoPage";
-import SriAvanzadoPage from "../pages/SriAvanzadoPage";
+import ContabilidadPage from "../pages/ContabilidadPage";
 import MesasPage from "../restaurante/pages/MesasPage";
 import CocinaPage from "../restaurante/pages/CocinaPage";
 import ConfigMesasPage from "../restaurante/pages/ConfigMesasPage";
@@ -47,7 +47,7 @@ export default function PageRenderer({ path }: { path: string }) {
     case "/series":          return <SeriesPage />;
     case "/caducidad":       return <CaducidadPage />;
     case "/servicio-tecnico":return <ServicioTecnicoPage />;
-    case "/sri-avanzado":    return <SriAvanzadoPage />;
+    case "/contabilidad":    return <ContabilidadPage />;
     case "/reportes":        return <ReportesPage />;
     case "/mesas":           return <MesasPage />;
     case "/cocina":          return <CocinaPage />;

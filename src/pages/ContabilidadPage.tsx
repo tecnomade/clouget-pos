@@ -1,8 +1,8 @@
 /**
- * v2.5.43 — Módulo SRI Avanzado (Agente de Retención + ATS)
+ * v2.5.43 — Módulo Contabilidad (Agente de Retención + ATS)
  *
  * Página dedicada con tabs internos. Solo accesible si la licencia
- * incluye el módulo `sri_avanzado` (validado en Layout.tsx).
+ * incluye el módulo `contabilidad` (validado en Layout.tsx).
  *
  * Tabs:
  *   1. Configuración — datos del agente de retención (resolución, tipo, etc.)
@@ -13,9 +13,9 @@ import { useState, useEffect } from "react";
 import { useToast } from "../components/Toast";
 import { invoke } from "@tauri-apps/api/core";
 
-// ─── Tipos (mirror del backend sri_avanzado.rs) ─────────────────────────────
+// ─── Tipos (mirror del backend contabilidad.rs) ─────────────────────────────
 
-interface SriAvanzadoConfig {
+interface ContabilidadConfig {
   es_agente_retencion: boolean;
   resolucion_designacion: string | null;
   fecha_designacion: string | null;
@@ -74,10 +74,10 @@ const CODIGOS_IVA_COMUNES = [
 
 type Tab = "config" | "comprobantes" | "ats";
 
-export default function SriAvanzadoPage() {
+export default function ContabilidadPage() {
   const { toastExito, toastError } = useToast();
   const [tab, setTab] = useState<Tab>("config");
-  const [config, setConfig] = useState<SriAvanzadoConfig | null>(null);
+  const [config, setConfig] = useState<ContabilidadConfig | null>(null);
   const [guardando, setGuardando] = useState(false);
 
   // Comprobantes
@@ -89,14 +89,14 @@ export default function SriAvanzadoPage() {
   const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().slice(0, 10));
 
   useEffect(() => {
-    invoke<SriAvanzadoConfig>("sri_avanzado_obtener_config")
+    invoke<ContabilidadConfig>("contabilidad_obtener_config")
       .then(setConfig)
       .catch((e) => toastError("Error cargando configuración: " + e));
   }, []);
 
   useEffect(() => {
     if (tab !== "comprobantes") return;
-    invoke<RetencionEmitidaResumen[]>("sri_avanzado_listar_retenciones", {
+    invoke<RetencionEmitidaResumen[]>("contabilidad_listar_retenciones", {
       fechaDesde, fechaHasta,
     }).then(setRetenciones).catch(() => setRetenciones([]));
   }, [tab, fechaDesde, fechaHasta]);
@@ -105,7 +105,7 @@ export default function SriAvanzadoPage() {
     if (!config) return;
     try {
       setGuardando(true);
-      await invoke<void>("sri_avanzado_guardar_config", { config });
+      await invoke<void>("contabilidad_guardar_config", { config });
       toastExito("Configuración guardada");
     } catch (err) {
       toastError("Error: " + err);
@@ -117,7 +117,7 @@ export default function SriAvanzadoPage() {
   return (
     <>
       <div className="page-header">
-        <h2>SRI Avanzado · Agente de Retención + ATS</h2>
+        <h2>Contabilidad · Agente de Retención + ATS</h2>
       </div>
       <div className="page-body">
         {/* Tabs */}

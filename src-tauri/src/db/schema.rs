@@ -1518,8 +1518,8 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     );
 
-    // ─── v2.5.43: Módulo SRI Avanzado (Agente de Retención + ATS) ────────────
-    // Módulo OPCIONAL — solo accesible si la licencia tiene el flag `sri_avanzado`
+    // ─── v2.5.43/44: Módulo Contabilidad (Agente de Retención + ATS) ─────────
+    // Módulo OPCIONAL — solo accesible si la licencia tiene el flag `contabilidad`
     // activado desde admin.clouget.com. Encierra:
     //   - Configuración separada del agente de retención (resolución, fecha, etc.)
     //   - Retenciones EMITIDAS a proveedores (yo soy el agente que retiene)
@@ -1528,8 +1528,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     //
     // NO se confunde con `retenciones_recibidas` que ya existe (lo que clientes
     // me retienen a mí). Ambas tablas conviven; cada una se maneja por separado.
+    //
+    // v2.5.44: rename de `sri_avanzado_config` a `contabilidad_config`. Si la tabla
+    // vieja existe (de v2.5.43 BETA), se migran los datos automáticamente.
     let _ = conn.execute_batch("
-        CREATE TABLE IF NOT EXISTS sri_avanzado_config (
+        CREATE TABLE IF NOT EXISTS contabilidad_config (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             es_agente_retencion INTEGER NOT NULL DEFAULT 0,
             resolucion_designacion TEXT,
@@ -1543,7 +1546,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             observacion TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         );
-        INSERT OR IGNORE INTO sri_avanzado_config (id) VALUES (1);
+        INSERT OR IGNORE INTO contabilidad_config (id) VALUES (1);
 
         CREATE TABLE IF NOT EXISTS retenciones_emitidas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1593,6 +1596,29 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
         CREATE INDEX IF NOT EXISTS idx_ret_emit_det_ret ON retencion_emitida_detalles(retencion_id);
     ");
+
+    // v2.5.44: si existe la tabla vieja sri_avanzado_config (de v2.5.43 BETA),
+    // migrar los datos y borrarla. Ignora errores si no existe (caso normal).
+    let tabla_vieja_existe: bool = conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sri_avanzado_config'",
+        [], |_r| Ok(true),
+    ).unwrap_or(false);
+    if tabla_vieja_existe {
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO contabilidad_config
+                (id, es_agente_retencion, resolucion_designacion, fecha_designacion,
+                 tipo_contribuyente, obligado_contabilidad,
+                 codigo_retencion_renta_default, codigo_retencion_iva_default,
+                 contador_ruc, contador_nombre, observacion, updated_at)
+             SELECT id, es_agente_retencion, resolucion_designacion, fecha_designacion,
+                    tipo_contribuyente, obligado_contabilidad,
+                    codigo_retencion_renta_default, codigo_retencion_iva_default,
+                    contador_ruc, contador_nombre, observacion, updated_at
+             FROM sri_avanzado_config WHERE id = 1",
+            [],
+        );
+        let _ = conn.execute("DROP TABLE IF EXISTS sri_avanzado_config", []);
+    }
 
     // ─── v2.5.35: Datos del comprobante NC del proveedor ─────────────────────
     // La tabla compra_devoluciones almacena devoluciones internas. Ahora también

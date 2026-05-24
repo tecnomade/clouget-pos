@@ -6,6 +6,39 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.44 — 2026-05-24 ✏️ Rename del módulo: SRI Avanzado → Contabilidad
+
+Decisión de nomenclatura: el módulo introducido en v2.5.43 se renombra a **"Contabilidad"** porque es un mejor paraguas conceptual para todo lo que va a contener (retenciones emitidas, ATS, declaración IVA, libro mayor, etc.).
+
+### Cambios
+
+| Elemento | Antes | Ahora |
+|----------|-------|-------|
+| Módulo de licencia | `sri_avanzado` | `contabilidad` |
+| Sección sidebar | `TRIBUTARIO` | `CONTABILIDAD` |
+| Path | `/sri-avanzado` | `/contabilidad` |
+| Tabla config | `sri_avanzado_config` | `contabilidad_config` |
+| Archivo backend | `commands/sri_avanzado.rs` | `commands/contabilidad.rs` |
+| Componente React | `SriAvanzadoPage` | `ContabilidadPage` |
+| Comandos | `sri_avanzado_*` | `contabilidad_*` |
+
+### Compatibilidad backward
+
+- Si tienes una licencia v2.5.43 BETA con el tag legacy `sri_avanzado`, el módulo se **sigue activando** (Layout.tsx acepta ambos nombres). Cuando renueves la licencia con `contabilidad` ya queda con el nombre nuevo.
+- La tabla `sri_avanzado_config` (si existe de v2.5.43 BETA) se **migra automáticamente** a `contabilidad_config` al arrancar la app, preservando datos. La tabla vieja se borra después.
+
+### Acción usuario (admin panel)
+
+Cuando edites licencias en `admin.clouget.com`, el checkbox debe escribir `"contabilidad"` (NO `"sri_avanzado"`) en el array de módulos.
+
+Sin nuevas funcionalidades — solo rename. Las features de captura/XML/RIDE/ATS siguen su roadmap original solo corriendo un número:
+- v2.5.45 (era 44): captura retenciones emitidas
+- v2.5.46 (era 45): XML SRI + autorización
+- v2.5.47 (era 46): RIDE PDF
+- v2.5.48 (era 47): ATS mensual
+
+---
+
 ## v2.5.43 — 2026-05-24 📑 Módulo SRI Avanzado (Agente de Retención + ATS) — Foundation
 
 Primera release del **módulo opcional `sri_avanzado`** orientado a empresas que son agentes de retención y necesitan emitir comprobantes de retención + ATS mensual. Pensado para distribuidoras, contribuyentes especiales, sociedades, etc.
