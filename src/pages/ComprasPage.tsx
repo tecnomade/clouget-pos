@@ -21,6 +21,7 @@ import {
 import type { CuentaBanco } from "../types";
 import type { PreviewXmlCompra, ItemMapeadoXml } from "../services/api";
 import { useToast } from "../components/Toast";
+import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
 import { FORMAS_PAGO_SRI } from "../config/formasPagoSri";
 import type { Proveedor, Compra, CompraCompleta, ItemCompra, Categoria } from "../types";
@@ -63,6 +64,7 @@ function fechaHace(dias: number): string {
 
 export default function ComprasPage() {
   const { toastExito, toastError, toastWarning } = useToast();
+  const { esAdmin } = useSesion();
   const [tab, setTab] = useState<"compras" | "proveedores">("compras");
 
   // ==================== PROVEEDORES TAB ====================
@@ -155,6 +157,11 @@ export default function ComprasPage() {
   const [devolverMotivo, setDevolverMotivo] = useState("");
   const [devolverObs, setDevolverObs] = useState("");
   const [devolverProcesando, setDevolverProcesando] = useState(false);
+  // v2.5.42: tipo NC (mercancia vs ajuste precio) + override stock negativo
+  const [devolverTipoNc, setDevolverTipoNc] = useState<"MERCANCIA" | "AJUSTE_PRECIO">("MERCANCIA");
+  const [devolverForzarNeg, setDevolverForzarNeg] = useState(false);
+  // v2.5.42: stock actual de cada producto del modal devolver (para mostrar "Disponible")
+  const [stockActualProductos, setStockActualProductos] = useState<Record<number, number>>({});
   // v2.5.35: datos del comprobante NC del proveedor (opcional)
   const [ncNumero, setNcNumero] = useState("");
   const [ncClaveAcceso, setNcClaveAcceso] = useState("");
@@ -602,6 +609,19 @@ export default function ComprasPage() {
       setNcEstadoSri(null);
       setNcXmlFirmado(null);
       setNcDatosVisibles(false);
+      // v2.5.42: reset tipo + cargar stock actual de cada producto para trazabilidad
+      setDevolverTipoNc("MERCANCIA");
+      setDevolverForzarNeg(false);
+      const stocks: Record<number, number> = {};
+      for (const d of compraCompleta.detalles) {
+        if (d.producto_id) {
+          try {
+            const prod = await import("../services/api").then(m => m.obtenerProducto(d.producto_id!));
+            stocks[d.producto_id] = prod.stock_actual ?? 0;
+          } catch { /* ignore */ }
+        }
+      }
+      setStockActualProductos(stocks);
     } catch (err) {
       toastError("Error cargando compra: " + err);
     }
@@ -673,6 +693,9 @@ export default function ComprasPage() {
         fecha_emision_nc: ncFechaEmision.trim() || null,
         estado_sri_nc: ncEstadoSri,
         xml_nc_firmado: ncXmlFirmado,
+        // v2.5.42: tipo NC + override stock negativo
+        tipo_nc: devolverTipoNc,
+        forzar_stock_negativo: devolverForzarNeg,
       });
       toastExito(`Devolucion ${res.numero} registrada por $${res.total.toFixed(2)}${res.es_total ? " (TOTAL)" : ""}`);
       setDevolverCompra(null);
@@ -1818,6 +1841,25 @@ export default function ComprasPage() {
                 Se revertirá el stock y se generará un movimiento <code>DEVOLUCION_COMPRA</code> en el kardex.
                 Si devuelves <strong>todo</strong>, la compra queda en estado <code>DEVUELTA</code>.
               </div>
+              {/* v2.5.42: Selector tipo de NC del proveedor */}
+              <div style={{ marginBottom: 12, padding: 10, background: "var(--color-surface-alt)", borderRadius: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Tipo de Nota de Crédito del proveedor</div>
+                <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                    <input type="radio" name="tipoNc" checked={devolverTipoNc === "MERCANCIA"}
+                      onChange={() => setDevolverTipoNc("MERCANCIA")} />
+                    <strong>Devolución de mercancía</strong>
+                    <span className="text-secondary" style={{ fontSize: 11 }}>— le devuelvo productos físicos, revierte stock</span>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                    <input type="radio" name="tipoNc" checked={devolverTipoNc === "AJUSTE_PRECIO"}
+                      onChange={() => setDevolverTipoNc("AJUSTE_PRECIO")} />
+                    <strong>Ajuste de precio</strong>
+                    <span className="text-secondary" style={{ fontSize: 11 }}>— me cobró de más, no devuelvo nada. Ajusta CXP + costo</span>
+                  </label>
+                </div>
+              </div>
+
               <table className="table" style={{ fontSize: 12 }}>
                 <thead>
                   <tr>
@@ -1825,9 +1867,10 @@ export default function ComprasPage() {
                     <th className="text-right">Comprado</th>
                     <th className="text-right">Ya devuelto</th>
                     <th className="text-right">Pendiente</th>
+                    {devolverTipoNc === "MERCANCIA" && <th className="text-right">Disponible</th>}
                     <th className="text-right" style={{ width: 120 }}>A devolver</th>
                     <th className="text-right">Precio</th>
-                    <th className="text-right">Subtotal devolución</th>
+                    <th className="text-right">Subtotal</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1836,6 +1879,13 @@ export default function ComprasPage() {
                     const pendiente = Math.max(0, d.cantidad - yaDev);
                     const cantDev = devolverItems[d.id ?? 0] ?? 0;
                     const sub = cantDev * d.precio_unitario;
+                    // v2.5.42: stock disponible (lo que realmente queda sin vender)
+                    const stockActual = d.producto_id ? (stockActualProductos[d.producto_id] ?? 0) : 0;
+                    // Solo aplica límite por stock cuando es MERCANCIA y hay producto vinculado
+                    const limiteEfectivo = devolverTipoNc === "MERCANCIA" && d.producto_id && !devolverForzarNeg
+                      ? Math.min(pendiente, Math.max(0, stockActual))
+                      : pendiente;
+                    const yaSeVendio = devolverTipoNc === "MERCANCIA" && d.producto_id && stockActual < pendiente;
                     return (
                       <tr key={d.id} style={{ opacity: pendiente <= 0 ? 0.5 : 1 }}>
                         <td>
@@ -1845,12 +1895,26 @@ export default function ComprasPage() {
                         <td className="text-right">{d.cantidad}</td>
                         <td className="text-right text-secondary">{yaDev}</td>
                         <td className="text-right font-bold">{pendiente}</td>
+                        {devolverTipoNc === "MERCANCIA" && (
+                          <td className="text-right" style={{
+                            color: yaSeVendio ? "var(--color-danger)" : "var(--color-success)",
+                            fontWeight: 600,
+                          }}
+                          title={yaSeVendio ? `Tienes ${stockActual} en stock — ya vendiste ${(pendiente - stockActual).toFixed(2)} unidad(es)` : "Disponible para devolver"}>
+                            {d.producto_id ? stockActual : "—"}
+                            {yaSeVendio && <span style={{ fontSize: 9, display: "block" }}>⚠ vendidos</span>}
+                          </td>
+                        )}
                         <td className="text-right">
-                          <input type="number" className="input" style={{ textAlign: "right", fontSize: 12, padding: "2px 6px" }}
-                            min="0" max={pendiente} step="0.01" value={cantDev}
+                          <input type="number" className="input" style={{
+                            textAlign: "right", fontSize: 12, padding: "2px 6px",
+                            borderColor: cantDev > limiteEfectivo ? "var(--color-danger)" : undefined,
+                          }}
+                            min="0" max={devolverForzarNeg ? pendiente : limiteEfectivo} step="0.01" value={cantDev}
                             disabled={pendiente <= 0}
                             onChange={(e) => {
-                              const v = Math.max(0, Math.min(pendiente, parseFloat(e.target.value) || 0));
+                              const max = devolverForzarNeg ? pendiente : limiteEfectivo;
+                              const v = Math.max(0, Math.min(max, parseFloat(e.target.value) || 0));
                               setDevolverItems((prev) => ({ ...prev, [d.id ?? 0]: v }));
                             }} />
                         </td>
@@ -1861,6 +1925,17 @@ export default function ComprasPage() {
                   })}
                 </tbody>
               </table>
+
+              {/* v2.5.42: override forzar stock negativo (admin) */}
+              {devolverTipoNc === "MERCANCIA" && esAdmin && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--color-warning)" }}>
+                    <input type="checkbox" checked={devolverForzarNeg}
+                      onChange={(e) => setDevolverForzarNeg(e.target.checked)} />
+                    Forzar devolución con stock negativo (admin) — usar solo si sabes lo que haces
+                  </label>
+                </div>
+              )}
               <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div>
                   <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Motivo</label>

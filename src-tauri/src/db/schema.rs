@@ -1528,6 +1528,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN estado_sri_nc TEXT", []);
     let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN fecha_emision_nc TEXT", []);
     let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN xml_nc_firmado TEXT", []);
+    // v2.5.42: tipo_nc — MERCANCIA (revierte stock) o AJUSTE_PRECIO (no toca stock, ajusta CXP + precio_costo)
+    let _ = conn.execute("ALTER TABLE compra_devoluciones ADD COLUMN tipo_nc TEXT NOT NULL DEFAULT 'MERCANCIA'", []);
+    // v2.5.42: config global para permitir stock negativo al anular/devolver
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO config (key, value) VALUES ('permitir_anulacion_stock_negativo', '0')",
+        [],
+    );
     // UNIQUE INDEX parcial sobre clave_acceso_nc (49 dig SRI) — evita re-importar misma NC
     let _ = conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_compra_dev_clave_nc_unique

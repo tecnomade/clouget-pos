@@ -6,6 +6,63 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.42 — 2026-05-24 🔍 Trazabilidad compra → venta en anulaciones + tipo NC del proveedor
+
+### 🐛 Bug crítico arreglado: anular compra generaba stock negativo
+
+**Antes**: si comprabas 100 unidades, vendías 80, y anulabas la compra, el stock quedaba en -80 (negativo). Total ruptura de la consistencia de inventario.
+
+**Ahora**: el sistema valida la trazabilidad y bloquea por default cuando hay items ya vendidos.
+
+### 🆕 Validación de trazabilidad
+
+Tanto `anular_compra` como `registrar_devolucion_compra` ahora calculan **"unidades realmente devolvibles"** = `min(cantidad_comprada − cantidad_devuelta, stock_actual)`.
+
+- Si pides anular/devolver más de lo que tienes en stock → bloquea con mensaje claro indicando cuántas unidades de cada producto ya se vendieron
+- Sugiere alternativas: devolver solo lo disponible, marcar como "ajuste de precio", o activar override
+
+### 🆕 Tipo de NC del proveedor
+
+En el modal de devolución, **selector con dos opciones**:
+
+| Tipo | Cuándo usarlo | Efecto en stock | Efecto en CXP |
+|------|---------------|-----------------|----------------|
+| **Devolución de mercancía** (default) | Le devuelves productos físicos | ↓ Revierte stock | ↓ Reduce saldo |
+| **Ajuste de precio** | Te cobró de más, no devuelves nada | ✗ NO toca stock | ↓ Reduce saldo + recalcula `costo_promedio` |
+
+El "Ajuste de precio" es útil cuando el proveedor te emite NC por:
+- Sobrecosto en la factura original
+- Descuento por volumen aplicado a posteriori
+- Corrección de precio unitario
+
+Movimiento de kardex tipo nuevo: `AJUSTE_PRECIO_NC` (cantidad 0, registra el ajuste como informativo).
+
+### 🆕 Override admin (3 capas)
+
+Para casos extremos donde sí se quiere generar stock negativo (ej. devolución física al proveedor de algo que ya se vendió):
+
+1. **Checkbox en el modal** "Forzar devolución con stock negativo (admin)" — solo visible para usuarios ADMIN
+2. **Config global** `permitir_anulacion_stock_negativo` (0/1) — el admin lo activa en Configuración para todos
+3. **Parámetro `forzar` en la API** — para integraciones programáticas
+
+En todos los casos el movimiento de kardex queda marcado con `⚠ STOCK NEGATIVO (items vendidos)` para auditoría.
+
+### 🎨 UI mejorada en modal Devolver
+
+- Nueva columna **"Disponible"** (stock actual de cada producto)
+  - Verde si hay suficiente para devolver lo pendiente
+  - Rojo con `⚠ vendidos` si parte ya se vendió
+- Input "A devolver" se limita automáticamente al disponible (a menos que actives forzar)
+- Border rojo en el input si se excede
+
+### Schema
+
+- Nueva columna `compra_devoluciones.tipo_nc` (MERCANCIA/AJUSTE_PRECIO, default MERCANCIA)
+- Nueva config `permitir_anulacion_stock_negativo` (default 0)
+- Self-healing migration
+
+---
+
 ## v2.5.41 — 2026-05-24 🚀 Promoción consolidada a STABLE (10 versiones beta)
 
 Empaqueta y publica al canal **STABLE** todos los cambios acumulados en BETA desde v2.5.31:

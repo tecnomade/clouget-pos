@@ -1422,7 +1422,14 @@ export const eliminarProveedor = (id: number) => smartInvoke<void>("eliminar_pro
 export const registrarCompra = (compra: NuevaCompra) => smartInvoke<CompraCompleta>("registrar_compra", { compra });
 export const listarCompras = (fechaDesde: string, fechaHasta: string) => smartInvoke<Compra[]>("listar_compras", { fechaDesde, fechaHasta });
 export const obtenerCompra = (id: number) => smartInvoke<CompraCompleta>("obtener_compra", { id });
-export const anularCompra = (id: number, motivo?: string) => smartInvoke<void>("anular_compra", { id, motivo });
+// v2.5.42: anular_compra ahora devuelve resultado con info de stock negativo
+export interface AnularCompraResultado {
+  anulada: boolean;
+  items_con_stock_negativo: number;
+  advertencia: string;
+}
+export const anularCompra = (id: number, motivo?: string, forzarStockNegativo?: boolean) =>
+  smartInvoke<AnularCompraResultado>("anular_compra", { id, motivo, forzarStockNegativo });
 
 // v2.5.30: devoluciones de compra
 export interface ItemDevolucionCompra {
@@ -1441,6 +1448,9 @@ export interface NuevaDevolucionCompra {
   fecha_emision_nc?: string | null;
   estado_sri_nc?: string | null;
   xml_nc_firmado?: string | null;
+  // v2.5.42: tipo de NC y override stock negativo
+  tipo_nc?: "MERCANCIA" | "AJUSTE_PRECIO";
+  forzar_stock_negativo?: boolean;
 }
 export interface DevolucionCompraInfo {
   id: number;
@@ -1459,6 +1469,8 @@ export interface DevolucionCompraInfo {
   clave_acceso_nc?: string | null;
   estado_sri_nc?: string | null;
   fecha_emision_nc?: string | null;
+  // v2.5.42
+  tipo_nc?: string | null;
 }
 export const registrarDevolucionCompra = (input: NuevaDevolucionCompra) =>
   smartInvoke<{ devolucion_id: number; numero: string; subtotal: number; iva: number; total: number; es_total: boolean; items: number }>(

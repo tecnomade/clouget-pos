@@ -554,15 +554,42 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
     Ok(CompraCompleta { compra, detalles })
 }
 
+/// v2.5.42: helper de trazabilidad — para un item de compra (producto_id, cantidad_comprada,
+/// cantidad_devuelta), calcula cuántas unidades se pueden todavía devolver o anular sin
+/// generar stock negativo. Fórmula:
+///     pendiente_de_la_compra = cantidad_comprada - cantidad_devuelta
+///     stock_actual = lo que el producto tiene ahora
+///     devolvible = min(pendiente_de_la_compra, stock_actual)
+///
+/// Retorna (devolvible, vendido_post_compra) donde vendido_post_compra =
+/// pendiente_de_la_compra - devolvible (lo que se vendió y por tanto no se puede devolver).
+fn calcular_devolvible(
+    conn: &rusqlite::Connection,
+    producto_id: i64,
+    cantidad_comprada: f64,
+    cantidad_devuelta: f64,
+) -> (f64, f64) {
+    let pendiente = (cantidad_comprada - cantidad_devuelta).max(0.0);
+    let stock_actual: f64 = conn.query_row(
+        "SELECT stock_actual FROM productos WHERE id = ?1",
+        rusqlite::params![producto_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let devolvible = pendiente.min(stock_actual.max(0.0));
+    let vendido = (pendiente - devolvible).max(0.0);
+    (devolvible, vendido)
+}
+
 #[tauri::command]
 pub fn anular_compra(
     db: State<Database>,
     sesion: State<SesionState>,
     id: i64,
     motivo: Option<String>,
-) -> Result<(), String> {
+    forzar_stock_negativo: Option<bool>,
+) -> Result<serde_json::Value, String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let usuario = usuario_actual(&sesion);
+    let forzar = forzar_stock_negativo.unwrap_or(false);
 
     // Verificar que la compra existe y no está ya anulada
     let (estado, numero, total_devuelto): (String, String, f64) = conn
@@ -587,23 +614,56 @@ pub fn anular_compra(
         ));
     }
 
-    // Revertir stock para cada detalle con producto_id
+    // v2.5.42: validar trazabilidad — items ya vendidos no permiten anular sin override
     let mut stmt = conn
         .prepare(
-            "SELECT producto_id, cantidad FROM compra_detalles WHERE compra_id = ?1 AND producto_id IS NOT NULL",
+            "SELECT cd.producto_id, cd.cantidad, COALESCE(p.nombre, '?'),
+                    COALESCE(cd.cantidad_devuelta, 0)
+             FROM compra_detalles cd
+             LEFT JOIN productos p ON cd.producto_id = p.id
+             WHERE cd.compra_id = ?1 AND cd.producto_id IS NOT NULL",
         )
         .map_err(|e| e.to_string())?;
 
-    let detalles: Vec<(i64, f64)> = stmt
+    let detalles: Vec<(i64, f64, String, f64)> = stmt
         .query_map(rusqlite::params![id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    // Detectar items con stock_actual menor a la cantidad que habría que revertir
+    let mut conflictos: Vec<(String, f64, f64)> = Vec::new(); // (nombre, vendido, devolvible)
+    for (pid, cant_comprada, nombre, cant_dev) in &detalles {
+        let (devolvible, vendido) = calcular_devolvible(&conn, *pid, *cant_comprada, *cant_dev);
+        if vendido > 0.001 {
+            conflictos.push((nombre.clone(), vendido, devolvible));
+        }
+    }
+
+    // Si hay conflictos y NO se forza, bloquear con mensaje detallado
+    if !conflictos.is_empty() && !forzar {
+        // Chequear flag global de config: permitir_anulacion_stock_negativo
+        let permitido_global: bool = conn.query_row(
+            "SELECT value FROM config WHERE key = 'permitir_anulacion_stock_negativo'",
+            [], |r| r.get::<_, String>(0),
+        ).map(|v| v == "1").unwrap_or(false);
+
+        if !permitido_global {
+            let detalle_str = conflictos.iter()
+                .map(|(n, vendido, devolvible)| format!("  - {}: vendiste {} unidad(es), solo puedes devolver {}", n, vendido, devolvible))
+                .collect::<Vec<_>>().join("\n");
+            return Err(format!(
+                "TRAZABILIDAD: No se puede anular completa porque algunos items YA SE VENDIERON:\n{}\n\nOpciones:\n  1) Usa 'Devolver' para regresar SOLO las cantidades disponibles\n  2) Activa 'Permitir anulación con stock negativo' en Configuración (admin)\n  3) Reenvía con la opción 'Forzar' marcada (admin)",
+                detalle_str
+            ));
+        }
+    }
+
     let motivo_str = motivo.unwrap_or_else(|| "Sin motivo".to_string());
-    for (producto_id, cantidad) in detalles {
+    let mut items_con_negativo = 0i64;
+    for (producto_id, cantidad, _nombre, _cant_dev) in detalles {
         // Stock antes (para kardex)
         let stock_antes: f64 = conn.query_row(
             "SELECT stock_actual FROM productos WHERE id = ?1",
@@ -617,12 +677,19 @@ pub fn anular_compra(
         )
         .map_err(|e| e.to_string())?;
 
-        // v2.5.30: kardex inverso
-        let motivo_kardex = format!("Anulacion compra {} - {}", numero, motivo_str);
+        let stock_nuevo = stock_antes - cantidad;
+        if stock_nuevo < 0.0 { items_con_negativo += 1; }
+
+        // v2.5.30: kardex inverso. v2.5.42: marca si quedó stock negativo
+        let motivo_kardex = if stock_nuevo < 0.0 {
+            format!("Anulacion compra {} - {} ⚠ STOCK NEGATIVO (items vendidos)", numero, motivo_str)
+        } else {
+            format!("Anulacion compra {} - {}", numero, motivo_str)
+        };
         let _ = conn.execute(
             "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
              VALUES (?1, 'ANULACION_COMPRA', ?2, ?3, ?4, 0, ?5, ?6, ?7)",
-            rusqlite::params![producto_id, -cantidad, stock_antes, stock_antes - cantidad, id, usuario, motivo_kardex],
+            rusqlite::params![producto_id, -cantidad, stock_antes, stock_nuevo, id, usuario, motivo_kardex],
         );
     }
 
@@ -642,7 +709,13 @@ pub fn anular_compra(
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(())
+    Ok(serde_json::json!({
+        "anulada": true,
+        "items_con_stock_negativo": items_con_negativo,
+        "advertencia": if items_con_negativo > 0 {
+            format!("Anulación forzada: {} producto(s) quedó/quedaron con stock negativo porque ya se habían vendido. Revisa el kardex.", items_con_negativo)
+        } else { String::new() },
+    }))
 }
 
 // ================================================================
@@ -1394,6 +1467,13 @@ pub struct NuevaDevolucionCompra {
     /// XML firmado original (solo si vino de import_xml_nc_compra)
     #[serde(default)]
     pub xml_nc_firmado: Option<String>,
+    /// v2.5.42: tipo de NC del proveedor — "MERCANCIA" (default, revierte stock)
+    /// o "AJUSTE_PRECIO" (no toca stock, solo ajusta precio_costo + saldo CXP)
+    #[serde(default)]
+    pub tipo_nc: Option<String>,
+    /// v2.5.42: override para permitir devolver con stock negativo (admin)
+    #[serde(default)]
+    pub forzar_stock_negativo: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1414,6 +1494,8 @@ pub struct DevolucionCompraInfo {
     pub clave_acceso_nc: Option<String>,
     pub estado_sri_nc: Option<String>,
     pub fecha_emision_nc: Option<String>,
+    /// v2.5.42: MERCANCIA (revierte stock) o AJUSTE_PRECIO (no toca stock)
+    pub tipo_nc: Option<String>,
 }
 
 #[tauri::command]
@@ -1482,6 +1564,45 @@ pub fn registrar_devolucion_compra(
         return Err("No hay items para devolver".into());
     }
 
+    // v2.5.42: determinar tipo de NC. MERCANCIA (default) revierte stock. AJUSTE_PRECIO no toca stock.
+    let tipo_nc = input.tipo_nc.as_deref().unwrap_or("MERCANCIA").to_uppercase();
+    let es_ajuste_precio = tipo_nc == "AJUSTE_PRECIO";
+
+    // v2.5.42: validar trazabilidad solo si es devolución de MERCANCÍA (afecta stock)
+    if !es_ajuste_precio {
+        let permitido_global: bool = conn.query_row(
+            "SELECT value FROM config WHERE key = 'permitir_anulacion_stock_negativo'",
+            [], |r| r.get::<_, String>(0),
+        ).map(|v| v == "1").unwrap_or(false);
+
+        let permitir_neg = input.forzar_stock_negativo || permitido_global;
+        if !permitir_neg {
+            let mut conflictos: Vec<String> = Vec::new();
+            for (_, pid_opt, desc, cant, _) in &items_efectivos {
+                if let Some(pid) = pid_opt {
+                    let stock_actual: f64 = conn.query_row(
+                        "SELECT stock_actual FROM productos WHERE id = ?1",
+                        rusqlite::params![pid], |r| r.get(0),
+                    ).unwrap_or(0.0);
+                    if *cant > stock_actual + 0.0001 {
+                        let disponible = stock_actual.max(0.0);
+                        conflictos.push(format!(
+                            "  - {}: pides devolver {}, pero solo hay {} en stock (ya vendiste algunas)",
+                            desc.clone().unwrap_or_else(|| format!("Producto #{}", pid)),
+                            cant, disponible
+                        ));
+                    }
+                }
+            }
+            if !conflictos.is_empty() {
+                return Err(format!(
+                    "TRAZABILIDAD: Las cantidades exceden el stock disponible:\n{}\n\nOpciones:\n  1) Devuelve solo la cantidad disponible (ajusta los items)\n  2) Si el proveedor te emitió NC por AJUSTE DE PRECIO (no devuelves mercancía), cambia el tipo de NC a 'AJUSTE_PRECIO'\n  3) Activa 'Permitir anulación con stock negativo' en Configuración (admin)",
+                    conflictos.join("\n")
+                ));
+            }
+        }
+    }
+
     // v2.5.35: validar clave_acceso_nc unica si viene (para evitar re-importar la misma NC)
     let clave_nc_norm: Option<String> = input.clave_acceso_nc.as_ref()
         .map(|s| s.trim().to_string())
@@ -1538,8 +1659,8 @@ pub fn registrar_devolucion_compra(
         .and_then(|f| convertir_fecha_sri(f));
     tx.execute(
         "INSERT INTO compra_devoluciones (compra_id, numero, motivo, subtotal, iva, total, es_total, usuario, observacion,
-                                          numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc, xml_nc_firmado)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                          numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc, xml_nc_firmado, tipo_nc)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         rusqlite::params![
             input.compra_id, numero_dev, input.motivo, subtotal_dev, iva_dev, total_dev,
             es_total_calculado as i64, usuario, input.observacion,
@@ -1548,6 +1669,7 @@ pub fn registrar_devolucion_compra(
             input.estado_sri_nc,
             fecha_nc_norm,
             input.xml_nc_firmado,
+            tipo_nc,
         ],
     ).map_err(|e| {
         let msg = e.to_string();
@@ -1570,22 +1692,77 @@ pub fn registrar_devolucion_compra(
             "UPDATE compra_detalles SET cantidad_devuelta = COALESCE(cantidad_devuelta,0) + ?1 WHERE id = ?2",
             rusqlite::params![cant, cd_id],
         ).ok();
-        // Revertir stock + kardex (solo si hay producto)
+        // v2.5.42: comportamiento según tipo_nc
         if let Some(pid) = pid_opt {
-            let stock_antes: f64 = tx.query_row(
-                "SELECT stock_actual FROM productos WHERE id = ?1",
-                rusqlite::params![pid], |r| r.get(0),
-            ).unwrap_or(0.0);
-            tx.execute(
-                "UPDATE productos SET stock_actual = stock_actual - ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
-                rusqlite::params![cant, pid],
-            ).ok();
-            let motivo_kardex = format!("Devolucion compra {} - {} (motivo: {})", numero_dev,
-                desc.clone().unwrap_or_default(), motivo_str);
+            if es_ajuste_precio {
+                // AJUSTE_PRECIO: NO toca stock. Solo recalcula precio_costo del producto
+                // (PMP inverso: como si "comprara" -cant al precio original. El resultado es
+                // que el costo_promedio refleja el descuento del proveedor).
+                let (stock_actual_p, costo_prom_actual): (f64, f64) = tx.query_row(
+                    "SELECT stock_actual, COALESCE(costo_promedio, precio_costo) FROM productos WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+                ).unwrap_or((0.0, *precio));
+                // El ajuste es un crédito: como si revirtiera el precio pagado por cant unidades.
+                // nuevo_costo = (stock_actual * costo - cant * precio) / (stock_actual - 0)  → inválido si stock_actual=0
+                // Mejor: calcular el descuento como "rebaja proporcional" del costo actual.
+                // Simplificado: si el descuento es por cant unidades a $precio, y aún tengo stock,
+                // el "valor del descuento" se distribuye: nuevo_costo = costo_actual * (1 - cant*precio / (stock_actual * costo_actual))
+                if stock_actual_p > 0.0 && costo_prom_actual > 0.0 {
+                    let valor_descuento = cant * precio;
+                    let valor_actual_inventario = stock_actual_p * costo_prom_actual;
+                    let nuevo_costo = (valor_actual_inventario - valor_descuento).max(0.0) / stock_actual_p;
+                    tx.execute(
+                        "UPDATE productos SET costo_promedio = ?1, precio_costo = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+                        rusqlite::params![nuevo_costo, pid],
+                    ).ok();
+                }
+                // Kardex: registrar el ajuste como movimiento informativo (cantidad 0, valor en motivo)
+                let motivo_kardex = format!("Ajuste precio compra {} - NC ${:.2} (motivo: {})", numero_dev, sub_item, motivo_str);
+                let _ = tx.execute(
+                    "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+                     VALUES (?1, 'AJUSTE_PRECIO_NC', 0, ?2, ?2, ?3, ?4, ?5, ?6)",
+                    rusqlite::params![pid, stock_actual_p, precio, input.compra_id, usuario, motivo_kardex],
+                );
+            } else {
+                // MERCANCIA (default): revertir stock + kardex normal
+                let stock_antes: f64 = tx.query_row(
+                    "SELECT stock_actual FROM productos WHERE id = ?1",
+                    rusqlite::params![pid], |r| r.get(0),
+                ).unwrap_or(0.0);
+                tx.execute(
+                    "UPDATE productos SET stock_actual = stock_actual - ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+                    rusqlite::params![cant, pid],
+                ).ok();
+                let stock_nuevo = stock_antes - cant;
+                let motivo_kardex = if stock_nuevo < 0.0 {
+                    format!("Devolucion compra {} - {} ⚠ STOCK NEGATIVO (items ya vendidos)", numero_dev, desc.clone().unwrap_or_default())
+                } else {
+                    format!("Devolucion compra {} - {} (motivo: {})", numero_dev,
+                        desc.clone().unwrap_or_default(), motivo_str)
+                };
+                let _ = tx.execute(
+                    "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
+                     VALUES (?1, 'DEVOLUCION_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![pid, -cant, stock_antes, stock_nuevo, precio, input.compra_id, usuario, motivo_kardex],
+                );
+            }
+        }
+    }
+
+    // v2.5.42: si es AJUSTE_PRECIO, también ajustar saldo de CXP (la cuenta por pagar baja por el total NC)
+    if es_ajuste_precio && total_dev > 0.0 {
+        // Buscar CXP activa de esta compra y reducir saldo
+        let cxp: Option<(i64, f64)> = tx.query_row(
+            "SELECT id, saldo FROM cuentas_por_pagar WHERE compra_id = ?1 AND estado != 'ANULADA' LIMIT 1",
+            rusqlite::params![input.compra_id], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).ok();
+        if let Some((cxp_id, saldo_actual)) = cxp {
+            let nuevo_saldo = (saldo_actual - total_dev).max(0.0);
+            let nuevo_estado = if nuevo_saldo <= 0.01 { "PAGADA" } else { "PENDIENTE" };
             let _ = tx.execute(
-                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
-                 VALUES (?1, 'DEVOLUCION_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![pid, -cant, stock_antes, stock_antes - cant, precio, input.compra_id, usuario, motivo_kardex],
+                "UPDATE cuentas_por_pagar SET saldo = ?1, estado = ?2 WHERE id = ?3",
+                rusqlite::params![nuevo_saldo, nuevo_estado, cxp_id],
             );
         }
     }
@@ -1619,7 +1796,8 @@ pub fn listar_devoluciones_compra(
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
         "SELECT id, compra_id, numero, fecha, motivo, subtotal, iva, total, es_total, usuario, observacion,
-                numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc
+                numero_nc, clave_acceso_nc, estado_sri_nc, fecha_emision_nc,
+                COALESCE(tipo_nc, 'MERCANCIA')
          FROM compra_devoluciones WHERE compra_id = ?1 ORDER BY id DESC"
     ).map_err(|e| e.to_string())?;
     let lista = stmt.query_map(rusqlite::params![compra_id], |r| {
@@ -1639,6 +1817,7 @@ pub fn listar_devoluciones_compra(
             clave_acceso_nc: r.get(12).ok(),
             estado_sri_nc: r.get(13).ok(),
             fecha_emision_nc: r.get(14).ok(),
+            tipo_nc: r.get(15).ok(),
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
