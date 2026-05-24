@@ -6,6 +6,48 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.45 — 2026-05-24 🧾 Captura de retenciones emitidas (módulo Contabilidad)
+
+Primera versión funcional del módulo **Contabilidad**: ya se pueden **capturar comprobantes de retención** desde la app, asociados a una compra, con auto-sugerencia de líneas RENTA + IVA según los códigos default configurados.
+
+### Backend nuevo
+
+Comandos Tauri:
+- `contabilidad_crear_retencion(payload)` — valida la compra, genera número correlativo `RET-XXXXXX`, inserta cabecera + detalles, y **ajusta automáticamente la CXP** del proveedor (reduce el saldo por el total retenido, porque se paga menos al proveedor).
+- `contabilidad_obtener_retencion(id)` — devuelve cabecera + items + datos del proveedor + número de la compra origen.
+- `contabilidad_anular_retencion(id, motivo)` — marca como anulada y **revierte el ajuste CXP** (suma de vuelta el saldo al proveedor).
+
+### Frontend nuevo
+
+Página **Contabilidad → Comprobantes** ahora tiene botón **"+ Nueva retención"**. Al abrir, modal con:
+
+1. **Selector de compra** (busca por número/proveedor, filtra las del último año, excluye anuladas)
+2. **Auto-sugerencia de líneas** al elegir compra:
+   - RENTA: base = subtotal, código = `codigo_retencion_renta_default`, % inferido (ej. código 304 = 8%)
+   - IVA: base = IVA de la compra, código = `codigo_retencion_iva_default`, % inferido (ej. código 10 = 70%)
+3. **Edición manual** de líneas: agregar / borrar / editar código, base, porcentaje
+4. **Secuencial SRI opcional** (estab / pto / sec) si todavía no se envía a SRI
+5. **Total en tiempo real**
+6. **Botón Guardar** → llama backend → cierra modal → refresca lista
+
+Las retenciones quedan en la tabla principal con su número, proveedor, total y fecha. Click en el ojo para anular (con motivo).
+
+### Integración con compras / CXP
+
+Cuando creas una retención sobre una compra a crédito:
+- El monto retenido **reduce la CXP del proveedor** (porque pagas menos)
+- El proveedor recibe el comprobante físico/electrónico como soporte del descuento
+
+Si anulas, la CXP vuelve a su valor original.
+
+### Pendiente (próximas versiones)
+
+- v2.5.46: **XML SRI** del comprobante + envío + autorización
+- v2.5.47: **RIDE PDF** del comprobante
+- v2.5.48: **ATS mensual** (anexo transaccional simplificado)
+
+---
+
 ## v2.5.44 — 2026-05-24 ✏️ Rename del módulo: SRI Avanzado → Contabilidad
 
 Decisión de nomenclatura: el módulo introducido en v2.5.43 se renombra a **"Contabilidad"** porque es un mejor paraguas conceptual para todo lo que va a contener (retenciones emitidas, ATS, declaración IVA, libro mayor, etc.).

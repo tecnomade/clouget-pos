@@ -594,6 +594,10 @@ pub fn run() {
             commands::contabilidad::contabilidad_guardar_config,
             commands::contabilidad::contabilidad_listar_retenciones,
             commands::contabilidad::contabilidad_registrar_retencion,
+            // v2.5.45: captura de retenciones emitidas
+            commands::contabilidad::contabilidad_crear_retencion,
+            commands::contabilidad::contabilidad_obtener_retencion,
+            commands::contabilidad::contabilidad_anular_retencion,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,
