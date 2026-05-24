@@ -1518,6 +1518,82 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     );
 
+    // ─── v2.5.43: Módulo SRI Avanzado (Agente de Retención + ATS) ────────────
+    // Módulo OPCIONAL — solo accesible si la licencia tiene el flag `sri_avanzado`
+    // activado desde admin.clouget.com. Encierra:
+    //   - Configuración separada del agente de retención (resolución, fecha, etc.)
+    //   - Retenciones EMITIDAS a proveedores (yo soy el agente que retiene)
+    //   - Generación XML SRI + autorización + RIDE del comprobante de retención
+    //   - Generador ATS (Anexo Transaccional Simplificado) mensual
+    //
+    // NO se confunde con `retenciones_recibidas` que ya existe (lo que clientes
+    // me retienen a mí). Ambas tablas conviven; cada una se maneja por separado.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS sri_avanzado_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            es_agente_retencion INTEGER NOT NULL DEFAULT 0,
+            resolucion_designacion TEXT,
+            fecha_designacion TEXT,
+            tipo_contribuyente TEXT,
+            obligado_contabilidad INTEGER NOT NULL DEFAULT 0,
+            codigo_retencion_renta_default TEXT,
+            codigo_retencion_iva_default TEXT,
+            contador_ruc TEXT,
+            contador_nombre TEXT,
+            observacion TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
+        INSERT OR IGNORE INTO sri_avanzado_config (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS retenciones_emitidas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT NOT NULL UNIQUE,
+            compra_id INTEGER NOT NULL,
+            proveedor_id INTEGER NOT NULL,
+            fecha_emision TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            tipo_documento_referencia TEXT NOT NULL DEFAULT '01',
+            numero_documento_referencia TEXT,
+            fecha_documento_referencia TEXT,
+            establecimiento TEXT,
+            punto_emision TEXT,
+            secuencial TEXT,
+            numero_factura TEXT,
+            clave_acceso TEXT,
+            estado_sri TEXT NOT NULL DEFAULT 'NO_APLICA',
+            autorizacion_sri TEXT,
+            fecha_autorizacion TEXT,
+            xml_firmado TEXT,
+            subtotal_renta REAL NOT NULL DEFAULT 0,
+            subtotal_iva REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            usuario TEXT,
+            observacion TEXT,
+            anulada INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (compra_id) REFERENCES compras(id),
+            FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ret_emit_compra ON retenciones_emitidas(compra_id);
+        CREATE INDEX IF NOT EXISTS idx_ret_emit_proveedor ON retenciones_emitidas(proveedor_id);
+        CREATE INDEX IF NOT EXISTS idx_ret_emit_fecha ON retenciones_emitidas(fecha_emision);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ret_emit_clave_acceso_unique
+            ON retenciones_emitidas(clave_acceso)
+            WHERE clave_acceso IS NOT NULL AND clave_acceso != '';
+
+        CREATE TABLE IF NOT EXISTS retencion_emitida_detalles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            retencion_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            codigo_sri TEXT NOT NULL,
+            base_imponible REAL NOT NULL,
+            porcentaje REAL NOT NULL,
+            valor REAL NOT NULL,
+            FOREIGN KEY (retencion_id) REFERENCES retenciones_emitidas(id) ON DELETE CASCADE,
+            CHECK (tipo IN ('RENTA', 'IVA'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_ret_emit_det_ret ON retencion_emitida_detalles(retencion_id);
+    ");
+
     // ─── v2.5.35: Datos del comprobante NC del proveedor ─────────────────────
     // La tabla compra_devoluciones almacena devoluciones internas. Ahora también
     // puede guardar los datos del comprobante NC SRI que el proveedor emitió

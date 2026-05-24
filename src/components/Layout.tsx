@@ -14,7 +14,7 @@ import type { Icon } from "@phosphor-icons/react";
 
 /** Grupos del sidebar — organizan los items en secciones lógicas.
  *  El orden aquí define el orden visual de los grupos. */
-type GroupKey = "principal" | "ventas" | "gestion" | "compras" | "operaciones" | "restaurante" | "analitica";
+type GroupKey = "principal" | "ventas" | "gestion" | "compras" | "operaciones" | "restaurante" | "tributario" | "analitica";
 const GROUPS: Record<GroupKey, { label: string; orden: number }> = {
   principal:   { label: "PRINCIPAL",    orden: 0 },
   ventas:      { label: "VENTAS",       orden: 1 },
@@ -22,7 +22,10 @@ const GROUPS: Record<GroupKey, { label: string; orden: number }> = {
   compras:     { label: "COMPRAS",      orden: 3 },
   operaciones: { label: "OPERACIONES",  orden: 4 },
   restaurante: { label: "RESTAURANTE",  orden: 5 },
-  analitica:   { label: "ANALÍTICA",    orden: 6 },
+  // v2.5.43: sección TRIBUTARIO solo visible si licencia tiene módulo sri_avanzado.
+  // Encierra Agente de Retención + futura Declaración IVA, ATS, etc.
+  tributario:  { label: "TRIBUTARIO",   orden: 6 },
+  analitica:   { label: "ANALÍTICA",    orden: 7 },
 };
 
 interface NavItem {
@@ -59,6 +62,8 @@ const navItems: NavItem[] = [
   // RESTAURANTE (filtrado por modulo)
   { path: "/mesas", label: "Mesas", icon: ForkKnife, shortcut: "", todos: true, group: "restaurante" },
   { path: "/cocina", label: "Cocina", icon: CookingPot, shortcut: "", todos: true, group: "restaurante" },
+  // TRIBUTARIO (v2.5.43, filtrado por modulo sri_avanzado en licencia)
+  { path: "/sri-avanzado", label: "Agente Retención", icon: Receipt, shortcut: "", todos: false, permiso: "gestionar_compras", group: "tributario" },
   // ANALÍTICA
   { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes", group: "analitica" },
 ];
@@ -93,6 +98,8 @@ export default function Layout({ children }: { children?: ReactNode }) {
   const [moduloCaducidadActivo, setModuloCaducidadActivo] = useState(false);
   const [moduloServicioTecnicoActivo, setModuloServicioTecnicoActivo] = useState(false);
   const [moduloRestauranteActivo, setModuloRestauranteActivo] = useState(false);
+  // v2.5.43: módulo SRI Avanzado (agente de retención + ATS) - solo si licencia lo incluye
+  const [moduloSriAvanzadoActivo, setModuloSriAvanzadoActivo] = useState(false);
   const [nombreNegocio, setNombreNegocio] = useState<string>("");
   const [tooltip, setTooltip] = useState<{ label: string; top: number } | null>(null);
   // Sidebar expandido (mostrar labels + group headers). Persistente.
@@ -129,13 +136,18 @@ export default function Layout({ children }: { children?: ReactNode }) {
           if (tieneLicenciaCargada) {
             // Fuente de verdad: licencia
             setModuloServicioTecnicoActivo(mods.includes("servicio_tecnico"));
+            // v2.5.43: sri_avanzado SOLO si está explicitamente en la licencia
+            setModuloSriAvanzadoActivo(mods.includes("sri_avanzado"));
           } else {
             // Sin licencia cargada: caer al flag legacy (instalación pre-v2.4.8)
             setModuloServicioTecnicoActivo(cfg.modulo_servicio_tecnico === "1");
+            // sri_avanzado nunca cae a legacy — es modulo nuevo, requiere licencia
+            setModuloSriAvanzadoActivo(false);
           }
         } catch {
           setModuloRestauranteActivo(false);
           setModuloServicioTecnicoActivo(false);
+          setModuloSriAvanzadoActivo(false);
         }
       }).catch(() => {});
     });
@@ -181,10 +193,11 @@ export default function Layout({ children }: { children?: ReactNode }) {
     if (!moduloSeriesActivo) items = items.filter(i => i.path !== "/series");
     if (!moduloCaducidadActivo) items = items.filter(i => i.path !== "/caducidad");
     if (!moduloServicioTecnicoActivo) items = items.filter(i => i.path !== "/servicio-tecnico");
+    if (!moduloSriAvanzadoActivo) items = items.filter(i => i.path !== "/sri-avanzado");
     // Mesas/Cocina: solo si modulo Restaurante activo (build Clouget + licencia con 'restaurante')
     if (!moduloRestauranteActivo) items = items.filter(i => i.path !== "/mesas" && i.path !== "/cocina");
     return items;
-  }, [esAdmin, tienePermiso, moduloSeriesActivo, moduloCaducidadActivo, moduloServicioTecnicoActivo, moduloRestauranteActivo]);
+  }, [esAdmin, tienePermiso, moduloSeriesActivo, moduloCaducidadActivo, moduloServicioTecnicoActivo, moduloRestauranteActivo, moduloSriAvanzadoActivo]);
 
   const headerNavFiltrados = esAdmin
     ? headerNavItems

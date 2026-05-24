@@ -25,6 +25,7 @@ export const TABS_METADATA: Record<string, TabMetadata> = {
   "/series":                { title: "Series",                  icon: "🔢" },
   "/caducidad":             { title: "Caducidad",               icon: "📅" },
   "/servicio-tecnico":      { title: "Servicio",                icon: "🔧" },
+  "/sri-avanzado":          { title: "Agente Retención",        icon: "🧾" },
   "/reportes":              { title: "Reportes",                icon: "📈" },
   "/mesas":                 { title: "Mesas",                   icon: "🍴" },
   "/cocina":                { title: "Cocina",                  icon: "🍳" },

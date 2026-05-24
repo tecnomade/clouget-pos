@@ -589,6 +589,11 @@ pub fn run() {
             commands::retenciones::total_retenciones_venta,
             commands::retenciones::registrar_retencion,
             commands::retenciones::eliminar_retencion,
+            // v2.5.43: módulo SRI Avanzado (agente de retención + ATS)
+            commands::sri_avanzado::sri_avanzado_obtener_config,
+            commands::sri_avanzado::sri_avanzado_guardar_config,
+            commands::sri_avanzado::sri_avanzado_listar_retenciones,
+            commands::sri_avanzado::sri_avanzado_registrar_retencion,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,

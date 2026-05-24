@@ -6,6 +6,70 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.43 — 2026-05-24 📑 Módulo SRI Avanzado (Agente de Retención + ATS) — Foundation
+
+Primera release del **módulo opcional `sri_avanzado`** orientado a empresas que son agentes de retención y necesitan emitir comprobantes de retención + ATS mensual. Pensado para distribuidoras, contribuyentes especiales, sociedades, etc.
+
+### Activación por licencia
+
+Solo accesible si la licencia incluye el módulo `sri_avanzado` (configurable desde `admin.clouget.com` → pestaña Licencias). Sin él, no aparece nada en el sidebar — sigue siendo el POS normal.
+
+### Schema nuevo
+
+- `sri_avanzado_config` — datos del agente (resolución, fecha designación, tipo contribuyente, códigos default, contador)
+- `retenciones_emitidas` — comprobantes generados (cabecera)
+- `retencion_emitida_detalles` — renglones por tipo (RENTA/IVA) + código SRI + base + porcentaje + valor
+- Migración self-healing (no rompe instalaciones existentes)
+
+### UI nueva — Sección sidebar "TRIBUTARIO"
+
+Nueva sección entre RESTAURANTE y ANALÍTICA. Por ahora 1 item: **"Agente Retención"**. Diseñada para crecer (declaración IVA, anexos, etc.).
+
+### Página `SriAvanzadoPage` con 3 tabs
+
+1. **⚙ Configuración** (✅ funcional en esta release):
+   - Checkbox "Soy agente de retención"
+   - Resolución de designación + fecha
+   - Tipo de contribuyente (Sociedad, Persona Natural, Especial, RIMPE...)
+   - Obligado a llevar contabilidad
+   - Códigos de retención RENTA / IVA por defecto
+   - Datos del contador (RUC + nombre, para ATS)
+   - Observaciones
+
+2. **📋 Comprobantes emitidos** (read-only en esta release, captura en v2.5.44)
+3. **📊 Generador ATS** (placeholder, llega en v2.5.47)
+
+### Backend nuevo
+
+Módulo `commands/sri_avanzado.rs` con:
+- `sri_avanzado_obtener_config` / `sri_avanzado_guardar_config`
+- `sri_avanzado_listar_retenciones` (filtrado por fecha)
+- `sri_avanzado_registrar_retencion` (stub para v2.5.44)
+
+### Por qué módulo separado
+
+- **No mezcla** la configuración del agente de retención con la config base SRI (RUC, certificado)
+- **Activable on-demand** según necesidad del cliente (licencia)
+- **Escalable**: futuras features tributarias entran aquí sin afectar el core
+- **Independiente totalmente**: si lo desactivas, todo el resto del POS sigue funcionando
+
+### Roadmap
+
+| Release | Contenido |
+|---------|-----------|
+| v2.5.43 (esta) | Foundation: schema + UI config + activación licencia |
+| v2.5.44 | Captura manual de retenciones emitidas al registrar/editar compra |
+| v2.5.45 | XML SRI del comprobante de retención + autorización |
+| v2.5.46 | RIDE PDF del comprobante |
+| v2.5.47 | Generador ATS mensual con XML |
+| v2.5.48+ | App móvil vendiendo POS (endpoints clientes/caja/emitir-sri/retenciones) |
+
+### Acción pendiente del usuario
+
+Agregar checkbox `sri_avanzado` en `admin.clouget.com` → pestaña Licencias → modal "Crear/Editar licencia", para que se pueda activar en las licencias de clientes que lo necesiten.
+
+---
+
 ## v2.5.42 — 2026-05-24 🔍 Trazabilidad compra → venta en anulaciones + tipo NC del proveedor
 
 ### 🐛 Bug crítico arreglado: anular compra generaba stock negativo
