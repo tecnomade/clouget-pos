@@ -831,7 +831,7 @@ fn generar_qr_image(data: &str) -> Result<String, String> {
 
 /// Genera un codigo de barras Code128 como imagen PNG en archivo temporal.
 /// Intenta Code128-C (numerico) primero, luego Code128-B como fallback.
-fn generar_barcode128_image(data: &str) -> Result<String, String> {
+pub fn generar_barcode128_image(data: &str) -> Result<String, String> {
     use barcoders::sym::code128::Code128;
 
     // Code128-C (Ć = U+0106): optimo para datos numericos puros

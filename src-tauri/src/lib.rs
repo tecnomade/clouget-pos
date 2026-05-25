@@ -599,6 +599,8 @@ pub fn run() {
             commands::contabilidad::contabilidad_anular_retencion,
             // v2.5.46: envío SRI del comprobante de retención (firma + SOAP real)
             commands::contabilidad::contabilidad_emitir_retencion_sri,
+            // v2.5.47: RIDE PDF del comprobante de retención
+            commands::contabilidad::contabilidad_generar_ride_pdf,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,

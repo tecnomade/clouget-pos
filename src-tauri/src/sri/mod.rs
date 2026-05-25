@@ -4,3 +4,4 @@ pub mod firma;
 pub mod soap;
 pub mod suscripcion;
 pub mod ride;
+pub mod ride_retencion;

@@ -16,7 +16,7 @@
 //! `licencia.modulos` debe incluir `"contabilidad"`).
 
 use crate::db::{Database, SesionState};
-use crate::sri::{clave_acceso, firma, soap, xml};
+use crate::sri::{clave_acceso, firma, ride_retencion, soap, xml};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -934,4 +934,218 @@ fn persistir_y_responder(
         numero_comprobante: if numero_comprobante.is_empty() { None } else { Some(numero_comprobante.to_string()) },
         mensaje,
     })
+}
+
+// ─── v2.5.47: RIDE PDF del comprobante de retención ──────────────────────────
+
+/// Genera el RIDE (PDF) del comprobante de retención y lo devuelve como bytes.
+/// El frontend recibe el Vec<u8> y lo guarda con un dialog Save / lo abre.
+///
+/// Funciona aunque la retención no esté autorizada (se marca como "PRUEBAS" /
+/// "PENDIENTE" en el encabezado), pero idealmente se imprime después de tener
+/// `autorizacion_sri` válido del SRI.
+#[tauri::command]
+pub fn contabilidad_generar_ride_pdf(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<Vec<u8>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Cabecera + datos del proveedor + compra
+    struct Cab {
+        numero_comprobante: Option<String>,
+        clave_acceso: Option<String>,
+        autorizacion_sri: Option<String>,
+        fecha_emision: String,
+        fecha_autorizacion: Option<String>,
+        fecha_doc_referencia: Option<String>,
+        num_doc_referencia: Option<String>,
+        compra_numero: String,
+        compra_fecha: String,
+        estab: Option<String>,
+        pto: Option<String>,
+        sec: Option<String>,
+        prov_nombre: String,
+        prov_ruc: Option<String>,
+        prov_tipo_id: Option<String>,
+        prov_direccion: Option<String>,
+        prov_email: Option<String>,
+        total: f64,
+        anulada: i32,
+    }
+
+    let cab: Cab = conn.query_row(
+        "SELECT re.numero_factura, re.clave_acceso, re.autorizacion_sri,
+                re.fecha_emision, re.fecha_autorizacion,
+                re.fecha_documento_referencia, re.numero_documento_referencia,
+                c.numero, COALESCE(c.fecha, re.fecha_emision),
+                re.establecimiento, re.punto_emision, re.secuencial,
+                p.nombre, p.ruc, p.tipo_identificacion, p.direccion, p.email,
+                re.total, re.anulada
+         FROM retenciones_emitidas re
+         JOIN compras c ON re.compra_id = c.id
+         JOIN proveedores p ON re.proveedor_id = p.id
+         WHERE re.id = ?1",
+        params![id],
+        |r| Ok(Cab {
+            numero_comprobante: r.get(0).ok(),
+            clave_acceso: r.get(1).ok(),
+            autorizacion_sri: r.get(2).ok(),
+            fecha_emision: r.get(3)?,
+            fecha_autorizacion: r.get(4).ok(),
+            fecha_doc_referencia: r.get(5).ok(),
+            num_doc_referencia: r.get(6).ok(),
+            compra_numero: r.get(7)?,
+            compra_fecha: r.get(8)?,
+            estab: r.get(9).ok(),
+            pto: r.get(10).ok(),
+            sec: r.get(11).ok(),
+            prov_nombre: r.get(12)?,
+            prov_ruc: r.get(13).ok(),
+            prov_tipo_id: r.get(14).ok(),
+            prov_direccion: r.get(15).ok(),
+            prov_email: r.get(16).ok(),
+            total: r.get(17)?,
+            anulada: r.get(18)?,
+        }),
+    ).map_err(|_| "Retención no encontrada".to_string())?;
+
+    if cab.anulada != 0 {
+        return Err("La retención está anulada — no se puede imprimir RIDE".into());
+    }
+
+    // Detalles
+    let mut stmt = conn.prepare(
+        "SELECT tipo, codigo_sri, base_imponible, porcentaje, valor
+         FROM retencion_emitida_detalles WHERE retencion_id = ?1 ORDER BY tipo, id"
+    ).map_err(|e| e.to_string())?;
+    let items_raw: Vec<(String, String, f64, f64, f64)> = stmt.query_map(params![id], |r| Ok((
+        r.get::<_, String>(0)?,
+        r.get::<_, String>(1)?,
+        r.get::<_, f64>(2)?,
+        r.get::<_, f64>(3)?,
+        r.get::<_, f64>(4)?,
+    ))).map_err(|e| e.to_string())?
+    .filter_map(Result::ok)
+    .collect();
+    drop(stmt);
+
+    // Config global
+    let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut stmt_cfg = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+    let rows = stmt_cfg.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+    for row in rows {
+        let (k, v) = row.map_err(|e| e.to_string())?;
+        config.insert(k, v);
+    }
+    drop(stmt_cfg);
+
+    // Config contabilidad (obligado + resolución)
+    let (obligado, resolucion): (i32, Option<String>) = conn.query_row(
+        "SELECT obligado_contabilidad,
+                NULLIF(TRIM(COALESCE(resolucion_designacion, '')), '')
+         FROM contabilidad_config WHERE id = 1",
+        [], |r| Ok((r.get(0)?, r.get(1).ok())),
+    ).unwrap_or((0, None));
+
+    // ── Armar datos ─────────────────────────────────────────────────────────
+    let ambiente = config.get("sri_ambiente").map(|s| s.as_str()).unwrap_or("pruebas");
+    let ambiente_cod = if ambiente == "produccion" { "2" } else { "1" };
+
+    let numero = cab.numero_comprobante.clone().unwrap_or_else(|| {
+        // Fallback: armar desde estab-pto-sec o desde fecha si nada
+        let estab = cab.estab.as_deref().unwrap_or("001");
+        let pto = cab.pto.as_deref().unwrap_or("001");
+        let sec = cab.sec.as_deref().unwrap_or("000000000");
+        format!("{}-{}-{}", estab, pto, sec)
+    });
+
+    let fecha_emision_fmt = formatear_fecha_dmy(&cab.fecha_emision);
+    let fecha_autorizacion_fmt = cab.fecha_autorizacion
+        .as_deref()
+        .map(formatear_fecha_dmy)
+        .unwrap_or_else(|| fecha_emision_fmt.clone());
+
+    // Período fiscal: MM/YYYY
+    let periodo_fiscal = periodo_fiscal_de_fecha(&cab.fecha_emision);
+
+    let tipo_id_sujeto = cab.prov_tipo_id.as_deref().map(|t| match t {
+        "RUC" => "04".to_string(),
+        "CEDULA" => "05".to_string(),
+        "PASAPORTE" => "06".to_string(),
+        _ => "07".to_string(),
+    }).unwrap_or_else(|| {
+        // Inferir por longitud del RUC
+        let r = cab.prov_ruc.as_deref().unwrap_or("");
+        if r.len() == 13 { "04".to_string() }
+        else if r.len() == 10 { "05".to_string() }
+        else { "06".to_string() }
+    });
+
+    let datos = ride_retencion::DatosRetencionRide {
+        numero,
+        clave_acceso: cab.clave_acceso.clone().unwrap_or_default(),
+        numero_autorizacion: cab.autorizacion_sri.clone().or_else(|| cab.clave_acceso.clone()).unwrap_or_default(),
+        fecha_emision: fecha_emision_fmt.clone(),
+        fecha_autorizacion: fecha_autorizacion_fmt,
+        ambiente: ambiente_cod.to_string(),
+        periodo_fiscal,
+        sujeto_nombre: cab.prov_nombre,
+        sujeto_identificacion: cab.prov_ruc.unwrap_or_default(),
+        sujeto_tipo_id: tipo_id_sujeto,
+        sujeto_direccion: cab.prov_direccion,
+        sujeto_email: cab.prov_email,
+        total_retenido: cab.total,
+    };
+
+    // Documento sustento (la compra)
+    let num_doc_sust_raw = cab.num_doc_referencia.unwrap_or(cab.compra_numero);
+    let num_doc_sust_fmt = {
+        let limpio: String = num_doc_sust_raw.chars().filter(|c| c.is_ascii_digit()).collect();
+        if limpio.len() >= 15 {
+            limpio.chars().rev().take(15).collect::<String>().chars().rev().collect()
+        } else {
+            format!("{:0>15}", limpio)
+        }
+    };
+    let fecha_doc_sust = cab.fecha_doc_referencia.as_deref().unwrap_or(&cab.compra_fecha);
+    let fecha_doc_sust_fmt = formatear_fecha_dmy(fecha_doc_sust);
+
+    let items: Vec<ride_retencion::ItemRetencionRide> = items_raw.into_iter().map(|(tipo, codigo, base, pct, valor)| {
+        ride_retencion::ItemRetencionRide {
+            tipo_label: tipo,
+            codigo_retencion: codigo,
+            base_imponible: base,
+            porcentaje: pct,
+            valor_retenido: valor,
+            cod_doc_sustento: "01".to_string(),
+            num_doc_sustento: num_doc_sust_fmt.clone(),
+            fecha_doc_sustento: fecha_doc_sust_fmt.clone(),
+        }
+    }).collect();
+
+    ride_retencion::generar_ride_retencion_pdf(&datos, &items, &config, obligado != 0, resolucion.as_deref())
+}
+
+/// Convierte "YYYY-MM-DD ..." a "dd/mm/yyyy". Si ya viene en otro formato,
+/// devuelve el string tal cual (el ride lo muestra como recibió).
+fn formatear_fecha_dmy(fecha_bd: &str) -> String {
+    let parte = fecha_bd.split(' ').next().unwrap_or(fecha_bd).trim();
+    let partes: Vec<&str> = parte.split('-').collect();
+    if partes.len() == 3 && partes[0].len() == 4 {
+        format!("{}/{}/{}", partes[2], partes[1], partes[0])
+    } else {
+        fecha_bd.to_string()
+    }
+}
+
+/// "2026-05-24 ..." → "05/2026"
+fn periodo_fiscal_de_fecha(fecha_bd: &str) -> String {
+    let parte = fecha_bd.split(' ').next().unwrap_or(fecha_bd).trim();
+    let partes: Vec<&str> = parte.split('-').collect();
+    if partes.len() == 3 && partes[0].len() == 4 {
+        format!("{}/{}", partes[1], partes[0])
+    } else {
+        chrono::Local::now().format("%m/%Y").to_string()
+    }
 }

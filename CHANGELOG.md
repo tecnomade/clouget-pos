@@ -6,6 +6,47 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.47 — 2026-05-24 📄 RIDE PDF del Comprobante de Retención
+
+Cierra el ciclo del módulo **Contabilidad** con la representación impresa del comprobante de retención electrónico, conforme a la ficha técnica del SRI Ecuador.
+
+### Botón "📄 PDF" en la pestaña Comprobantes
+
+Junto a "Enviar SRI" y "Anular", ahora hay un tercer botón **📄 PDF** que genera y descarga el RIDE como `Retencion-{numero}.pdf`. Funciona tanto si la retención ya fue autorizada por el SRI (recomendado) como si todavía está pendiente — en este último caso aparece el ambiente como PRUEBAS y los campos de autorización vacíos.
+
+### Contenido del PDF (A4, conforme SRI)
+
+1. **Encabezado** (2 columnas con bordes alineados):
+   - Izq: Logo del negocio + datos del agente (RUC, razón social, dirección matriz/sucursal, teléfono, **OBLIGADO A LLEVAR CONTABILIDAD**, **AGENTE DE RETENCIÓN Res. No.** si está configurado, régimen RIMPE/General)
+   - Der: R.U.C., **COMPROBANTE DE RETENCIÓN**, No. (estab-pto-secuencial), número de autorización SRI, fecha autorización, ambiente, emisión, **clave de acceso de 49 dígitos con barcode Code128**.
+
+2. **Datos del sujeto retenido** (proveedor) en recuadro: razón social, identificación (RUC/Cédula/Pasaporte autodetectado), fecha emisión, dirección, **período fiscal (MM/YYYY)**.
+
+3. **Tabla de impuestos retenidos** con 8 columnas:
+   `Comprobante | Número | Fecha | Impuesto (RENTA/IVA) | Cód. | Base Imp. | % | Valor Ret.`
+   El número del documento sustento se muestra formateado como `001-001-000000123` (15 dígitos).
+
+4. **VALOR TOTAL RETENIDO** alineado a la derecha en formato $ 0.00.
+
+5. **Información adicional** con el email del proveedor (si está cargado).
+
+6. **Pie de página** con leyenda de RIDE + ambiente.
+
+### Detalles técnicos
+
+- Reutiliza `genpdf` 0.2 + `barcoders` (Code128) — mismo stack que el RIDE de facturas
+- Función `crate::sri::ride::generar_barcode128_image` ahora es `pub` (compartida entre los dos generadores)
+- Nuevo módulo `src-tauri/src/sri/ride_retencion.rs` con `DatosRetencionRide`, `ItemRetencionRide`, `generar_ride_retencion_pdf`
+- Comando Tauri `contabilidad_generar_ride_pdf(id) → Vec<u8>` que devuelve los bytes del PDF
+- Frontend convierte los bytes a Blob y dispara descarga automática del archivo
+
+### Pendiente próxima versión
+
+- v2.5.48: **Generador ATS mensual** (Anexo Transaccional Simplificado, XML mensual que se sube al portal del SRI con todas las compras + ventas + retenciones del mes)
+- v2.5.49+: APP MÓVIL vendiendo POS
+
+---
+
 ## v2.5.46 — 2026-05-24 📡 Envío real al SRI de comprobantes de retención + 🐛 fix form productos
 
 Esta versión cierra el flujo SRI completo del módulo Contabilidad: ahora una retención capturada puede **firmarse con XAdES-BES y enviarse al servicio oficial del SRI** (recepción + autorización), igual que se hace con las facturas. También se arregla un bug molesto en el form de productos.

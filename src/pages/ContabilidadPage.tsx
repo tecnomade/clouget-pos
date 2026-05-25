@@ -131,6 +131,29 @@ export default function ContabilidadPage() {
     }
   };
 
+  // v2.5.47: generar RIDE PDF y abrirlo en visor del SO (Save dialog)
+  const generarRidePdf = async (id: number, numero: string) => {
+    try {
+      const bytes = await invoke<number[]>("contabilidad_generar_ride_pdf", { id });
+      // bytes vienen como array de números — convertir a Uint8Array → Blob
+      const u8 = new Uint8Array(bytes);
+      const blob = new Blob([u8], { type: "application/pdf" });
+      // Abrir en nueva ventana / descargar
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Retencion-${numero}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // Liberar la URL al ratito
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toastExito(`PDF de ${numero} generado`);
+    } catch (err) {
+      toastError("Error generando PDF: " + err);
+    }
+  };
+
   useEffect(() => {
     invoke<ContabilidadConfig>("contabilidad_obtener_config")
       .then(setConfig)
@@ -374,6 +397,13 @@ export default function ContabilidadPage() {
                             onClick={() => enviarRetencionSri(r.id, r.numero)}
                             title="Firmar con P12 y enviar al SRI (recepción + autorización)">
                             {enviandoSri === r.id ? "⏳ Enviando..." : (r.estado_sri === "PENDIENTE" || r.estado_sri === "RECHAZADA" ? "↻ Reintentar SRI" : "📤 Enviar SRI")}
+                          </button>
+                        )}
+                        {!r.anulada && (
+                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            onClick={() => generarRidePdf(r.id, r.numero)}
+                            title="Generar y descargar el RIDE (PDF) del comprobante">
+                            📄 PDF
                           </button>
                         )}
                         {!r.anulada && r.estado_sri !== "AUTORIZADA" && (
