@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.46 — 2026-05-24 📡 Envío real al SRI de comprobantes de retención + 🐛 fix form productos
+
+Esta versión cierra el flujo SRI completo del módulo Contabilidad: ahora una retención capturada puede **firmarse con XAdES-BES y enviarse al servicio oficial del SRI** (recepción + autorización), igual que se hace con las facturas. También se arregla un bug molesto en el form de productos.
+
+### 📡 Comprobante de retención al SRI (real)
+
+Nuevo botón **"📤 Enviar SRI"** en cada retención (pestaña Comprobantes). Hace todo el flujo end-to-end:
+
+1. **Genera XML v2.0.0** según schema oficial SRI (`<comprobanteRetencion>` con `infoTributaria`, `infoCompRetencion`, `<impuestos>`).
+2. **Clave de acceso** de 49 dígitos con `codDoc=07` (comprobante de retención).
+3. **Firma XAdES-BES** usando el certificado P12 ya cargado (mismo que facturas).
+4. **Envía SOAP** a `recepcionComprobantes` y luego consulta `autorizacionComprobantes` con backoff progresivo.
+5. **Persiste** `clave_acceso`, `autorizacion_sri`, `fecha_autorizacion`, `xml_firmado` y actualiza `estado_sri` a AUTORIZADA / PENDIENTE / RECHAZADA.
+
+Si quedó PENDIENTE (timeout SRI), el botón cambia a **"↻ Reintentar SRI"** y reusa el mismo XML firmado en vez de generar uno nuevo (idempotente para el SRI).
+
+#### Datos fiscales del proveedor
+
+Para emitir correctamente al SRI se agregaron 3 columnas a `proveedores`:
+- `tipo_identificacion` (RUC / CEDULA / PASAPORTE) — si no está, se infiere por largo del documento.
+- `obligado_contabilidad` (0/1) — si no está, se reporta NO.
+- `tipo` ("01"=Persona Natural, "02"=Sociedad) — si no está, se infiere por el 3er dígito del RUC.
+
+Migración self-healing (ALTER TABLE silencioso, no rompe instalaciones existentes).
+
+#### Requisitos para emitir
+
+- Licencia con módulo `contabilidad` activa
+- Certificado P12 cargado (mismo que facturas)
+- `Contabilidad → Configuración → Es agente de retención` = ✓
+- RUC configurado (13 dígitos)
+
+#### Endpoints SRI
+
+Idénticos a los de facturas — el WS de recepción/autorización del SRI acepta los 4 tipos de comprobante (factura, NC, retención, ND) por la misma URL. Ambiente se toma de `sri_ambiente` (pruebas / produccion).
+
+### 🐛 Fix: form de productos se reseteaba al pegar/arrastrar imagen
+
+**Bug:** estabas creando o editando un producto, ibas a otra ventana (Chrome, Explorador) a buscar una imagen, la copiabas, volvías a Clouget, pegabas (Ctrl+V) o la arrastrabas — y los campos que habías llenado/editado **antes** se restablecían a los valores originales. La imagen aparecía, pero el resto del form perdía cambios.
+
+**Causa:** stale closure clásico. El componente `ImagenProductoPicker` registra listeners de paste y drag-drop en `useEffect[productoId]`. Esos listeners capturaban la función `onChange` del **primer render** del padre, que internamente hacía `setForm({ ...form, imagen: b64 })`. El `form` en ese closure era el viejo, así que al disparar el paste se sobrescribía el state con los valores de antes.
+
+**Fix:** una línea — usar la forma callback de setForm:
+```diff
+- onChange={(b64) => setForm({ ...form, imagen: b64 })}
++ onChange={(b64) => setForm((prev) => ({ ...prev, imagen: b64 }))}
+```
+Ahora siempre se aplica el cambio sobre el state más reciente.
+
+### Pendiente próximas versiones
+
+- v2.5.47: RIDE PDF del comprobante de retención (clave de acceso + barcode + detalle de impuestos)
+- v2.5.48: Generador ATS mensual + XML completo
+
+---
+
 ## v2.5.45 — 2026-05-24 🧾 Captura de retenciones emitidas (módulo Contabilidad)
 
 Primera versión funcional del módulo **Contabilidad**: ya se pueden **capturar comprobantes de retención** desde la app, asociados a una compra, con auto-sugerencia de líneas RENTA + IVA según los códigos default configurados.

@@ -753,12 +753,19 @@ function FormProducto({
       </div>
 
       {/* Imagen del producto — v2.4.1: soporta pegar (Ctrl+V), drag & drop,
-          y formatos PNG/JPG/WebP/GIF/BMP/AVIF/SVG. */}
+          y formatos PNG/JPG/WebP/GIF/BMP/AVIF/SVG.
+          v2.5.46: setForm usa callback (prev => ...) en vez de {...form, ...}
+          para evitar stale closure cuando los listeners de paste/drag-drop del
+          picker — registrados en useEffect[productoId] — disparan onChange
+          DESPUÉS de que el usuario editó otros campos. Con la forma callback,
+          siempre se usa el state más reciente y no se sobrescriben los cambios.
+          (Bug reportado: "al pegar una imagen después de ir a buscarla en otra
+          ventana, el formulario se reseteaba"). */}
       <ImagenProductoPicker
         imagen={form.imagen}
         nombre={form.nombre}
         productoId={form.id}
-        onChange={(b64) => setForm({ ...form, imagen: b64 })}
+        onChange={(b64) => setForm((prev) => ({ ...prev, imagen: b64 }))}
         onError={(msg) => toastError(msg)}
       />
 

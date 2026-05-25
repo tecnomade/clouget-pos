@@ -89,6 +89,35 @@ export default function ContabilidadPage() {
   const [fechaHasta, setFechaHasta] = useState(() => new Date().toISOString().slice(0, 10));
   // v2.5.45: modal "Nueva retención"
   const [modalNuevaAbierto, setModalNuevaAbierto] = useState(false);
+  // v2.5.46: tracking de envío SRI en curso
+  const [enviandoSri, setEnviandoSri] = useState<number | null>(null);
+
+  const recargarRetenciones = () => {
+    invoke<RetencionEmitidaResumen[]>("contabilidad_listar_retenciones", {
+      fechaDesde, fechaHasta,
+    }).then(setRetenciones).catch(() => setRetenciones([]));
+  };
+
+  // v2.5.46: enviar retención al SRI (firma + SOAP real)
+  const enviarRetencionSri = async (id: number, numero: string) => {
+    if (!confirm(`¿Enviar al SRI la retención ${numero}?\n\nSe firmará con el certificado P12 cargado y se enviará a los servicios de recepción/autorización del SRI.`)) return;
+    setEnviandoSri(id);
+    try {
+      const res = await invoke<{ exito: boolean; estado_sri: string; numero_comprobante: string | null; numero_autorizacion: string | null; mensaje: string }>(
+        "contabilidad_emitir_retencion_sri", { id }
+      );
+      if (res.exito) {
+        toastExito(`✓ ${res.mensaje}${res.numero_autorizacion ? `\nAutorización: ${res.numero_autorizacion}` : ""}`);
+      } else {
+        toastError(`SRI: ${res.estado_sri} — ${res.mensaje}`);
+      }
+      recargarRetenciones();
+    } catch (err) {
+      toastError("Error enviando al SRI: " + err);
+    } finally {
+      setEnviandoSri(null);
+    }
+  };
 
   const anularRetencion = async (id: number, numero: string) => {
     const motivo = prompt(`Motivo de anulación de retención ${numero}:`);
@@ -96,9 +125,7 @@ export default function ContabilidadPage() {
     try {
       await invoke<void>("contabilidad_anular_retencion", { id, motivo: motivo.trim() || null });
       toastExito("Retención anulada");
-      invoke<RetencionEmitidaResumen[]>("contabilidad_listar_retenciones", {
-        fechaDesde, fechaHasta,
-      }).then(setRetenciones).catch(() => setRetenciones([]));
+      recargarRetenciones();
     } catch (err) {
       toastError("Error: " + err);
     }
@@ -339,7 +366,16 @@ export default function ContabilidadPage() {
                             : "var(--color-text-secondary)",
                         }}>{r.estado_sri}</span>
                       </td>
-                      <td style={{ whiteSpace: "nowrap" }}>
+                      <td style={{ whiteSpace: "nowrap", display: "flex", gap: 4 }}>
+                        {!r.anulada && r.estado_sri !== "AUTORIZADA" && (
+                          <button className="btn btn-primary"
+                            style={{ fontSize: 10, padding: "2px 8px" }}
+                            disabled={enviandoSri === r.id}
+                            onClick={() => enviarRetencionSri(r.id, r.numero)}
+                            title="Firmar con P12 y enviar al SRI (recepción + autorización)">
+                            {enviandoSri === r.id ? "⏳ Enviando..." : (r.estado_sri === "PENDIENTE" || r.estado_sri === "RECHAZADA" ? "↻ Reintentar SRI" : "📤 Enviar SRI")}
+                          </button>
+                        )}
                         {!r.anulada && r.estado_sri !== "AUTORIZADA" && (
                           <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)", borderColor: "var(--color-danger)" }}
                             onClick={() => anularRetencion(r.id, r.numero)}>

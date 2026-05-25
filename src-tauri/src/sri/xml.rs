@@ -449,6 +449,133 @@ pub fn generar_xml_nota_credito(datos: &DatosNotaCredito) -> String {
     xml
 }
 
+// ─── v2.5.46: Comprobante de Retención SRI v2.0.0 ────────────────────────────
+
+/// Datos necesarios para generar el XML de un comprobante de retención SRI v2.0.0.
+///
+/// Schema oficial: https://www.sri.gob.ec → "Esquemas XSD" → comprobanteRetencion v2.0
+///
+/// codDoc = "07" (comprobante de retención)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatosRetencion {
+    // infoTributaria
+    pub ambiente: String,            // "1" pruebas, "2" producción
+    pub tipo_emision: String,        // "1" normal
+    pub razon_social: String,        // mi negocio (agente de retención)
+    pub nombre_comercial: String,
+    pub ruc: String,
+    pub clave_acceso: String,        // 49 dígitos, codDoc=07
+    pub estab: String,               // "001"
+    pub pto_emi: String,             // "001"
+    pub secuencial: String,          // "000000001"
+    pub dir_matriz: String,
+    pub contribuyente_rimpe: Option<String>,
+
+    // infoCompRetencion
+    pub fecha_emision: String,       // dd/mm/yyyy
+    pub dir_establecimiento: String,
+    pub contribuyente_especial: Option<String>, // número de resolución (opcional)
+    pub obligado_contabilidad: String,          // "SI" / "NO"
+    pub tipo_identificacion_sujeto_retenido: String, // "04"=RUC, "05"=cédula, "06"=pasaporte
+    pub razon_social_sujeto_retenido: String,        // nombre/razón social del proveedor
+    pub tipo_sujeto_retenido: Option<String>,        // "01"=PN, "02"=Sociedad (opcional)
+    pub identificacion_sujeto_retenido: String,
+    pub periodo_fiscal: String,      // "MM/YYYY"
+
+    // impuestos (lista de impuesto retenido)
+    pub impuestos: Vec<ImpuestoRetenido>,
+}
+
+/// Una línea de retención dentro del comprobante.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ImpuestoRetenido {
+    pub codigo: String,                  // "1"=Renta, "2"=IVA, "6"=ISD
+    pub codigo_retencion: String,        // Código SRI Tabla 304 / 21 (ej. "304", "10")
+    pub base_imponible: f64,
+    pub porcentaje_retener: f64,
+    pub valor_retenido: f64,
+    pub cod_doc_sustento: String,        // "01"=factura, "04"=NC, "05"=ND, "11"=pasajes, "12"=NV
+    pub num_doc_sustento: String,        // 15 dígitos sin guiones: "estab(3)pto(3)sec(9)"
+    pub fecha_emision_doc_sustento: String, // dd/mm/yyyy
+    pub numero_autorizacion_doc_sustento: Option<String>, // opcional (49 dígitos)
+}
+
+/// Genera el XML del comprobante de retención electrónico SRI v2.0.0.
+///
+/// IMPORTANTE: No usa self-closing tags (<tag/>) porque el SRI los rechaza.
+/// Tag root: `comprobanteRetencion` (NO `retencion` ni `comprobante`).
+pub fn generar_xml_retencion(datos: &DatosRetencion) -> String {
+    let mut xml = String::with_capacity(4096);
+
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<comprobanteRetencion id=\"comprobante\" version=\"2.0.0\">\n");
+
+    // === infoTributaria ===
+    xml.push_str("  <infoTributaria>\n");
+    xml_tag(&mut xml, 4, "ambiente", &datos.ambiente);
+    xml_tag(&mut xml, 4, "tipoEmision", &datos.tipo_emision);
+    xml_tag(&mut xml, 4, "razonSocial", &xml_escape(&datos.razon_social));
+    xml_tag(&mut xml, 4, "nombreComercial", &xml_escape(&datos.nombre_comercial));
+    xml_tag(&mut xml, 4, "ruc", &datos.ruc);
+    xml_tag(&mut xml, 4, "claveAcceso", &datos.clave_acceso);
+    xml_tag(&mut xml, 4, "codDoc", "07");
+    xml_tag(&mut xml, 4, "estab", &datos.estab);
+    xml_tag(&mut xml, 4, "ptoEmi", &datos.pto_emi);
+    xml_tag(&mut xml, 4, "secuencial", &datos.secuencial);
+    xml_tag(&mut xml, 4, "dirMatriz", &xml_escape(&datos.dir_matriz));
+    if let Some(ref rimpe) = datos.contribuyente_rimpe {
+        if !rimpe.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteRimpe", &xml_escape(rimpe));
+        }
+    }
+    xml.push_str("  </infoTributaria>\n");
+
+    // === infoCompRetencion ===
+    xml.push_str("  <infoCompRetencion>\n");
+    xml_tag(&mut xml, 4, "fechaEmision", &datos.fecha_emision);
+    xml_tag(&mut xml, 4, "dirEstablecimiento", &xml_escape(&datos.dir_establecimiento));
+    if let Some(ref ce) = datos.contribuyente_especial {
+        if !ce.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteEspecial", ce);
+        }
+    }
+    xml_tag(&mut xml, 4, "obligadoContabilidad", &datos.obligado_contabilidad);
+    xml_tag(&mut xml, 4, "tipoIdentificacionSujetoRetenido", &datos.tipo_identificacion_sujeto_retenido);
+    xml_tag(&mut xml, 4, "razonSocialSujetoRetenido", &xml_escape(&datos.razon_social_sujeto_retenido));
+    if let Some(ref ts) = datos.tipo_sujeto_retenido {
+        if !ts.is_empty() {
+            xml_tag(&mut xml, 4, "tipoSujetoRetenido", ts);
+        }
+    }
+    xml_tag(&mut xml, 4, "identificacionSujetoRetenido", &datos.identificacion_sujeto_retenido);
+    xml_tag(&mut xml, 4, "periodoFiscal", &datos.periodo_fiscal);
+    xml.push_str("  </infoCompRetencion>\n");
+
+    // === impuestos ===
+    xml.push_str("  <impuestos>\n");
+    for imp in &datos.impuestos {
+        xml.push_str("    <impuesto>\n");
+        xml_tag(&mut xml, 6, "codigo", &imp.codigo);
+        xml_tag(&mut xml, 6, "codigoRetencion", &imp.codigo_retencion);
+        xml_tag(&mut xml, 6, "baseImponible", &format!("{:.2}", imp.base_imponible));
+        xml_tag(&mut xml, 6, "porcentajeRetener", &format!("{:.2}", imp.porcentaje_retener));
+        xml_tag(&mut xml, 6, "valorRetenido", &format!("{:.2}", imp.valor_retenido));
+        xml_tag(&mut xml, 6, "codDocSustento", &imp.cod_doc_sustento);
+        xml_tag(&mut xml, 6, "numDocSustento", &imp.num_doc_sustento);
+        xml_tag(&mut xml, 6, "fechaEmisionDocSustento", &imp.fecha_emision_doc_sustento);
+        if let Some(ref nas) = imp.numero_autorizacion_doc_sustento {
+            if !nas.is_empty() {
+                xml_tag(&mut xml, 6, "numeroAutorizacionDocSustento", nas);
+            }
+        }
+        xml.push_str("    </impuesto>\n");
+    }
+    xml.push_str("  </impuestos>\n");
+
+    xml.push_str("</comprobanteRetencion>");
+    xml
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

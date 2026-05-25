@@ -1620,6 +1620,17 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         let _ = conn.execute("DROP TABLE IF EXISTS sri_avanzado_config", []);
     }
 
+    // ─── v2.5.46: Datos fiscales del proveedor para retenciones SRI ──────────
+    // Para emitir un comprobante de retención al SRI necesitamos saber:
+    //   - tipo_identificacion del sujeto retenido (RUC/CEDULA/PASAPORTE)
+    //   - si está obligado a llevar contabilidad (SI/NO)
+    //   - tipo de sujeto (01=Persona Natural, 02=Sociedad)
+    // Estos campos son opcionales en la app — si no están, el comando intenta
+    // inferirlos desde el RUC (largo + tercer dígito).
+    let _ = conn.execute("ALTER TABLE proveedores ADD COLUMN tipo_identificacion TEXT", []);
+    let _ = conn.execute("ALTER TABLE proveedores ADD COLUMN obligado_contabilidad INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE proveedores ADD COLUMN tipo TEXT", []); // "01"=PN, "02"=Sociedad
+
     // ─── v2.5.35: Datos del comprobante NC del proveedor ─────────────────────
     // La tabla compra_devoluciones almacena devoluciones internas. Ahora también
     // puede guardar los datos del comprobante NC SRI que el proveedor emitió

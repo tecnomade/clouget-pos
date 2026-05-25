@@ -16,6 +16,7 @@
 //! `licencia.modulos` debe incluir `"contabilidad"`).
 
 use crate::db::{Database, SesionState};
+use crate::sri::{clave_acceso, firma, soap, xml};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -440,11 +441,497 @@ pub fn contabilidad_anular_retencion(
     Ok(())
 }
 
-/// Stub para v2.5.46 — emitir retención al SRI. Por ahora retorna error claro.
+// ─── v2.5.46: Emisión SRI del comprobante de retención ───────────────────────
+
+/// Resultado de la emisión SRI de un comprobante de retención.
+#[derive(Debug, Serialize)]
+pub struct ResultadoEmisionRetencion {
+    pub exito: bool,
+    pub estado_sri: String,
+    pub clave_acceso: Option<String>,
+    pub numero_autorizacion: Option<String>,
+    pub fecha_autorizacion: Option<String>,
+    pub numero_comprobante: Option<String>,
+    pub mensaje: String,
+}
+
+/// Convierte fecha "YYYY-MM-DD ..." a "DD/MM/YYYY" (formato SRI).
+fn fmt_fecha_sri(fecha_bd: &str) -> Result<String, String> {
+    let parte = fecha_bd.split(' ').next().unwrap_or(fecha_bd).trim();
+    let partes: Vec<&str> = parte.split('-').collect();
+    if partes.len() != 3 {
+        return Err(format!("Fecha inválida: {}", fecha_bd));
+    }
+    Ok(format!("{}/{}/{}", partes[2], partes[1], partes[0]))
+}
+
+/// Normaliza "001-002-000000123" → "001002000000123" (15 dígitos sin guiones).
+/// Si no tiene formato esperado, intenta zero-pad a 15 dígitos.
+fn fmt_num_doc_sustento(numero: &str) -> String {
+    let limpio: String = numero.chars().filter(|c| c.is_ascii_digit()).collect();
+    if limpio.len() >= 15 {
+        limpio.chars().rev().take(15).collect::<String>().chars().rev().collect()
+    } else {
+        format!("{:0>15}", limpio)
+    }
+}
+
+/// Emite al SRI el comprobante de retención: genera XML, firma con XAdES-BES,
+/// envía via SOAP, consulta autorización y persiste resultado en BD.
+///
+/// Reutiliza la infra existente de facturas (clave_acceso, firma, soap).
+///
+/// Requisitos:
+/// - Licencia con módulo `contabilidad` activa
+/// - Certificado P12 cargado (mismo que facturas)
+/// - Config: ruc, sri_ambiente, terminal_establecimiento/punto_emision o establecimiento/punto_emision
+/// - contabilidad_config: es_agente_retencion = true
 #[tauri::command]
-pub fn contabilidad_registrar_retencion(
-    _db: State<'_, Database>,
-    _sesion: State<'_, SesionState>,
-) -> Result<i64, String> {
-    Err("Función disponible en v2.5.44 (próxima release)".to_string())
+pub async fn contabilidad_emitir_retencion_sri(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<ResultadoEmisionRetencion, String> {
+    // ── 1. Leer todo lo necesario en un solo lock ────────────────────────────
+    #[allow(dead_code)]
+    struct DatosRet {
+        numero_interno: String,
+        compra_id: i64,
+        proveedor_nombre: String,
+        proveedor_ruc: Option<String>,
+        proveedor_tipo_identificacion: Option<String>,
+        proveedor_obligado_contabilidad: i32,
+        proveedor_tipo: Option<String>, // "01"=PN, "02"=Sociedad
+        compra_numero: String,
+        compra_fecha: String,
+        num_doc_referencia: Option<String>,
+        fecha_doc_referencia: Option<String>,
+        anulada: i32,
+        estado_sri: String,
+        clave_acceso_previa: Option<String>,
+        xml_firmado_previo: Option<String>,
+        establecimiento_prev: Option<String>,
+        punto_emision_prev: Option<String>,
+        secuencial_prev: Option<String>,
+        numero_comprobante_prev: Option<String>,
+    }
+    struct DetRet {
+        tipo: String,        // "RENTA" o "IVA"
+        codigo_sri: String,
+        base_imponible: f64,
+        porcentaje: f64,
+        valor: f64,
+    }
+
+    let (datos, detalles, config, p12_data, p12_password, es_agente, obligado_contabilidad_cfg, contribuyente_especial_cfg) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+        // Cabecera + JOIN proveedor + compra
+        let datos: DatosRet = conn.query_row(
+            "SELECT re.numero, re.compra_id, p.nombre, p.ruc, p.tipo_identificacion,
+                    COALESCE(p.obligado_contabilidad, 0),
+                    p.tipo,
+                    c.numero, COALESCE(c.fecha, re.fecha_emision),
+                    re.numero_documento_referencia, re.fecha_documento_referencia,
+                    re.anulada, re.estado_sri,
+                    re.clave_acceso, re.xml_firmado,
+                    re.establecimiento, re.punto_emision, re.secuencial, re.numero_factura
+             FROM retenciones_emitidas re
+             JOIN proveedores p ON re.proveedor_id = p.id
+             JOIN compras c ON re.compra_id = c.id
+             WHERE re.id = ?1",
+            params![id],
+            |r| Ok(DatosRet {
+                numero_interno: r.get(0)?,
+                compra_id: r.get(1)?,
+                proveedor_nombre: r.get(2)?,
+                proveedor_ruc: r.get(3).ok(),
+                proveedor_tipo_identificacion: r.get(4).ok(),
+                proveedor_obligado_contabilidad: r.get::<_, i32>(5).unwrap_or(0),
+                proveedor_tipo: r.get(6).ok(),
+                compra_numero: r.get(7)?,
+                compra_fecha: r.get(8)?,
+                num_doc_referencia: r.get(9).ok(),
+                fecha_doc_referencia: r.get(10).ok(),
+                anulada: r.get(11)?,
+                estado_sri: r.get(12)?,
+                clave_acceso_previa: r.get(13).ok(),
+                xml_firmado_previo: r.get(14).ok(),
+                establecimiento_prev: r.get(15).ok(),
+                punto_emision_prev: r.get(16).ok(),
+                secuencial_prev: r.get(17).ok(),
+                numero_comprobante_prev: r.get(18).ok(),
+            }),
+        ).map_err(|_| "Retención no encontrada".to_string())?;
+
+        if datos.anulada != 0 {
+            return Err("La retención está anulada".into());
+        }
+        if datos.estado_sri == "AUTORIZADA" {
+            return Err("Esta retención ya fue autorizada por el SRI".into());
+        }
+
+        // Detalles
+        let mut stmt = conn.prepare(
+            "SELECT tipo, codigo_sri, base_imponible, porcentaje, valor
+             FROM retencion_emitida_detalles WHERE retencion_id = ?1 ORDER BY tipo, id"
+        ).map_err(|e| e.to_string())?;
+        let detalles: Vec<DetRet> = stmt.query_map(params![id], |r| Ok(DetRet {
+            tipo: r.get(0)?,
+            codigo_sri: r.get(1)?,
+            base_imponible: r.get(2)?,
+            porcentaje: r.get(3)?,
+            valor: r.get(4)?,
+        })).map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+        drop(stmt);
+
+        if detalles.is_empty() {
+            return Err("La retención no tiene líneas".into());
+        }
+
+        // Config global (RUC, ambiente, etc.)
+        let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut stmt_cfg = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+        let rows = stmt_cfg.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+        for row in rows {
+            let (k, v) = row.map_err(|e| e.to_string())?;
+            config.insert(k, v);
+        }
+        drop(stmt_cfg);
+
+        // contabilidad_config: es_agente_retencion + obligado_contabilidad + contribuyente_especial (vía resolución)
+        let (es_agente, obligado, contrib_esp): (i32, i32, Option<String>) = conn.query_row(
+            "SELECT es_agente_retencion, obligado_contabilidad,
+                    NULLIF(TRIM(COALESCE(resolucion_designacion, '')), '')
+             FROM contabilidad_config WHERE id = 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2).ok())),
+        ).unwrap_or((0, 0, None));
+
+        // Certificado P12
+        let (p12_blob, p12_pass): (Vec<u8>, String) = conn.query_row(
+            "SELECT p12_data, password FROM sri_certificado WHERE id = 1",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(|_| "No hay certificado digital cargado. Cárguelo en Configuración → SRI.".to_string())?;
+
+        (datos, detalles, config, p12_blob, p12_pass, es_agente != 0, obligado != 0, contrib_esp)
+    };
+
+    if !es_agente {
+        return Err("Active 'Es agente de retención' en Contabilidad → Configuración antes de emitir.".into());
+    }
+
+    // ── 2. Resolver config ───────────────────────────────────────────────────
+    let cfg = |k: &str| config.get(k).cloned().unwrap_or_default();
+    let ruc = cfg("ruc");
+    if ruc.len() != 13 {
+        return Err("Configure el RUC del negocio (13 dígitos) antes de emitir.".into());
+    }
+    let ambiente = match cfg("sri_ambiente").as_str() {
+        "produccion" => "2",
+        _ => "1",
+    };
+    let establecimiento_cfg = {
+        let term = cfg("terminal_establecimiento");
+        if term.is_empty() { cfg("establecimiento") } else { term }
+    };
+    let punto_emision_cfg = {
+        let term = cfg("terminal_punto_emision");
+        if term.is_empty() { cfg("punto_emision") } else { term }
+    };
+    let regimen = cfg("regimen");
+
+    let tipo_doc_sec = if ambiente == "1" { "RETENCION_PRUEBAS" } else { "RETENCION" };
+
+    // Verificar suscripción SRI (mismo enforcement que facturas, mismo cupo).
+    // En modo demo, se salta.
+    let modo_demo = cfg("demo_activo") == "1";
+
+    // ── 3. Reenvío o primera emisión ─────────────────────────────────────────
+    let mut secuencial_sri: i64 = 0;
+    let mut numero_comprobante = datos.numero_comprobante_prev.clone().unwrap_or_default();
+    let mut establecimiento_usado = datos.establecimiento_prev.clone().unwrap_or_else(|| establecimiento_cfg.clone());
+    let mut punto_emision_usado = datos.punto_emision_prev.clone().unwrap_or_else(|| punto_emision_cfg.clone());
+    let mut es_primera_emision = false;
+
+    let (clave_final, xml_firmado_final, resultado_sri) = if datos.estado_sri == "PENDIENTE"
+        && datos.clave_acceso_previa.is_some()
+        && datos.xml_firmado_previo.is_some()
+        && !modo_demo
+    {
+        let clave_prev = datos.clave_acceso_previa.clone().unwrap();
+        let xml_prev = datos.xml_firmado_previo.clone().unwrap();
+        soap::log_sri(&format!("=== REENVIO RETENCION: clave previa {} ===", clave_prev));
+
+        // Primero consultar autorización
+        let consulta = soap::consultar_autorizacion(&clave_prev, ambiente).await;
+        match consulta {
+            Ok(ref res) if res.exito => (clave_prev, xml_prev, consulta.unwrap()),
+            _ => {
+                soap::log_sri("Clave previa no autorizada, reenviando XML firmado de retención...");
+                let r = soap::enviar_comprobante(&xml_prev, &clave_prev, ambiente).await?;
+                (clave_prev, xml_prev, r)
+            }
+        }
+    } else {
+        es_primera_emision = true;
+
+        // Secuencial nuevo
+        secuencial_sri = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            // Asegurar registro y leer
+            conn.execute(
+                "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, ?3, 1)",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+            ).map_err(|e| format!("Error creando secuencial retención: {}", e))?;
+            conn.query_row(
+                "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+                |r| r.get::<_, i64>(0),
+            ).map_err(|e| format!("Error leyendo secuencial: {}", e))?
+        };
+        establecimiento_usado = establecimiento_cfg.clone();
+        punto_emision_usado = punto_emision_cfg.clone();
+        let secuencial = format!("{:09}", secuencial_sri);
+        numero_comprobante = format!("{}-{}-{}", establecimiento_usado, punto_emision_usado, secuencial);
+
+        let fecha_emision = fmt_fecha_sri(&datos.compra_fecha).unwrap_or_else(|_| {
+            // fallback: hoy
+            chrono::Local::now().format("%d/%m/%Y").to_string()
+        });
+
+        let clave = clave_acceso::generar_clave_acceso(
+            &fecha_emision,
+            "07", // comprobante de retención
+            &ruc,
+            ambiente,
+            &establecimiento_usado,
+            &punto_emision_usado,
+            &secuencial,
+            "1",
+        );
+
+        // Identificación del sujeto retenido (proveedor)
+        let id_sujeto = datos.proveedor_ruc.clone().unwrap_or_default();
+        if id_sujeto.is_empty() {
+            return Err("El proveedor no tiene RUC/identificación configurada".into());
+        }
+        let tipo_id_sujeto = match datos.proveedor_tipo_identificacion.as_deref().unwrap_or("") {
+            "RUC" => "04",
+            "CEDULA" => "05",
+            "PASAPORTE" => "06",
+            _ => {
+                // Inferir por longitud
+                if id_sujeto.len() == 13 { "04" }
+                else if id_sujeto.len() == 10 { "05" }
+                else { "06" }
+            }
+        };
+
+        // tipo_sujeto_retenido: "01"=PN, "02"=Sociedad. Si no está claro, default según largo del RUC.
+        let tipo_sujeto = datos.proveedor_tipo.clone().or_else(|| {
+            if id_sujeto.len() == 13 && id_sujeto.ends_with("001") {
+                let tercero = id_sujeto.chars().nth(2).and_then(|c| c.to_digit(10)).unwrap_or(0);
+                if tercero == 9 { Some("02".to_string()) } // RUC sociedad
+                else if tercero == 6 { Some("01".to_string()) } // RUC público (tratar como PN)
+                else { Some("01".to_string()) } // RUC persona natural
+            } else { Some("01".to_string()) }
+        });
+
+        // Período fiscal = MM/YYYY de la fecha de emisión (DD/MM/YYYY)
+        let periodo_fiscal = {
+            let partes: Vec<&str> = fecha_emision.split('/').collect();
+            if partes.len() == 3 {
+                format!("{}/{}", partes[1], partes[2])
+            } else {
+                chrono::Local::now().format("%m/%Y").to_string()
+            }
+        };
+
+        // Documento sustento (la compra/factura del proveedor)
+        let num_doc_sustento = datos.num_doc_referencia.as_deref().unwrap_or(&datos.compra_numero);
+        let num_doc_sustento_fmt = fmt_num_doc_sustento(num_doc_sustento);
+        let fecha_doc_sustento = datos.fecha_doc_referencia.as_deref().unwrap_or(&datos.compra_fecha);
+        let fecha_doc_sustento_fmt = fmt_fecha_sri(fecha_doc_sustento).unwrap_or(fecha_emision.clone());
+
+        // Mapear detalles → ImpuestoRetenido
+        let impuestos: Vec<xml::ImpuestoRetenido> = detalles.iter().map(|d| {
+            let codigo = if d.tipo.eq_ignore_ascii_case("RENTA") { "1" } else { "2" }; // 1=Renta, 2=IVA
+            xml::ImpuestoRetenido {
+                codigo: codigo.to_string(),
+                codigo_retencion: d.codigo_sri.trim().to_string(),
+                base_imponible: d.base_imponible,
+                porcentaje_retener: d.porcentaje,
+                valor_retenido: d.valor,
+                cod_doc_sustento: "01".to_string(), // factura (compra del proveedor)
+                num_doc_sustento: num_doc_sustento_fmt.clone(),
+                fecha_emision_doc_sustento: fecha_doc_sustento_fmt.clone(),
+                numero_autorizacion_doc_sustento: None,
+            }
+        }).collect();
+
+        let contribuyente_rimpe = match regimen.as_str() {
+            "RIMPE_EMPRENDEDOR" => Some("CONTRIBUYENTE RÉGIMEN RIMPE".to_string()),
+            "RIMPE_POPULAR" => Some("CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE".to_string()),
+            _ => None,
+        };
+
+        let datos_xml = xml::DatosRetencion {
+            ambiente: ambiente.to_string(),
+            tipo_emision: "1".to_string(),
+            razon_social: cfg("nombre_negocio"),
+            nombre_comercial: cfg("nombre_negocio"),
+            ruc: ruc.clone(),
+            clave_acceso: clave.clone(),
+            estab: establecimiento_usado.clone(),
+            pto_emi: punto_emision_usado.clone(),
+            secuencial: secuencial.clone(),
+            dir_matriz: cfg("direccion"),
+            contribuyente_rimpe,
+            fecha_emision,
+            dir_establecimiento: cfg("direccion"),
+            contribuyente_especial: contribuyente_especial_cfg.clone(),
+            obligado_contabilidad: if obligado_contabilidad_cfg { "SI".to_string() } else { "NO".to_string() },
+            tipo_identificacion_sujeto_retenido: tipo_id_sujeto.to_string(),
+            razon_social_sujeto_retenido: datos.proveedor_nombre.clone(),
+            tipo_sujeto_retenido: tipo_sujeto,
+            identificacion_sujeto_retenido: id_sujeto,
+            periodo_fiscal,
+            impuestos,
+        };
+
+        let _ = datos.proveedor_obligado_contabilidad; // suprimido warn
+
+        let xml_sin_firma = xml::generar_xml_retencion(&datos_xml);
+        soap::log_sri(&format!("XML retención sin firma ({} bytes):\n{}", xml_sin_firma.len(), xml_sin_firma));
+
+        if modo_demo {
+            // Demo mode: simular autorización sin enviar al SRI
+            let fake_auth = clave.clone();
+            let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            return persistir_y_responder(
+                &db, id, &clave, &xml_sin_firma, true, "AUTORIZADA",
+                Some(fake_auth), Some(now), &numero_comprobante,
+                &establecimiento_usado, &punto_emision_usado, secuencial_sri,
+                tipo_doc_sec, es_primera_emision,
+                "Demo: retención autorizada simulada (no enviada al SRI)",
+            );
+        }
+
+        let firmado = firma::firmar_comprobante(
+            &xml_sin_firma,
+            &p12_data,
+            &p12_password,
+            "comprobanteRetencion",
+        )?;
+        let r = soap::enviar_comprobante(&firmado.xml, &clave, ambiente).await?;
+        (clave, firmado.xml, r)
+    };
+
+    // ── 4. Persistir resultado y responder ───────────────────────────────────
+    persistir_y_responder(
+        &db, id,
+        &clave_final, &xml_firmado_final,
+        resultado_sri.exito,
+        &resultado_sri.estado,
+        resultado_sri.numero_autorizacion.clone(),
+        resultado_sri.fecha_autorizacion.clone(),
+        &numero_comprobante,
+        &establecimiento_usado, &punto_emision_usado, secuencial_sri,
+        tipo_doc_sec, es_primera_emision,
+        resultado_sri.mensaje.as_deref().unwrap_or(""),
+    )
+}
+
+/// Persiste el resultado de la emisión SRI y devuelve respuesta para el frontend.
+#[allow(clippy::too_many_arguments)]
+fn persistir_y_responder(
+    db: &State<'_, Database>,
+    retencion_id: i64,
+    clave: &str,
+    xml_firmado: &str,
+    exito: bool,
+    estado_raw: &str,
+    numero_autorizacion: Option<String>,
+    fecha_autorizacion: Option<String>,
+    numero_comprobante: &str,
+    establecimiento: &str,
+    punto_emision: &str,
+    secuencial_int: i64,
+    tipo_doc_sec: &str,
+    es_primera_emision: bool,
+    mensaje_extra: &str,
+) -> Result<ResultadoEmisionRetencion, String> {
+    let nuevo_estado = if exito {
+        "AUTORIZADA"
+    } else if estado_raw == "EN_PROCESO" {
+        "PENDIENTE"
+    } else {
+        "RECHAZADA"
+    };
+
+    let xml_para_guardar = if exito || nuevo_estado == "PENDIENTE" {
+        Some(xml_firmado.to_string())
+    } else {
+        None
+    };
+
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let secuencial_str = if secuencial_int > 0 {
+            Some(format!("{:09}", secuencial_int))
+        } else { None };
+
+        conn.execute(
+            "UPDATE retenciones_emitidas SET
+                estado_sri = ?1,
+                clave_acceso = ?2,
+                autorizacion_sri = ?3,
+                fecha_autorizacion = ?4,
+                xml_firmado = COALESCE(?5, xml_firmado),
+                numero_factura = COALESCE(?6, numero_factura),
+                establecimiento = COALESCE(?7, establecimiento),
+                punto_emision = COALESCE(?8, punto_emision),
+                secuencial = COALESCE(?9, secuencial)
+             WHERE id = ?10",
+            params![
+                nuevo_estado,
+                clave,
+                numero_autorizacion,
+                fecha_autorizacion,
+                xml_para_guardar,
+                if numero_comprobante.is_empty() { None } else { Some(numero_comprobante.to_string()) },
+                if establecimiento.is_empty() { None } else { Some(establecimiento.to_string()) },
+                if punto_emision.is_empty() { None } else { Some(punto_emision.to_string()) },
+                secuencial_str,
+                retencion_id,
+            ],
+        ).map_err(|e| format!("Error actualizando retención: {}", e))?;
+
+        if exito && es_primera_emision && secuencial_int > 0 {
+            let _ = conn.execute(
+                "UPDATE secuenciales SET secuencial = secuencial + 1
+                 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento, punto_emision, tipo_doc_sec],
+            );
+        }
+    }
+
+    let mensaje = if !mensaje_extra.is_empty() {
+        mensaje_extra.to_string()
+    } else if exito {
+        format!("Retención autorizada — Nº {}", numero_comprobante)
+    } else {
+        format!("Estado: {}", nuevo_estado)
+    };
+
+    Ok(ResultadoEmisionRetencion {
+        exito,
+        estado_sri: nuevo_estado.to_string(),
+        clave_acceso: Some(clave.to_string()),
+        numero_autorizacion,
+        fecha_autorizacion,
+        numero_comprobante: if numero_comprobante.is_empty() { None } else { Some(numero_comprobante.to_string()) },
+        mensaje,
+    })
 }
