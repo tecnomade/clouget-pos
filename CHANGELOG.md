@@ -6,6 +6,86 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.48 — 2026-05-24 📊 Generador ATS mensual (Anexo Transaccional Simplificado)
+
+Cierra la trifecta del módulo **Contabilidad** para agentes de retención: ahora se puede generar el **XML mensual del ATS** listo para subirse al portal del SRI (DIMM Anexos).
+
+### Nueva pestaña "Generador ATS" funcional
+
+En **Contabilidad → Generador ATS**:
+
+1. Selector de **año** (últimos 6) y **mes** (1-12, default = mes pasado)
+2. Botón **🛠 Generar XML** que arma el ATS desde los datos en BD
+3. Botón **⬇ Descargar XML** que guarda el archivo como `ATS_{YYYY}_{MM}.xml`
+4. Vista previa colapsable del XML generado
+5. Tarjetas con estadísticas: período, total de compras, grupos de ventas, anulados, valor total de ventas
+
+### Qué incluye el XML
+
+Conforme al schema oficial `AnexoTransaccionalSimplificado` del SRI, root `<iva>`:
+
+**Cabecera:** `TipoIDInformante=R`, `IdInformante` (RUC), `razonSocial`, `Anio`, `Mes`, `numEstabRuc` (calculado desde tabla `establecimientos`), `totalVentas`, `codigoOperativo=IVA`.
+
+**`<compras>`** — todas las compras del mes con `tipo_documento != INFORMAL` y `estado != ANULADA`:
+- Sustento tributario (default `01` = Crédito Tributario IVA)
+- `tpIdProv` y `idProv` (RUC/cédula/pasaporte autodetectado desde proveedor)
+- `tipoComprobante` (FACTURA→01, NC→04, NV→12, etc.)
+- estab/pto/sec parseados desde `numero_factura`
+- Fechas dd/mm/yyyy
+- Bases imponibles separadas por tarifa IVA (`baseImponible` 0%, `baseImpGrav` > 0%)
+- `montoIva`
+- Retención IVA distribuida en `valorRetBienes` (30%), `valorRetServicios` (70%), `valRetServ100` (100%) según % retenido
+- `pagoLocExt=01` (local) + `formaPago` mapeada a Tabla 24 SRI
+- **Bloque `<air>`** con cada retención RENTA emitida sobre la compra (código, base, %, valor)
+
+**`<ventas>`** — todas las facturas autorizadas del mes, **agrupadas** por `(tpIdCliente, idCliente, tipoComprobante, formaPago)`:
+- `numeroComprobantes` (cantidad agrupada)
+- `denoCli` (razón social del cliente, omitido si es Consumidor Final 9999999999999)
+- `tipoCliente` (PN=01 / Sociedad=02 inferido desde el RUC)
+- `tipoEmision=E` (Electrónica)
+- Sumas de bases, IVA, etc.
+
+**`<ventasEstablecimiento>`** — total de ventas asignado al establecimiento configurado.
+
+**`<anulados>`** — ventas anuladas del mes con secuencial SRI asignado (estab/pto/sec + autorización).
+
+### Mapeos SRI implementados
+
+- Tabla 5 (proveedor): `01`=RUC, `02`=cédula, `03`=pasaporte
+- Tabla 4 (cliente): `04`=RUC, `05`=cédula, `06`=pasaporte, `07`=consumidor final
+- Tabla 11 (comprobantes): factura=`01`, NC=`04`, ND=`05`, LC=`03`, NV=`12`, retención=`07`
+- Tabla 24 (formas pago): `01`=efectivo, `16`=débito, `19`=crédito tarjeta, `20`=transferencia, `21`=endeudamiento
+
+### Limitaciones de esta primera versión
+
+- **Multi-establecimiento simplificado**: todo se agrupa al establecimiento configurado por defecto. Si necesitas reportar ventas distribuidas por sucursal, hay que migrar las ventas para incluir `establecimiento_id` por venta (planeado).
+- **Sin reembolsos ni exportaciones**: no se generan los bloques `<totbasesImpReemb>` ni `<exportaciones>`. El SRI los hace opcionales.
+- **Retención RENTA del comprador (sobre ventas)**: aún no se captura en la app (solo capturamos retenciones que YO emito a proveedores). Si necesitas reportar lo que TUS clientes te retienen en sus comprobantes, se llena con 0 — esto se puede mejorar en futuras versiones leyendo de `retenciones_recibidas`.
+
+### Endpoints técnicos
+
+- Nuevo módulo `src-tauri/src/sri/ats.rs` con `DatosAts`, `DetalleCompra/Venta/Anulado/Air`, `VentaEstablecimiento` y `generar_xml_ats()`
+- Nuevo comando Tauri `contabilidad_generar_ats(anio, mes)` → `ResultadoAts { xml, anio, mes, total_compras, total_ventas, total_anulados, valor_ventas }`
+
+### Estado del roadmap Contabilidad
+
+| Versión | Feature | Estado |
+|---|---|---|
+| v2.5.43 | Foundation (config + schema) | ✅ |
+| v2.5.44 | Rename SRI Avanzado → Contabilidad | ✅ |
+| v2.5.45 | Captura retenciones emitidas + ajuste CXP | ✅ |
+| v2.5.46 | Envío real al SRI (firma + SOAP) | ✅ |
+| v2.5.47 | RIDE PDF | ✅ |
+| **v2.5.48** | **ATS mensual** | ✅ |
+
+El módulo Contabilidad está **funcionalmente completo** para un agente de retención típico en Ecuador. Solo queda esperar el primer cliente real con autorización para hacer la prueba de fuego contra el SRI de producción.
+
+### Próximo: APP MÓVIL
+
+v2.5.49+: aplicación móvil (Android primero) que use los endpoints existentes del POS para vender en la calle / atención a domicilio / mesas en restaurante.
+
+---
+
 ## v2.5.47 — 2026-05-24 📄 RIDE PDF del Comprobante de Retención
 
 Cierra el ciclo del módulo **Contabilidad** con la representación impresa del comprobante de retención electrónico, conforme a la ficha técnica del SRI Ecuador.

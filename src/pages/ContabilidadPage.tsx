@@ -437,21 +437,8 @@ export default function ContabilidadPage() {
           </div>
         )}
 
-        {/* TAB: ATS (placeholder) */}
-        {tab === "ats" && (
-          <div className="card" style={{ maxWidth: 600, textAlign: "center" }}>
-            <div className="card-body" style={{ padding: 40 }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
-              <h3 style={{ marginBottom: 8 }}>Generador ATS Mensual</h3>
-              <p style={{ color: "var(--color-text-secondary)", marginBottom: 16 }}>
-                Genera el Anexo Transaccional Simplificado en formato XML SRI listo para subir al portal.
-              </p>
-              <div style={{ padding: 12, background: "rgba(245,158,11,0.1)", borderRadius: 6, fontSize: 13, color: "var(--color-warning)" }}>
-                Disponible en <strong>v2.5.47</strong>. Primero implementamos captura de retenciones (v2.5.44) y el XML/RIDE del comprobante de retención (v2.5.45-46).
-              </div>
-            </div>
-          </div>
-        )}
+        {/* TAB: ATS (v2.5.48) */}
+        {tab === "ats" && <AtsGenerador />}
       </div>
     </>
   );
@@ -751,4 +738,155 @@ function inferPorcentajeIva(codigo: string): number {
     "9": 30, "10": 70, "11": 100, "725": 10, "726": 20,
   };
   return map[codigo] ?? 0;
+}
+
+// ─── AtsGenerador (v2.5.48) ──────────────────────────────────────────────────
+//
+// Genera el XML del Anexo Transaccional Simplificado (ATS) mensual del SRI.
+// Selector año + mes, botón "Generar XML" y luego "Descargar" + vista previa.
+
+interface ResultadoAts {
+  xml: string;
+  anio: string;
+  mes: string;
+  total_compras: number;
+  total_ventas: number;
+  total_anulados: number;
+  valor_ventas: number;
+}
+
+function AtsGenerador() {
+  const { toastExito, toastError } = useToast();
+  const hoy = new Date();
+  const [anio, setAnio] = useState<number>(hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear());
+  const [mes, setMes] = useState<number>(hoy.getMonth() === 0 ? 12 : hoy.getMonth()); // mes pasado por defecto
+  const [generando, setGenerando] = useState(false);
+  const [resultado, setResultado] = useState<ResultadoAts | null>(null);
+
+  const generar = async () => {
+    setGenerando(true);
+    setResultado(null);
+    try {
+      const res = await invoke<ResultadoAts>("contabilidad_generar_ats", { anio, mes });
+      setResultado(res);
+      toastExito(`ATS ${res.mes}/${res.anio} generado: ${res.total_compras} compras, ${res.total_ventas} grupos de ventas, ${res.total_anulados} anulados`);
+    } catch (err) {
+      toastError("Error generando ATS: " + err);
+    } finally {
+      setGenerando(false);
+    }
+  };
+
+  const descargar = () => {
+    if (!resultado) return;
+    const blob = new Blob([resultado.xml], { type: "application/xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ATS_${resultado.anio}_${resultado.mes}.xml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    toastExito(`ATS descargado: ATS_${resultado.anio}_${resultado.mes}.xml`);
+  };
+
+  const meses = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+  ];
+
+  const aniosOpciones = (() => {
+    const arr: number[] = [];
+    for (let y = hoy.getFullYear(); y >= hoy.getFullYear() - 5; y--) arr.push(y);
+    return arr;
+  })();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="card">
+        <div className="card-header">📊 Generador ATS Mensual</div>
+        <div className="card-body" style={{ padding: 20 }}>
+          <p style={{ color: "var(--color-text-secondary)", marginBottom: 16, fontSize: 13 }}>
+            Genera el <strong>Anexo Transaccional Simplificado</strong> (XML) del mes seleccionado.
+            Incluye todas las compras con sustento, ventas autorizadas, retenciones emitidas (bloque AIR)
+            y comprobantes anulados.<br/>
+            El archivo resultante se sube al <strong>DIMM Anexos</strong> del portal del SRI.
+          </p>
+
+          <div style={{ display: "flex", gap: 12, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <div style={{ flex: "0 0 140px" }}>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Año</label>
+              <select className="input" style={{ marginTop: 4 }}
+                value={anio}
+                onChange={(e) => setAnio(parseInt(e.target.value, 10))}>
+                {aniosOpciones.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: "0 0 180px" }}>
+              <label style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 600 }}>Mes</label>
+              <select className="input" style={{ marginTop: 4 }}
+                value={mes}
+                onChange={(e) => setMes(parseInt(e.target.value, 10))}>
+                {meses.map((label, idx) => (
+                  <option key={idx} value={idx + 1}>{String(idx + 1).padStart(2, "0")} — {label}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn btn-primary"
+              disabled={generando}
+              onClick={generar}>
+              {generando ? "⏳ Generando..." : "🛠 Generar XML"}
+            </button>
+            {resultado && (
+              <button className="btn btn-outline" onClick={descargar}>
+                ⬇ Descargar XML
+              </button>
+            )}
+          </div>
+
+          {resultado && (
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+              <Stat label="Período" value={`${resultado.mes}/${resultado.anio}`} />
+              <Stat label="Compras" value={resultado.total_compras.toString()} />
+              <Stat label="Grupos de ventas" value={resultado.total_ventas.toString()} />
+              <Stat label="Anulados" value={resultado.total_anulados.toString()} />
+              <Stat label="Total ventas" value={`$ ${resultado.valor_ventas.toFixed(2)}`} />
+            </div>
+          )}
+
+          {resultado && (
+            <details>
+              <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                Ver XML generado ({resultado.xml.length.toLocaleString()} bytes)
+              </summary>
+              <pre style={{
+                fontSize: 10, padding: 12, background: "rgba(0,0,0,0.3)", borderRadius: 6,
+                maxHeight: 400, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all",
+                fontFamily: "monospace",
+              }}>{resultado.xml}</pre>
+            </details>
+          )}
+
+          <div style={{ marginTop: 20, padding: 12, background: "rgba(59,130,246,0.1)", borderRadius: 6, fontSize: 12 }}>
+            💡 <strong>Importante:</strong> el ATS solo incluye <strong>facturas AUTORIZADAS</strong> por el SRI
+            del mes seleccionado y <strong>compras formales</strong> (con tipo de documento distinto de INFORMAL).
+            Las notas de venta y los comprobantes informales no se reportan en ATS.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{
+      padding: "10px 14px", background: "var(--color-surface-alt, rgba(255,255,255,0.03))",
+      borderRadius: 6, border: "1px solid var(--color-border)", minWidth: 120,
+    }}>
+      <div style={{ fontSize: 10, color: "var(--color-text-secondary)", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginTop: 2 }}>{value}</div>
+    </div>
+  );
 }

@@ -601,6 +601,8 @@ pub fn run() {
             commands::contabilidad::contabilidad_emitir_retencion_sri,
             // v2.5.47: RIDE PDF del comprobante de retención
             commands::contabilidad::contabilidad_generar_ride_pdf,
+            // v2.5.48: generador ATS mensual (XML para subir al DIMM Anexos del SRI)
+            commands::contabilidad::contabilidad_generar_ats,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,

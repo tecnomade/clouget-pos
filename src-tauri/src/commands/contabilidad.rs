@@ -16,7 +16,7 @@
 //! `licencia.modulos` debe incluir `"contabilidad"`).
 
 use crate::db::{Database, SesionState};
-use crate::sri::{clave_acceso, firma, ride_retencion, soap, xml};
+use crate::sri::{ats, clave_acceso, firma, ride_retencion, soap, xml};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -1147,5 +1147,412 @@ fn periodo_fiscal_de_fecha(fecha_bd: &str) -> String {
         format!("{}/{}", partes[1], partes[0])
     } else {
         chrono::Local::now().format("%m/%Y").to_string()
+    }
+}
+
+// ─── v2.5.48: Generador ATS mensual ──────────────────────────────────────────
+
+/// Mapeos auxiliares para armar el ATS.
+
+/// Mapea tipo_documento de venta a código SRI Tabla 11.
+fn tipo_comprobante_venta(tipo: &str) -> &'static str {
+    match tipo {
+        "FACTURA" => "01",
+        "NOTA_VENTA" => "12",
+        "NOTA_CREDITO" => "04",
+        "NOTA_DEBITO" => "05",
+        "LIQUIDACION_COMPRA" => "03",
+        "RETENCION" => "07",
+        "GUIA_REMISION" => "06",
+        _ => "01",
+    }
+}
+
+/// Mapea tipo_documento de compra (lo que YO recibí del proveedor) a código SRI.
+fn tipo_comprobante_compra(tipo: &str) -> &'static str {
+    match tipo {
+        "FACTURA" => "01",
+        "NOTA_VENTA" => "12",
+        "NOTA_CREDITO" => "04",
+        "NOTA_DEBITO" => "05",
+        "LIQUIDACION_COMPRA" => "03",
+        _ => "01",
+    }
+}
+
+/// Mapea forma_pago de la app (EFECTIVO/TARJETA/...) a código SRI Tabla 24.
+fn forma_pago_ats(fp: &str) -> &'static str {
+    match fp.to_uppercase().as_str() {
+        "EFECTIVO" | "CASH" => "01",
+        "TRANSFERENCIA" | "TRANSFER" => "20",
+        "TARJETA_DEBITO" | "DEBITO" => "16",
+        "TARJETA_CREDITO" | "TARJETA" | "CREDITO_TARJETA" => "19",
+        "CHEQUE" => "20",
+        "CREDITO" => "21", // Endeudamiento / Compensación
+        _ => "01",
+    }
+}
+
+/// Mapea tipo_identificacion de cliente / proveedor a tpIdCliente / tpIdProv.
+/// Para CLIENTES (Tabla 4): 04=RUC, 05=Cédula, 06=Pasaporte, 07=CF, 08=Exterior.
+/// Para PROVEEDORES (Tabla 5): 01=RUC, 02=Cédula, 03=Pasaporte.
+fn tipo_id_cliente_ats(tipo: &str, identificacion: &str) -> &'static str {
+    if identificacion == "9999999999999" { return "07"; }
+    match tipo {
+        "RUC" => "04",
+        "CEDULA" => "05",
+        "PASAPORTE" => "06",
+        _ => {
+            if identificacion.len() == 13 { "04" }
+            else if identificacion.len() == 10 { "05" }
+            else { "06" }
+        }
+    }
+}
+
+fn tipo_id_prov_ats(tipo: &str, ruc: &str) -> &'static str {
+    match tipo {
+        "RUC" => "01",
+        "CEDULA" => "02",
+        "PASAPORTE" => "03",
+        _ => {
+            if ruc.len() == 13 { "01" }
+            else if ruc.len() == 10 { "02" }
+            else { "03" }
+        }
+    }
+}
+
+/// "01"=Persona Natural, "02"=Sociedad. Inferido por longitud + 3er dígito.
+fn tipo_cliente_ats(identificacion: &str) -> &'static str {
+    if identificacion.len() != 13 { return "01"; }
+    let tercero = identificacion.chars().nth(2).and_then(|c| c.to_digit(10)).unwrap_or(0);
+    if tercero == 9 { "02" } else { "01" }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResultadoAts {
+    pub xml: String,
+    pub anio: String,
+    pub mes: String,
+    pub total_compras: usize,
+    pub total_ventas: usize,
+    pub total_anulados: usize,
+    pub valor_ventas: f64,
+}
+
+/// Genera el XML completo del ATS para un mes específico.
+/// Devuelve el XML como string + estadísticas para mostrar en UI.
+///
+/// El frontend lo guarda como archivo `ATS-{anio}-{mes}.xml` para subirlo
+/// al portal del SRI (DIMM Anexos).
+#[tauri::command]
+pub fn contabilidad_generar_ats(
+    db: State<'_, Database>,
+    anio: i32,
+    mes: i32,
+) -> Result<ResultadoAts, String> {
+    if !(1..=12).contains(&mes) {
+        return Err("Mes inválido (1-12)".into());
+    }
+    if !(2010..=2100).contains(&anio) {
+        return Err("Año inválido".into());
+    }
+    let anio_str = format!("{:04}", anio);
+    let mes_str = format!("{:02}", mes);
+    let fecha_desde = format!("{}-{}-01", anio_str, mes_str);
+    let ultimo_dia = ultimo_dia_mes(anio, mes);
+    let fecha_hasta = format!("{}-{}-{:02}", anio_str, mes_str, ultimo_dia);
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // ── Datos del informante ──────────────────────────────────────────────
+    let razon_social: String = conn.query_row(
+        "SELECT value FROM config WHERE key = 'nombre_negocio'", [],
+        |r| r.get(0),
+    ).unwrap_or_default();
+    let ruc: String = conn.query_row(
+        "SELECT value FROM config WHERE key = 'ruc'", [],
+        |r| r.get(0),
+    ).unwrap_or_default();
+    if ruc.len() != 13 {
+        return Err("Configure el RUC (13 dígitos) en Configuración antes de generar ATS".into());
+    }
+    let num_estab: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM establecimientos WHERE COALESCE(activo, 1) = 1",
+        [], |r| r.get(0),
+    ).unwrap_or(1);
+    let num_estab_str = format!("{:03}", num_estab.max(1));
+
+    // ── Compras del mes ───────────────────────────────────────────────────
+    let mut stmt_c = conn.prepare(
+        "SELECT c.id, c.tipo_documento, c.numero, c.numero_factura, COALESCE(c.fecha_emision, c.fecha),
+                c.fecha, c.clave_acceso, c.subtotal, c.iva, c.forma_pago, c.estado,
+                p.ruc, p.nombre, p.tipo_identificacion
+         FROM compras c
+         JOIN proveedores p ON c.proveedor_id = p.id
+         WHERE date(COALESCE(c.fecha_emision, c.fecha)) >= date(?1)
+           AND date(COALESCE(c.fecha_emision, c.fecha)) <= date(?2)
+           AND c.estado != 'ANULADA'
+           AND c.tipo_documento != 'INFORMAL'"
+    ).map_err(|e| e.to_string())?;
+    let compras_raw: Vec<(i64, String, String, Option<String>, String, String, Option<String>, f64, f64, String, String, Option<String>, String, Option<String>)> = stmt_c
+        .query_map(params![fecha_desde, fecha_hasta], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3).ok(), r.get(4)?, r.get(5)?,
+            r.get(6).ok(), r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?,
+            r.get(11).ok(), r.get(12)?, r.get(13).ok(),
+        ))).map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt_c);
+
+    // Para cada compra, leer las retenciones emitidas asociadas (para el bloque <air>)
+    let mut stmt_ret = conn.prepare(
+        "SELECT red.tipo, red.codigo_sri, red.base_imponible, red.porcentaje, red.valor
+         FROM retencion_emitida_detalles red
+         JOIN retenciones_emitidas re ON red.retencion_id = re.id
+         WHERE re.compra_id = ?1 AND re.anulada = 0"
+    ).map_err(|e| e.to_string())?;
+
+    let mut compras: Vec<ats::DetalleCompra> = Vec::with_capacity(compras_raw.len());
+    for (compra_id, tipo_doc, _numero, num_factura, fecha_emi, fecha_reg, clave, subtotal, iva, fp, _estado, ruc_prov, _nom_prov, tipo_id_prov_str) in compras_raw {
+        // Parsear num_factura "001-001-000000001" → estab/pto/sec
+        let nf = num_factura.unwrap_or_else(|| "001-001-000000001".to_string());
+        let partes: Vec<&str> = nf.split('-').collect();
+        let estab = partes.first().map(|s| s.to_string()).unwrap_or_else(|| "001".to_string());
+        let pto = partes.get(1).map(|s| s.to_string()).unwrap_or_else(|| "001".to_string());
+        let sec = partes.get(2).map(|s| s.to_string()).unwrap_or_else(|| "000000001".to_string());
+
+        let id_prov_str = ruc_prov.unwrap_or_else(|| "9999999999999".to_string());
+
+        // Leer retenciones emitidas de esta compra
+        let mut renta_valores: Vec<ats::DetalleAir> = Vec::new();
+        let mut iva_ret_bienes_30 = 0.0_f64;
+        let mut iva_ret_servicios_70 = 0.0_f64;
+        let mut iva_ret_100 = 0.0_f64;
+        let ret_rows: Vec<(String, String, f64, f64, f64)> = stmt_ret.query_map(params![compra_id], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?,
+        ))).map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+        for (tipo, codigo, base, pct, valor) in ret_rows {
+            if tipo.eq_ignore_ascii_case("RENTA") {
+                renta_valores.push(ats::DetalleAir {
+                    cod_ret_air: codigo,
+                    base_imp_air: base,
+                    porcentaje_air: pct,
+                    val_ret_air: valor,
+                });
+            } else if tipo.eq_ignore_ascii_case("IVA") {
+                // Distribuir según el % retenido
+                if pct >= 99.0 { iva_ret_100 += valor; }
+                else if pct >= 65.0 { iva_ret_servicios_70 += valor; } // 70% típico
+                else { iva_ret_bienes_30 += valor; } // 30% típico
+            }
+        }
+
+        // Fechas dd/mm/yyyy
+        let fmt_d = |s: &str| -> String {
+            let p = s.split(' ').next().unwrap_or(s);
+            let pp: Vec<&str> = p.split('-').collect();
+            if pp.len() == 3 && pp[0].len() == 4 { format!("{}/{}/{}", pp[2], pp[1], pp[0]) } else { s.to_string() }
+        };
+
+        compras.push(ats::DetalleCompra {
+            cod_sustento: "01".to_string(), // Crédito Tributario IVA por defecto
+            tp_id_prov: tipo_id_prov_ats(tipo_id_prov_str.as_deref().unwrap_or(""), &id_prov_str).to_string(),
+            id_prov: id_prov_str,
+            tipo_comprobante: tipo_comprobante_compra(&tipo_doc).to_string(),
+            parte_rel: "NO".to_string(),
+            fecha_registro: fmt_d(&fecha_reg),
+            establecimiento: estab,
+            punto_emision: pto,
+            secuencial: sec.trim_start_matches('0').to_string().is_empty()
+                .then(|| "1".to_string()).unwrap_or_else(|| sec.trim_start_matches('0').to_string()),
+            fecha_emision: fmt_d(&fecha_emi),
+            autorizacion: clave,
+            base_no_gra_iva: 0.0,
+            base_imponible: if iva == 0.0 { subtotal } else { 0.0 },
+            base_imp_grav: if iva > 0.0 { subtotal } else { 0.0 },
+            base_imp_exe: 0.0,
+            monto_ice: 0.0,
+            monto_iva: iva,
+            val_ret_bien_10: 0.0,
+            val_ret_serv_20: 0.0,
+            valor_ret_bienes: iva_ret_bienes_30,
+            val_ret_serv_50: 0.0,
+            valor_ret_servicios: iva_ret_servicios_70,
+            val_ret_serv_100: iva_ret_100,
+            totbases_imp_reemb: 0.0,
+            pago_loc_ext: "01".to_string(),
+            forma_pago: forma_pago_ats(&fp).to_string(),
+            air: renta_valores,
+        });
+    }
+    drop(stmt_ret);
+
+    // ── Ventas del mes (agrupadas por cliente + tipo comprobante) ─────────
+    // Solo se reportan FACTURAS autorizadas (tipo_documento='FACTURA' y
+    // estado_sri='AUTORIZADA'). Las NV no se reportan en ATS.
+    let mut stmt_v = conn.prepare(
+        "SELECT v.tipo_documento, cl.tipo_identificacion, COALESCE(cl.identificacion, '9999999999999'),
+                cl.nombre, v.subtotal_sin_iva, v.subtotal_con_iva, v.iva, v.forma_pago
+         FROM ventas v
+         LEFT JOIN clientes cl ON v.cliente_id = cl.id
+         WHERE date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+           AND v.anulada = 0
+           AND v.tipo_documento = 'FACTURA'
+           AND v.estado_sri = 'AUTORIZADA'"
+    ).map_err(|e| e.to_string())?;
+
+    use std::collections::HashMap;
+    #[derive(Default)]
+    struct Agrupado {
+        tp_id: String,
+        id: String,
+        nombre: String,
+        tipo_comp: String,
+        forma_pago: String,
+        count: i64,
+        base_no_grav_iva: f64,
+        base_imponible_0: f64,
+        base_imp_grav: f64,
+        iva: f64,
+    }
+    let mut grupos: HashMap<String, Agrupado> = HashMap::new();
+    let mut total_ventas_mes = 0.0_f64;
+
+    for row in stmt_v.query_map(params![fecha_desde, fecha_hasta], |r| Ok((
+        r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?,
+        r.get::<_, String>(3)?, r.get::<_, f64>(4)?, r.get::<_, f64>(5)?, r.get::<_, f64>(6)?, r.get::<_, String>(7)?,
+    ))).map_err(|e| e.to_string())? {
+        let (tipo_doc, tipo_id_cli, id_cli, nombre, sub_sin_iva, sub_con_iva, iva, fp) = row.map_err(|e| e.to_string())?;
+        let tp = tipo_id_cliente_ats(tipo_id_cli.as_deref().unwrap_or(""), &id_cli).to_string();
+        let tipo_comp = tipo_comprobante_venta(&tipo_doc).to_string();
+        let fp_ats = forma_pago_ats(&fp).to_string();
+        // Agrupar por (tp, id, tipo_comp, fp)
+        let key = format!("{}-{}-{}-{}", tp, id_cli, tipo_comp, fp_ats);
+        let g = grupos.entry(key).or_insert_with(|| Agrupado {
+            tp_id: tp.clone(), id: id_cli.clone(), nombre: nombre.clone(),
+            tipo_comp: tipo_comp.clone(), forma_pago: fp_ats.clone(),
+            ..Default::default()
+        });
+        g.count += 1;
+        g.base_imp_grav += sub_con_iva;
+        g.base_imponible_0 += sub_sin_iva;
+        g.iva += iva;
+        total_ventas_mes += sub_con_iva + sub_sin_iva;
+    }
+    drop(stmt_v);
+
+    let ventas: Vec<ats::DetalleVenta> = grupos.into_values().map(|g| ats::DetalleVenta {
+        tp_id_cliente: g.tp_id,
+        id_cliente: g.id.clone(),
+        parte_rel_vtas: "NO".to_string(),
+        tipo_cliente: tipo_cliente_ats(&g.id).to_string(),
+        deno_cli: if g.id == "9999999999999" { None } else { Some(g.nombre) },
+        tipo_comprobante: g.tipo_comp,
+        tipo_emision: "E".to_string(), // Electrónica (todas las autorizadas SRI)
+        numero_comprobantes: g.count,
+        base_no_gra_iva: g.base_no_grav_iva,
+        base_imponible: g.base_imponible_0,
+        base_imp_grav: g.base_imp_grav,
+        monto_iva: g.iva,
+        monto_ice: 0.0,
+        valor_ret_iva: 0.0,
+        valor_ret_renta: 0.0,
+        forma_pago: g.forma_pago,
+    }).collect();
+
+    // ── Ventas por establecimiento ────────────────────────────────────────
+    // Por simplicidad agregamos todo a "001" (el establecimiento configurado).
+    // En multi-establecimiento real, requeriría joinear por terminal/establecimiento.
+    let est_default: String = conn.query_row(
+        "SELECT value FROM config WHERE key = 'establecimiento'", [],
+        |r| r.get::<_, String>(0),
+    ).unwrap_or_else(|_| "001".to_string());
+
+    let ventas_establecimiento = vec![ats::VentaEstablecimiento {
+        cod_estab: est_default,
+        ventas_estab: total_ventas_mes,
+        iva_comp: 0.0, // IVA por compensar (avanzado, usualmente 0)
+    }];
+
+    // ── Anulados del mes (ventas y compras anuladas con secuencial SRI) ───
+    let mut stmt_a = conn.prepare(
+        "SELECT v.tipo_documento, v.numero_factura, v.clave_acceso, v.autorizacion_sri
+         FROM ventas v
+         WHERE date(v.fecha) >= date(?1) AND date(v.fecha) <= date(?2)
+           AND v.anulada = 1
+           AND v.numero_factura IS NOT NULL AND TRIM(v.numero_factura) != ''"
+    ).map_err(|e| e.to_string())?;
+
+    let anulados_rows: Vec<(String, String, Option<String>, Option<String>)> = stmt_a
+        .query_map(params![fecha_desde, fecha_hasta], |r| Ok((
+            r.get(0)?, r.get(1)?, r.get(2).ok(), r.get(3).ok(),
+        ))).map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt_a);
+
+    let anulados: Vec<ats::DetalleAnulado> = anulados_rows.into_iter().filter_map(|(tipo_doc, nf, clave, aut)| {
+        let partes: Vec<&str> = nf.split('-').collect();
+        if partes.len() != 3 { return None; }
+        let estab = partes[0].to_string();
+        let pto = partes[1].to_string();
+        let sec = partes[2].trim_start_matches('0');
+        let sec = if sec.is_empty() { "1".to_string() } else { sec.to_string() };
+        Some(ats::DetalleAnulado {
+            tipo_comprobante: tipo_comprobante_venta(&tipo_doc).to_string(),
+            establecimiento: estab,
+            punto_emision: pto,
+            secuencial_inicio: sec.clone(),
+            secuencial_fin: sec,
+            autorizacion: aut.or(clave),
+        })
+    }).collect();
+
+    let total_compras = compras.len();
+    let total_ventas_count = ventas.len();
+    let total_anulados = anulados.len();
+
+    let datos = ats::DatosAts {
+        razon_social,
+        ruc,
+        anio: anio_str.clone(),
+        mes: mes_str.clone(),
+        num_estab_ruc: num_estab_str,
+        total_ventas: total_ventas_mes,
+        codigo_operativo: "IVA".to_string(),
+        compras,
+        ventas,
+        ventas_establecimiento,
+        anulados,
+    };
+
+    let xml = ats::generar_xml_ats(&datos);
+
+    Ok(ResultadoAts {
+        xml,
+        anio: anio_str,
+        mes: mes_str,
+        total_compras,
+        total_ventas: total_ventas_count,
+        total_anulados,
+        valor_ventas: total_ventas_mes,
+    })
+}
+
+/// Calcula el último día de un mes (28/29/30/31).
+fn ultimo_dia_mes(anio: i32, mes: i32) -> u32 {
+    match mes {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            // Año bisiesto
+            let bis = (anio % 4 == 0 && anio % 100 != 0) || anio % 400 == 0;
+            if bis { 29 } else { 28 }
+        }
+        _ => 30,
     }
 }
