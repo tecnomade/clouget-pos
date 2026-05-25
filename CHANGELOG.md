@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.50 — 2026-05-24 📱 APP MÓVIL — endpoints clientes, caja y retenciones recibidas
+
+Comienza el desarrollo de la **API HTTP de la app móvil** (proyecto `luxor-movil` en repo aparte). Se agregan 8 endpoints nuevos bajo el prefijo `/api/v1/app/*`, todos protegidos por token de dispositivo (esquema `app_tokens` ya existente).
+
+### Endpoints nuevos
+
+#### Clientes
+- `GET  /api/v1/app/clientes?q=&limite=` — lista con búsqueda por nombre/ID/email (default 100, máx 500)
+- `GET  /api/v1/app/clientes/:id` — un cliente específico
+- `POST /api/v1/app/clientes` — crea cliente (idempotente: si la identificación ya existe, devuelve el ID existente). Requiere `gestionar_clientes` o `vende_piso`.
+
+#### Caja
+- `GET  /api/v1/app/caja/estado` — estado de la caja abierta (monto inicial, ventas, esperado, usuario, etc.)
+- `POST /api/v1/app/caja/abrir` — abre caja con `{ monto_inicial, observacion? }`. Requiere `abre_caja` o `cobra_caja`.
+- `POST /api/v1/app/caja/cerrar` — cierra caja activa con `{ monto_real, observacion? }`. Calcula automáticamente `monto_ventas`, `monto_esperado` y `diferencia` desde las ventas en efectivo del turno.
+
+#### Retenciones recibidas (cliente me retiene al pagar)
+- `GET  /api/v1/app/ventas/:id/retenciones` — lista retenciones aplicadas a una venta
+- `POST /api/v1/app/ventas/:id/retencion` — registra retención `{ tipo: "RENTA"|"IVA", codigo_sri, base_imponible, porcentaje, valor, numero_comprobante?, fecha_emision? }`. Reduce automáticamente saldo de CXC si la venta era a crédito.
+
+### Pendiente para v2.5.51
+
+- **`POST /api/v1/app/ventas/:id/emitir-sri`** — el endpoint ya existe pero responde 501 (no implementado). Requiere extender el dispatcher HTTP del Multi-POS con soporte para el comando async de firma + SOAP del SRI. Mientras tanto, la app puede registrar ventas como NOTA_VENTA y emitir la factura desde el POS desktop.
+
+### Arquitectura
+
+Los nuevos handlers usan el mismo patrón que los existentes (`extract_app_session` para auth + check de permisos + lógica). 3 patrones de implementación:
+- **Inline SQL** (clientes, caja_cerrar, retenciones): handlers que ejecutan SQL directo contra `state.db.conn`
+- **Dispatch** (caja_estado, caja_abrir, ventas_registrar): delegan al dispatcher HTTP del Multi-POS para reusar la lógica completa del POS
+- **Stub 501** (emitir_sri): retorna mensaje claro indicando que se implementará en v2.5.51
+
+### Cómo probarlo desde curl
+
+```bash
+# 1. Auth
+TOKEN=$(curl -s -X POST http://192.168.1.100:8765/api/v1/app/auth/pin \
+  -H "Content-Type: application/json" \
+  -d '{"usuario_id":1,"pin":"1234","dispositivo_nombre":"Test"}' | jq -r .token)
+
+# 2. Listar clientes
+curl http://192.168.1.100:8765/api/v1/app/clientes?q=juan \
+  -H "Authorization: Bearer $TOKEN"
+
+# 3. Crear cliente
+curl -X POST http://192.168.1.100:8765/api/v1/app/clientes \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"nombre":"Juan Perez","identificacion":"0911111111","tipo_identificacion":"CEDULA","email":"juan@test.com"}'
+
+# 4. Estado caja
+curl http://192.168.1.100:8765/api/v1/app/caja/estado \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+---
+
 ## v2.5.49 — 2026-05-24 🐛 Bugfixes: crédito como "Transfer" + QR ticket muy pequeño + email error feo
 
 ### Fix 1 — Ventas a crédito aparecían como "Transfer"

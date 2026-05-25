@@ -1530,6 +1530,387 @@ pub async fn pedidos_mesas_libres(
     Ok(Json(serde_json::json!({ "ok": true, "mesas": mesas })))
 }
 
+// ─── v2.5.50 — Clientes (CRUD básico desde la app) ──────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ListarClientesQuery {
+    pub q: Option<String>,
+    pub limite: Option<i64>,
+}
+
+/// `GET /api/v1/app/clientes?q=&limite=` — lista clientes. Si `q` viene,
+/// filtra por nombre/identificacion/email. Default 100, máx 500.
+pub async fn listar_clientes(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<ListarClientesQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+
+    let limite = qp.limite.unwrap_or(100).clamp(1, 500);
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let busqueda = qp.q.unwrap_or_default();
+    let busqueda_pat = format!("%{}%", busqueda);
+
+    let (sql, params_dyn): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if busqueda.is_empty() {
+        (
+            "SELECT id, COALESCE(tipo_identificacion, ''), COALESCE(identificacion, ''),
+                    nombre, COALESCE(email, ''), COALESCE(telefono, ''), COALESCE(direccion, '')
+             FROM clientes
+             WHERE COALESCE(activo, 1) = 1
+             ORDER BY nombre
+             LIMIT ?1",
+            vec![Box::new(limite)],
+        )
+    } else {
+        (
+            "SELECT id, COALESCE(tipo_identificacion, ''), COALESCE(identificacion, ''),
+                    nombre, COALESCE(email, ''), COALESCE(telefono, ''), COALESCE(direccion, '')
+             FROM clientes
+             WHERE COALESCE(activo, 1) = 1
+               AND (nombre LIKE ?1 OR identificacion LIKE ?1 OR email LIKE ?1)
+             ORDER BY nombre
+             LIMIT ?2",
+            vec![Box::new(busqueda_pat), Box::new(limite)],
+        )
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(err500)?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_dyn.iter().map(|b| b.as_ref()).collect();
+
+    let clientes: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params_from_iter(params_refs.iter()), |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "tipo_identificacion": r.get::<_, String>(1)?,
+                "identificacion": r.get::<_, String>(2)?,
+                "nombre": r.get::<_, String>(3)?,
+                "email": r.get::<_, String>(4)?,
+                "telefono": r.get::<_, String>(5)?,
+                "direccion": r.get::<_, String>(6)?,
+            }))
+        })
+        .map_err(err500)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "clientes": clientes,
+        "total": clientes.len(),
+    })))
+}
+
+/// `GET /api/v1/app/clientes/:id` — un cliente específico.
+pub async fn obtener_cliente(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let cliente: serde_json::Value = conn.query_row(
+        "SELECT id, COALESCE(tipo_identificacion, ''), COALESCE(identificacion, ''),
+                nombre, COALESCE(email, ''), COALESCE(telefono, ''), COALESCE(direccion, '')
+         FROM clientes WHERE id = ?1",
+        params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "tipo_identificacion": r.get::<_, String>(1)?,
+            "identificacion": r.get::<_, String>(2)?,
+            "nombre": r.get::<_, String>(3)?,
+            "email": r.get::<_, String>(4)?,
+            "telefono": r.get::<_, String>(5)?,
+            "direccion": r.get::<_, String>(6)?,
+        })),
+    ).map_err(|_| err400("Cliente no encontrado"))?;
+    Ok(Json(serde_json::json!({ "ok": true, "cliente": cliente })))
+}
+
+/// `POST /api/v1/app/clientes` — crea un cliente (INSERT directo a BD).
+/// Body: `{ tipo_identificacion, identificacion, nombre, email?, telefono?, direccion? }`
+/// Si la identificación ya existe, lo busca y devuelve el existente (idempotente).
+pub async fn crear_cliente(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("gestionar_clientes") && !session.tiene("vende_piso") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso gestionar_clientes o vende_piso"))));
+    }
+
+    let tipo_id = body.get("tipo_identificacion").and_then(|v| v.as_str()).unwrap_or("CEDULA").to_string();
+    let identificacion = body.get("identificacion").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let nombre = body.get("nombre").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if nombre.is_empty() {
+        return Err(err400("El nombre es obligatorio"));
+    }
+    let email = body.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let telefono = body.get("telefono").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let direccion = body.get("direccion").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Si ya existe por identificación, devolver el existente
+    if let Some(ref id_str) = identificacion {
+        if !id_str.is_empty() {
+            if let Ok(existente_id) = conn.query_row(
+                "SELECT id FROM clientes WHERE identificacion = ?1 LIMIT 1",
+                params![id_str],
+                |r| r.get::<_, i64>(0),
+            ) {
+                return Ok(Json(serde_json::json!({
+                    "ok": true,
+                    "id": existente_id,
+                    "existente": true,
+                    "mensaje": "Cliente ya existente, se devuelve el ID actual",
+                })));
+            }
+        }
+    }
+
+    conn.execute(
+        "INSERT INTO clientes (tipo_identificacion, identificacion, nombre, email, telefono, direccion, activo)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+        params![tipo_id, identificacion, nombre, email, telefono, direccion],
+    ).map_err(err500)?;
+    let id = conn.last_insert_rowid();
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "existente": false,
+    })))
+}
+
+// ─── v2.5.50 — Caja (estado, abrir, cerrar desde la app) ────────────────────
+
+/// `GET /api/v1/app/caja/estado` — devuelve si hay caja abierta, monto inicial,
+/// ventas del turno, monto esperado.
+pub async fn caja_estado(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "obtener_caja_abierta", serde_json::json!({})
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+    Ok(Json(serde_json::json!({ "ok": true, "caja": resultado })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AbrirCajaRequest {
+    pub monto_inicial: f64,
+    pub observacion: Option<String>,
+}
+
+/// `POST /api/v1/app/caja/abrir` — abre una caja con monto inicial.
+/// Requiere permiso `abre_caja` o `cobra_caja`.
+pub async fn caja_abrir(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<AbrirCajaRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("abre_caja") && !session.tiene("cobra_caja") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso abre_caja o cobra_caja"))));
+    }
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "abrir_caja", serde_json::json!({
+            "montoInicial": req.monto_inicial,
+            "observacion": req.observacion,
+        })
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+    Ok(Json(serde_json::json!({ "ok": true, "resultado": resultado })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CerrarCajaRequest {
+    pub monto_real: f64,
+    pub observacion: Option<String>,
+}
+
+/// `POST /api/v1/app/caja/cerrar` — cierra la caja activa.
+/// Implementación inline: UPDATE caja con monto_real, diferencia, fecha_cierre.
+pub async fn caja_cerrar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<CerrarCajaRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("cierra_caja") && !session.tiene("cobra_caja") && !session.tiene("abre_caja") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso cierra_caja o cobra_caja"))));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Obtener la caja abierta + recalcular monto_esperado en base a ventas reales
+    let (caja_id, monto_inicial): (i64, f64) = conn.query_row(
+        "SELECT id, monto_inicial FROM caja WHERE estado = 'ABIERTA' ORDER BY id DESC LIMIT 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| err400("No hay caja abierta para cerrar"))?;
+
+    // Sumar ventas en efectivo del turno (forma_pago=EFECTIVO y no anuladas)
+    let monto_ventas: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(total), 0) FROM ventas
+         WHERE forma_pago = 'EFECTIVO' AND anulada = 0
+           AND fecha >= (SELECT fecha_apertura FROM caja WHERE id = ?1)",
+        params![caja_id],
+        |r| r.get(0),
+    ).unwrap_or(0.0);
+
+    let monto_esperado = monto_inicial + monto_ventas;
+    let diferencia = req.monto_real - monto_esperado;
+
+    conn.execute(
+        "UPDATE caja SET estado = 'CERRADA',
+                         fecha_cierre = datetime('now','localtime'),
+                         monto_ventas = ?1,
+                         monto_esperado = ?2,
+                         monto_real = ?3,
+                         diferencia = ?4,
+                         observacion = COALESCE(?5, observacion)
+         WHERE id = ?6",
+        params![monto_ventas, monto_esperado, req.monto_real, diferencia, req.observacion, caja_id],
+    ).map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "caja_id": caja_id,
+        "monto_inicial": monto_inicial,
+        "monto_ventas": monto_ventas,
+        "monto_esperado": monto_esperado,
+        "monto_real": req.monto_real,
+        "diferencia": diferencia,
+    })))
+}
+
+// ─── v2.5.50 — Retenciones recibidas (cliente me retiene al pagar) ──────────
+
+/// `GET /api/v1/app/ventas/:id/retenciones` — lista las retenciones recibidas
+/// asociadas a una venta. Implementación inline (SELECT directo).
+pub async fn ventas_listar_retenciones(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(venta_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, tipo, codigo_sri, base_imponible, porcentaje, valor,
+                numero_comprobante, fecha_emision
+         FROM retenciones_recibidas WHERE venta_id = ?1 ORDER BY id"
+    ).map_err(err500)?;
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![venta_id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "tipo": r.get::<_, String>(1)?,
+            "codigo_sri": r.get::<_, String>(2)?,
+            "base_imponible": r.get::<_, f64>(3)?,
+            "porcentaje": r.get::<_, f64>(4)?,
+            "valor": r.get::<_, f64>(5)?,
+            "numero_comprobante": r.get::<_, String>(6)?,
+            "fecha_emision": r.get::<_, String>(7)?,
+        }))
+    }).map_err(err500)?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "retenciones": rows })))
+}
+
+/// `POST /api/v1/app/ventas/:id/retencion` — registra una retención recibida
+/// (cliente me retiene al pagar). Reduce saldo de CXC si corresponde.
+/// Payload: `{ tipo: "RENTA"|"IVA", codigo_retencion, base_imponible, porcentaje, valor, numero_comprobante?, fecha_emision? }`
+pub async fn ventas_registrar_retencion(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(venta_id): Path<i64>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("cobra_caja") && !session.tiene("gestionar_cobranzas") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso cobra_caja o gestionar_cobranzas"))));
+    }
+    let tipo = body.get("tipo").and_then(|v| v.as_str()).unwrap_or("RENTA").to_string();
+    let codigo = body.get("codigo_sri")
+        .or_else(|| body.get("codigo_retencion"))
+        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let base: f64 = body.get("base_imponible").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let pct: f64 = body.get("porcentaje").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let valor: f64 = body.get("valor").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    // numero_comprobante y fecha_emision son NOT NULL en la tabla — usar defaults
+    let numero_comprobante = body.get("numero_comprobante").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "S/N".to_string());
+    let fecha_emision = body.get("fecha_emision").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+
+    if codigo.is_empty() {
+        return Err(err400("codigo_sri es obligatorio"));
+    }
+    if valor <= 0.0 {
+        return Err(err400("valor debe ser > 0"));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    conn.execute(
+        "INSERT INTO retenciones_recibidas
+            (venta_id, tipo, codigo_sri, base_imponible, porcentaje, valor,
+             numero_comprobante, fecha_emision, usuario)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![venta_id, tipo, codigo, base, pct, valor, numero_comprobante, fecha_emision, session.nombre],
+    ).map_err(err500)?;
+    let id = conn.last_insert_rowid();
+
+    // Si la venta tiene CXC activa, reducir saldo (igual que retención emitida sobre compra)
+    let _ = conn.execute(
+        "UPDATE cuentas_por_cobrar
+         SET saldo = MAX(0, saldo - ?1),
+             estado = CASE WHEN saldo - ?1 <= 0.01 THEN 'PAGADA' ELSE 'PENDIENTE' END
+         WHERE venta_id = ?2 AND estado != 'ANULADA'",
+        params![valor, venta_id],
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "mensaje": format!("Retención {} registrada por ${:.2}", tipo, valor),
+    })))
+}
+
+// ─── v2.5.50 — Emisión SRI desde la app (stub claro) ─────────────────────────
+
+/// `POST /api/v1/app/ventas/:id/emitir-sri` — autoriza una venta ya registrada
+/// como FACTURA ante el SRI.
+///
+/// **Limitación v2.5.50:** la lógica de `emitir_factura_sri` es async y vive
+/// como comando Tauri (no en el dispatcher HTTP). Para usar este endpoint
+/// desde la app móvil, hay que extender el dispatcher con soporte para el
+/// comando SRI completo (firma + SOAP). Se implementará en v2.5.51.
+///
+/// Mientras tanto, la app móvil puede registrar la venta como NOTA_VENTA y
+/// el usuario del POS desktop emite la factura SRI desde la pestaña VentasDia.
+pub async fn ventas_emitir_sri(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(_venta_id): Path<i64>,
+    Json(_body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ApiError::new(
+            "Emisión SRI desde la app pendiente — se implementa en v2.5.51. \
+             Mientras tanto, emita la factura desde el POS desktop."
+        )),
+    ))
+}
+
 // ─── Router builder ──────────────────────────────────────────────────────
 
 /// Devuelve el router con todas las rutas del módulo, listo para `merge` en
@@ -1572,6 +1953,17 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/cocina/items/:id/estado", post(cocina_marcar))
         // ── Vendedor de piso (Sprint 3b) ────────────────────────────────
         .route("/api/v1/app/ventas", post(ventas_registrar))
+        // ── v2.5.50: Clientes CRUD básico ───────────────────────────────
+        .route("/api/v1/app/clientes", get(listar_clientes).post(crear_cliente))
+        .route("/api/v1/app/clientes/:id", get(obtener_cliente))
+        // ── v2.5.50: Caja (estado/abrir/cerrar) ─────────────────────────
+        .route("/api/v1/app/caja/estado", get(caja_estado))
+        .route("/api/v1/app/caja/abrir", post(caja_abrir))
+        .route("/api/v1/app/caja/cerrar", post(caja_cerrar))
+        // ── v2.5.50: Emisión SRI + retenciones recibidas ────────────────
+        .route("/api/v1/app/ventas/:id/emitir-sri", post(ventas_emitir_sri))
+        .route("/api/v1/app/ventas/:id/retencion", post(ventas_registrar_retencion))
+        .route("/api/v1/app/ventas/:id/retenciones", get(ventas_listar_retenciones))
         // ── Servicio Técnico (Sprint 6.4 — técnico móvil) ───────────────
         .route("/api/v1/app/st/mis-ordenes", get(super::http_st::st_mis_ordenes))
         .route("/api/v1/app/st/ordenes", post(super::http_st::st_crear_orden))
