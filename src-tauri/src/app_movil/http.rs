@@ -1917,6 +1917,455 @@ pub async fn ventas_emitir_sri(
     Ok(Json(serde_json::json!({ "ok": true, "resultado": resultado })))
 }
 
+// ─── v2.5.52 — Proveedores (listar/crear/obtener) ───────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ListarProveedoresQuery {
+    pub q: Option<String>,
+    pub limite: Option<i64>,
+}
+
+/// `GET /api/v1/app/proveedores?q=&limite=` — lista proveedores activos.
+/// Búsqueda por nombre/RUC/email. Default 100, máx 500.
+pub async fn listar_proveedores(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<ListarProveedoresQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let limite = qp.limite.unwrap_or(100).clamp(1, 500);
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let busqueda = qp.q.unwrap_or_default();
+    let busqueda_pat = format!("%{}%", busqueda);
+
+    let (sql, params_dyn): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if busqueda.is_empty() {
+        (
+            "SELECT id, COALESCE(ruc, ''), nombre, COALESCE(email, ''),
+                    COALESCE(telefono, ''), COALESCE(direccion, ''), dias_credito
+             FROM proveedores WHERE COALESCE(activo, 1) = 1 ORDER BY nombre LIMIT ?1",
+            vec![Box::new(limite)],
+        )
+    } else {
+        (
+            "SELECT id, COALESCE(ruc, ''), nombre, COALESCE(email, ''),
+                    COALESCE(telefono, ''), COALESCE(direccion, ''), dias_credito
+             FROM proveedores WHERE COALESCE(activo, 1) = 1
+               AND (nombre LIKE ?1 OR ruc LIKE ?1 OR email LIKE ?1)
+             ORDER BY nombre LIMIT ?2",
+            vec![Box::new(busqueda_pat), Box::new(limite)],
+        )
+    };
+
+    let mut stmt = conn.prepare(sql).map_err(err500)?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_dyn.iter().map(|b| b.as_ref()).collect();
+    let proveedores: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params_from_iter(params_refs.iter()), |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "ruc": r.get::<_, String>(1)?,
+                "nombre": r.get::<_, String>(2)?,
+                "email": r.get::<_, String>(3)?,
+                "telefono": r.get::<_, String>(4)?,
+                "direccion": r.get::<_, String>(5)?,
+                "dias_credito": r.get::<_, i64>(6)?,
+            }))
+        }).map_err(err500)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "proveedores": proveedores, "total": proveedores.len(),
+    })))
+}
+
+/// `GET /api/v1/app/proveedores/:id` — un proveedor.
+pub async fn obtener_proveedor(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let prov: serde_json::Value = conn.query_row(
+        "SELECT id, COALESCE(ruc, ''), nombre, COALESCE(email, ''),
+                COALESCE(telefono, ''), COALESCE(direccion, ''),
+                COALESCE(contacto, ''), dias_credito
+         FROM proveedores WHERE id = ?1",
+        params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "ruc": r.get::<_, String>(1)?,
+            "nombre": r.get::<_, String>(2)?,
+            "email": r.get::<_, String>(3)?,
+            "telefono": r.get::<_, String>(4)?,
+            "direccion": r.get::<_, String>(5)?,
+            "contacto": r.get::<_, String>(6)?,
+            "dias_credito": r.get::<_, i64>(7)?,
+        })),
+    ).map_err(|_| err400("Proveedor no encontrado"))?;
+    Ok(Json(serde_json::json!({ "ok": true, "proveedor": prov })))
+}
+
+/// `POST /api/v1/app/proveedores` — crea un proveedor. Idempotente por RUC.
+pub async fn crear_proveedor(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("gestionar_compras") && !session.tiene("vende_piso") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso gestionar_compras o vende_piso"))));
+    }
+    let nombre = body.get("nombre").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if nombre.is_empty() {
+        return Err(err400("El nombre es obligatorio"));
+    }
+    let ruc = body.get("ruc").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let email = body.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let telefono = body.get("telefono").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let direccion = body.get("direccion").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let contacto = body.get("contacto").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let dias_credito = body.get("dias_credito").and_then(|v| v.as_i64()).unwrap_or(0);
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    if let Some(ref r) = ruc {
+        if !r.is_empty() {
+            if let Ok(existente_id) = conn.query_row(
+                "SELECT id FROM proveedores WHERE ruc = ?1 LIMIT 1",
+                params![r],
+                |r| r.get::<_, i64>(0),
+            ) {
+                return Ok(Json(serde_json::json!({
+                    "ok": true, "id": existente_id, "existente": true,
+                    "mensaje": "Proveedor ya existente, se devuelve el ID actual",
+                })));
+            }
+        }
+    }
+
+    conn.execute(
+        "INSERT INTO proveedores (ruc, nombre, email, telefono, direccion, contacto, dias_credito, activo)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+        params![ruc, nombre, email, telefono, direccion, contacto, dias_credito],
+    ).map_err(err500)?;
+    let id = conn.last_insert_rowid();
+    Ok(Json(serde_json::json!({ "ok": true, "id": id, "existente": false })))
+}
+
+// ─── v2.5.52 — Compras (listar + crear básica INFORMAL desde la app) ────────
+
+#[derive(Debug, Deserialize)]
+pub struct ListarComprasQuery {
+    pub desde: Option<String>,    // YYYY-MM-DD
+    pub hasta: Option<String>,
+    pub proveedor_id: Option<i64>,
+    pub limite: Option<i64>,
+}
+
+/// `GET /api/v1/app/compras?desde=&hasta=&proveedor_id=&limite=` — lista compras.
+pub async fn listar_compras(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<ListarComprasQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let limite = qp.limite.unwrap_or(100).clamp(1, 500);
+    let desde = qp.desde.unwrap_or_else(|| "1970-01-01".to_string());
+    let hasta = qp.hasta.unwrap_or_else(|| "2999-12-31".to_string());
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    let mut sql = String::from(
+        "SELECT c.id, c.numero, c.fecha, COALESCE(c.numero_factura, ''),
+                c.subtotal, c.iva, c.total, c.forma_pago, c.estado,
+                c.tipo_documento, COALESCE(c.estado_sri, ''),
+                c.proveedor_id, p.nombre, COALESCE(p.ruc, '')
+         FROM compras c
+         JOIN proveedores p ON c.proveedor_id = p.id
+         WHERE date(COALESCE(c.fecha_emision, c.fecha)) >= date(?1)
+           AND date(COALESCE(c.fecha_emision, c.fecha)) <= date(?2)"
+    );
+    let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(desde), Box::new(hasta)];
+    if let Some(pid) = qp.proveedor_id {
+        sql.push_str(" AND c.proveedor_id = ?3");
+        params_dyn.push(Box::new(pid));
+    }
+    sql.push_str(" ORDER BY c.fecha DESC LIMIT ?");
+    sql.push_str(&(params_dyn.len() + 1).to_string());
+    params_dyn.push(Box::new(limite));
+
+    let mut stmt = conn.prepare(&sql).map_err(err500)?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_dyn.iter().map(|b| b.as_ref()).collect();
+    let compras: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params_from_iter(params_refs.iter()), |r| {
+            Ok(serde_json::json!({
+                "id": r.get::<_, i64>(0)?,
+                "numero": r.get::<_, String>(1)?,
+                "fecha": r.get::<_, String>(2)?,
+                "numero_factura": r.get::<_, String>(3)?,
+                "subtotal": r.get::<_, f64>(4)?,
+                "iva": r.get::<_, f64>(5)?,
+                "total": r.get::<_, f64>(6)?,
+                "forma_pago": r.get::<_, String>(7)?,
+                "estado": r.get::<_, String>(8)?,
+                "tipo_documento": r.get::<_, String>(9)?,
+                "estado_sri": r.get::<_, String>(10)?,
+                "proveedor_id": r.get::<_, i64>(11)?,
+                "proveedor_nombre": r.get::<_, String>(12)?,
+                "proveedor_ruc": r.get::<_, String>(13)?,
+            }))
+        }).map_err(err500)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "compras": compras, "total": compras.len(),
+    })))
+}
+
+/// `POST /api/v1/app/compras` — registra una compra INFORMAL básica (cabecera).
+/// Para registro rápido desde la calle. Sin items detallados (el desktop maneja
+/// las compras formales con kardex + IVA por item).
+///
+/// Body: `{ proveedor_id, total, forma_pago?, observacion?, fecha? }`
+pub async fn crear_compra_simple(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("gestionar_compras") && !session.tiene("vende_piso") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso gestionar_compras o vende_piso"))));
+    }
+    let proveedor_id = body.get("proveedor_id").and_then(|v| v.as_i64())
+        .ok_or_else(|| err400("proveedor_id es obligatorio"))?;
+    let total: f64 = body.get("total").and_then(|v| v.as_f64())
+        .ok_or_else(|| err400("total es obligatorio"))?;
+    if total <= 0.0 {
+        return Err(err400("total debe ser > 0"));
+    }
+    let forma_pago = body.get("forma_pago").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "EFECTIVO".to_string());
+    let observacion = body.get("observacion").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let es_credito = forma_pago.eq_ignore_ascii_case("CREDITO");
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Generar número interno COMP-XXXXXXXXX
+    let next: i64 = conn.query_row(
+        "SELECT COALESCE(CAST(value AS INTEGER), 1) FROM config WHERE key = 'secuencial_compra'",
+        [], |r| r.get(0),
+    ).unwrap_or(1);
+    let _ = conn.execute(
+        "INSERT OR IGNORE INTO config (key, value) VALUES ('secuencial_compra', ?1)",
+        params![next.to_string()],
+    );
+    let _ = conn.execute(
+        "UPDATE config SET value = CAST(?1 AS TEXT) WHERE key = 'secuencial_compra'",
+        params![next + 1],
+    );
+    let numero = format!("COMP-{:09}", next);
+
+    conn.execute(
+        "INSERT INTO compras
+            (numero, proveedor_id, subtotal, iva, total, forma_pago, es_credito,
+             observacion, tipo_documento, estado, usuario)
+         VALUES (?1, ?2, ?3, 0, ?3, ?4, ?5, ?6, 'INFORMAL', 'REGISTRADA', ?7)",
+        params![numero, proveedor_id, total, forma_pago, es_credito as i32, observacion, session.nombre],
+    ).map_err(err500)?;
+    let id = conn.last_insert_rowid();
+
+    // Si es a crédito, crear CXP
+    if es_credito {
+        let _ = conn.execute(
+            "INSERT INTO cuentas_por_pagar (proveedor_id, compra_id, monto_total, saldo, estado)
+             VALUES (?1, ?2, ?3, ?3, 'PENDIENTE')",
+            params![proveedor_id, id, total],
+        );
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "numero": numero,
+        "total": total,
+    })))
+}
+
+/// `GET /api/v1/app/compras/:id` — detalle de una compra (cabecera).
+pub async fn obtener_compra(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let compra: serde_json::Value = conn.query_row(
+        "SELECT c.id, c.numero, c.fecha, COALESCE(c.numero_factura, ''),
+                c.subtotal, c.iva, c.total, c.forma_pago, c.estado,
+                c.tipo_documento, COALESCE(c.observacion, ''),
+                c.proveedor_id, p.nombre, COALESCE(p.ruc, '')
+         FROM compras c JOIN proveedores p ON c.proveedor_id = p.id
+         WHERE c.id = ?1",
+        params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "numero": r.get::<_, String>(1)?,
+            "fecha": r.get::<_, String>(2)?,
+            "numero_factura": r.get::<_, String>(3)?,
+            "subtotal": r.get::<_, f64>(4)?,
+            "iva": r.get::<_, f64>(5)?,
+            "total": r.get::<_, f64>(6)?,
+            "forma_pago": r.get::<_, String>(7)?,
+            "estado": r.get::<_, String>(8)?,
+            "tipo_documento": r.get::<_, String>(9)?,
+            "observacion": r.get::<_, String>(10)?,
+            "proveedor_id": r.get::<_, i64>(11)?,
+            "proveedor_nombre": r.get::<_, String>(12)?,
+            "proveedor_ruc": r.get::<_, String>(13)?,
+        })),
+    ).map_err(|_| err400("Compra no encontrada"))?;
+
+    // Items (si hay)
+    let mut stmt_items = conn.prepare(
+        "SELECT id, COALESCE(producto_id, 0), COALESCE(descripcion, ''),
+                cantidad, precio_unitario, subtotal
+         FROM compra_detalles WHERE compra_id = ?1 ORDER BY id"
+    ).map_err(err500)?;
+    let items: Vec<serde_json::Value> = stmt_items.query_map(params![id], |r| {
+        Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "producto_id": r.get::<_, i64>(1)?,
+            "descripcion": r.get::<_, String>(2)?,
+            "cantidad": r.get::<_, f64>(3)?,
+            "precio_unitario": r.get::<_, f64>(4)?,
+            "subtotal": r.get::<_, f64>(5)?,
+        }))
+    }).map_err(err500)?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(err500)?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true, "compra": compra, "items": items,
+    })))
+}
+
+// ─── v2.5.53 — Dashboard KPIs del día ────────────────────────────────────────
+
+/// `GET /api/v1/app/dashboard/hoy` — KPIs rápidos para el dueño:
+/// ventas del día, ticket promedio, top 5 productos, estado caja,
+/// fiados pendientes, stock crítico.
+pub async fn dashboard_hoy(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Ventas del día (no anuladas)
+    let (ventas_count, ventas_total, ventas_iva): (i64, f64, f64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(iva), 0)
+         FROM ventas WHERE date(fecha) = date('now', 'localtime') AND anulada = 0",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).unwrap_or((0, 0.0, 0.0));
+
+    let ticket_promedio = if ventas_count > 0 { ventas_total / ventas_count as f64 } else { 0.0 };
+
+    // Ventas por forma de pago (hoy)
+    let mut stmt_fp = conn.prepare(
+        "SELECT forma_pago, COUNT(*), COALESCE(SUM(total), 0)
+         FROM ventas WHERE date(fecha) = date('now', 'localtime') AND anulada = 0
+         GROUP BY forma_pago ORDER BY 3 DESC"
+    ).map_err(err500)?;
+    let formas_pago: Vec<serde_json::Value> = stmt_fp.query_map([], |r| {
+        Ok(serde_json::json!({
+            "forma_pago": r.get::<_, String>(0)?,
+            "count": r.get::<_, i64>(1)?,
+            "total": r.get::<_, f64>(2)?,
+        }))
+    }).map_err(err500)?.filter_map(Result::ok).collect();
+    drop(stmt_fp);
+
+    // Top 5 productos del día
+    let mut stmt_top = conn.prepare(
+        "SELECT COALESCE(p.nombre, vd.observacion, 'Producto') as nombre,
+                SUM(vd.cantidad) as unidades,
+                SUM(vd.cantidad * vd.precio_unitario - COALESCE(vd.descuento, 0)) as importe
+         FROM venta_detalles vd
+         JOIN ventas v ON vd.venta_id = v.id
+         LEFT JOIN productos p ON vd.producto_id = p.id
+         WHERE date(v.fecha) = date('now', 'localtime') AND v.anulada = 0
+         GROUP BY COALESCE(p.id, -vd.id)
+         ORDER BY unidades DESC
+         LIMIT 5"
+    ).map_err(err500)?;
+    let top_productos: Vec<serde_json::Value> = stmt_top.query_map([], |r| {
+        Ok(serde_json::json!({
+            "nombre": r.get::<_, String>(0)?,
+            "unidades": r.get::<_, f64>(1)?,
+            "importe": r.get::<_, f64>(2)?,
+        }))
+    }).map_err(err500)?.filter_map(Result::ok).collect();
+    drop(stmt_top);
+
+    // Estado caja
+    let caja: Option<serde_json::Value> = conn.query_row(
+        "SELECT id, fecha_apertura, monto_inicial, monto_ventas, monto_esperado, usuario
+         FROM caja WHERE estado = 'ABIERTA' ORDER BY id DESC LIMIT 1",
+        [], |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "fecha_apertura": r.get::<_, String>(1)?,
+            "monto_inicial": r.get::<_, f64>(2)?,
+            "monto_ventas": r.get::<_, f64>(3)?,
+            "monto_esperado": r.get::<_, f64>(4)?,
+            "usuario": r.get::<_, Option<String>>(5)?,
+        })),
+    ).ok();
+
+    // Fiados pendientes (CXC abiertas)
+    let (cxc_count, cxc_total): (i64, f64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(saldo), 0)
+         FROM cuentas_por_cobrar WHERE estado != 'PAGADA' AND estado != 'ANULADA'",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap_or((0, 0.0));
+
+    // Stock crítico (productos con stock <= stock_minimo > 0)
+    let stock_critico: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM productos
+         WHERE activo = 1 AND COALESCE(no_controla_stock, 0) = 0
+           AND stock_minimo > 0 AND stock_actual <= stock_minimo",
+        [], |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Comparación vs ayer (ventas)
+    let ayer_total: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(total), 0)
+         FROM ventas WHERE date(fecha) = date('now', '-1 day', 'localtime') AND anulada = 0",
+        [], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let diferencia_pct = if ayer_total > 0.01 {
+        ((ventas_total - ayer_total) / ayer_total) * 100.0
+    } else { 0.0 };
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "ventas_hoy": {
+            "count": ventas_count,
+            "total": ventas_total,
+            "iva": ventas_iva,
+            "ticket_promedio": ticket_promedio,
+            "vs_ayer_pct": diferencia_pct,
+            "ayer_total": ayer_total,
+        },
+        "formas_pago": formas_pago,
+        "top_productos": top_productos,
+        "caja": caja,
+        "cxc": { "count": cxc_count, "total": cxc_total },
+        "stock_critico_count": stock_critico,
+    })))
+}
+
 // ─── Router builder ──────────────────────────────────────────────────────
 
 /// Devuelve el router con todas las rutas del módulo, listo para `merge` en
@@ -1970,6 +2419,14 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/ventas/:id/emitir-sri", post(ventas_emitir_sri))
         .route("/api/v1/app/ventas/:id/retencion", post(ventas_registrar_retencion))
         .route("/api/v1/app/ventas/:id/retenciones", get(ventas_listar_retenciones))
+        // ── v2.5.52: Proveedores ────────────────────────────────────────
+        .route("/api/v1/app/proveedores", get(listar_proveedores).post(crear_proveedor))
+        .route("/api/v1/app/proveedores/:id", get(obtener_proveedor))
+        // ── v2.5.52: Compras (listar/crear INFORMAL/detalle) ────────────
+        .route("/api/v1/app/compras", get(listar_compras).post(crear_compra_simple))
+        .route("/api/v1/app/compras/:id", get(obtener_compra))
+        // ── v2.5.53: Dashboard KPIs del día ─────────────────────────────
+        .route("/api/v1/app/dashboard/hoy", get(dashboard_hoy))
         // ── Servicio Técnico (Sprint 6.4 — técnico móvil) ───────────────
         .route("/api/v1/app/st/mis-ordenes", get(super::http_st::st_mis_ordenes))
         .route("/api/v1/app/st/ordenes", post(super::http_st::st_crear_orden))

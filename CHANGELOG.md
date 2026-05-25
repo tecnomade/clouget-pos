@@ -6,6 +6,98 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.52 — 2026-05-25 📱 APP MÓVIL — proveedores + compras + dashboard KPIs
+
+Tres bloques de endpoints nuevos para que la app móvil cubra el caso del **dueño en la calle**: registrar compras a proveedores en el momento, ver KPIs del día desde el celular, y gestionar el directorio de proveedores.
+
+### Proveedores
+
+- `GET  /api/v1/app/proveedores?q=&limite=` — listar (búsqueda por nombre/RUC/email)
+- `GET  /api/v1/app/proveedores/:id` — detalle
+- `POST /api/v1/app/proveedores` — crear (idempotente por RUC: si ya existe lo devuelve)
+
+Permisos: `gestionar_compras` o `vende_piso` para crear.
+
+### Compras
+
+- `GET  /api/v1/app/compras?desde=&hasta=&proveedor_id=&limite=` — listar con filtros
+- `GET  /api/v1/app/compras/:id` — detalle (cabecera + items)
+- `POST /api/v1/app/compras` — registrar **compra simple INFORMAL** (cabecera solo, sin items detallados). Body: `{ proveedor_id, total, forma_pago?, observacion? }`. Si `forma_pago = "CREDITO"` crea CXP automáticamente.
+
+> ⚠ **Nota**: el endpoint POST registra compras *informales* (sin items + sin IVA detallado + sin kardex). Para compras formales con detalle de productos, kardex y SRI, usar el POS desktop. Esto cubre el caso típico de "compré gasolina/insumos en la calle, anótalo en el sistema rápido".
+
+### Dashboard KPIs del día — `GET /api/v1/app/dashboard/hoy`
+
+Devuelve en una sola llamada todo lo que el dueño necesita ver en el celular:
+
+```json
+{
+  "ok": true,
+  "ventas_hoy": {
+    "count": 47,
+    "total": 1850.50,
+    "iva": 241.37,
+    "ticket_promedio": 39.37,
+    "vs_ayer_pct": 12.5,
+    "ayer_total": 1645.00
+  },
+  "formas_pago": [
+    { "forma_pago": "EFECTIVO", "count": 30, "total": 1200.00 },
+    { "forma_pago": "TRANSFER", "count": 12, "total": 450.50 },
+    { "forma_pago": "CREDITO", "count": 5, "total": 200.00 }
+  ],
+  "top_productos": [
+    { "nombre": "Gaseosa 500ml", "unidades": 23, "importe": 57.50 },
+    ...
+  ],
+  "caja": {
+    "id": 42,
+    "fecha_apertura": "2026-05-25 08:00:00",
+    "monto_inicial": 50.00,
+    "monto_ventas": 1200.00,
+    "monto_esperado": 1250.00,
+    "usuario": "Juan"
+  },
+  "cxc": { "count": 8, "total": 425.00 },
+  "stock_critico_count": 3
+}
+```
+
+Útil para construir la pantalla principal de la app móvil del dueño con:
+- 📊 **Hero card**: ventas hoy + comparación vs ayer (% con flecha verde/roja)
+- 💵 **Distribución de pagos**: gráfica de torta o barras
+- 🏆 **Top 5 productos**: lista vertical
+- 💼 **Caja abierta**: monto esperado vs ventas
+- 📒 **Fiados pendientes**: alerta amarilla si CXC > 0
+- ⚠ **Stock crítico**: badge rojo con count
+
+### Estado completo de la API móvil
+
+| Categoría | Endpoints | Versiones |
+|---|---|---|
+| Auth | 5 | original |
+| Productos | 1 | original |
+| Restaurante (mesas + pedidos + cocina) | ~18 | original |
+| Ventas (vendedor de piso) | 1 | original |
+| Servicio Técnico | 6 | original |
+| **Clientes** | 3 | v2.5.50 |
+| **Caja** | 3 | v2.5.50 |
+| **Retenciones recibidas** | 2 | v2.5.50 |
+| **Emisión SRI** | 1 | v2.5.51 |
+| **Proveedores** | 3 | **v2.5.52** |
+| **Compras** | 3 | **v2.5.52** |
+| **Dashboard** | 1 | **v2.5.52** |
+| **Total** | **~47 endpoints** | |
+
+### Próximo (v2.5.53+)
+
+- Más detalle en dashboard (semana/mes, comparativas avanzadas)
+- Endpoints reportes (resumen mensual, ranking proveedores)
+- Endpoints inventario rápido (ajuste de stock desde app)
+- Pulir UX en `luxor-movil` consumiendo todos los endpoints
+
+---
+
 ## v2.5.51 — 2026-05-25 📱 APP MÓVIL — emisión SRI desde el celular (ACTIVA)
 
 Cierra el ciclo de venta completo desde la app móvil: ahora se puede **autorizar facturas ante el SRI** sin tocar el POS desktop. El endpoint `/api/v1/app/ventas/:id/emitir-sri` que en v2.5.50 respondía 501 (no implementado) ahora está **100% funcional**.
