@@ -165,10 +165,24 @@ struct ClienteSri {
 }
 
 /// Emite una factura electronica al SRI para una venta existente.
-/// Genera XML, firma con XAdES-BES, envia via SOAP, y actualiza la venta.
+/// Wrapper de Tauri que delega a `emitir_factura_sri_internal` para que la
+/// misma lógica pueda ser invocada desde el dispatcher HTTP (app móvil).
 #[tauri::command]
 pub async fn emitir_factura_sri(
     db: State<'_, Database>,
+    venta_id: i64,
+    forma_pago_credito_sri: Option<String>,
+) -> Result<ResultadoEmision, String> {
+    emitir_factura_sri_internal(db.inner(), venta_id, forma_pago_credito_sri).await
+}
+
+/// Versión interna que acepta `&Database` directamente (sin Tauri State).
+/// Llamada por:
+///   - El comando Tauri `emitir_factura_sri` (POS desktop)
+///   - El dispatcher HTTP (app móvil v2.5.51+)
+///   - El procesador de lotes `emitir_facturas_lote_sri`
+pub async fn emitir_factura_sri_internal(
+    db: &Database,
     venta_id: i64,
     forma_pago_credito_sri: Option<String>,
 ) -> Result<ResultadoEmision, String> {

@@ -1883,32 +1883,38 @@ pub async fn ventas_registrar_retencion(
     })))
 }
 
-// ─── v2.5.50 — Emisión SRI desde la app (stub claro) ─────────────────────────
+// ─── v2.5.51 — Emisión SRI desde la app (ACTIVA) ────────────────────────────
 
 /// `POST /api/v1/app/ventas/:id/emitir-sri` — autoriza una venta ya registrada
-/// como FACTURA ante el SRI.
+/// como FACTURA ante el SRI. Genera XML, firma con XAdES-BES, envía via SOAP,
+/// consulta autorización y persiste el resultado en la venta.
 ///
-/// **Limitación v2.5.50:** la lógica de `emitir_factura_sri` es async y vive
-/// como comando Tauri (no en el dispatcher HTTP). Para usar este endpoint
-/// desde la app móvil, hay que extender el dispatcher con soporte para el
-/// comando SRI completo (firma + SOAP). Se implementará en v2.5.51.
+/// Body opcional: `{ forma_pago_credito_sri?: "20"|"21"|... }` para sobreescribir
+/// el código de forma de pago SRI cuando la venta es a crédito.
 ///
-/// Mientras tanto, la app móvil puede registrar la venta como NOTA_VENTA y
-/// el usuario del POS desktop emite la factura SRI desde la pestaña VentasDia.
+/// Requiere permiso `vende_piso` o `cobra_caja`. Valida también la suscripción
+/// SRI (mismo enforcement que el POS desktop: trial gratuito + planes pagados).
 pub async fn ventas_emitir_sri(
     AxumState(state): AxumState<Arc<ServerState>>,
     headers: HeaderMap,
-    Path(_venta_id): Path<i64>,
-    Json(_body): Json<serde_json::Value>,
+    Path(venta_id): Path<i64>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
-    let _session = extract_app_session(&headers, &state)?;
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        Json(ApiError::new(
-            "Emisión SRI desde la app pendiente — se implementa en v2.5.51. \
-             Mientras tanto, emita la factura desde el POS desktop."
-        )),
-    ))
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("vende_piso") && !session.tiene("cobra_caja") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso vende_piso o cobra_caja"))));
+    }
+    let forma_pago_credito_sri = body.get("forma_pago_credito_sri")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "emitir_factura_sri", serde_json::json!({
+            "ventaId": venta_id,
+            "formaPagoCreditoSri": forma_pago_credito_sri,
+        })
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+    Ok(Json(serde_json::json!({ "ok": true, "resultado": resultado })))
 }
 
 // ─── Router builder ──────────────────────────────────────────────────────

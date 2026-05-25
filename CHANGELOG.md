@@ -6,6 +6,87 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.51 — 2026-05-25 📱 APP MÓVIL — emisión SRI desde el celular (ACTIVA)
+
+Cierra el ciclo de venta completo desde la app móvil: ahora se puede **autorizar facturas ante el SRI** sin tocar el POS desktop. El endpoint `/api/v1/app/ventas/:id/emitir-sri` que en v2.5.50 respondía 501 (no implementado) ahora está **100% funcional**.
+
+### Refactor: `emitir_factura_sri` ahora es reutilizable
+
+Para compartir la lógica entre el comando Tauri (POS desktop) y el dispatcher HTTP (app móvil), se extrajo el cuerpo de la función a un helper:
+
+```rust
+// Comando Tauri (POS desktop, sin cambios para el usuario)
+#[tauri::command]
+pub async fn emitir_factura_sri(db: State<'_, Database>, ...) -> Result<...> {
+    emitir_factura_sri_internal(db.inner(), venta_id, forma_pago_credito_sri).await
+}
+
+// Versión interna reusable
+pub async fn emitir_factura_sri_internal(db: &Database, ...) -> Result<...> {
+    // toda la lógica original (validación suscripción, generación XML,
+    // firma XAdES-BES, envío SOAP, consulta autorización, persistencia)
+}
+```
+
+El refactor es no-disruptivo: la API Tauri sigue idéntica, solo se agregó el wrapper interno público para uso del dispatcher.
+
+### Flujo end-to-end desde la app
+
+1. App móvil hace `POST /api/v1/app/ventas` (registrar venta como FACTURA pendiente)
+2. App muestra al cliente el resumen y pregunta "¿Emitir al SRI?"
+3. Si sí: `POST /api/v1/app/ventas/{id}/emitir-sri` con body opcional `{ "forma_pago_credito_sri": "20" }` para sobreescribir el código SRI de forma de pago cuando la venta es a crédito
+4. El servidor (POS desktop corriendo Multi-POS) **firma** el XML con el P12 cargado, lo **envía al WS del SRI**, espera **autorización**, y persiste el resultado en la BD
+5. Respuesta: `{ ok: true, resultado: { exito, estado_sri, clave_acceso, numero_autorizacion, fecha_autorizacion, numero_factura, mensaje } }`
+
+### Requisitos para usar el endpoint
+
+- Licencia con módulo `app_movil` activo (ya validado en `extract_app_session`)
+- Token de dispositivo válido (auth via PIN previa)
+- Usuario con permiso **`vende_piso`** o **`cobra_caja`**
+- En el POS desktop: certificado **P12 cargado** + RUC + ambiente SRI configurado
+- Suscripción SRI vigente (mismo enforcement que el desktop: trial gratuito + planes pagados, validado con cache offline de 7 días)
+
+### Ejemplo curl
+
+```bash
+curl -X POST http://192.168.1.100:8765/api/v1/app/ventas/123/emitir-sri \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"forma_pago_credito_sri":"20"}'
+
+# Respuesta exitosa:
+# {
+#   "ok": true,
+#   "resultado": {
+#     "exito": true,
+#     "estado_sri": "AUTORIZADA",
+#     "clave_acceso": "2505...",
+#     "numero_autorizacion": "...",
+#     "fecha_autorizacion": "2026-05-25T10:30:15",
+#     "numero_factura": "001-001-000000124",
+#     "mensaje": "Factura autorizada correctamente"
+#   }
+# }
+```
+
+### Estado de la API de la app móvil
+
+| Endpoint | Estado |
+|---|---|
+| Auth (PIN, logout, push-token, usuarios-disponibles) | ✅ |
+| Productos | ✅ |
+| Mesas + Pedidos + Cocina (restaurante) | ✅ |
+| Vendedor de piso (registrar venta) | ✅ |
+| **Clientes** (CRUD) | ✅ v2.5.50 |
+| **Caja** (estado/abrir/cerrar) | ✅ v2.5.50 |
+| **Retenciones recibidas** | ✅ v2.5.50 |
+| **🆕 Emisión SRI** | ✅ **v2.5.51** |
+| Servicio técnico | ✅ |
+
+Próximos endpoints en el roadmap (v2.5.52+): proveedores, compras, dashboard KPIs, reportes del día.
+
+---
+
 ## v2.5.50 — 2026-05-24 📱 APP MÓVIL — endpoints clientes, caja y retenciones recibidas
 
 Comienza el desarrollo de la **API HTTP de la app móvil** (proyecto `luxor-movil` en repo aparte). Se agregan 8 endpoints nuevos bajo el prefijo `/api/v1/app/*`, todos protegidos por token de dispositivo (esquema `app_tokens` ya existente).

@@ -537,6 +537,20 @@ pub async fn dispatch_command(
             }))
         }
 
+        // v2.5.51: emisión SRI desde la app móvil (firma + SOAP)
+        "emitir_factura_sri" => {
+            let venta_id: i64 = extract(&args, "ventaId")?;
+            let forma_pago_credito_sri: Option<String> = args.get("formaPagoCreditoSri")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let resultado = crate::commands::sri::emitir_factura_sri_internal(
+                &state.db,
+                venta_id,
+                forma_pago_credito_sri,
+            ).await?;
+            to_json(&resultado)
+        }
+
         "listar_ventas_dia" => {
             let fecha: String = extract(&args, "fecha")?;
             let conn = state.db.conn.lock().map_err(|e| e.to_string())?;
