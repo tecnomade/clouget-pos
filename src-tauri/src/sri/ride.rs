@@ -736,18 +736,30 @@ pub fn generar_ticket_pdf(
         let ambiente_label = if ambiente == "produccion" { "PRODUCCION" } else { "PRUEBAS" };
         doc.push(p(&format!("Ambiente: {}", ambiente_label), s_normal));
 
-        // QR de clave de acceso (mas grande para que sea escaneable)
+        // v2.5.49: reemplazado QR por Code128 (más grande y legible).
+        // El QR a escala 0.7 (~35mm) era demasiado pequeño en ticket 80mm y
+        // los lectores fallaban. El Code128 ocupa todo el ancho del ticket y
+        // es el mismo formato que el SRI exige en el RIDE oficial.
         if let Some(ref clave) = venta.venta.clave_acceso {
             if !clave.is_empty() {
-                if let Ok(qr_path) = generar_qr_image(clave) {
-                    if let Ok(mut qr_img) = genpdf::elements::Image::from_path(&qr_path) {
-                        qr_img = qr_img.with_alignment(Alignment::Center);
-                        // Escala 0.7 = ~35-40mm cuadrados: legible por celulares
-                        qr_img = qr_img.with_scale(genpdf::Scale::new(0.7, 0.7));
-                        doc.push(qr_img);
+                match generar_barcode128_image(clave) {
+                    Ok(barcode_path) => {
+                        if let Ok(mut barcode_img) = genpdf::elements::Image::from_path(&barcode_path) {
+                            barcode_img = barcode_img.with_alignment(Alignment::Center);
+                            // Ticket 80mm con margen 3+3 = 74mm útiles.
+                            // Barcode PNG ~331px. scale_x ≈ (70*300)/(25.4*331) ≈ 2.5
+                            // alto: (14*300)/(25.4*80) ≈ 2.07 → ~14mm
+                            barcode_img = barcode_img.with_scale(genpdf::Scale::new(2.5, 2.0));
+                            doc.push(barcode_img);
+                        }
+                        let _ = std::fs::remove_file(&barcode_path);
                     }
-                    let _ = std::fs::remove_file(&qr_path);
+                    Err(e) => {
+                        eprintln!("Warning: barcode Code128 falló en ticket: {}", e);
+                    }
                 }
+                // Clave en texto chico debajo (fallback si el barcode no escanea bien)
+                doc.push(p_aligned(clave, Style::new().with_font_size(6), Alignment::Center));
             }
         }
 
@@ -782,6 +794,7 @@ pub fn generar_ticket_pdf(
 // ============================================
 
 /// Genera un QR code como imagen PNG en archivo temporal.
+#[allow(dead_code)] // v2.5.49: reemplazado en ticket por Code128; se conserva por si se necesita en otro contexto
 fn generar_qr_image(data: &str) -> Result<String, String> {
     use qrcode::QrCode;
 

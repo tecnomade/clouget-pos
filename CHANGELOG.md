@@ -6,6 +6,56 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.49 — 2026-05-24 🐛 Bugfixes: crédito como "Transfer" + QR ticket muy pequeño + email error feo
+
+### Fix 1 — Ventas a crédito aparecían como "Transfer"
+
+**Síntoma reportado:** una venta marcada como **crédito** aparecía como **Transfer** en VentasDia (y se reportaría también mal en ATS, reportes, etc.).
+
+**Causa raíz:** en el POS hay 3 botones de pago — Efectivo, Transferencia y Crédito. Los dos primeros hacen `setFormaPago("EFECTIVO"/"TRANSFER") + setEsFiado(false)`, pero el botón "Crédito" solo hacía `setEsFiado(!esFiado)` — **NO tocaba `formaPago`**.
+
+Resultado: si el cajero primero clickeaba **Transferencia** (formaPago="TRANSFER") y luego se daba cuenta que era a crédito y clickeaba **Crédito** (esFiado=true), el state quedaba `{ formaPago: "TRANSFER", esFiado: true }`. Al guardar:
+- `forma_pago: "TRANSFER"` ← INCORRECTO  
+- `es_fiado: true`  
+- Y se creaba la CXC porque `es_fiado=true`
+
+En BD quedaba como TRANSFER pero con CXC, lo que confundía a todos los reportes posteriores.
+
+### Fix (3 capas defensivas)
+
+1. **Botón "Crédito" ahora setea `formaPago="CREDITO"`** explícitamente al activarse, y limpia `bancoSeleccionado`, `referenciaPago`, `comprobanteImagen` (que eran datos de transferencia que ya no aplican — porque cuando es crédito todavía NO sabemos cómo se va a pagar). Al desactivar vuelve a EFECTIVO.
+
+2. **Defensa en el payload de la venta:** la línea que arma `nuevaVenta` ahora hace `forma_pago: esFiado ? "CREDITO" : formaPago` para garantizar consistencia aunque el state haya quedado inconsistente por cualquier otra ruta. También `banco_id`/`referencia_pago`/`comprobante_imagen` se setean a null si `esFiado=true`.
+
+3. **Migración correctiva one-shot:** al arrancar v2.5.49+, se ejecuta automáticamente:
+   ```sql
+   UPDATE ventas SET forma_pago = 'CREDITO'
+   WHERE forma_pago = 'TRANSFER'
+     AND id IN (SELECT venta_id FROM cuentas_por_cobrar
+                WHERE venta_id IS NOT NULL AND estado != 'ANULADA')
+   ```
+   Esto detecta las ventas que están mal guardadas (TRANSFER con CXC activa = en realidad eran crédito) y las reclasifica. Es idempotente (correr varias veces no hace daño).
+
+### Por qué tiene sentido el reseteo de campos
+
+Cuando una venta es a crédito, **todavía no sabemos cómo se va a pagar** — el cliente puede después pagar en efectivo, transferencia, mixto, etc. Por eso al activar crédito se borran los campos de transferencia: no aplican hasta que el cliente realmente abone.
+
+### Fix 2 — QR de clave de acceso demasiado pequeño en ticket 80mm
+
+**Síntoma reportado:** el QR en el ticket de factura autorizada se imprimía a ~35mm, demasiado chico para que los lectores móviles lo escanearan bien.
+
+**Fix:** reemplazado QR por **código de barras Code128** (mismo formato que el RIDE oficial del SRI). Ocupa todo el ancho útil del ticket (~70mm) con altura ~14mm, mucho más legible. Debajo se imprime también la clave de 49 dígitos en texto chico como fallback por si el lector no escanea.
+
+### Fix 3 — Error de email salía como texto crudo aterrador
+
+**Síntoma reportado:** al enviar email desde el modal post-emisión, si el servicio SMTP fallaba (auth, timeout, etc.), aparecía un toast rojo enorme con el JSON crudo del error (`ENCOLADO:Error enviando email: {"error":"...535 5.7.8 Error: authentication failed..."}`).
+
+**Fix:** ahora el modal "Enviar Factura por Email" trata el caso `ENCOLADO` como **warning amigable**: muestra "Email pendiente para X. Se reintentará automáticamente cuando el servicio de correo esté disponible.". El email queda persistido en `email_log` con estado PENDIENTE y el reintento periódico se encarga. Para errores no-ENCOLADO se muestra un mensaje resumido en lugar del JSON crudo.
+
+> **Nota infra (no es bug de la app):** el error `535 5.7.8 authentication failed` viene del SMTP `mail.sertev.com` rechazando las credenciales de `notificaciones@clouget.com`. Hay que verificar / actualizar la contraseña en las variables de entorno de la Edge Function `enviar-email` del servidor. Mientras eso se arregla, los emails quedan encolados y se enviarán solos cuando el SMTP vuelva.
+
+---
+
 ## v2.5.48 — 2026-05-24 📊 Generador ATS mensual (Anexo Transaccional Simplificado)
 
 Cierra la trifecta del módulo **Contabilidad** para agentes de retención: ahora se puede generar el **XML mensual del ATS** listo para subirse al portal del SRI (DIMM Anexos).

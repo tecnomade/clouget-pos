@@ -840,7 +840,11 @@ export default function PuntoVenta() {
           combo_seleccion: (i as any).combo_seleccion ?? null,
         } as any;
       }),
-      forma_pago: usarMixto ? "MIXTO" : formaPago,
+      // v2.5.48 FIX: si es fiado/credito siempre forma_pago="CREDITO" (defensa
+      // ante cualquier estado donde formaPago haya quedado "TRANSFER" o algo
+      // inconsistente). Esto garantiza que VentasDia muestre "Crédito" y NO
+      // "Transfer" para ventas a crédito.
+      forma_pago: usarMixto ? "MIXTO" : (esFiado ? "CREDITO" : formaPago),
       monto_recibido: usarMixto ? total : (esFiado ? 0 : parseFloat(montoRecibido || "0")),
       // v2.3.63: descuento automático por forma de pago (helper calcula 0 si
       // no aplica: feature off, mixto, % no configurado, o monto < mínimo).
@@ -849,9 +853,12 @@ export default function PuntoVenta() {
       tipo_documento: tipoDocumento,
       // es_fiado solo cuando NO es mixto y es CREDITO; en mixto, el credito se maneja por pagos[]
       es_fiado: usarMixto ? false : esFiado,
-      banco_id: usarMixto ? null : (formaPago === "TRANSFER" ? bancoSeleccionado : null),
-      referencia_pago: usarMixto ? null : (formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null),
-      comprobante_imagen: usarMixto ? null : (formaPago === "TRANSFER" ? (comprobanteImagen || null) : null),
+      // v2.5.48 FIX: si es fiado no enviar banco/referencia/comprobante (eran
+      // datos de transferencia que quedaron del state previo y no aplican al
+      // crédito — todavía no sabemos cómo se va a pagar)
+      banco_id: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? bancoSeleccionado : null),
+      referencia_pago: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null),
+      comprobante_imagen: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? (comprobanteImagen || null) : null),
       pagos: usarMixto ? pagosMixtos.map(p => ({
         forma_pago: p.forma_pago,
         monto: p.monto,
@@ -1200,6 +1207,25 @@ export default function PuntoVenta() {
         setClienteSeleccionado(prev => prev ? { ...prev, email: emailInput } : prev);
       }
 
+      // v2.5.49: helper interno que trata ENCOLADO como warning amigable
+      // (no como error rojo). El email queda en cola y se reintenta solo.
+      const enviarEmailConFallback = async (vid: number) => {
+        try {
+          await enviarNotificacionSri(vid, emailInput);
+          toastExito(`Email enviado a ${emailInput}`);
+        } catch (err) {
+          const errStr = String(err);
+          if (errStr.startsWith("ENCOLADO:")) {
+            toastWarning(`Email pendiente para ${emailInput}. Se reintentará automáticamente cuando el servicio de correo esté disponible.`);
+          } else {
+            // Solo errores que NO son ENCOLADO se muestran como warning visible.
+            // Mensaje resumido — el detalle queda en logs.
+            console.error("Error enviando email:", err);
+            toastWarning(`No se pudo enviar email a ${emailInput}. Revise el servicio de correo.`);
+          }
+        }
+      };
+
       // Si la factura aún no está autorizada, autorizar primero
       if (ventaCompletada.venta.tipo_documento === "FACTURA" && ventaCompletada.venta.estado_sri !== "AUTORIZADA") {
         setMostrarModalEmail(false);
@@ -1215,9 +1241,8 @@ export default function PuntoVenta() {
               venta: { ...prev.venta, tipo_documento: "FACTURA", estado_sri: "AUTORIZADA", numero_factura: res.numero_factura, clave_acceso: res.clave_acceso, autorizacion_sri: res.numero_autorizacion }
             } : prev);
             window.dispatchEvent(new CustomEvent("sri-factura-emitida"));
-            // Enviar notificación con el email recién guardado
-            await enviarNotificacionSri(ventaCompletada.venta.id, emailInput);
-            toastExito(`Email enviado a ${emailInput}`);
+            // Enviar notificación con el email recién guardado (no romper si falla)
+            await enviarEmailConFallback(ventaCompletada.venta.id);
           } else {
             toastWarning(`SRI: ${res.mensaje}`);
           }
@@ -1228,8 +1253,7 @@ export default function PuntoVenta() {
         }
       } else {
         // Ya autorizada, solo enviar notificación
-        await enviarNotificacionSri(ventaCompletada.venta.id, emailInput);
-        toastExito(`Email enviado a ${emailInput}`);
+        await enviarEmailConFallback(ventaCompletada.venta.id);
         setMostrarModalEmail(false);
       }
     } catch (err) {
@@ -1988,7 +2012,23 @@ export default function PuntoVenta() {
                       Transferencia
                     </button>
                     <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                      onClick={() => setEsFiado(!esFiado)}>
+                      onClick={() => {
+                        // v2.5.48 FIX: al activar crédito, también marcar formaPago="CREDITO"
+                        // y limpiar campos de transferencia. Antes el formaPago quedaba en
+                        // "TRANSFER" si el user había clickeado Transferencia antes — eso
+                        // hacía que en VentasDia se mostrara "Transfer" en lugar de "Crédito".
+                        const nuevoEsFiado = !esFiado;
+                        setEsFiado(nuevoEsFiado);
+                        if (nuevoEsFiado) {
+                          setFormaPago("CREDITO");
+                          setBancoSeleccionado(null);
+                          setReferenciaPago("");
+                          setComprobanteImagen(null);
+                        } else {
+                          // Al desactivar crédito vuelve a EFECTIVO por defecto
+                          setFormaPago("EFECTIVO");
+                        }
+                      }}>
                       Credito
                     </button>
                   </div>

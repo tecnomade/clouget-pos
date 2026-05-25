@@ -1620,6 +1620,25 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         let _ = conn.execute("DROP TABLE IF EXISTS sri_avanzado_config", []);
     }
 
+    // ─── v2.5.48: Migración correctiva — ventas a crédito mal guardadas ─────
+    // En versiones previas a v2.5.48, si el usuario seleccionaba "Transferencia"
+    // y después tocaba "Crédito" en POS, el state quedaba con formaPago="TRANSFER"
+    // + esFiado=true. La venta se guardaba con forma_pago="TRANSFER" en BD aunque
+    // realmente era crédito (porque se creaba la CXC asociada).
+    //
+    // Esta migración detecta esas ventas (TRANSFER + tiene CXC activa) y las
+    // reclasifica a CREDITO. Solo se ejecuta una vez al arrancar v2.5.48+.
+    let _ = conn.execute(
+        "UPDATE ventas
+         SET forma_pago = 'CREDITO'
+         WHERE forma_pago = 'TRANSFER'
+           AND id IN (
+               SELECT venta_id FROM cuentas_por_cobrar
+               WHERE venta_id IS NOT NULL AND estado != 'ANULADA'
+           )",
+        [],
+    );
+
     // ─── v2.5.46: Datos fiscales del proveedor para retenciones SRI ──────────
     // Para emitir un comprobante de retención al SRI necesitamos saber:
     //   - tipo_identificacion del sujeto retenido (RUC/CEDULA/PASAPORTE)
