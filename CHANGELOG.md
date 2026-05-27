@@ -6,6 +6,62 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.54 — 2026-05-27 💸 Gastos con filtros inteligentes + nuevo reporte de Gastos
+
+La página Gastos solo mostraba un día a la vez (selector de fecha único). Ahora tiene **filtros inteligentes con presets de rango** y **un reporte completo** en la pestaña Reportes con gráficas y KPIs.
+
+### 📋 Filtros nuevos en Gastos
+
+**Presets rápidos** (1 click):
+- 📅 Hoy
+- 📅 Ayer
+- 📅 Últimos 7 días
+- 📅 Últimos 30 días
+- 📅 Este mes
+- 📅 Mes anterior
+- 📅 Este año
+- 📅 **Rango personalizado** (desde / hasta)
+
+**Filtros adicionales** (colapsables):
+- 🔍 **Búsqueda libre** en descripción y observación
+- 🏷 **Categoría** (dropdown con todas las que existen + las default)
+- 🔁 **Solo recurrentes**
+- ✕ **Limpiar filtros** (1 click resetea todo)
+
+**KPIs visuales** en cabecera (4 tarjetas):
+- 💰 Total del período (con count de gastos)
+- 📊 Promedio por gasto
+- 🏆 Top categoría
+- 📆 Promedio diario (si rango > 1 día)
+
+### 📊 Reportes — nueva sección "💸 Gastos"
+
+En Reportes → tab **"💸 Gastos"** ahora tienes análisis profundo del rango seleccionado:
+
+1. **5 KPIs** arriba: Total, Cantidad, Promedio por gasto, Días con gastos, Promedio diario
+2. **📈 Gráfica de barras "Gastos por día"** (visualiza picos y valles)
+3. **🏷 Por categoría**: tabla con conteo + total + % + **PieChart** de distribución
+4. **👤 Por usuario**: cuánto registró cada cajero/admin
+
+### Backend nuevos
+
+- `listar_gastos_rango(fecha_desde, fecha_hasta, categoria?, usuario_id?, solo_recurrentes?, busqueda?)` — query SQL dinámico con filtros opcionales
+- `resumen_gastos_rango(fecha_desde, fecha_hasta)` → `ResumenGastos { total, count, promedio, por_categoria[], por_dia[], por_usuario[] }`
+
+### Frontend wrappers
+
+- `listarGastosRango(desde, hasta, filtros?)`
+- `resumenGastosRango(desde, hasta)` → tipos exportados
+
+### Por qué es útil
+
+- **Antes:** "¿Cuánto gasté esta semana?" → tenías que ver día por día y sumar mentalmente
+- **Ahora:** 1 click en "7 días" → ves total + promedio + top categoría
+- **Antes:** "¿En qué categoría gastamos más este mes?" → exportar a Excel y filtrar
+- **Ahora:** tab Gastos en Reportes → pie chart te lo dice de un vistazo
+
+---
+
 ## v2.5.53 — 2026-05-27 📧 Cada cliente conecta SU PROPIO Gmail desde el POS (OAuth deep link)
 
 Hasta ahora todas las facturas se enviaban desde las cuentas centralizadas de Clouget (`notificaciones@clouget.com` y otras). Ahora **cada negocio puede conectar SU PROPIO Gmail** desde Configuración del POS y las facturas saldrán **desde su dirección personal/comercial** — mejor entregabilidad, más profesional, y escala sin límite.

@@ -699,6 +699,43 @@ export async function listarGastosDia(fecha: string): Promise<Gasto[]> {
   return smartInvoke("listar_gastos_dia", { fecha });
 }
 
+// v2.5.54: listar gastos por rango con filtros opcionales
+export interface FiltrosGasto {
+  categoria?: string;
+  usuario_id?: number;
+  solo_recurrentes?: boolean;
+  busqueda?: string;
+}
+export async function listarGastosRango(
+  fechaDesde: string,
+  fechaHasta: string,
+  filtros?: FiltrosGasto,
+): Promise<Gasto[]> {
+  return smartInvoke("listar_gastos_rango", {
+    fechaDesde,
+    fechaHasta,
+    categoria: filtros?.categoria ?? null,
+    usuarioId: filtros?.usuario_id ?? null,
+    soloRecurrentes: filtros?.solo_recurrentes ?? null,
+    busqueda: filtros?.busqueda ?? null,
+  });
+}
+
+export interface ResumenGastos {
+  total: number;
+  count: number;
+  promedio: number;
+  por_categoria: { categoria: string; total: number; count: number }[];
+  por_dia: { dia: string; total: number; count: number }[];
+  por_usuario: { usuario: string; total: number; count: number }[];
+}
+export async function resumenGastosRango(
+  fechaDesde: string,
+  fechaHasta: string,
+): Promise<ResumenGastos> {
+  return smartInvoke("resumen_gastos_rango", { fechaDesde, fechaHasta });
+}
+
 export async function eliminarGasto(id: number): Promise<void> {
   return smartInvoke("eliminar_gasto", { id });
 }

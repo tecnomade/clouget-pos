@@ -138,6 +138,209 @@ pub fn listar_gastos_dia(db: State<Database>, fecha: String) -> Result<Vec<Gasto
     Ok(gastos)
 }
 
+/// v2.5.54: lista gastos con rango de fechas + filtros opcionales.
+/// Reemplaza la limitación de `listar_gastos_dia` (que solo aceptaba un día).
+#[tauri::command]
+pub fn listar_gastos_rango(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+    categoria: Option<String>,
+    usuario_id: Option<i64>,
+    solo_recurrentes: Option<bool>,
+    busqueda: Option<String>,
+) -> Result<Vec<Gasto>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut sql = String::from(
+        "SELECT g.id, g.descripcion, g.monto, g.categoria, g.fecha, g.caja_id, g.observacion,
+                COALESCE(g.es_recurrente, 0), g.usuario_id,
+                COALESCE(g.usuario_nombre, u.nombre) as usuario_nombre,
+                c.estado as caja_estado
+         FROM gastos g
+         LEFT JOIN usuarios u ON g.usuario_id = u.id
+         LEFT JOIN caja c ON g.caja_id = c.id
+         WHERE date(g.fecha) >= date(?1) AND date(g.fecha) <= date(?2)"
+    );
+    let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> =
+        vec![Box::new(fecha_desde), Box::new(fecha_hasta)];
+
+    if let Some(cat) = categoria.filter(|s| !s.trim().is_empty()) {
+        sql.push_str(&format!(" AND g.categoria = ?{}", params_dyn.len() + 1));
+        params_dyn.push(Box::new(cat));
+    }
+    if let Some(uid) = usuario_id {
+        sql.push_str(&format!(" AND g.usuario_id = ?{}", params_dyn.len() + 1));
+        params_dyn.push(Box::new(uid));
+    }
+    if let Some(true) = solo_recurrentes {
+        sql.push_str(" AND COALESCE(g.es_recurrente, 0) = 1");
+    }
+    if let Some(q) = busqueda.filter(|s| !s.trim().is_empty()) {
+        sql.push_str(&format!(
+            " AND (g.descripcion LIKE ?{idx} OR g.observacion LIKE ?{idx})",
+            idx = params_dyn.len() + 1
+        ));
+        params_dyn.push(Box::new(format!("%{}%", q)));
+    }
+    sql.push_str(" ORDER BY g.fecha DESC");
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> =
+        params_dyn.iter().map(|b| b.as_ref()).collect();
+    let gastos = stmt
+        .query_map(rusqlite::params_from_iter(params_refs.iter()), |row| {
+            Ok(Gasto {
+                id: Some(row.get(0)?),
+                descripcion: row.get(1)?,
+                monto: row.get(2)?,
+                categoria: row.get(3)?,
+                fecha: row.get(4)?,
+                caja_id: row.get(5)?,
+                observacion: row.get(6)?,
+                es_recurrente: row.get::<_, i32>(7)? != 0,
+                usuario_id: row.get(8).ok(),
+                usuario_nombre: row.get(9).ok(),
+                caja_estado: row.get(10).ok(),
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(gastos)
+}
+
+#[derive(serde::Serialize)]
+pub struct ResumenGastos {
+    pub total: f64,
+    pub count: i64,
+    pub promedio: f64,
+    pub por_categoria: Vec<CategoriaResumen>,
+    pub por_dia: Vec<DiaResumen>,
+    pub por_usuario: Vec<UsuarioResumen>,
+}
+
+#[derive(serde::Serialize)]
+pub struct CategoriaResumen {
+    pub categoria: String,
+    pub total: f64,
+    pub count: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct DiaResumen {
+    pub dia: String,   // YYYY-MM-DD
+    pub total: f64,
+    pub count: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct UsuarioResumen {
+    pub usuario: String,
+    pub total: f64,
+    pub count: i64,
+}
+
+/// v2.5.54: resumen de gastos agrupado por categoría, día y usuario.
+/// Usado por Reportes y por la cabecera de Gastos para mostrar KPIs.
+#[tauri::command]
+pub fn resumen_gastos_rango(
+    db: State<Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+) -> Result<ResumenGastos, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let (total, count): (f64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0), COUNT(*)
+             FROM gastos
+             WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)",
+            rusqlite::params![fecha_desde, fecha_hasta],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0.0, 0));
+    let promedio = if count > 0 { total / count as f64 } else { 0.0 };
+
+    // Por categoría
+    let mut stmt_cat = conn
+        .prepare(
+            "SELECT COALESCE(categoria, 'Sin categoria') as cat,
+                    COALESCE(SUM(monto), 0), COUNT(*)
+             FROM gastos
+             WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+             GROUP BY cat ORDER BY 2 DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let por_categoria: Vec<CategoriaResumen> = stmt_cat
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| {
+            Ok(CategoriaResumen {
+                categoria: r.get(0)?,
+                total: r.get(1)?,
+                count: r.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt_cat);
+
+    // Por día
+    let mut stmt_dia = conn
+        .prepare(
+            "SELECT date(fecha) as dia, COALESCE(SUM(monto), 0), COUNT(*)
+             FROM gastos
+             WHERE date(fecha) >= date(?1) AND date(fecha) <= date(?2)
+             GROUP BY dia ORDER BY dia",
+        )
+        .map_err(|e| e.to_string())?;
+    let por_dia: Vec<DiaResumen> = stmt_dia
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| {
+            Ok(DiaResumen {
+                dia: r.get(0)?,
+                total: r.get(1)?,
+                count: r.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt_dia);
+
+    // Por usuario
+    let mut stmt_usr = conn
+        .prepare(
+            "SELECT COALESCE(g.usuario_nombre, u.nombre, 'Sin usuario') as usuario,
+                    COALESCE(SUM(g.monto), 0), COUNT(*)
+             FROM gastos g
+             LEFT JOIN usuarios u ON g.usuario_id = u.id
+             WHERE date(g.fecha) >= date(?1) AND date(g.fecha) <= date(?2)
+             GROUP BY usuario ORDER BY 2 DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let por_usuario: Vec<UsuarioResumen> = stmt_usr
+        .query_map(rusqlite::params![fecha_desde, fecha_hasta], |r| {
+            Ok(UsuarioResumen {
+                usuario: r.get(0)?,
+                total: r.get(1)?,
+                count: r.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+        .collect();
+
+    Ok(ResumenGastos {
+        total,
+        count,
+        promedio,
+        por_categoria,
+        por_dia,
+        por_usuario,
+    })
+}
+
 #[tauri::command]
 pub fn eliminar_gasto(db: State<Database>, id: i64) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;

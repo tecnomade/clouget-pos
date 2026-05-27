@@ -35,7 +35,9 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "cancelaciones_st" | "garantias_st">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "gastos" | "cancelaciones_st" | "garantias_st">("utilidad");
+  // v2.5.54: reporte de gastos
+  const [gastosReporte, setGastosReporte] = useState<import("../services/api").ResumenGastos | null>(null);
   // v2.5.22: estado para reporte de valuación de inventario
   const [valuacionData, setValuacionData] = useState<any | null>(null);
   const [valuacionMetodo, setValuacionMetodo] = useState<"PMP" | "ULTIMO">("PMP");
@@ -141,6 +143,11 @@ export default function ReportesPage() {
           setGarantiasST({ total_activas: 0, total_por_vencer_30d: 0, ordenes: [] });
           if (!String(e).includes("modulo")) toastError("" + e);
         }
+      }
+      else if (tab === "gastos") {
+        // v2.5.54: reporte de gastos del rango
+        const { resumenGastosRango } = await import("../services/api");
+        setGastosReporte(await resumenGastosRango(desde, hasta));
       }
       else if (tab === "ventas") {
         // Cargar opciones de filtro + datos en paralelo
@@ -629,6 +636,7 @@ export default function ReportesPage() {
             ["valuacion", "💼 Valuación"],
             ["kardex", "Kardex Multi"],
             ["cajeros", "Cajeros"],
+            ["gastos", "💸 Gastos"],
             ...(moduloSTActivo ? [
               ["cancelaciones_st", "🚫 Cancelaciones ST"],
               ["garantias_st", "🛡 Garantías ST"],
@@ -1622,6 +1630,141 @@ export default function ReportesPage() {
         )}
 
         {/* TAB: Cajeros — ranking + tickets promedio */}
+        {/* v2.5.54: Reporte de Gastos */}
+        {!cargando && tab === "gastos" && gastosReporte && (
+          <div>
+            {/* KPIs */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
+              <KpiCard label="Total gastos" valor={`$${gastosReporte.total.toFixed(2)}`} color="var(--color-danger)" />
+              <KpiCard label="Cantidad" valor={String(gastosReporte.count)} />
+              <KpiCard label="Promedio por gasto" valor={`$${gastosReporte.promedio.toFixed(2)}`} />
+              <KpiCard label="Días con gastos" valor={String(gastosReporte.por_dia.length)} />
+              {gastosReporte.por_dia.length > 1 && (
+                <KpiCard label="Promedio diario"
+                  valor={`$${(gastosReporte.total / gastosReporte.por_dia.length).toFixed(2)}`} />
+              )}
+            </div>
+
+            {gastosReporte.count === 0 ? (
+              <div className="card">
+                <div className="card-body" style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)" }}>
+                  No hay gastos en este período.
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Gráfica: gastos por día */}
+                {gastosReporte.por_dia.length > 1 && (
+                  <div className="card mb-4">
+                    <div className="card-header">📈 Gastos por día</div>
+                    <div className="card-body">
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={gastosReporte.por_dia.map(d => ({
+                          dia: d.dia.slice(5), // MM-DD
+                          total: d.total,
+                          count: d.count,
+                        }))}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                          <XAxis dataKey="dia" tick={{ fill: "var(--color-text-secondary)", fontSize: 11 }} />
+                          <YAxis tick={{ fill: "var(--color-text-secondary)", fontSize: 11 }} />
+                          <Tooltip
+                            formatter={(value) => [`$${Number(value ?? 0).toFixed(2)}`, "Gastos"]}
+                            contentStyle={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }} />
+                          <Bar dataKey="total" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                {/* Por categoría: tabla + pie */}
+                {gastosReporte.por_categoria.length > 0 && (
+                  <div className="card mb-4">
+                    <div className="card-header">🏷 Por categoría</div>
+                    <div className="card-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                      <div>
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>Categoría</th>
+                              <th className="text-right">Gastos</th>
+                              <th className="text-right">Total</th>
+                              <th className="text-right">%</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {gastosReporte.por_categoria.map((c) => (
+                              <tr key={c.categoria}>
+                                <td><strong>{c.categoria}</strong></td>
+                                <td className="text-right">{c.count}</td>
+                                <td className="text-right font-bold" style={{ color: "var(--color-danger)" }}>
+                                  ${c.total.toFixed(2)}
+                                </td>
+                                <td className="text-right text-secondary">
+                                  {gastosReporte.total > 0 ? ((c.total / gastosReporte.total) * 100).toFixed(1) : 0}%
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div>
+                        <ResponsiveContainer width="100%" height={260}>
+                          <PieChart>
+                            <Pie
+                              data={gastosReporte.por_categoria}
+                              dataKey="total"
+                              nameKey="categoria"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={90}
+                              label={(e: any) => `${e.categoria}: $${e.total.toFixed(0)}`}>
+                              {gastosReporte.por_categoria.map((_, idx) => {
+                                const colors = ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
+                                return <Cell key={idx} fill={colors[idx % colors.length]} />;
+                              })}
+                            </Pie>
+                            <Tooltip formatter={(v) => `$${Number(v ?? 0).toFixed(2)}`} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Por usuario */}
+                {gastosReporte.por_usuario.length > 0 && (
+                  <div className="card mb-4">
+                    <div className="card-header">👤 Por usuario</div>
+                    <div className="card-body">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>Usuario</th>
+                            <th className="text-right">Gastos registrados</th>
+                            <th className="text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gastosReporte.por_usuario.map((u) => (
+                            <tr key={u.usuario}>
+                              <td><strong>{u.usuario}</strong></td>
+                              <td className="text-right">{u.count}</td>
+                              <td className="text-right font-bold" style={{ color: "var(--color-danger)" }}>
+                                ${u.total.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         {tab === "cajeros" && cajerosData && (
           <div>
             {/* KPIs globales */}

@@ -451,6 +451,8 @@ pub fn run() {
             // Gastos
             commands::gastos::crear_gasto,
             commands::gastos::listar_gastos_dia,
+            commands::gastos::listar_gastos_rango,
+            commands::gastos::resumen_gastos_rango,
             commands::gastos::eliminar_gasto,
             // Cuentas por cobrar
             commands::cuentas::resumen_deudores,
