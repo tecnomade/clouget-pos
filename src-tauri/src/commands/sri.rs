@@ -1625,20 +1625,47 @@ async fn enviar_email_interno(
         nombre_negocio, numero
     );
 
-    let body = serde_json::json!({
-        "destinatario": email,
-        "asunto": format!("Factura Electronica {} - {}", numero, nombre_negocio),
-        "cuerpo_html": cuerpo_html,
-        "adjuntos": adjuntos,
-    });
+    // v2.5.53: si hay cuenta OAuth Gmail per-cliente activa, usar /enviar-email-oauth
+    //   en vez de /enviar-email (que usa cuentas centralizadas de Clouget).
+    //   El email saldrá DESDE el Gmail del propio negocio del cliente.
+    let cuenta_oauth = crate::commands::oauth_email::obtener_cuenta_oauth_activa(db.inner());
+
+    let asunto = format!("Factura Electronica {} - {}", numero, nombre_negocio);
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("Error HTTP: {}", e))?;
 
+    let (endpoint, body) = if let Some(ref cuenta) = cuenta_oauth {
+        eprintln!("[Email] Usando cuenta OAuth Gmail per-cliente: {}", cuenta.email);
+        let from_name = cuenta.from_name.clone().unwrap_or_else(|| nombre_negocio.clone());
+        (
+            format!("{}/enviar-email-oauth", email_url),
+            serde_json::json!({
+                "refresh_token": cuenta.refresh_token,
+                "email_remitente": cuenta.email,
+                "from_name": from_name,
+                "destinatario": email,
+                "asunto": asunto,
+                "cuerpo_html": cuerpo_html,
+                "adjuntos": adjuntos,
+            }),
+        )
+    } else {
+        (
+            format!("{}/enviar-email", email_url),
+            serde_json::json!({
+                "destinatario": email,
+                "asunto": asunto,
+                "cuerpo_html": cuerpo_html,
+                "adjuntos": adjuntos,
+            }),
+        )
+    };
+
     let resp = client
-        .post(format!("{}/enviar-email", email_url))
+        .post(&endpoint)
         .header("Authorization", format!("Bearer {}", email_api_key))
         .header("Content-Type", "application/json")
         .json(&body)

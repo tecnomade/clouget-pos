@@ -3,6 +3,7 @@ import { obtenerConfig, guardarConfig, obtenerSecuenciales, actualizarSecuencial
 import type { DispositivoApp, QrEmparejamiento } from "../services/api";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
@@ -2257,6 +2258,9 @@ export default function Configuracion() {
           </div>
           )}
 
+          {/* v2.5.53: Cuentas OAuth Gmail per-cliente para envío de email */}
+          <OauthEmailCard />
+
           {/* Multi-Almacen — solo si tiene módulo multi_almacen */}
           {(config.licencia_modulos || "").includes("multi_almacen") && (
           <div className="card">
@@ -2934,6 +2938,231 @@ function PanelAppMovil({ licenciaModulos, servidorPuerto, usuariosConPermisos }:
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── v2.5.53: Cuentas OAuth Gmail per-cliente ──────────────────────────────
+//
+// Card en Configuración que permite al cliente conectar SU PROPIO Gmail para
+// enviar facturas desde su dirección personal/negocio. El flow:
+//   1. Click "Conectar Gmail" → llama comando Rust iniciar_oauth_email_gmail
+//      → abre navegador del SO con email.clouget.com/oauth/cliente/init
+//   2. Usuario autoriza en Google
+//   3. Google redirige a email.clouget.com/oauth/google/callback?state=cliente
+//   4. Backend muestra pantalla con deep link `clouget://oauth-email-callback?...`
+//   5. Tauri intercepta el deep link y emite evento "deep-link://new-url"
+//   6. Este componente escucha ese evento, parsea la URL y llama
+//      guardar_oauth_email_cuenta para persistir refresh_token + email
+
+interface OauthEmailCuenta {
+  id: number;
+  proveedor: string;
+  email: string;
+  from_name: string | null;
+  activa: boolean;
+  created_at: string;
+}
+
+function OauthEmailCard() {
+  const { toastExito, toastError } = useToast();
+  const [cuentas, setCuentas] = useState<OauthEmailCuenta[]>([]);
+  const [conectando, setConectando] = useState(false);
+  const [mostrarCodigoManual, setMostrarCodigoManual] = useState(false);
+  const [codigoManual, setCodigoManual] = useState("");
+
+  const cargar = async () => {
+    try {
+      const lista = await invoke<OauthEmailCuenta[]>("listar_oauth_email_cuentas");
+      setCuentas(lista);
+    } catch (err) {
+      console.error("Error cargando cuentas OAuth:", err);
+    }
+  };
+
+  useEffect(() => {
+    cargar();
+  }, []);
+
+  // Escucha eventos de deep link → cuando el navegador redirige a
+  // clouget://oauth-email-callback?email=...&refresh_token=...&from_name=...
+  // Tauri emite "deep-link://new-url" con la URL completa. La parseamos y
+  // guardamos la cuenta. Luego refrescamos la lista.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<string[]>("deep-link://new-url", async (event) => {
+          const urls = event.payload as string[];
+          for (const url of urls || []) {
+            if (!url.startsWith("clouget://oauth-email-callback")) continue;
+            try {
+              const u = new URL(url);
+              const email = u.searchParams.get("email") || "";
+              const refresh_token = u.searchParams.get("refresh_token") || "";
+              const from_name = u.searchParams.get("from_name") || undefined;
+              if (!email || !refresh_token) {
+                toastError("Deep link sin email o refresh_token");
+                return;
+              }
+              await invoke("guardar_oauth_email_cuenta", {
+                cuenta: { proveedor: "gmail", email, refresh_token, from_name },
+              });
+              toastExito(`Gmail conectado: ${email}`);
+              setConectando(false);
+              await cargar();
+            } catch (err) {
+              toastError("Error procesando deep link: " + err);
+            }
+          }
+        });
+      } catch (err) {
+        console.error("No se pudo registrar listener de deep links:", err);
+      }
+    })();
+    return () => { if (unlisten) unlisten(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const conectarGmail = async () => {
+    setConectando(true);
+    try {
+      await invoke("iniciar_oauth_email_gmail");
+      toastExito("Se abrió el navegador. Autoriza tu Gmail y volverás automáticamente.");
+    } catch (err) {
+      toastError("Error: " + err);
+      setConectando(false);
+    }
+  };
+
+  const eliminar = async (cuenta: OauthEmailCuenta) => {
+    if (!confirm(`¿Desconectar Gmail ${cuenta.email}?\n\nLas facturas volverán a enviarse desde la cuenta centralizada de Clouget.`)) return;
+    try {
+      await invoke("eliminar_oauth_email_cuenta", { id: cuenta.id });
+      toastExito("Cuenta desconectada");
+      await cargar();
+    } catch (err) {
+      toastError("Error: " + err);
+    }
+  };
+
+  const toggle = async (cuenta: OauthEmailCuenta) => {
+    try {
+      await invoke("toggle_oauth_email_cuenta", { id: cuenta.id, activa: !cuenta.activa });
+      await cargar();
+    } catch (err) {
+      toastError("Error: " + err);
+    }
+  };
+
+  const pegarCodigoManual = async () => {
+    if (!codigoManual.trim()) return;
+    try {
+      const jsonStr = atob(codigoManual.trim());
+      const data = JSON.parse(jsonStr);
+      if (!data.email || !data.refresh_token) {
+        toastError("Código inválido: faltan email o refresh_token");
+        return;
+      }
+      await invoke("guardar_oauth_email_cuenta", {
+        cuenta: {
+          proveedor: "gmail",
+          email: data.email,
+          refresh_token: data.refresh_token,
+          from_name: data.from_name,
+        },
+      });
+      toastExito(`Gmail conectado: ${data.email}`);
+      setCodigoManual("");
+      setMostrarCodigoManual(false);
+      setConectando(false);
+      await cargar();
+    } catch (err) {
+      toastError("Código inválido: " + err);
+    }
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: 900, marginBottom: 24 }}>
+      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>📧 Mi Gmail para enviar facturas</span>
+        {cuentas.length === 0 && (
+          <button className="btn btn-primary" onClick={conectarGmail} disabled={conectando}>
+            {conectando ? "Conectando..." : "🔐 Conectar mi Gmail"}
+          </button>
+        )}
+      </div>
+      <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <p style={{ fontSize: 13, color: "var(--color-text-secondary)", margin: 0 }}>
+          Conecta tu cuenta Gmail para que las facturas se envíen <strong>desde tu propia dirección</strong> en
+          lugar de salir desde Clouget. Mejor entregabilidad y los clientes ven al remitente como tu negocio.
+        </p>
+
+        {cuentas.length === 0 ? (
+          <div style={{ padding: 16, background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px dashed var(--color-border)", textAlign: "center", fontSize: 13, color: "var(--color-text-secondary)" }}>
+            No hay cuenta Gmail conectada. Mientras tanto las facturas usan las cuentas centralizadas de Clouget.
+          </div>
+        ) : (
+          cuentas.map((c) => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, background: "rgba(255,255,255,0.03)", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  {c.activa ? "✅" : "⏸"} {c.email}
+                </div>
+                {c.from_name && (
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Remitente: <strong>{c.from_name}</strong>
+                  </div>
+                )}
+                <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+                  Conectada: {c.created_at.slice(0, 10)}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+                  onClick={() => toggle(c)}>
+                  {c.activa ? "Desactivar" : "Activar"}
+                </button>
+                <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", color: "var(--color-danger)", borderColor: "var(--color-danger)" }}
+                  onClick={() => eliminar(c)}>
+                  Desconectar
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+
+        {conectando && (
+          <div style={{ padding: 12, background: "rgba(59,130,246,0.1)", borderRadius: 6, fontSize: 12, color: "var(--color-primary)" }}>
+            ⏳ Esperando autorización en el navegador... cuando termines, el POS recibirá la cuenta automáticamente.
+            <br />
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px", marginTop: 8 }}
+              onClick={() => setMostrarCodigoManual(!mostrarCodigoManual)}>
+              ¿No se abrió el POS? Pegar código manual
+            </button>
+          </div>
+        )}
+
+        {mostrarCodigoManual && (
+          <div style={{ padding: 12, background: "rgba(245,158,11,0.1)", borderRadius: 6, border: "1px solid var(--color-warning)" }}>
+            <div style={{ fontSize: 12, marginBottom: 8 }}>
+              Pega el código que te dio la página de Google:
+            </div>
+            <textarea
+              className="input"
+              style={{ width: "100%", minHeight: 60, fontSize: 11, fontFamily: "monospace" }}
+              value={codigoManual}
+              onChange={(e) => setCodigoManual(e.target.value)}
+              placeholder="eyJlbWFpbCI6...=="
+            />
+            <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 14px", marginTop: 8 }}
+              onClick={pegarCodigoManual}>
+              Guardar cuenta
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

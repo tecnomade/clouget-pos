@@ -6,6 +6,80 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.53 — 2026-05-27 📧 Cada cliente conecta SU PROPIO Gmail desde el POS (OAuth deep link)
+
+Hasta ahora todas las facturas se enviaban desde las cuentas centralizadas de Clouget (`notificaciones@clouget.com` y otras). Ahora **cada negocio puede conectar SU PROPIO Gmail** desde Configuración del POS y las facturas saldrán **desde su dirección personal/comercial** — mejor entregabilidad, más profesional, y escala sin límite.
+
+### Cómo funciona desde el lado del cliente
+
+1. Configuración del POS → nueva card **"📧 Mi Gmail para enviar facturas"**
+2. Click **"🔐 Conectar mi Gmail"**
+3. Se abre el navegador → Google muestra consentimiento → autoriza
+4. La página de éxito dispara automáticamente el deep link `clouget://oauth-email-callback?email=...&refresh_token=...`
+5. Tauri intercepta el deep link → reabre el POS → guarda la cuenta en SQLite local
+6. A partir de ese momento, todas las facturas se envían desde la cuenta Gmail del propio negocio
+
+### Fallback robusto
+
+Si el deep link falla (navegador bloquea schemes no estándar, o por seguridad del SO), la página de éxito incluye un botón **"Copiar código"** que el usuario pega en Configuración → "Pegar código manual". Mismo resultado, 2 clicks extra.
+
+### Failover automático en el envío
+
+Lógica en `commands::sri::enviar_email_interno`:
+
+```
+if hay cuenta OAuth activa local:
+    → POST email.clouget.com/enviar-email-oauth con refresh_token del cliente
+    → envía desde Gmail del cliente
+else:
+    → POST email.clouget.com/enviar-email
+    → usa cuentas centralizadas (Brevo, Sertev, Gmail OAuth admin)
+```
+
+Si el cliente no conecta Gmail, todo sigue funcionando con las cuentas centralizadas. Si lo conecta, cambia automáticamente. Si lo desconecta, vuelve al failover centralizado.
+
+### Backend — email-service v2.2.0
+
+Nuevos endpoints en `https://email.clouget.com`:
+
+- **`GET /oauth/cliente/init`** — Inicia OAuth con `state=cliente` para que el callback no toque Supabase.
+- **`GET /oauth/google/callback?state=cliente`** — En lugar de guardar, devuelve HTML que dispara el deep link `clouget://oauth-email-callback?...`. Incluye fallback "copiar código" en base64.
+- **`POST /enviar-email-oauth`** (stateless) — Recibe `{ refresh_token, email_remitente, from_name, destinatario, asunto, cuerpo_html, adjuntos }`. Crea transporter OAuth on-the-fly, envía, no almacena nada.
+
+### POS desktop — cambios
+
+| Cambio | Detalle |
+|---|---|
+| Tabla `oauth_email_cuentas` | refresh_token + email + from_name local en SQLite |
+| Plugin `tauri-plugin-deep-link` | Registra scheme `clouget://` en SO al arrancar |
+| 5 comandos Rust | `iniciar/listar/guardar/eliminar/toggle_oauth_email_cuenta` |
+| Card en Configuración | UI conectar/activar/desactivar/eliminar + fallback código manual |
+| Listener `deep-link://new-url` | Frontend procesa callback automáticamente |
+| Modificado `enviar_email_interno` | Failover automático OAuth-cliente → centralizado |
+
+### Por qué Gmail OAuth supera a SMTP tradicional
+
+| Aspecto | SMTP + password | Gmail OAuth per-cliente |
+|---|---|---|
+| Setup | Generar "contraseña de aplicación" manualmente | 1 click → autorizar |
+| Seguridad | Password en plain text en BD | Solo refresh_token (revocable) |
+| Renovación | Cliente cambia password Gmail → todo se rompe | Tokens se renuevan auto |
+| Revocación | Cambiar password afecta otras apps | Click revocar en myaccount.google.com |
+
+### Limitaciones conocidas
+
+- **Refresh token caduca a los 7 días** mientras la app está en modo **Testing** en Google. Para uso ilimitado hay que pasarla a "Production" (1-2 semanas de proceso de verificación con Google).
+- Si el cliente revoca el acceso desde `myaccount.google.com/permissions`, el siguiente envío fallará con `REFRESH_TOKEN_INVALIDO` y deberá reconectar desde Configuración.
+
+### Requisitos previos (ya configurados en este proyecto)
+
+- Gmail API habilitada en Google Cloud Console
+- OAuth Client con redirect URI `https://email.clouget.com/oauth/google/callback`
+- Scopes: `gmail.send`, `userinfo.email`, `userinfo.profile`
+- `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` en `.env` del container email-service (VPS)
+
+---
+
 ## v2.5.52 — 2026-05-25 📱 APP MÓVIL — proveedores + compras + dashboard KPIs
 
 Tres bloques de endpoints nuevos para que la app móvil cubra el caso del **dueño en la calle**: registrar compras a proveedores en el momento, ver KPIs del día desde el celular, y gestionar el directorio de proveedores.

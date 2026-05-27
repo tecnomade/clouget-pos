@@ -48,7 +48,9 @@ uuid = { version = "1", features = ["v4"] }
 # Backup cloud
 flate2 = "1"
 aes-gcm = "0.10"
-tauri-plugin-single-instance = "2.4.0"
+tauri-plugin-single-instance = { version = "2.4.0", features = ["deep-link"] }
+# v2.5.53: deep link clouget:// para callback OAuth Gmail per-cliente
+tauri-plugin-deep-link = "2"
 # v2.4.4 — Sprint 3c: discovery automático de servidor + obtener IP local
 mdns-sd = "0.11"
 local-ip-address = "0.6"

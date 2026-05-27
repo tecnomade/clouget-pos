@@ -32,3 +32,4 @@ pub mod combos;
 pub mod verificacion;
 pub mod retenciones;
 pub mod contabilidad;
+pub mod oauth_email;

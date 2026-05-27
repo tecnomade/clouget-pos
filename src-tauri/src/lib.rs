@@ -236,16 +236,62 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        // v2.5.53: deep link clouget:// para OAuth Gmail callback per-cliente.
+        // Cuando el cliente autoriza en navegador, email.clouget.com lo redirige
+        // a clouget://oauth-email-callback?email=...&refresh_token=...&from_name=...
+        // y este handler emite un evento al frontend para que persista la cuenta.
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            use tauri::Emitter;
             // Focus the existing window when a second instance is launched
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
                 let _ = w.unminimize();
             }
+            // v2.5.53: deep link en segunda instancia (Windows lanza nuevo proceso al hacer click)
+            for arg in args.iter().skip(1) {
+                if arg.starts_with("clouget://") {
+                    let _ = app.emit("deep-link://new-url", vec![arg.clone()]);
+                    eprintln!("[DeepLink] segunda instancia recibió: {}", arg);
+                }
+            }
         }))
         .setup(|app| {
+            use tauri::Manager;
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            // v2.5.53: registrar protocol handler clouget:// en el SO al arrancar
+            // (idempotente: si ya está, no hace nada). Esto permite que el navegador
+            // abra Clouget POS cuando recibe una URL clouget://...
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(e) = app.deep_link().register("clouget") {
+                    eprintln!("[DeepLink] No se pudo registrar scheme clouget://: {}", e);
+                } else {
+                    eprintln!("[DeepLink] Scheme clouget:// registrado en el SO");
+                }
+            }
+
+            // v2.5.53: handler para deep links recibidos cuando la app YA está corriendo
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let app_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    use tauri::Emitter;
+                    let urls: Vec<String> = event.urls().into_iter().map(|u| u.to_string()).collect();
+                    eprintln!("[DeepLink] Recibido: {:?}", urls);
+                    // Re-emit como evento al frontend
+                    let _ = app_handle.emit("deep-link://new-url", urls);
+                    // Asegurar que la ventana esté visible
+                    if let Some(w) = app_handle.get_webview_window("main") {
+                        let _ = w.set_focus();
+                        let _ = w.unminimize();
+                    }
+                });
+            }
             Ok(())
         })
         .manage(database)
@@ -603,6 +649,12 @@ pub fn run() {
             commands::contabilidad::contabilidad_generar_ride_pdf,
             // v2.5.48: generador ATS mensual (XML para subir al DIMM Anexos del SRI)
             commands::contabilidad::contabilidad_generar_ats,
+            // v2.5.53: cuentas OAuth Gmail per-cliente
+            commands::oauth_email::listar_oauth_email_cuentas,
+            commands::oauth_email::guardar_oauth_email_cuenta,
+            commands::oauth_email::eliminar_oauth_email_cuenta,
+            commands::oauth_email::toggle_oauth_email_cuenta,
+            commands::oauth_email::iniciar_oauth_email_gmail,
             offline::cache::contar_cola_offline,
             offline::cache::sincronizar_cache_productos,
             offline::cache::buscar_productos_offline,

@@ -1620,6 +1620,28 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         let _ = conn.execute("DROP TABLE IF EXISTS sri_avanzado_config", []);
     }
 
+    // ─── v2.5.53: Cuentas OAuth Gmail per-cliente para envio de emails ──────
+    // Cada POS puede conectar su propia cuenta Gmail (sin pasar por
+    // notificaciones@clouget.com centralizada). El refresh_token se persiste
+    // localmente y se envia al microservicio email.clouget.com puntualmente
+    // en cada envio (stateless desde el lado del microservicio).
+    //
+    // Si hay al menos 1 cuenta activa aqui, enviar_email_interno usa OAuth.
+    // Si no, hace fallback al flow tradicional (cuentas centralizadas).
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS oauth_email_cuentas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proveedor TEXT NOT NULL DEFAULT 'gmail',
+            email TEXT NOT NULL,
+            refresh_token TEXT NOT NULL,
+            from_name TEXT,
+            activa INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_email_proveedor_email
+            ON oauth_email_cuentas(proveedor, email);
+    ");
+
     // ─── v2.5.48: Migración correctiva — ventas a crédito mal guardadas ─────
     // En versiones previas a v2.5.48, si el usuario seleccionaba "Transferencia"
     // y después tocaba "Crédito" en POS, el state quedaba con formaPago="TRANSFER"
