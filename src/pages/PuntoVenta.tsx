@@ -328,6 +328,63 @@ export default function PuntoVenta() {
     }
   };
 
+  // v2.5.57: Auto-detección de cédula (10 dig) o RUC (13 dig).
+  // Si el user escribe un número completo y pausa 500ms:
+  //   1. Si ya está en BD local con identificación exacta → auto-seleccionar
+  //   2. Si no está → consultar SRI automáticamente → crear + auto-seleccionar
+  // Ahorra el botón "Crear" + apertura modal cuando es un ID conocido por SRI.
+  const autoSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (autoSelectTimerRef.current) clearTimeout(autoSelectTimerRef.current);
+    const termino = busquedaCliente.trim();
+    // Solo si el campo está abierto y es un ID con formato válido
+    if (!mostrarClientes || clienteSeleccionado || mostrarCrearCliente) return;
+    if (!/^\d{10}$|^\d{13}$/.test(termino)) return;
+
+    autoSelectTimerRef.current = setTimeout(async () => {
+      try {
+        // 1. Buscar local — si hay match exacto por identificación, auto-seleccionar
+        const localMatches = await buscarClientes(termino);
+        const exacto = localMatches.find(c => c.identificacion?.trim() === termino);
+        if (exacto) {
+          setClienteSeleccionado(exacto);
+          setMostrarClientes(false);
+          setBusquedaCliente("");
+          setClientesResultados([]);
+          setMostrarCrearCliente(false);
+          recalcularPreciosCarrito(exacto.id ?? null);
+          toastExito(`Cliente seleccionado: ${exacto.nombre}`);
+          return;
+        }
+
+        // 2. No está local → consultar SRI (esto crea el cliente y lo devuelve)
+        setConsultandoSri(true);
+        try {
+          const cliente = await consultarIdentificacion(termino);
+          setClienteSeleccionado(cliente);
+          setMostrarClientes(false);
+          setBusquedaCliente("");
+          setClientesResultados([]);
+          recalcularPreciosCarrito(cliente.id ?? null);
+          toastExito(`Cliente desde SRI: ${cliente.nombre}`);
+        } catch (err: any) {
+          // SRI falló — no hacemos nada, el user verá el botón manual
+          // para "Crear cliente" o "Consultar SRI" en la UI normal.
+          console.warn("Auto-consulta SRI falló:", err);
+        } finally {
+          setConsultandoSri(false);
+        }
+      } catch {
+        // ignorar errores de búsqueda local
+      }
+    }, 500);
+
+    return () => {
+      if (autoSelectTimerRef.current) clearTimeout(autoSelectTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busquedaCliente, mostrarClientes, clienteSeleccionado, mostrarCrearCliente]);
+
   const handleCrearClienteRapido = async () => {
     if (!nuevoClienteNombre.trim()) {
       toastError("Ingrese el nombre del cliente");

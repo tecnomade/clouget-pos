@@ -6,6 +6,50 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.57 — 2026-05-28 ⚡ Auto-selección de cliente al escribir cédula/RUC completa
+
+### El problema
+
+Al cobrar a un cliente nuevo identificado, tenías que escribir su cédula/RUC → esperar resultados → si no estaba en BD, hacer click en "+ Crear cliente" → llenar formulario o hacer click en "Buscar en SRI" → confirmar. Pasos repetitivos en cada venta a cliente conocido por SRI.
+
+### Lo nuevo
+
+Si en el buscador de cliente escribes exactamente **10 dígitos (cédula)** o **13 dígitos (RUC)** y **pausas 500ms**, el sistema automáticamente:
+
+1. 🔍 **Busca local primero** — si ya tienes ese cliente con esa identificación exacta, lo **auto-selecciona** y cierra el dropdown (toast: "Cliente seleccionado: X")
+2. 🌐 **Si no está local**, **consulta automáticamente al SRI** — si SRI lo encuentra, lo **crea y auto-selecciona** (toast: "Cliente desde SRI: X")
+3. ❌ **Si SRI no lo encuentra**, no hace nada — el user sigue viendo los botones manuales "Crear cliente" y "Consultar SRI" como antes
+
+### Detalles técnicos
+
+- **Debounce de 500ms** — no consulta mientras el user todavía está escribiendo
+- **Cancela timer** si el user borra o cambia el texto antes de los 500ms
+- **Solo se dispara con formato exacto**: regex `/^\d{10}$|^\d{13}$/` — no afecta búsqueda por nombre
+- **No interfiere con el flow manual** — si SRI falla o el user prefiere crear el cliente a mano, todos los botones de antes siguen ahí
+- **No se dispara si ya hay cliente seleccionado** ni si el formulario "Crear cliente" está abierto
+
+### Ahorro de clicks
+
+| Escenario | Antes | Ahora |
+|---|---|---|
+| Cliente ya existente con cédula | escribir → ver resultado → click | escribir → ⚡ auto |
+| Cliente nuevo en SRI | escribir → click + → click Consultar SRI → confirmar | escribir → ⚡ auto |
+
+### Útil para
+
+- Negocios que facturan a clientes diferentes en cada venta (carnicería, papelería)
+- Cajeros rápidos que ya conocen el RUC de memoria de clientes frecuentes
+- Cualquier flujo donde la identificación viene del cliente y rara vez hay error de tipeo
+
+### Cuando NO se dispara
+
+- Búsqueda por nombre o por texto parcial (necesita ver opciones manualmente)
+- Cédula incompleta (menos de 10 dígitos)
+- RUC incompleto (menos de 13 dígitos)
+- Si tienes varios clientes con identificación PARCIAL similar — espera al match exacto
+
+---
+
 ## v2.5.56 — 2026-05-28 ✨ UX: auto-seleccionar cuenta al re-clickear Transferencia
 
 ### El problema
