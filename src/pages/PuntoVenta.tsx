@@ -963,7 +963,13 @@ export default function PuntoVenta() {
     } catch (err) {
       toastError("Error al registrar venta: " + err);
     }
-  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, autoImprimirSri, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning]);
+  }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, autoImprimirSri, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning,
+      // v2.5.55 FIX: agregadas deps faltantes que causaban stale closure.
+      // Síntoma: "número de comprobante obligatorio" aunque el campo estuviera lleno;
+      // segundo click sí funcionaba (porque otro state forzaba recreación del callback).
+      referenciaPago, requiereReferencia, bancoSeleccionado, cuentasBanco,
+      pagosMixtos, modoPagoMixto, descuentoAplicado, descuentoFp,
+      sriAmbienteConfirmado, total, subtotal]);
 
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);

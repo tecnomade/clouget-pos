@@ -6,6 +6,54 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.55 — 2026-05-27 🐛 Hotfix: transferencia pedía referencia 2 veces (stale closure)
+
+### El bug
+
+**Síntoma reportado:** al cobrar una venta por **Transferencia**, llenabas el número de referencia (visible en el chip "✓ Detalles transferencia · Guayaquil · ref: 2333333") y al hacer click en **Cobrar** salía error "El número de referencia es obligatorio". Tenías que clickear Cobrar **una segunda vez** para que procesara.
+
+### Causa raíz
+
+La función `procesarVenta` está envuelta en `useCallback` con una lista de dependencias. **Faltaban en esa lista** varias variables que la función lee — entre ellas `referenciaPago`, `requiereReferencia`, `bancoSeleccionado`, `cuentasBanco`, y otras.
+
+Cuando llenabas el campo de referencia:
+1. React actualizaba el state ✅
+2. PERO `procesarVenta` **NO se recreaba** (porque `referenciaPago` no estaba en deps)
+3. El primer click ejecutaba la versión vieja del callback que leía `referenciaPago = ""` → fallaba validación
+4. Cualquier otra interacción (mover el mouse sobre otro state que SÍ estaba en deps) forzaba la recreación
+5. Segundo click: ya tenía la versión nueva → procesaba
+
+Este es el mismo tipo de bug que el del form de productos arreglado en v2.5.46 — **dependencias incompletas en hook React** → stale closure.
+
+### Fix
+
+Una sola línea — agregadas las deps faltantes al `useCallback`:
+
+```diff
+-  }, [carrito, cajaAbierta, ..., comprobanteImagen, toastError, ...]);
++  }, [carrito, cajaAbierta, ..., comprobanteImagen, toastError, ...,
++      referenciaPago, requiereReferencia, bancoSeleccionado, cuentasBanco,
++      pagosMixtos, modoPagoMixto, descuentoAplicado, descuentoFp,
++      sriAmbienteConfirmado, total, subtotal]);
+```
+
+### Efectos colaterales positivos (también arregla)
+
+Con las nuevas deps también se corrigen casos donde:
+- Si cambiabas la cuenta bancaria en el selector y cobrabas inmediatamente, podía usar la cuenta vieja
+- Si el descuento por forma de pago se acababa de aplicar, el primer click usaba el monto sin descuento
+- Si confirmabas el ambiente SRI en el modal y cobrabas, podía volver a pedirlo
+
+Todos esos casos eran manifestaciones del mismo bug de fondo.
+
+### Cómo verificar el fix
+
+1. Selecciona Transferencia → elige cuenta bancaria → llena referencia → cierra modal de detalles
+2. Click **una sola vez** en Cobrar → debe procesar la venta
+3. El chip "✓ Detalles transferencia" sigue mostrando lo que llenaste
+
+---
+
 ## v2.5.54 — 2026-05-27 💸 Gastos con filtros inteligentes + nuevo reporte de Gastos
 
 La página Gastos solo mostraba un día a la vez (selector de fecha único). Ahora tiene **filtros inteligentes con presets de rango** y **un reporte completo** en la pestaña Reportes con gráficas y KPIs.
