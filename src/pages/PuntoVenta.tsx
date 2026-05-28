@@ -2014,7 +2014,17 @@ export default function PuntoVenta() {
                   </button>
                   <div className="flex gap-2">
                     <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
-                      onClick={() => { setFormaPago("TRANSFER"); setEsFiado(false); }}>
+                      onClick={() => {
+                        setFormaPago("TRANSFER");
+                        setEsFiado(false);
+                        // v2.5.56: auto-seleccionar primera cuenta bancaria si no hay
+                        // ninguna seleccionada (puede haber quedado null al pasar por
+                        // Credito). Si la app NO requiere referencia ni comprobante,
+                        // basta con tener banco seleccionado para poder cobrar al toque.
+                        if (!bancoSeleccionado && cuentasBanco.length > 0) {
+                          setBancoSeleccionado(cuentasBanco[0].id ?? null);
+                        }
+                      }}>
                       Transferencia
                     </button>
                     <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}

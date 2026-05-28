@@ -6,6 +6,51 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.56 — 2026-05-28 ✨ UX: auto-seleccionar cuenta al re-clickear Transferencia
+
+### El problema
+
+Cuando clickeas **Crédito** después de haber tenido Transferencia seleccionada, el sistema limpia correctamente el banco (`bancoSeleccionado = null`) porque para crédito no se sabe cómo se va a pagar después. Pero si después clickeas **Transferencia otra vez**, el chip aparece como **"⚠ Faltan detalles transfer / Sin cuenta"** obligando a abrir el modal para volver a elegir la cuenta — aunque seas un negocio con una sola cuenta bancaria configurada.
+
+### El fix
+
+Al hacer click en **Transferencia**, si no hay banco seleccionado y existen cuentas configuradas, **auto-selecciona la primera cuenta** (igual que se hace en el carga inicial de la pantalla). Una línea:
+
+```diff
+ onClick={() => {
+   setFormaPago("TRANSFER");
+   setEsFiado(false);
++  if (!bancoSeleccionado && cuentasBanco.length > 0) {
++    setBancoSeleccionado(cuentasBanco[0].id ?? null);
++  }
+ }}
+```
+
+### Cuándo cobra al toque (sin abrir modal)
+
+Si tu configuración **NO requiere** ni número de comprobante ni imagen de comprobante (toggles en Configuración → Cuentas Bancarias):
+
+1. Carrito listo → click **Transferencia** → cuenta default auto-seleccionada
+2. Click **Cobrar** → ✅ procesa al instante
+
+El usuario puede **opcionalmente** clickear "Editar →" para cambiar la cuenta o agregar referencia/comprobante si quiere. Pero ya no es obligatorio.
+
+### Útil para
+
+- Negocios que verifican la transferencia en el momento (no necesitan guardar referencia)
+- Clientes conocidos donde no se exige comprobante
+- Tiendas con una sola cuenta bancaria que siempre se usa
+
+### Casos donde sigue pidiendo modal
+
+- Si en Configuración → Cuentas Bancarias activaste **"Requiere referencia"** → tienes que llenar la referencia para cobrar
+- Si activaste **"Requiere comprobante"** → tienes que subir la imagen
+- Si tienes **varias cuentas** y la auto-seleccionada (primera) no es la que quieres → click Editar para cambiar
+
+Estos siguen siendo opcionales por banco/negocio.
+
+---
+
 ## v2.5.55 — 2026-05-27 🐛 Hotfix: transferencia pedía referencia 2 veces (stale closure)
 
 ### El bug
