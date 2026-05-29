@@ -145,6 +145,24 @@ export default function Configuracion() {
     checkEsDemo().then(setModoDemo).catch(() => {});
   }, []);
 
+  // v2.5.58: recargar secuenciales cuando se autoriza una factura SRI (la disparan
+  // PuntoVenta.tsx y VentasDia.tsx via window.dispatchEvent("sri-factura-emitida")).
+  // Antes el secuencial mostrado en esta pantalla quedaba stale y el usuario
+  // veía el valor viejo aunque ya se hubiera incrementado en la BD.
+  useEffect(() => {
+    const recargarSec = () => {
+      obtenerSecuenciales().then(setSecuenciales).catch(() => {});
+    };
+    window.addEventListener("sri-factura-emitida", recargarSec);
+    // También al regresar el foco a la ventana (caso típico: usuario abrió
+    // POS en otra ventana, autorizó factura, vuelve a Configuración)
+    window.addEventListener("focus", recargarSec);
+    return () => {
+      window.removeEventListener("sri-factura-emitida", recargarSec);
+      window.removeEventListener("focus", recargarSec);
+    };
+  }, []);
+
   const handleGuardar = async () => {
     setGuardando(true);
     try {

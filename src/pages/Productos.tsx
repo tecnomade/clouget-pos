@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import NumericInput from "../components/NumericInput";
 import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, guardarImagenProductoB64, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
-import { save, open } from "@tauri-apps/plugin-dialog";
+import { save, open, ask } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import { useTabActivated } from "../contexts/TabsContext";
@@ -2250,7 +2250,15 @@ export default function Productos() {
                                     onClick={() => handleEditar(p.id)}>Editar</button>
                                   <button className="btn btn-danger" style={{ padding: "2px 6px", fontSize: 11 }}
                                     onClick={async () => {
-                                      if (!confirm(`\u00bfEliminar "${p.nombre}"?`)) return;
+                                      // v2.5.58: usar ask() de Tauri en vez de confirm() nativo.
+                                      // El confirm() del webview de Tauri 2 a veces NO bloquea y
+                                      // sigue ejecutando antes de que el user responda \u2192 producto
+                                      // eliminado sin confirmaci\u00f3n. ask() es async y S\u00cd espera.
+                                      const ok = await ask(`\u00bfEliminar "${p.nombre}"?`, {
+                                        title: "Eliminar producto",
+                                        kind: "warning",
+                                      });
+                                      if (!ok) return;
                                       try {
                                         await eliminarProducto(p.id);
                                         toastExito("Eliminado");
@@ -2334,7 +2342,12 @@ export default function Productos() {
                             </button>
                             <button className="btn btn-danger" style={{ padding: "2px 8px", fontSize: 11 }}
                               onClick={async () => {
-                                if (!confirm(`\u00bfEliminar "${p.nombre}"?`)) return;
+                                // v2.5.58: ver nota en el otro bot\u00f3n de eliminar de esta misma tabla
+                                const ok = await ask(`\u00bfEliminar "${p.nombre}"?`, {
+                                  title: "Eliminar producto",
+                                  kind: "warning",
+                                });
+                                if (!ok) return;
                                 try {
                                   await eliminarProducto(p.id);
                                   toastExito("Producto eliminado");

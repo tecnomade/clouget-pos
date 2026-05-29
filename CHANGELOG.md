@@ -6,6 +6,41 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.58 — 2026-05-29 🐛 Eliminar producto + secuencial Config en tiempo real
+
+### Bug A: eliminar producto se ejecutaba ANTES de confirmar
+
+**Síntoma:** al hacer click en la **X** roja de un producto en la tabla, aparecía el cartel "¿Eliminar X?" — pero al pulsar Cancelar/Aceptar **el producto ya había sido eliminado** antes de que respondieras. Cancelar no servía.
+
+**Causa raíz:** el `window.confirm()` nativo de JavaScript en el webview de Tauri 2 a veces NO bloquea correctamente. El handler `async` seguía ejecutando `await eliminarProducto()` sin esperar la respuesta del usuario.
+
+**Fix:** reemplazado por `await ask()` del plugin oficial `@tauri-apps/plugin-dialog` que SÍ espera la respuesta del usuario antes de continuar:
+
+```diff
+- if (!confirm(`¿Eliminar "${p.nombre}"?`)) return;
++ const ok = await ask(`¿Eliminar "${p.nombre}"?`, {
++   title: "Eliminar producto",
++   kind: "warning",
++ });
++ if (!ok) return;
+```
+
+Aplicado a los 2 botones X de eliminar producto (vista normal + vista agrupada por categoría).
+
+### Bug B: secuencial SRI quedaba stale en Configuración
+
+**Síntoma:** después de autorizar facturas en el POS, al ir a Configuración → SRI → Secuenciales, el número mostrado seguía siendo el **viejo** aunque la BD ya lo había incrementado. Confundía al usuario haciéndole pensar que el contador no avanzaba.
+
+**Causa raíz:** los secuenciales se cargaban una sola vez al montar Configuración (`useEffect([])`). No había mecanismo de refresh cuando otra pantalla cambiaba el valor.
+
+**Fix:** Configuración ahora escucha 2 eventos para recargar automáticamente:
+1. **`sri-factura-emitida`** — disparado por PuntoVenta, VentasDía, ServicioTécnico y Restaurante cuando autorizan una factura
+2. **`focus` de la ventana** — cuando el usuario vuelve al POS desde otra app (caso típico: autorizó en otra ventana → vuelve a Config)
+
+Ahora si autorizas una factura y vienes a Configuración, ves el secuencial real (incrementado).
+
+---
+
 ## v2.5.57 — 2026-05-28 ⚡ Auto-selección de cliente al escribir cédula/RUC completa
 
 ### El problema
