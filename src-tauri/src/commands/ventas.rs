@@ -3070,6 +3070,15 @@ pub fn anular_venta(
     .collect();
     drop(stmt);
 
+    // v2.5.62: refactor del loop de reintegración para NO silenciar errores
+    // críticos. Antes se usaba .ok() en todos los UPDATE, lo que ocultaba
+    // fallos (ej. columna updated_at faltante en BDs viejas) → venta quedaba
+    // anulada pero stock no se actualizaba. Ahora:
+    //   - UPDATE de productos.stock_actual → fail-fast con map_err
+    //   - INSERT a movimientos_inventario → fail-fast (auditoría obligatoria)
+    //   - UPDATE de updated_at QUITADO (no es crítico y rompe en BDs viejas)
+    //   - lote_caducidad y stock_establecimiento → seguir como best-effort
+    //     porque son secundarios (multi-almacén/caducidad pueden estar off)
     for (prod_id, cant, factor, lote_id) in &items {
         let cant_base = cant * factor;
         let omite: bool = conn.query_row(
@@ -3079,37 +3088,47 @@ pub fn anular_venta(
         ).unwrap_or(false);
         if omite { continue; }
 
-        // Reversar al lote si existe
+        // Best-effort: reversar al lote (no crítico, módulo caducidad puede no estar)
         if let Some(lid) = lote_id {
-            conn.execute(
+            let _ = conn.execute(
                 "UPDATE lotes_caducidad SET cantidad = cantidad + ?1 WHERE id = ?2",
                 rusqlite::params![cant_base, lid],
-            ).ok();
+            );
         }
 
         let stock_antes: f64 = conn.query_row(
             "SELECT stock_actual FROM productos WHERE id = ?1",
             rusqlite::params![prod_id], |row| row.get(0)
         ).unwrap_or(0.0);
-        conn.execute(
-            "UPDATE productos SET stock_actual = stock_actual + ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
-            rusqlite::params![cant_base, prod_id]
-        ).ok();
 
+        // CRÍTICO: UPDATE stock (sin updated_at para compatibilidad con BDs viejas)
+        conn.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+            rusqlite::params![cant_base, prod_id]
+        ).map_err(|e| format!(
+            "Error reintegrando stock del producto {}: {}. La anulación NO se aplicó para evitar inconsistencia.",
+            prod_id, e
+        ))?;
+
+        // Best-effort: stock por establecimiento (multi-almacén puede no estar)
         if let Some(eid) = est_id {
-            conn.execute(
+            let _ = conn.execute(
                 "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
                  WHERE producto_id = ?2 AND establecimiento_id = ?3",
                 rusqlite::params![cant_base, prod_id, eid]
-            ).ok();
+            );
         }
 
+        // CRÍTICO: movimiento auditable (sin esto no podemos auto-reparar en el futuro)
         conn.execute(
             "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario, referencia_id, establecimiento_id)
              VALUES (?1, 'ANULACION_VENTA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![prod_id, cant_base, stock_antes, stock_antes + cant_base,
                 format!("Anulacion venta {} - {}", numero, motivo.trim()), usuario_nombre, venta_id, est_id]
-        ).ok();
+        ).map_err(|e| format!(
+            "Error registrando movimiento de auditoría para producto {}: {}. La anulación NO se aplicó.",
+            prod_id, e
+        ))?;
     }
 
     // v2.3.49: calcular EFECTIVO real de la venta ANTES de borrar pagos_venta.

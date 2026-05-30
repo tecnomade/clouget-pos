@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta, stAbonosPorVenta, totalRetencionesVenta, verificarAnulacion, repararAnulacionVenta } from "../services/api";
-import type { AbonoServicio, TotalesRetencion, DiagnosticoAnulacion } from "../services/api";
+import { listarVentasDia, listarVentasPeriodo, imprimirTicket, imprimirTicketPdf, exportarVentasCsv, emitirFacturaSri, obtenerXmlFirmado, imprimirRide, enviarNotificacionSri, obtenerConfig, procesarEmailsPendientes, listarNotasCreditoDia, listarNotasCredito, emitirNotaCreditoSri, generarRideNcPdf, listarVentasSesionCaja, resumenSesionCaja, listarNotasCreditoSesionCaja, ventasPorDia, obtenerVenta, anularVenta, obtenerCajaAbierta, stAbonosPorVenta, totalRetencionesVenta } from "../services/api";
+import type { AbonoServicio, TotalesRetencion } from "../services/api";
 import ModalRetenciones from "../components/ModalRetenciones";
 import { resumenDiario, resumenPeriodo, productosMasVendidosReporte, alertasStockBajo } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -1302,11 +1302,6 @@ export default function VentasDia() {
                 )}
               </div>
 
-              {/* v2.5.61: Diagnóstico + reparación de anulaciones que dejaron stock inconsistente.
-                  Solo se muestra para ventas anuladas. */}
-              {ventaDetalle.venta.anulada && ventaDetalle.venta.id && (
-                <BotonReparacionAnulacion ventaId={ventaDetalle.venta.id} />
-              )}
 
               {/* Pago */}
               <div style={{ background: "var(--color-surface-alt)", borderRadius: 8, padding: 12, marginBottom: 16 }}>
@@ -1834,86 +1829,3 @@ function SinAutorizarPanel({ fechaDesde, fechaHasta, onCambio }: {
   );
 }
 
-// v2.5.61: componente para diagnosticar y reparar anulaciones que dejaron stock
-// inconsistente. Aparece en el detalle de venta anulada. Verifica al montar y
-// muestra estado + botón de reparar si hace falta.
-function BotonReparacionAnulacion({ ventaId }: { ventaId: number }) {
-  const { toastExito, toastError } = useToast();
-  const [diag, setDiag] = useState<DiagnosticoAnulacion | null>(null);
-  const [cargando, setCargando] = useState(true);
-  const [reparando, setReparando] = useState(false);
-
-  const verificar = async () => {
-    setCargando(true);
-    try {
-      const d = await verificarAnulacion(ventaId);
-      setDiag(d);
-    } catch (err) {
-      toastError("Error verificando anulación: " + err);
-    } finally {
-      setCargando(false);
-    }
-  };
-
-  useEffect(() => { verificar(); /* eslint-disable-next-line */ }, [ventaId]);
-
-  const reparar = async () => {
-    if (!confirm("¿Reparar la anulación? Se reintegrará al stock las cantidades de los items que NO fueron revertidos.")) return;
-    setReparando(true);
-    try {
-      const res = await repararAnulacionVenta(ventaId);
-      const cuantos = res.items_reparados.length;
-      if (cuantos > 0) {
-        toastExito(`✓ Reparados ${cuantos} item(s). Stock actualizado.`);
-      } else {
-        toastExito(`Nada que reparar (${res.items_ya_correctos} ya correctos, ${res.items_omitidos_servicio} servicios).`);
-      }
-      await verificar();
-    } catch (err) {
-      toastError("Error reparando: " + err);
-    } finally {
-      setReparando(false);
-    }
-  };
-
-  if (cargando) {
-    return (
-      <div style={{ padding: 12, marginBottom: 16, background: "var(--color-surface-alt)", borderRadius: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
-        Verificando estado de la anulación...
-      </div>
-    );
-  }
-  if (!diag) return null;
-
-  if (diag.todo_correcto) {
-    return (
-      <div style={{ padding: 12, marginBottom: 16, background: "rgba(34,197,94,0.1)", borderLeft: "3px solid var(--color-success)", borderRadius: 4, fontSize: 12, color: "var(--color-success)" }}>
-        ✅ <strong>Anulación correcta</strong> — el stock fue revertido para todos los items aplicables.
-      </div>
-    );
-  }
-
-  const necesitan = diag.items.filter(i => i.necesita_reparacion);
-  return (
-    <div style={{ padding: 14, marginBottom: 16, background: "rgba(239,68,68,0.08)", borderLeft: "3px solid var(--color-danger)", borderRadius: 4 }}>
-      <div style={{ fontWeight: 600, color: "var(--color-danger)", marginBottom: 8, fontSize: 13 }}>
-        ⚠ Anulación incompleta — {necesitan.length} item(s) no revirtieron stock
-      </div>
-      <div style={{ fontSize: 12, marginBottom: 10, color: "var(--color-text-secondary)" }}>
-        Se detectó que esta venta fue anulada pero la reintegración de stock falló silenciosamente. Click "Reparar" para sumar las cantidades de vuelta al stock:
-      </div>
-      <ul style={{ fontSize: 12, marginLeft: 18, marginBottom: 10 }}>
-        {necesitan.map(it => (
-          <li key={it.producto_id}>
-            <strong>{it.producto_nombre}</strong> — sumará <strong>+{it.cantidad_base}</strong> al stock (actual: {it.stock_actual_ahora})
-          </li>
-        ))}
-      </ul>
-      <button className="btn btn-danger" style={{ fontSize: 12 }}
-        disabled={reparando}
-        onClick={reparar}>
-        {reparando ? "Reparando..." : "🛠 Reparar anulación"}
-      </button>
-    </div>
-  );
-}

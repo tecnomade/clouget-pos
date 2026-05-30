@@ -6,6 +6,53 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.62 — 2026-05-30 🔧 Auto-reparación de anulaciones + fix raíz del problema
+
+Reemplaza el enfoque de v2.5.61 (botón "Reparar") por algo automático y transparente.
+
+### 1. Auto-reparación al arrancar la app (one-shot)
+
+Una migración self-healing en `schema.rs` corre cada vez que arrancás v2.5.62+. Busca todas las ventas `anulada=1` que NO tengan movimiento `ANULACION_VENTA` en sus items, suma las cantidades de vuelta al stock y crea el movimiento auditable con motivo `AUTO-REPARACION migracion v2.5.62`.
+
+**El user no hace nada** — el primer arranque después de actualizar repara silenciosamente todas las anulaciones huérfanas (en este caso particular: tu venta NV-000000110). Verás en la consola un mensaje:
+
+```
+[Migración v2.5.62] Detectados 2 item(s) de venta(s) anuladas sin reversión de stock. Reparando...
+[Migración v2.5.62] Auto-reparación completada para 2 item(s).
+```
+
+Idempotente: tras la primera corrida, los items ya tienen el movimiento y las siguientes corridas no hacen nada.
+
+### 2. Fix raíz: anular_venta ya no silencia errores críticos
+
+El bug original venía de `.ok()` en los UPDATE de stock, que silenciaban cualquier error de SQL (ej: columna `updated_at` faltante en BDs viejas, triggers rotos, IO error). La venta quedaba `anulada=1` pero el stock no se actualizaba — sin error visible.
+
+**Refactor:**
+- ❌ Removido `updated_at = datetime('now','localtime')` del UPDATE de stock (no es crítico y rompía en instalaciones viejas que no tenían esa columna)
+- ✅ UPDATE de `productos.stock_actual` ahora hace `map_err` — si falla, la anulación devuelve error claro al user en vez de silenciarlo
+- ✅ INSERT a `movimientos_inventario` también obligatorio (auditoría no opcional)
+- ⚠ Mantenidos como best-effort: `lotes_caducidad` y `stock_establecimiento` (módulos opcionales, no críticos para anulación básica)
+
+### 3. Botón "Reparar" removido (UI limpia)
+
+El botón que agregué en v2.5.61 se removió de VentasDía porque ya no es necesario — la auto-reparación lo cubre. Los comandos `verificar_anulacion` y `reparar_anulacion_venta` se mantienen registrados por si se necesitan a futuro (debug o diagnóstico via API móvil).
+
+### Qué hacer ahora con tu venta NV-000000110
+
+**Nada.** Al actualizar a v2.5.62 y abrir el POS, la migración corre automáticamente y suma +1 al producto 593 y +1 al 32OZ VASO. Verifica en Productos después si quieres confirmar.
+
+Si ya hiciste el ajuste manual que te recomendé antes, **deshazlo primero** (resta 1 a cada producto) para que la auto-reparación no duplique.
+
+### Por qué no va a volver a pasar
+
+| Antes | Ahora |
+|---|---|
+| UPDATE stock con `.ok()` → falla en silencio → venta queda anulada con stock incorrecto | UPDATE stock con `map_err` → falla con error visible → anulación rechazada → estado consistente |
+| `updated_at` requería columna que no siempre existía | Removido — no afecta funcionalidad |
+| Sin auto-detección de inconsistencias | Migración self-healing en cada arranque |
+
+---
+
 ## v2.5.61 — 2026-05-30 🛠 Reparar anulaciones que dejaron stock inconsistente
 
 ### El problema reportado

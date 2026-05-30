@@ -1734,5 +1734,105 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
                       WHERE venta_id = cuentas_por_cobrar.venta_id)
     ", []);
 
+    // ─── v2.5.62: One-shot auto-repair — anulaciones con stock no revertido ──
+    // Reportado: anular_venta usaba .ok() en los UPDATE de stock, silenciando
+    // errores. En instalaciones viejas (columna updated_at faltante, triggers
+    // rotos, etc.) la venta quedaba marcada anulada=1 pero el stock no volvía.
+    //
+    // Esta migración corre al arrancar la app:
+    //   1. Busca ventas con anulada=1
+    //   2. Para cada item de esas ventas, verifica si existe movimiento
+    //      'ANULACION_VENTA' en movimientos_inventario
+    //   3. Si NO existe → suma cant*factor al stock del producto y crea el
+    //      movimiento ahora (auditable). Skip si es servicio/no_controla_stock.
+    //
+    // Es idempotente: tras correrla una vez, todos los items quedan marcados
+    // y futuras corridas no hacen nada.
+    {
+        // Cargar items huérfanos en memoria primero (para evitar locks anidados)
+        let mut stmt = conn.prepare("
+            SELECT vd.id, vd.venta_id, vd.producto_id,
+                   vd.cantidad, COALESCE(vd.factor_unidad, 1) as factor,
+                   vd.lote_id, p.stock_actual,
+                   v.numero
+            FROM venta_detalles vd
+            JOIN ventas v ON vd.venta_id = v.id
+            JOIN productos p ON vd.producto_id = p.id
+            WHERE v.anulada = 1
+              AND vd.producto_id IS NOT NULL
+              AND COALESCE(p.es_servicio, 0) = 0
+              AND COALESCE(p.no_controla_stock, 0) = 0
+              AND NOT EXISTS (
+                  SELECT 1 FROM movimientos_inventario mi
+                  WHERE mi.referencia_id = vd.venta_id
+                    AND mi.producto_id = vd.producto_id
+                    AND mi.tipo = 'ANULACION_VENTA'
+              )
+        ");
+        if let Ok(mut stmt) = stmt {
+            let rows = stmt.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?,       // detalle_id (no usado, solo dedup)
+                r.get::<_, i64>(1)?,       // venta_id
+                r.get::<_, i64>(2)?,       // producto_id
+                r.get::<_, f64>(3)?,       // cantidad
+                r.get::<_, f64>(4)?,       // factor
+                r.get::<_, Option<i64>>(5)?, // lote_id
+                r.get::<_, f64>(6)?,       // stock_actual
+                r.get::<_, String>(7)?,    // venta numero
+            )));
+
+            if let Ok(rows) = rows {
+                let items: Vec<(i64, i64, i64, f64, f64, Option<i64>, f64, String)> =
+                    rows.filter_map(|r| r.ok()).collect();
+                drop(stmt);
+
+                let cuantos = items.len();
+                if cuantos > 0 {
+                    eprintln!(
+                        "[Migración v2.5.62] Detectados {} item(s) de venta(s) anuladas sin reversión de stock. Reparando...",
+                        cuantos
+                    );
+
+                    for (_det_id, venta_id, prod_id, cant, factor, lote_id, stock_antes, numero) in &items {
+                        let cant_base = cant * factor;
+                        let stock_despues = stock_antes + cant_base;
+
+                        // Reintegrar stock
+                        let upd_stock = conn.execute(
+                            "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+                            rusqlite::params![cant_base, prod_id],
+                        );
+                        if let Err(e) = upd_stock {
+                            eprintln!("[Migración v2.5.62] Error reintegrando stock producto {}: {}", prod_id, e);
+                            continue;
+                        }
+
+                        // Reintegrar lote si aplica
+                        if let Some(lid) = lote_id {
+                            let _ = conn.execute(
+                                "UPDATE lotes_caducidad SET cantidad = cantidad + ?1 WHERE id = ?2",
+                                rusqlite::params![cant_base, lid],
+                            );
+                        }
+
+                        // Crear movimiento auditable
+                        let _ = conn.execute(
+                            "INSERT INTO movimientos_inventario
+                                (producto_id, tipo, cantidad, stock_anterior, stock_nuevo,
+                                 motivo, usuario, referencia_id)
+                             VALUES (?1, 'ANULACION_VENTA', ?2, ?3, ?4, ?5, ?6, ?7)",
+                            rusqlite::params![
+                                prod_id, cant_base, stock_antes, stock_despues,
+                                format!("AUTO-REPARACION migracion v2.5.62 (anulacion {} no habia revertido stock)", numero),
+                                "sistema", venta_id
+                            ],
+                        );
+                    }
+                    eprintln!("[Migración v2.5.62] Auto-reparación completada para {} item(s).", cuantos);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
