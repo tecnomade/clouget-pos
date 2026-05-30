@@ -1096,6 +1096,43 @@ export async function listarNotasCreditoSesionCaja(): Promise<NotaCreditoInfo[]>
 export const anularVenta = (ventaId: number, motivo: string, efectivoDevuelto?: boolean) =>
   smartInvoke<void>("anular_venta", { ventaId, motivo, efectivoDevuelto: efectivoDevuelto ?? null });
 
+// v2.5.61: diagnostico y reparacion de anulaciones que no revirtieron stock
+export interface DiagnosticoItemAnulacion {
+  producto_id: number;
+  producto_nombre: string;
+  cantidad_vendida: number;
+  factor_unidad: number;
+  cantidad_base: number;
+  stock_actual_ahora: number;
+  es_servicio_o_no_controla: boolean;
+  tiene_movimiento_anulacion: boolean;
+  necesita_reparacion: boolean;
+}
+export interface DiagnosticoAnulacion {
+  venta_numero: string;
+  anulada: boolean;
+  fecha_anulacion: string | null;
+  items: DiagnosticoItemAnulacion[];
+  todo_correcto: boolean;
+}
+export interface ItemReparado {
+  producto_id: number;
+  producto_nombre: string;
+  cantidad_sumada: number;
+  stock_antes: number;
+  stock_despues: number;
+}
+export interface ReparacionAnulacion {
+  venta_numero: string;
+  items_reparados: ItemReparado[];
+  items_ya_correctos: number;
+  items_omitidos_servicio: number;
+}
+export const verificarAnulacion = (ventaId: number) =>
+  smartInvoke<DiagnosticoAnulacion>("verificar_anulacion", { ventaId });
+export const repararAnulacionVenta = (ventaId: number) =>
+  smartInvoke<ReparacionAnulacion>("reparar_anulacion_venta", { ventaId });
+
 export const crearDevolucionInterna = (ventaId: number, motivo: string, items: any[]) =>
   smartInvoke<any>("crear_devolucion_interna", { ventaId, motivo, items });
 

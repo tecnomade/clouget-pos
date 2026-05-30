@@ -366,6 +366,9 @@ pub fn run() {
             commands::ventas::obtener_nota_credito,
             commands::ventas::crear_devolucion_interna,
             commands::ventas::anular_venta,
+            // v2.5.61: diagnostico y reparacion de anulaciones que dejaron stock inconsistente
+            commands::ventas::verificar_anulacion,
+            commands::ventas::reparar_anulacion_venta,
             commands::ventas::listar_notas_credito_dia,
             commands::ventas::listar_notas_credito,
             commands::ventas::listar_ventas_sesion_caja,

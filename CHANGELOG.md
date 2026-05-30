@@ -6,6 +6,47 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.61 — 2026-05-30 🛠 Reparar anulaciones que dejaron stock inconsistente
+
+### El problema reportado
+
+Después de anular una venta, **el stock no se revirtió** y **la caja no se descontó**. Sucedió silenciosamente — sin error visible para el usuario.
+
+### Causa raíz
+
+En `anular_venta` los UPDATE de stock están envueltos en `.ok()` (Rust), lo que **silencia cualquier error** de SQL. Si alguno fallaba (por ejemplo: columna `updated_at` faltante en instalaciones viejas, trigger DB que se rompe, IO error, etc.), el flujo continuaba como si nada — la venta quedaba marcada como anulada pero el stock no se sumaba de vuelta.
+
+### Solución
+
+#### 1. **Comando nuevo `verificar_anulacion(venta_id)`** (diagnóstico)
+Read-only. Para cada item de la venta anulada revisa si existe el movimiento `ANULACION_VENTA` en `movimientos_inventario`. Si NO existe → marca el item como "necesita reparación".
+
+#### 2. **Comando nuevo `reparar_anulacion_venta(venta_id)`**
+Reintegra al stock las cantidades de los items que NO tienen movimiento de anulación registrado. Crea el movimiento ahora con motivo "REPARACION manual". Solo admin.
+
+#### 3. **UI en VentasDía**
+Al abrir el detalle de una venta **ANULADA**:
+- Si todo está bien: badge verde ✅ **"Anulación correcta — el stock fue revertido"**
+- Si falta reintegrar: panel rojo ⚠ con la lista de items + botón **"🛠 Reparar anulación"**
+
+### Cómo usarlo en tu caso (venta NV-000000110)
+
+1. Actualiza el POS a v2.5.61
+2. Ve a **VentasDía** → click en la venta anulada NV-000000110
+3. Aparece el panel rojo con: "593 — sumará +1 al stock" y "32OZ VASO — sumará +1"
+4. Click **"🛠 Reparar anulación"**
+5. Stock corregido y movimiento de inventario auditable creado
+
+### Sobre la caja
+
+Solo se descuenta el `monto_esperado` durante la **anulación original**. Si la anulación falló silenciosamente, ese descuento puede no haberse aplicado. **Verifícalo al cerrar caja**: si el monto físico es mayor al esperado por ~el valor de la venta, restálo manualmente con un "Retiro de caja" con motivo "Ajuste anulación NV-XXX".
+
+### Pendiente para v2.5.62
+
+Refactorizar `anular_venta` para que los UPDATE de stock devuelvan error real en vez de silenciarlo con `.ok()` (así futuras anulaciones no fallan en silencio).
+
+---
+
 ## v2.5.60 — 2026-05-30 ⚡ Performance: app más liviana en PCs lentos
 
 Pulida la app después de quejas de carga lenta en equipos modestos. Dos cambios principales:

@@ -3171,6 +3171,251 @@ pub fn anular_venta(
     Ok(())
 }
 
+// ─── v2.5.61: Reparación de anulaciones que dejaron stock inconsistente ─────
+//
+// Algunos clientes reportaron que después de anular una venta, el stock no
+// volvía al producto. El motivo más común: los `.ok()` en `anular_venta`
+// silenciaban un UPDATE fallido (ej. la columna `updated_at` no existía en
+// instalaciones muy viejas, o un trigger DB fallaba).
+//
+// Estos comandos permiten al admin diagnosticar y reparar después del hecho.
+
+#[derive(serde::Serialize)]
+pub struct DiagnosticoAnulacion {
+    pub venta_numero: String,
+    pub anulada: bool,
+    pub fecha_anulacion: Option<String>,
+    pub items: Vec<DiagnosticoItemAnulacion>,
+    pub todo_correcto: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct DiagnosticoItemAnulacion {
+    pub producto_id: i64,
+    pub producto_nombre: String,
+    pub cantidad_vendida: f64,
+    pub factor_unidad: f64,
+    pub cantidad_base: f64,
+    pub stock_actual_ahora: f64,
+    pub es_servicio_o_no_controla: bool,
+    pub tiene_movimiento_anulacion: bool,
+    pub necesita_reparacion: bool,
+}
+
+/// Diagnóstico: revisa una venta anulada y reporta qué items quedaron sin
+/// reintegrar al stock. Es read-only, no modifica nada.
+#[tauri::command]
+pub fn verificar_anulacion(
+    db: State<Database>,
+    venta_id: i64,
+) -> Result<DiagnosticoAnulacion, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let (numero, anulada, _estado): (String, i32, String) = conn.query_row(
+        "SELECT numero, anulada, COALESCE(estado, '') FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ).map_err(|_| "Venta no encontrada".to_string())?;
+
+    if anulada == 0 {
+        return Err("Esta venta NO está anulada. Solo se puede verificar anulaciones.".into());
+    }
+
+    // Items de la venta
+    let mut stmt = conn.prepare(
+        "SELECT vd.producto_id, COALESCE(p.nombre, '?'),
+                vd.cantidad, COALESCE(vd.factor_unidad, 1) as factor,
+                p.stock_actual,
+                (COALESCE(p.es_servicio, 0) + COALESCE(p.no_controla_stock, 0)) > 0 as es_servicio
+         FROM venta_detalles vd
+         LEFT JOIN productos p ON vd.producto_id = p.id
+         WHERE vd.venta_id = ?1 AND vd.producto_id IS NOT NULL"
+    ).map_err(|e| e.to_string())?;
+    let items_raw: Vec<(i64, String, f64, f64, f64, bool)> = stmt.query_map(
+        rusqlite::params![venta_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+    ).map_err(|e| e.to_string())?
+    .filter_map(Result::ok)
+    .collect();
+    drop(stmt);
+
+    let mut items: Vec<DiagnosticoItemAnulacion> = Vec::new();
+    let mut todo_correcto = true;
+
+    for (pid, nombre, cant, factor, stock_ahora, es_serv) in items_raw {
+        let cant_base = cant * factor;
+        // ¿Existe movimiento ANULACION_VENTA para este producto y esta venta?
+        let tiene_mov: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM movimientos_inventario
+             WHERE referencia_id = ?1 AND producto_id = ?2 AND tipo = 'ANULACION_VENTA'",
+            rusqlite::params![venta_id, pid],
+            |r| r.get(0),
+        ).unwrap_or(false);
+
+        // Necesita reparación si: NO es servicio Y NO tiene movimiento de anulación
+        let necesita = !es_serv && !tiene_mov;
+        if necesita { todo_correcto = false; }
+
+        items.push(DiagnosticoItemAnulacion {
+            producto_id: pid,
+            producto_nombre: nombre,
+            cantidad_vendida: cant,
+            factor_unidad: factor,
+            cantidad_base: cant_base,
+            stock_actual_ahora: stock_ahora,
+            es_servicio_o_no_controla: es_serv,
+            tiene_movimiento_anulacion: tiene_mov,
+            necesita_reparacion: necesita,
+        });
+    }
+
+    Ok(DiagnosticoAnulacion {
+        venta_numero: numero,
+        anulada: true,
+        fecha_anulacion: None,
+        items,
+        todo_correcto,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct ReparacionAnulacion {
+    pub venta_numero: String,
+    pub items_reparados: Vec<ItemReparado>,
+    pub items_ya_correctos: usize,
+    pub items_omitidos_servicio: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct ItemReparado {
+    pub producto_id: i64,
+    pub producto_nombre: String,
+    pub cantidad_sumada: f64,
+    pub stock_antes: f64,
+    pub stock_despues: f64,
+}
+
+/// Repara una anulación que NO revirtió correctamente el stock.
+/// Solo aplica a items que NO tienen movimiento `ANULACION_VENTA` registrado.
+/// Crea el movimiento ahora con motivo "REPARACION".
+#[tauri::command]
+pub fn reparar_anulacion_venta(
+    db: State<Database>,
+    sesion: State<SesionState>,
+    venta_id: i64,
+) -> Result<ReparacionAnulacion, String> {
+    let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+    let sesion_actual = sesion_guard.as_ref().ok_or("Debe iniciar sesion".to_string())?;
+    let usuario_rol = sesion_actual.rol.clone();
+    let usuario_nombre = sesion_actual.nombre.clone();
+    drop(sesion_guard);
+
+    if usuario_rol != "ADMIN" {
+        return Err("Solo el administrador puede reparar anulaciones".into());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let (numero, anulada): (String, i32) = conn.query_row(
+        "SELECT numero, anulada FROM ventas WHERE id = ?1",
+        rusqlite::params![venta_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| "Venta no encontrada".to_string())?;
+
+    if anulada == 0 {
+        return Err("La venta NO está anulada. No hay nada que reparar.".into());
+    }
+
+    // Cargar items
+    let mut stmt = conn.prepare(
+        "SELECT vd.producto_id, COALESCE(p.nombre, '?'),
+                vd.cantidad, COALESCE(vd.factor_unidad, 1) as factor,
+                vd.lote_id,
+                (COALESCE(p.es_servicio, 0) + COALESCE(p.no_controla_stock, 0)) > 0 as es_servicio
+         FROM venta_detalles vd
+         LEFT JOIN productos p ON vd.producto_id = p.id
+         WHERE vd.venta_id = ?1 AND vd.producto_id IS NOT NULL"
+    ).map_err(|e| e.to_string())?;
+    let items_raw: Vec<(i64, String, f64, f64, Option<i64>, bool)> = stmt.query_map(
+        rusqlite::params![venta_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+    ).map_err(|e| e.to_string())?
+    .filter_map(Result::ok)
+    .collect();
+    drop(stmt);
+
+    let mut reparados: Vec<ItemReparado> = Vec::new();
+    let mut ya_correctos = 0usize;
+    let mut omitidos = 0usize;
+
+    for (pid, nombre, cant, factor, lote_id, es_serv) in items_raw {
+        if es_serv {
+            omitidos += 1;
+            continue;
+        }
+
+        let tiene_mov: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM movimientos_inventario
+             WHERE referencia_id = ?1 AND producto_id = ?2 AND tipo = 'ANULACION_VENTA'",
+            rusqlite::params![venta_id, pid],
+            |r| r.get(0),
+        ).unwrap_or(false);
+
+        if tiene_mov {
+            ya_correctos += 1;
+            continue;
+        }
+
+        let cant_base = cant * factor;
+        let stock_antes: f64 = conn.query_row(
+            "SELECT stock_actual FROM productos WHERE id = ?1",
+            rusqlite::params![pid], |r| r.get(0),
+        ).unwrap_or(0.0);
+
+        conn.execute(
+            "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+            rusqlite::params![cant_base, pid],
+        ).map_err(|e| format!("Error reintegrando stock producto {}: {}", pid, e))?;
+
+        // Reversar lote si aplica
+        if let Some(lid) = lote_id {
+            let _ = conn.execute(
+                "UPDATE lotes_caducidad SET cantidad = cantidad + ?1 WHERE id = ?2",
+                rusqlite::params![cant_base, lid],
+            );
+        }
+
+        // Registrar movimiento de reparación (importante: tipo ANULACION_VENTA
+        // para que un re-verificar marque ya_correcto). Motivo distintivo.
+        let stock_despues = stock_antes + cant_base;
+        let _ = conn.execute(
+            "INSERT INTO movimientos_inventario
+                (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario, referencia_id)
+             VALUES (?1, 'ANULACION_VENTA', ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                pid, cant_base, stock_antes, stock_despues,
+                format!("REPARACION manual anulacion {}", numero),
+                usuario_nombre, venta_id
+            ],
+        );
+
+        reparados.push(ItemReparado {
+            producto_id: pid,
+            producto_nombre: nombre,
+            cantidad_sumada: cant_base,
+            stock_antes,
+            stock_despues,
+        });
+    }
+
+    Ok(ReparacionAnulacion {
+        venta_numero: numero,
+        items_reparados: reparados,
+        items_ya_correctos: ya_correctos,
+        items_omitidos_servicio: omitidos,
+    })
+}
+
 // ─── Detalle completo de NC (v2.3.62) ────────────────────────────────────
 // Para que el modal de detalle pueda mostrar todo: header + items + venta original
 // + desglose de reembolso + retiro_caja vinculado.
