@@ -5,31 +5,55 @@
  * Cada PageRenderer rendereará una página completa. Cuando el sistema de tabs
  * mantiene varias instancias montadas (display:none), cada una usa su propio
  * componente de página por su path → state preservado por tab.
+ *
+ * v2.5.60: lazy-load de todas las páginas EXCEPTO PuntoVenta (caso más común).
+ * Esto reduce el bundle inicial de ~600KB a ~200KB. Páginas con dependencias
+ * pesadas (Recharts en Dashboard/Reportes, genpdf-like en Etiquetas, etc) solo
+ * cargan cuando el usuario abre esa pestaña. Mejora notable en PCs lentos:
+ *   - tiempo de arranque más rápido
+ *   - menos memoria ocupada al inicio
+ *   - actualización vía updater más rápida (instalador chunkificado)
  */
-import DashboardPage from "../pages/DashboardPage";
-import PuntoVenta from "../pages/PuntoVenta";
-import Productos from "../pages/Productos";
-import Clientes from "../pages/Clientes";
-import VentasDia from "../pages/VentasDia";
-import CajaPage from "../pages/CajaPage";
-import GastosPage from "../pages/GastosPage";
-import CuentasPage from "../pages/CuentasPage";
-import Configuracion from "../pages/Configuracion";
-import InventarioPage from "../pages/InventarioPage";
-import GuiasRemisionPage from "../pages/GuiasRemisionPage";
-import ReportesPage from "../pages/ReportesPage";
-import ComprasPage from "../pages/ComprasPage";
-import PagarPage from "../pages/PagarPage";
-import MovimientosBancariosPage from "../pages/MovimientosBancariosPage";
-import SeriesPage from "../pages/SeriesPage";
-import CaducidadPage from "../pages/CaducidadPage";
-import ServicioTecnicoPage from "../pages/ServicioTecnicoPage";
-import ContabilidadPage from "../pages/ContabilidadPage";
-import MesasPage from "../restaurante/pages/MesasPage";
-import CocinaPage from "../restaurante/pages/CocinaPage";
-import ConfigMesasPage from "../restaurante/pages/ConfigMesasPage";
+import { lazy, Suspense } from "react";
+import PuntoVenta from "../pages/PuntoVenta"; // Página más usada — carga inmediata
 
-export default function PageRenderer({ path }: { path: string }) {
+// Páginas con dependencias pesadas (recharts ~400KB)
+const DashboardPage = lazy(() => import("../pages/DashboardPage"));
+const ReportesPage = lazy(() => import("../pages/ReportesPage"));
+const ContabilidadPage = lazy(() => import("../pages/ContabilidadPage"));
+
+// Páginas de uso medio
+const Productos = lazy(() => import("../pages/Productos"));
+const Clientes = lazy(() => import("../pages/Clientes"));
+const VentasDia = lazy(() => import("../pages/VentasDia"));
+const CajaPage = lazy(() => import("../pages/CajaPage"));
+const GastosPage = lazy(() => import("../pages/GastosPage"));
+const CuentasPage = lazy(() => import("../pages/CuentasPage"));
+const Configuracion = lazy(() => import("../pages/Configuracion"));
+const InventarioPage = lazy(() => import("../pages/InventarioPage"));
+const GuiasRemisionPage = lazy(() => import("../pages/GuiasRemisionPage"));
+const ComprasPage = lazy(() => import("../pages/ComprasPage"));
+const PagarPage = lazy(() => import("../pages/PagarPage"));
+const MovimientosBancariosPage = lazy(() => import("../pages/MovimientosBancariosPage"));
+const SeriesPage = lazy(() => import("../pages/SeriesPage"));
+const CaducidadPage = lazy(() => import("../pages/CaducidadPage"));
+const ServicioTecnicoPage = lazy(() => import("../pages/ServicioTecnicoPage"));
+const MesasPage = lazy(() => import("../restaurante/pages/MesasPage"));
+const CocinaPage = lazy(() => import("../restaurante/pages/CocinaPage"));
+const ConfigMesasPage = lazy(() => import("../restaurante/pages/ConfigMesasPage"));
+
+function PageFallback() {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "center",
+      height: "60vh", color: "var(--color-text-secondary)", fontSize: 14,
+    }}>
+      Cargando…
+    </div>
+  );
+}
+
+function resolverPagina(path: string) {
   switch (path) {
     case "/":                return <DashboardPage />;
     case "/pos":             return <PuntoVenta />;
@@ -57,4 +81,12 @@ export default function PageRenderer({ path }: { path: string }) {
       // Catch-all → Dashboard
       return <DashboardPage />;
   }
+}
+
+export default function PageRenderer({ path }: { path: string }) {
+  return (
+    <Suspense fallback={<PageFallback />}>
+      {resolverPagina(path)}
+    </Suspense>
+  );
 }

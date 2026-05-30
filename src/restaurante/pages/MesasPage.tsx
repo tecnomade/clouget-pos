@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "../../components/Toast";
 import { useSesion } from "../../contexts/SesionContext";
+import { usePausableInterval } from "../../hooks/usePausableInterval";
 import {
   listarMesasConEstado,
   listarZonas,
@@ -51,9 +52,12 @@ export default function MesasPage() {
 
   useEffect(() => {
     cargar();
-    const intervalo = setInterval(cargar, 15000);
-    return () => clearInterval(intervalo);
   }, [cargar]);
+
+  // v2.5.60: auto-refresh cada 15s, pausa cuando la tab no está activa.
+  // runOnReactivate=true → al volver a la tab, recarga 1 vez inmediato para
+  // ver estados actualizados sin esperar el siguiente tick de 15s.
+  usePausableInterval(cargar, 15_000, "/mesas", { runOnReactivate: true });
 
   const mesasFiltradas = useMemo(
     () =>

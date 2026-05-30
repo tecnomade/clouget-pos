@@ -9,6 +9,7 @@ import ModalEmailCliente from "../components/ModalEmailCliente";
 import PosGridTactil from "../components/PosGridTactil";
 import { useSesion } from "../contexts/SesionContext";
 import { useTabActivated } from "../contexts/TabsContext";
+import { usePausableInterval } from "../hooks/usePausableInterval";
 import DocumentosRecientes from "../components/DocumentosRecientes";
 import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
 
@@ -1246,19 +1247,19 @@ export default function PuntoVenta() {
     };
   }, [procesarVenta, nuevaVentaClick, guardarComoDocumento, handleGuiaRemision, carrito.length, esFiado, formaPago, total]);
 
-  // Background: procesar emails pendientes cada 60 segundos
-  useEffect(() => {
-    const intervalo = setInterval(() => {
-      procesarEmailsPendientes()
-        .then((res) => {
-          if (res.enviados > 0) {
-            toastExito(`${res.enviados} email(s) pendiente(s) enviado(s)`);
-          }
-        })
-        .catch(() => {}); // silencioso si falla
-    }, 60_000);
-    return () => clearInterval(intervalo);
-  }, [toastExito]);
+  // v2.5.60: background procesar emails pendientes cada 60s, PERO solo cuando
+  // esta tab está activa. Antes el setInterval corría aunque la pestaña /pos
+  // estuviera oculta consumiendo CPU + haciendo SQL queries cada minuto en
+  // todas las instalaciones (multi-tab) que tuvieran POS abierto en background.
+  usePausableInterval(() => {
+    procesarEmailsPendientes()
+      .then((res) => {
+        if (res.enviados > 0) {
+          toastExito(`${res.enviados} email(s) pendiente(s) enviado(s)`);
+        }
+      })
+      .catch(() => {}); // silencioso si falla
+  }, 60_000, "/pos");
 
   const handleEnviarEmailModal = async (emailInput: string) => {
     if (!ventaCompletada?.venta.id) return;

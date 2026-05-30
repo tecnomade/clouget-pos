@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "../../components/Toast";
 import { listarItemsCocinaPendientes, marcarItemCocina } from "../api";
 import type { ItemCocina, EstadoCocina } from "../types";
+import { usePausableInterval } from "../../hooks/usePausableInterval";
 
 const REFRESH_MS = 8000;
 
@@ -44,9 +45,12 @@ export default function CocinaPage() {
 
   useEffect(() => {
     cargar();
-    const intervalo = setInterval(() => cargar(true), REFRESH_MS);
-    return () => clearInterval(intervalo);
   }, [cargar]);
+
+  // v2.5.60: auto-refresh cada 8s, pausa cuando la tab no está activa.
+  // En kiosko (TV cocina) la tab siempre está activa → polling sigue normal.
+  // En POS multi-tab, pausa al cambiar y refresca inmediato al volver.
+  usePausableInterval(() => cargar(true), REFRESH_MS, "/cocina", { runOnReactivate: true });
 
   const conteos = useMemo(() => {
     const c = { PENDIENTE: 0, EN_PREPARACION: 0, LISTO: 0 };
