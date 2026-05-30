@@ -1122,43 +1122,73 @@ export default function VentasDia() {
       )}
 
       {/* Modal: anular venta (solo ventas no autorizadas) */}
-      {anularVentaModal && (
+      {anularVentaModal && (() => {
+        // v2.5.64: derivar variables informativas según forma_pago para mostrar
+        // info clara y específica al user sobre qué pasará con caja/banco/CXC.
+        const fp = (anularVentaModal.forma_pago || "").toUpperCase();
+        const total = anularVentaModal.total ?? 0;
+        const esEfectivo = fp === "EFECTIVO";
+        const esTransfer = fp === "TRANSFER" || fp === "TRANSFERENCIA";
+        const esCredito = fp === "CREDITO";
+        const esMixto = fp === "MIXTO";
+        return (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
           onClick={(e) => { if (e.target === e.currentTarget) { setAnularVentaModal(null); setAnularMotivo(""); } }}>
-          <div className="card" style={{ width: 460 }}>
+          <div className="card" style={{ width: 520, maxHeight: "90vh", overflow: "auto" }}>
             <div className="card-header" style={{ color: "var(--color-danger)" }}>⚠ Anular Venta {anularVentaModal.numero}</div>
             <div className="card-body">
-              <div style={{ padding: 10, background: "rgba(239,68,68,0.1)", borderRadius: 6, marginBottom: 12, fontSize: 12 }}>
-                <strong>Esta accion:</strong>
-                <ul style={{ margin: "6px 0", paddingLeft: 20, lineHeight: 1.6 }}>
+              {/* Cabecera con forma de pago original */}
+              <div style={{ padding: 10, background: "rgba(239,68,68,0.08)", borderRadius: 6, marginBottom: 12, fontSize: 13 }}>
+                <strong>Forma de pago original:</strong>{" "}
+                {esEfectivo && <span>💵 EFECTIVO — ${total.toFixed(2)}</span>}
+                {esTransfer && <span>🏦 TRANSFERENCIA — ${total.toFixed(2)}</span>}
+                {esCredito && <span>📒 CRÉDITO — ${total.toFixed(2)} pendiente</span>}
+                {esMixto && <span>🔀 MIXTO — ${total.toFixed(2)}</span>}
+                {!esEfectivo && !esTransfer && !esCredito && !esMixto && <span>{fp || "?"} — ${total.toFixed(2)}</span>}
+              </div>
+
+              {/* Acciones que se harán */}
+              <div style={{ padding: 10, background: "var(--color-surface-alt)", borderRadius: 6, marginBottom: 12, fontSize: 12 }}>
+                <strong style={{ display: "block", marginBottom: 6 }}>Al confirmar se hará:</strong>
+                <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
                   <li>Marca la venta como <strong>ANULADA</strong></li>
-                  <li>Reintegra el stock de cada producto</li>
-                  <li>Elimina la cuenta por cobrar si existiera</li>
-                  <li>Elimina los pagos registrados</li>
-                  <li>Descuenta el monto del total de ventas de la caja</li>
+                  <li>📦 <strong>Reintegra el stock</strong> de cada producto al inventario</li>
+                  {esCredito && (
+                    <li>📒 <strong>Elimina la cuenta por cobrar</strong> — la deuda del cliente queda en $0</li>
+                  )}
+                  {esEfectivo && (
+                    <li>💵 Descuenta la caja según marques abajo</li>
+                  )}
+                  {esTransfer && (
+                    <li>🏦 El registro bancario <strong>desaparece automáticamente</strong> del listado de movimientos. <em>Tú tienes que hacer la transferencia inversa al cliente desde tu app bancaria</em> — Clouget no controla tu banco.</li>
+                  )}
+                  {esMixto && (
+                    <li>🔀 Procesa cada parte según su forma de pago (efectivo, transfer, crédito)</li>
+                  )}
                 </ul>
-                <em style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                  No se puede deshacer. Si solo desea devolver parte de los productos, use "Devolver" en su lugar.
+                <em style={{ display: "block", marginTop: 8, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  ⚠ No se puede deshacer. Si solo querés devolver parte de los productos, usa "Devolver" en lugar de anular.
                 </em>
               </div>
+
+              {/* Motivo (siempre) */}
               <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 6 }}>
-                Motivo de la anulacion <span style={{ color: "var(--color-danger)" }}>*</span>
+                Motivo de la anulación <span style={{ color: "var(--color-danger)" }}>*</span>
               </label>
               <textarea className="input" rows={3} autoFocus
-                placeholder="Ej: Venta duplicada, error del cajero, cliente cancelo..."
+                placeholder="Ej: Venta duplicada, error del cajero, cliente canceló..."
                 value={anularMotivo}
                 onChange={(e) => setAnularMotivo(e.target.value)} />
 
-              {/* v2.3.50: si la venta era EFECTIVO o MIXTO, preguntar si el efectivo
-                  se devolvio al cliente. Determina si debe restar del monto_esperado. */}
-              {anularVentaModal.forma_pago && ["EFECTIVO", "MIXTO"].includes(anularVentaModal.forma_pago.toUpperCase()) && (
+              {/* Checkbox efectivo (EFECTIVO o MIXTO con efectivo) */}
+              {(esEfectivo || esMixto) && (
                 <div style={{
                   marginTop: 12, padding: 10,
                   background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
                   borderRadius: 6, fontSize: 12,
                 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--color-warning)" }}>
-                    💵 Esta venta fue {anularVentaModal.forma_pago === "MIXTO" ? "MIXTA con efectivo" : "en EFECTIVO"} (${anularVentaModal.total?.toFixed(2)})
+                    💵 {esMixto ? "Esta venta tuvo efectivo (parcial)" : "Esta venta fue en EFECTIVO"}
                   </div>
                   <label style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
                     <input type="checkbox" checked={anularEfectivoDevuelto}
@@ -1167,11 +1197,43 @@ export default function VentasDia() {
                     <span>
                       <strong>Ya devolví el efectivo al cliente</strong>
                       <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
-                        ✅ Marcado: la caja se ajusta restando el efectivo (cliente recibió el dinero).<br/>
+                        ✅ Marcado: la caja se ajusta restando el efectivo (caso normal — cliente recibió el dinero).<br/>
                         ⬜ Desmarcado: el efectivo queda en caja como sobrante (anulación contable, cliente nunca lo recibió).
                       </div>
                     </span>
                   </label>
+                </div>
+              )}
+
+              {/* Aviso TRANSFER */}
+              {esTransfer && (
+                <div style={{
+                  marginTop: 12, padding: 10,
+                  background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.3)",
+                  borderRadius: 6, fontSize: 12,
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, color: "#2563eb" }}>
+                    🏦 Recordatorio: devolución manual al cliente
+                  </div>
+                  <div style={{ color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                    Al anular, esta entrada desaparece de Movimientos Bancarios automáticamente. Pero el dinero <strong>sigue en tu cuenta bancaria</strong>. Hazle la transferencia inversa al cliente desde tu app del banco para devolverle el dinero. Clouget no puede mover plata en tu cuenta.
+                  </div>
+                </div>
+              )}
+
+              {/* Aviso CREDITO */}
+              {esCredito && (
+                <div style={{
+                  marginTop: 12, padding: 10,
+                  background: "rgba(217,119,6,0.08)", border: "1px solid rgba(217,119,6,0.3)",
+                  borderRadius: 6, fontSize: 12,
+                }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, color: "#d97706" }}>
+                    📒 Esta venta era a crédito
+                  </div>
+                  <div style={{ color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
+                    Al anular se elimina la cuenta por cobrar entera (${total.toFixed(2)}). Si el cliente ya había abonado algo parcialmente, esos pagos también se eliminarán.
+                  </div>
                 </div>
               )}
 
@@ -1187,13 +1249,14 @@ export default function VentasDia() {
                       await cargar();
                     } catch (err) { toastError("Error: " + err); }
                   }}>
-                  Confirmar anulacion
+                  Confirmar anulación
                 </button>
               </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Modal: forma de pago para SRI cuando venta es a credito o mixto */}
       {sriPagoVenta && (

@@ -6,6 +6,60 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.64 — 2026-05-30 🎨 UX modal de anular: info clara según forma de pago
+
+Mejorado el modal de "Anular venta" para que el usuario sepa exactamente **qué va a pasar con su dinero** según cómo cobró originalmente la venta.
+
+### Antes vs ahora
+
+**Antes** (lista genérica):
+- Marca como ANULADA
+- Reintegra stock
+- Elimina la cuenta por cobrar si existiera
+- Elimina los pagos registrados
+- Descuenta el monto del total de ventas de la caja
+
+**Ahora** (acciones específicas según forma_pago, con explicación):
+
+#### Cuando es EFECTIVO 💵
+- Cabecera: "Forma de pago original: 💵 EFECTIVO — $5.00"
+- Acciones: Marca anulada + reintegra stock + descuenta caja según marques abajo
+- Checkbox: "Ya devolví el efectivo al cliente" (mismo de antes, mejor explicado)
+
+#### Cuando es TRANSFERENCIA 🏦
+- Cabecera: "Forma de pago original: 🏦 TRANSFERENCIA — $5.00"
+- Acciones: Marca anulada + reintegra stock + el registro bancario desaparece auto del listado
+- **Aviso azul**: "Recordatorio: devolución manual al cliente — el dinero sigue en tu cuenta bancaria. Hazle la transferencia inversa desde tu app del banco."
+- (No hay checkbox porque caja no se toca)
+
+#### Cuando es CRÉDITO 📒
+- Cabecera: "Forma de pago original: 📒 CRÉDITO — $5.00 pendiente"
+- Acciones: Marca anulada + reintegra stock + **elimina la cuenta por cobrar** (la deuda del cliente queda en $0)
+- **Aviso naranja**: "Si el cliente ya había abonado algo parcialmente, esos pagos también se eliminarán"
+
+#### Cuando es MIXTO 🔀
+- Cabecera: "Forma de pago original: 🔀 MIXTO — $5.00"
+- Procesa cada parte según su forma (efectivo + transfer + crédito)
+- Checkbox de efectivo aparece solo si la mixta incluía efectivo
+- Acciones se aplican selectivamente
+
+### Por qué cambió
+
+Antes el user no sabía si una venta TRANSFER:
+- ¿La caja se descuenta? (No, pero no quedaba claro)
+- ¿Tengo que devolver el dinero al cliente? (Sí, pero el sistema no lo recordaba)
+
+Para CRÉDITO:
+- ¿Qué pasa con la CXC? (Se elimina, pero no estaba en la lista de acciones)
+
+Ahora el modal muestra exactamente lo que pasa y le recuerda al user las acciones manuales que tiene que tomar fuera del POS (devolución bancaria).
+
+### Sin cambios funcionales
+
+Todo el código del backend sigue igual (los fixes de v2.5.62/63 ya se aplicaron). Esto es solo UX más clara.
+
+---
+
 ## v2.5.63 — 2026-05-30 💰 Fix raíz caja al anular + compensación auto cajas abiertas
 
 ### El problema
