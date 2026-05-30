@@ -3177,15 +3177,22 @@ pub fn anular_venta(
         rusqlite::params![obs_anulacion, venta_id]
     ).map_err(|e| e.to_string())?;
 
-    // v2.3.49 FIX: revertir monto_ventas (todas las formas) y monto_esperado
-    // (solo porcion EFECTIVO, calculada antes de borrar pagos_venta arriba).
-    // Antes solo se restaba monto_ventas, dejando monto_esperado inflado por
-    // efectivo fantasma de ventas anuladas → cierre con descuadre falso.
+    // v2.5.63: CRÍTICO — UPDATE de caja ya NO usa .ok() (silenciaba errores).
+    // Mismo bug que el de stock: si este UPDATE fallaba (ej. por trigger o
+    // tipo de columna), la venta quedaba marcada anulada pero la caja seguía
+    // contando el dinero. Ahora si falla, devolvemos error real al user.
+    //
+    // Solo descontamos la caja ABIERTA. Si la caja en que se hizo la venta
+    // ya fue cerrada, ese cierre NO se altera (caso ya cerrado/cuadrado).
     conn.execute(
         "UPDATE caja SET monto_ventas = monto_ventas - ?1, monto_esperado = monto_esperado - ?2
          WHERE estado = 'ABIERTA'",
         rusqlite::params![total, efectivo_a_restar]
-    ).ok();
+    ).map_err(|e| format!(
+        "Error actualizando caja al anular: {}. La anulación NO se aplicó. \
+         Stock ya fue revertido si llegó hasta aquí — revisa logs.",
+        e
+    ))?;
 
     Ok(())
 }

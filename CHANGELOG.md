@@ -6,6 +6,56 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.63 — 2026-05-30 💰 Fix raíz caja al anular + compensación auto cajas abiertas
+
+### El problema
+
+v2.5.62 arregló la reversión de stock al anular, pero el mismo bug existía en la actualización de la caja: el UPDATE usaba `.ok()` y silenciaba errores. Resultado reportado: al anular venta EFECTIVO con "ya devolví el dinero" marcado, **el monto_esperado no se descontaba**.
+
+### Fix raíz (igual que stock en v2.5.62)
+
+En `anular_venta`, el UPDATE de caja ahora usa `map_err`:
+
+```diff
+- ).ok();
++ ).map_err(|e| format!(
++     "Error actualizando caja al anular: {}. La anulación NO se aplicó.", e
++ ))?;
+```
+
+Si Cuando arregla caja:
+- ✅ funcionaba antes (caso normal): sigue funcionando
+- ❌ fallaba silenciosamente: ahora devuelve error claro al user → puede investigar
+
+### Migración self-healing para cajas abiertas con anulaciones huérfanas
+
+Al arrancar v2.5.63 por primera vez, busca:
+- Ventas con `anulada=1` y `forma_pago='EFECTIVO'`
+- Cuya caja está **AÚN ABIERTA** (cajas cerradas no se tocan — ya están cuadradas)
+- Compensa el `monto_esperado` y `monto_ventas` restando el total de cada una
+
+**Idempotente:** flag en `config.migracion_v2_5_63_caja_anulada_aplicada` para que solo corra 1 vez.
+
+Para tu venta NV-000000110 ($5 EFECTIVO en caja #52 que sigue abierta):
+- Al actualizar, la migración detecta que esa anulación quedó sin compensar
+- Resta $5 al `monto_esperado` de tu caja #52
+- En el siguiente cierre tu monto esperado va a estar correcto
+
+### Sobre devolución por transferencia
+
+Cuando la venta era TRANSFERENCIA, **no hay que tocar caja** (el dinero nunca entró a caja, entró al banco). Al anular:
+- La entrada en MovimientosBancariosPage **desaparece automáticamente** (esos movimientos se computan dinámicamente filtrando `anulada=0`)
+- El user debe hacer manualmente la transferencia inversa al cliente desde su app bancaria — Clouget no controla bancos externos
+
+### Sobre crédito (CXC)
+
+Ya se eliminaba la CXC al anular (`DELETE FROM cuentas_por_cobrar WHERE venta_id`), pero no estaba claro en el modal. **Pendiente UX v2.5.64**: mejorar el modal de anular para mostrar:
+- Si TRANSFER: "Esta venta era una transferencia al banco X. La anulación elimina el registro contable, pero la transferencia inversa al cliente debes hacerla manualmente."
+- Si CREDITO: "Esta venta era a crédito ($X pendiente). La cuenta por cobrar se eliminará."
+- Si MIXTO: desglose por forma de pago
+
+---
+
 ## v2.5.62 — 2026-05-30 🔧 Auto-reparación de anulaciones + fix raíz del problema
 
 Reemplaza el enfoque de v2.5.61 (botón "Reparar") por algo automático y transparente.

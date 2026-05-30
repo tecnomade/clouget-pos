@@ -1837,5 +1837,67 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
     }
 
+    // ─── v2.5.63: Auto-reparación de caja — anulaciones que no descontaron ───
+    // Reportado: al anular venta EFECTIVO, el monto_esperado de caja NO se
+    // descontaba (mismo bug del .ok() silenciando errores).
+    //
+    // Solo CAJAS ABIERTAS. Cajas cerradas ya están cuadradas (el cierre asumió
+    // el monto que tenía en su momento y no se debe re-ajustar).
+    //
+    // Idempotente vía flag en `config`: corre 1 sola vez por instalación.
+    let migracion_aplicada: bool = conn.query_row(
+        "SELECT 1 FROM config WHERE key = 'migracion_v2_5_63_caja_anulada_aplicada'",
+        [], |_| Ok(true),
+    ).unwrap_or(false);
+    if !migracion_aplicada {
+        // Resta del monto_esperado de cajas abiertas el total de cada venta
+        // EFECTIVO anulada que tiene la columna caja_id apuntando a esa caja.
+        // Esto compensa el descuento que originalmente debía haber hecho
+        // anular_venta pero que falló silenciosamente.
+        let mut stmt = conn.prepare("
+            SELECT v.id, v.numero, v.total, v.caja_id
+            FROM ventas v
+            JOIN caja c ON v.caja_id = c.id
+            WHERE v.anulada = 1
+              AND v.forma_pago = 'EFECTIVO'
+              AND c.estado = 'ABIERTA'
+        ");
+        if let Ok(mut stmt) = stmt {
+            let rows = stmt.query_map([], |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
+                r.get::<_, i64>(3)?,
+            )));
+
+            if let Ok(rows) = rows {
+                let items: Vec<(i64, String, f64, i64)> = rows.filter_map(|r| r.ok()).collect();
+                let cuantos = items.len();
+
+                if cuantos > 0 {
+                    eprintln!(
+                        "[Migración v2.5.63] {} anulación(es) EFECTIVO en caja abierta sin descuento. Compensando...",
+                        cuantos
+                    );
+
+                    for (_venta_id, numero, total, caja_id) in &items {
+                        let _ = conn.execute(
+                            "UPDATE caja SET monto_esperado = monto_esperado - ?1,
+                                              monto_ventas   = monto_ventas - ?1
+                             WHERE id = ?2",
+                            rusqlite::params![total, caja_id],
+                        );
+                        eprintln!("  · Venta {} ${:.2} compensada en caja #{}", numero, total, caja_id);
+                    }
+                    eprintln!("[Migración v2.5.63] Compensación completada.");
+                }
+            }
+        }
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES ('migracion_v2_5_63_caja_anulada_aplicada', '1')",
+            [],
+        );
+    }
+
     Ok(())
 }
