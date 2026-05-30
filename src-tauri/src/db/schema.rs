@@ -1784,7 +1784,10 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             if let Ok(rows) = rows {
                 let items: Vec<(i64, i64, i64, f64, f64, Option<i64>, f64, String)> =
                     rows.filter_map(|r| r.ok()).collect();
-                drop(stmt);
+                // Nota: NO hacemos drop(stmt) — sale de scope al final del
+                // `if let Ok(mut stmt) = stmt {`. Hacerlo manualmente confunde
+                // al borrow checker porque `rows` borrowea `stmt` aunque ya
+                // colectamos en `items`.
 
                 let cuantos = items.len();
                 if cuantos > 0 {
