@@ -6,6 +6,54 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.59 — 2026-05-30 🖨 Fix impresión 80mm: cotización mostraba "FACTURA" + decimales desbordados
+
+Dos bugs visibles solo en **impresión directa a térmica 80mm** (ESC/POS), no en el RIDE PDF.
+
+### Bug A: cotización se imprimía como "FACTURA" o "NOTA DE VENTA"
+
+**Síntoma:** guardar una venta como cotización (botón "Cotización"), imprimir directo en térmica → en lugar del título **"COTIZACION"** aparecía **"FACTURA"** o **"NOTA DE VENTA"** sobre la línea del código.
+
+**Causa raíz:** las cotizaciones se guardan en BD con `tipo_documento = "NOTA_VENTA"` (o `FACTURA`) pero `tipo_estado = "COTIZACION"`. El renderizador del ticket 80mm solo miraba `tipo_documento`, ignorando `tipo_estado`. El RIDE PDF ya manejaba ambos campos correctamente — por eso el bug solo se veía en impresión directa.
+
+**Fix:** ahora el ticket también lee `tipo_estado` igual que el PDF:
+```rust
+let es_cotizacion = tipo_documento == "COTIZACION" || tipo_estado == "COTIZACION";
+let es_borrador   = tipo_documento == "BORRADOR"   || tipo_estado == "BORRADOR";
+let es_guia       = tipo_documento == "GUIA_REMISION" || tipo_estado == "GUIA_REMISION";
+```
+
+### Bug B: los decimales del precio se desbordaban a línea nueva
+
+**Síntoma:** cada item del ticket impreso generaba una línea fantasma debajo con solo `.00` o `.50` (los decimales del subtotal cortados).
+
+**Causa raíz:** error de cálculo en el ancho de columnas. El layout del detalle era:
+
+```
+nombre (ancho-20) + espacio + cant (4) + espacio + p.unit (7) + espacio + subtot (8)
+```
+
+Sumaba **`ancho + 2`** chars en cada línea (44 chars cuando el ancho de impresora es 42). La térmica hacía word-wrap → los últimos 2 chars (decimales) caían en línea nueva.
+
+**Fix:** cambiar `ancho-20` por `ancho-22` para que la suma cuadre exactamente con el ancho:
+
+```diff
+-    let col_nombre = ancho.saturating_sub(20).max(14);
++    let col_nombre = ancho.saturating_sub(22).max(14);
+```
+
+Ahora el detalle ocupa exactamente `ancho` chars y no hay wrap.
+
+### Impacto
+
+| Antes | Ahora |
+|---|---|
+| Cotización 80mm → "FACTURA" | Cotización 80mm → "COTIZACION" ✅ |
+| Item: `7UP 1LT  1  5.00  5.00\n` (línea desbordada con `.00` abajo) | Item: `7UP 1LT  1  5.00  5.00\n` (1 sola línea) ✅ |
+| RIDE PDF | Sin cambios (ya estaba bien) |
+
+---
+
 ## v2.5.58 — 2026-05-29 🐛 Eliminar producto + secuencial Config en tiempo real
 
 ### Bug A: eliminar producto se ejecutaba ANTES de confirmar

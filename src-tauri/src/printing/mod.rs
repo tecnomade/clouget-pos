@@ -92,14 +92,19 @@ pub fn generar_ticket(
     ticket.extend_from_slice(linea_separador_doble(ancho).as_bytes());
 
     // === TIPO DE DOCUMENTO - prominente, doble alto, centrado ===
-    let es_cotizacion = venta.venta.tipo_documento == "COTIZACION";
-    let es_borrador = venta.venta.tipo_documento == "BORRADOR";
-    let tipo_doc = match venta.venta.tipo_documento.as_str() {
-        "FACTURA" => "FACTURA",
-        "COTIZACION" => "COTIZACION",
-        "BORRADOR" => "BORRADOR",
-        _ => "NOTA DE VENTA",
-    };
+    // v2.5.59: las cotizaciones/borradores SE GUARDAN con tipo_documento=NOTA_VENTA
+    // o FACTURA, pero su `tipo_estado` = "COTIZACION"/"BORRADOR". Si solo miramos
+    // tipo_documento, el ticket impreso decía "FACTURA" o "NOTA DE VENTA" cuando
+    // debería decir "COTIZACION". El RIDE PDF ya lo hace bien, este lo igualo.
+    let tipo_estado = venta.venta.tipo_estado.as_deref().unwrap_or("");
+    let es_cotizacion = venta.venta.tipo_documento == "COTIZACION" || tipo_estado == "COTIZACION";
+    let es_borrador = venta.venta.tipo_documento == "BORRADOR" || tipo_estado == "BORRADOR";
+    let es_guia = venta.venta.tipo_documento == "GUIA_REMISION" || tipo_estado == "GUIA_REMISION";
+    let tipo_doc = if es_cotizacion { "COTIZACION" }
+        else if es_borrador { "BORRADOR" }
+        else if es_guia { "GUIA DE REMISION" }
+        else if venta.venta.tipo_documento == "FACTURA" { "FACTURA" }
+        else { "NOTA DE VENTA" };
     ticket.extend_from_slice(esc_center);
     ticket.extend_from_slice(esc_bold_on);
     ticket.extend_from_slice(esc_double_h); // Doble alto para prominencia
@@ -123,9 +128,12 @@ pub fn generar_ticket(
     ticket.extend_from_slice(linea_separador_simple(ancho).as_bytes());
 
     // Cabecera de detalle
-    // v2.5.14: columnas calibradas para que SUMEN exactamente `ancho` (default 42).
-    // Layout: nombre (ancho-20) + cant (4) + p.unit (7) + subtot (8) + 3 espacios = ancho
-    let col_nombre: usize = ancho.saturating_sub(20).max(14);
+    // v2.5.59: BUG fix — el layout viejo (ancho-20) producía 44 chars con ancho=42
+    // (default 80mm). La impresora hacía wrap y los decimales del subtotal caían
+    // en línea nueva creando 1 línea fantasma por item.
+    // Layout correcto: nombre (ancho-22) + " " + cant (4) + " " + p.unit (7) + " " + subtot (8) = ancho
+    //   ancho-22 + 1 + 4 + 1 + 7 + 1 + 8 = ancho ✅
+    let col_nombre: usize = ancho.saturating_sub(22).max(14);
     ticket.extend_from_slice(esc_bold_on);
     ticket.extend_from_slice(
         format!(
