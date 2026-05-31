@@ -13,6 +13,7 @@ import {
   consultarIdentificacion,
   previewXmlCompra,
   importarXmlCompra,
+  validarClaveAccesoSri,
   listarCategorias,
   listarCuentasBanco,
   registrarDevolucionCompra,
@@ -205,6 +206,7 @@ export default function ComprasPage() {
   const [xmlReferencia, setXmlReferencia] = useState<string>("");
   const [cuentasBancoXml, setCuentasBancoXml] = useState<CuentaBanco[]>([]);
   const [xmlProcesando, setXmlProcesando] = useState(false);
+  const [validandoSri, setValidandoSri] = useState(false); // v2.5.65
   const [categoriasXml, setCategoriasXml] = useState<Categoria[]>([]);
   // Búsqueda producto existente
   const [xmlBusquedaIdx, setXmlBusquedaIdx] = useState<number | null>(null);
@@ -380,6 +382,7 @@ export default function ComprasPage() {
         banco_id: reqBanco ? (xmlBancoId as number) : null,
         referencia_pago: reqBanco && xmlReferencia.trim() ? xmlReferencia.trim() : null,
         autorizada: xmlPreview.autorizada,
+        estado_sri_xml: xmlPreview.estado_sri || null,
         clave_acceso: xmlPreview.clave_acceso || null,
       });
       const partes: string[] = [];
@@ -1478,25 +1481,67 @@ export default function ComprasPage() {
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setXmlPreview(null)} disabled={xmlProcesando}>x</button>
             </div>
             <div className="card-body">
-              {/* v2.5.30: badge de autorización SRI + alerta de duplicado */}
-              <div style={{ marginBottom: 12, padding: 10, borderRadius: 6,
-                background: xmlPreview.autorizada ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)",
-                border: `1px solid ${xmlPreview.autorizada ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.35)"}` }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
-                  {xmlPreview.autorizada
-                    ? "✅ Factura SRI AUTORIZADA — se registrará como FACTURA con clave de acceso"
-                    : "⚠ XML NO autorizado por SRI — se registrará como NOTA DE VENTA"}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                  Estado XML: {xmlPreview.estado_sri || "no detectado"} · Clave de acceso: {xmlPreview.clave_acceso ? `${xmlPreview.clave_acceso.length} dig` : "ninguna"}
-                </div>
-                {xmlPreview.compra_duplicada_id && (
-                  <div style={{ marginTop: 6, padding: 8, background: "rgba(239,68,68,0.15)",
-                    border: "1px solid rgba(239,68,68,0.45)", borderRadius: 4, fontSize: 12, fontWeight: 600, color: "var(--color-danger)" }}>
-                    🚫 Esta factura ya fue importada previamente (compra interna #{xmlPreview.compra_duplicada_id}). No se puede registrar de nuevo.
+              {/* v2.5.30/65: badge de autorización SRI + alerta de duplicado.
+                  Distinguimos 3 casos:
+                    - autorizada=true + estado AUTORIZADO → factura validada (verde)
+                    - autorizada=true + estado PENDIENTE/EN_PROCESO/RECIBIDA → factura formal SRI procesando (azul)
+                    - autorizada=false → XML sin firma, se registra como NOTA_VENTA (amarillo) */}
+              {(() => {
+                const estado = (xmlPreview.estado_sri || "").toUpperCase();
+                const esPendiente = xmlPreview.autorizada && ["PENDIENTE", "EN_PROCESO", "RECIBIDA"].includes(estado);
+                const colorBg = esPendiente ? "rgba(37,99,235,0.10)" : (xmlPreview.autorizada ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)");
+                const colorBorder = esPendiente ? "rgba(37,99,235,0.35)" : (xmlPreview.autorizada ? "rgba(34,197,94,0.35)" : "rgba(245,158,11,0.35)");
+                return (
+                  <div style={{ marginBottom: 12, padding: 10, borderRadius: 6, background: colorBg, border: `1px solid ${colorBorder}` }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>
+                      {esPendiente
+                        ? `⏳ XML válido — SRI todavía está procesando (${estado}). Se registrará como FACTURA con clave de acceso.`
+                        : xmlPreview.autorizada
+                          ? "✅ Factura SRI AUTORIZADA — se registrará como FACTURA con clave de acceso"
+                          : "⚠ XML sin firma SRI — se registrará como NOTA DE VENTA"}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Estado XML: {xmlPreview.estado_sri || "no detectado"} · Clave de acceso: {xmlPreview.clave_acceso ? `${xmlPreview.clave_acceso.length} dig` : "ninguna"}
+                    </div>
+                    {esPendiente && (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "#1e40af" }}>
+                        ℹ El SRI puede tardar minutos en autorizar. Podés consultar el estado actual ahora:
+                        <div style={{ marginTop: 6 }}>
+                          <button className="btn btn-outline" style={{ fontSize: 11, padding: "3px 10px" }}
+                            disabled={validandoSri || !xmlPreview.clave_acceso}
+                            onClick={async () => {
+                              if (!xmlPreview.clave_acceso) return;
+                              setValidandoSri(true);
+                              try {
+                                const r = await validarClaveAccesoSri(xmlPreview.clave_acceso);
+                                if (r.autorizado) {
+                                  // El SRI ya autorizó — actualizar el preview a AUTORIZADO
+                                  setXmlPreview({ ...xmlPreview, autorizada: true, estado_sri: "AUTORIZADO" });
+                                  toastExito(`✅ SRI confirma: AUTORIZADO${r.numero_autorizacion ? ` (aut. ${r.numero_autorizacion})` : ""}`);
+                                } else {
+                                  setXmlPreview({ ...xmlPreview, estado_sri: r.estado });
+                                  toastError(`SRI responde: ${r.estado}. ${r.mensaje}`);
+                                }
+                              } catch (err) {
+                                toastError("No se pudo consultar SRI: " + err);
+                              } finally {
+                                setValidandoSri(false);
+                              }
+                            }}>
+                            {validandoSri ? "⏳ Consultando SRI..." : "🔄 Validar con SRI ahora"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
+              })()}
+              {xmlPreview.compra_duplicada_id && (
+                <div style={{ marginBottom: 12, padding: 8, background: "rgba(239,68,68,0.15)",
+                  border: "1px solid rgba(239,68,68,0.45)", borderRadius: 4, fontSize: 12, fontWeight: 600, color: "var(--color-danger)" }}>
+                  🚫 Esta factura ya fue importada previamente (compra interna #{xmlPreview.compra_duplicada_id}). No se puede registrar de nuevo.
+                </div>
+              )}
               {/* Proveedor */}
               <div className="card mb-4" style={{ background: "rgba(255,255,255,0.03)" }}>
                 <div className="card-body" style={{ padding: 12 }}>

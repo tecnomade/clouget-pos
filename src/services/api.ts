@@ -1636,14 +1636,29 @@ export interface ImportarXmlInput {
   dias_credito?: number | null;
   banco_id?: number | null;
   referencia_pago?: string | null;
-  /** v2.5.30: si el XML estaba <estado>AUTORIZADO</estado> → registrar como FACTURA SRI */
+  /** v2.5.30: si el XML estaba <estado>AUTORIZADO</estado> → registrar como FACTURA SRI.
+   *  v2.5.65: también true si el XML tiene clave válida + PENDIENTE/EN_PROCESO/RECIBIDA */
   autorizada?: boolean;
+  /** v2.5.65: estado SRI real del XML ("AUTORIZADO", "PENDIENTE", "EN_PROCESO", "RECIBIDA").
+   *  Se persiste como estado_sri de la compra. Para PENDIENTE, el user puede revalidar luego. */
+  estado_sri_xml?: string | null;
   /** Clave de acceso (49 dig) — clave única antiduplicado */
   clave_acceso?: string | null;
 }
 
 export const previewXmlCompra = (xmlContenido: string) =>
   smartInvoke<PreviewXmlCompra>("preview_xml_compra", { xmlContenido });
+
+export interface ResultadoValidacionSri {
+  autorizado: boolean;
+  estado: string;
+  numero_autorizacion: string | null;
+  fecha_autorizacion: string | null;
+  mensaje: string;
+}
+/** v2.5.65: consulta en vivo el estado SRI de una clave de acceso (49 dig) */
+export const validarClaveAccesoSri = (claveAcceso: string) =>
+  smartInvoke<ResultadoValidacionSri>("validar_clave_acceso_sri", { claveAcceso });
 
 export const importarXmlCompra = (input: ImportarXmlInput) =>
   smartInvoke<{ compra_id: number | null; productos_creados: number; gastos_creados: number; items_compra: number }>(

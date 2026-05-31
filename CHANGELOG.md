@@ -6,6 +6,65 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.65 — 2026-05-31 📥 Importar XML SRI con estado PENDIENTE / EN_PROCESO acepta como FACTURA
+
+### El caso reportado
+
+Un cliente importó una factura electrónica del SRI (de UNICOMER, una factura legítima de $199 firmada digitalmente) y el POS le dijo:
+> ⚠ XML NO autorizado por SRI — se registrará como NOTA DE VENTA
+
+Pero el XML era válido: tenía clave de acceso de 49 dígitos, firma XAdES-BES, y todos los datos correctos. El "problema" era que el wrapper `<autorizacion>` decía `<estado>PENDIENTE</estado>` en lugar de `<estado>AUTORIZADO</estado>` — el SRI todavía estaba procesando el envío de Unicomer en el momento que el XML se generó para el cliente.
+
+### Causa
+
+El código solo aceptaba estado `AUTORIZADO` exacto. Cualquier otro estado caía a NOTA_VENTA, perdiendo la información SRI valiosa.
+
+### Fix
+
+Ahora el código distingue 3 casos:
+
+| Caso XML | Antes | Ahora |
+|---|---|---|
+| `<estado>AUTORIZADO</estado>` + clave acceso | ✅ FACTURA + estado_sri=AUTORIZADA | igual |
+| `<estado>PENDIENTE/EN_PROCESO/RECIBIDA</estado>` + clave 49 dig válida | ❌ NOTA_VENTA (perdíamos la clave) | ✅ **FACTURA + estado_sri=PENDIENTE** (con clave para revalidar después) |
+| Sin firma / sin estado | ❌ NOTA_VENTA | igual |
+
+### UI mejorada
+
+El modal de "Importar XML" muestra ahora 3 banners distintos según estado:
+
+- 🟢 **Verde** (AUTORIZADO): "Factura SRI AUTORIZADA — se registrará como FACTURA con clave de acceso"
+- 🔵 **Azul** (PENDIENTE/EN_PROCESO): "XML válido — SRI todavía está procesando. Se registrará como FACTURA con clave de acceso. Una vez autorizado por SRI, la clave servirá automáticamente como respaldo tributario."
+- 🟡 **Amarillo** (sin firma): "XML sin firma SRI — se registrará como NOTA DE VENTA"
+
+### Estado en BD
+
+Las facturas importadas en estado PENDIENTE quedan con:
+- `tipo_documento = 'FACTURA'`
+- `estado_sri = 'PENDIENTE'`
+- `clave_acceso` guardada (la misma que el SRI usará al autorizar)
+
+El user puede después validar manualmente el estado actual del SRI (la mayoría de PENDIENTE pasan a AUTORIZADO en minutos).
+
+### 🔄 Validación en vivo con el SRI
+
+Para XMLs en estado PENDIENTE/EN_PROCESO, el modal muestra un botón **"🔄 Validar con SRI ahora"** que consulta el estado ACTUAL de la clave de acceso directamente al web service del SRI:
+
+- Si el SRI responde **AUTORIZADO** → el badge cambia a verde y la factura se registra como AUTORIZADA con su número de autorización
+- Si sigue **PENDIENTE/EN_PROCESO** → muestra el estado real y mantiene el azul
+
+El ambiente (pruebas/producción) se infiere automáticamente del dígito 24 de la clave de acceso, así que funciona con cualquier factura sin configuración extra.
+
+Backend: nuevo comando `validar_clave_acceso_sri(clave_acceso)` que reutiliza `soap::consultar_autorizacion` (el mismo que usa la emisión de facturas propias).
+
+### Por qué es seguro
+
+- **No relajamos seguridad**: el wrapper PENDIENTE solo se acepta SI hay clave de acceso de 49 dígitos válida (numérica). Un XML mal formado no pasa.
+- **Anti-duplicado**: la clave de acceso es UNIQUE INDEX en `compras` — no se puede registrar 2 veces la misma factura aunque el SRI la autorice después.
+- **Validación opcional contra SRI**: el user puede confirmar el estado real en el momento sin salir del POS.
+
+---
+
 ## v2.5.64 — 2026-05-30 🎨 UX modal de anular: info clara según forma de pago
 
 Mejorado el modal de "Anular venta" para que el usuario sepa exactamente **qué va a pasar con su dinero** según cómo cobró originalmente la venta.

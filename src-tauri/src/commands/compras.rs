@@ -769,6 +769,8 @@ pub fn preview_xml_compra(
     // v2.5.30: detectar si el XML viene envuelto en <autorizacion><estado>AUTORIZADO</estado>
     // (formato de autorización del SRI). Si sí → factura autorizada legítima.
     // Si no → puede ser un XML sin autorizar / generado / manipulado → tratar como NOTA_VENTA.
+    // v2.5.65: si el estado es PENDIENTE/EN_PROCESO/RECIBIDA pero hay clave de
+    // acceso válida (49 dig) + firma → tratar como FACTURA con estado_sri pendiente.
     let estado_sri_xml: Option<String> = {
         let bytes = xml_contenido.as_bytes();
         let mut reader = Reader::from_reader(bytes);
@@ -803,7 +805,8 @@ pub fn preview_xml_compra(
         let t = estado_text.trim().to_string();
         if t.is_empty() { None } else { Some(t) }
     };
-    let autorizada = estado_sri_xml.as_deref().map(|s| s.eq_ignore_ascii_case("AUTORIZADO")).unwrap_or(false);
+    // v2.5.65: se re-evalúa más abajo. Inicial: solo basado en estado wrapper.
+    let autorizada_estado = estado_sri_xml.as_deref().map(|s| s.eq_ignore_ascii_case("AUTORIZADO")).unwrap_or(false);
 
     // Algunos XMLs del SRI envuelven la factura dentro de <autorizacion><comprobante><![CDATA[...]]></comprobante>
     // Intentamos detectar esto y desenrollar el contenido real de la factura.
@@ -1086,6 +1089,17 @@ pub fn preview_xml_compra(
         ).ok()
     } else { None };
 
+    // v2.5.65: re-evaluar `autorizada` ahora que tenemos clave_acceso.
+    // Si el wrapper dice AUTORIZADO → autorizada
+    // O si dice PENDIENTE/EN_PROCESO/RECIBIDA + clave válida de 49 dígitos →
+    //   autorizada (factura formal del proveedor, SRI está procesando todavía).
+    let clave_es_valida = clave_acceso.len() == 49 && clave_acceso.chars().all(|c| c.is_ascii_digit());
+    let estado_es_provisional = estado_sri_xml.as_deref().map(|s| {
+        let u = s.to_uppercase();
+        u == "PENDIENTE" || u == "EN_PROCESO" || u == "RECIBIDA"
+    }).unwrap_or(false);
+    let autorizada = autorizada_estado || (clave_es_valida && estado_es_provisional);
+
     Ok(PreviewXmlCompra {
         proveedor_ruc,
         proveedor_nombre,
@@ -1140,9 +1154,15 @@ pub struct ImportarXmlInput {
     pub referencia_pago: Option<String>,
     /// v2.5.30: del XML — si vino dentro de <autorizacion><estado>AUTORIZADO</estado>
     /// el frontend lo pasa como true y se registra como FACTURA + estado_sri=AUTORIZADA.
+    /// v2.5.65: también es true si el XML tiene clave válida + estado PENDIENTE/EN_PROCESO/RECIBIDA
+    /// (factura formal del proveedor que el SRI está procesando todavía).
     /// Si false → NOTA_VENTA (sin validez tributaria de soporte).
     #[serde(default)]
     pub autorizada: bool,
+    /// v2.5.65: estado SRI real del XML ("AUTORIZADO", "PENDIENTE", "EN_PROCESO", etc.)
+    /// para persistir correctamente. Si no viene, se infiere desde `autorizada`.
+    #[serde(default)]
+    pub estado_sri_xml: Option<String>,
     /// Clave de acceso SRI (49 dig) — clave única que evita doble importación
     #[serde(default)]
     pub clave_acceso: Option<String>,
@@ -1159,7 +1179,18 @@ pub fn importar_xml_compra(
 
     // v2.5.30: determinar tipo_documento por estado de autorización del XML
     let tipo_doc_xml = if input.autorizada { "FACTURA" } else { "NOTA_VENTA" };
-    let estado_sri_xml = if input.autorizada { Some("AUTORIZADA".to_string()) } else { None };
+    // v2.5.65: si el frontend mandó el estado real del XML, usarlo (puede ser
+    // PENDIENTE para casos donde el SRI todavía está procesando). Si no manda,
+    // inferimos: si autorizada=true → AUTORIZADA, si false → ninguno.
+    let estado_sri_xml = input.estado_sri_xml
+        .as_ref()
+        .map(|s| s.trim().to_uppercase())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            // Normalizar AUTORIZADO → AUTORIZADA (consistencia interna)
+            if s == "AUTORIZADO" { "AUTORIZADA".to_string() } else { s }
+        })
+        .or_else(|| if input.autorizada { Some("AUTORIZADA".to_string()) } else { None });
     let clave_acceso_norm: Option<String> = input.clave_acceso.as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
@@ -2128,4 +2159,47 @@ pub fn preview_xml_nc_compra(
 #[allow(dead_code)]
 fn _placeholder_cod_doc_mod() {
     let _ = "01"; // FACTURA modificada
+}
+
+// ─── v2.5.65: Validar en vivo el estado SRI de una clave de acceso ──────────
+//
+// Cuando se importa un XML de compra en estado PENDIENTE/EN_PROCESO, el user
+// puede consultar al SRI el estado ACTUAL de esa clave (la mayoría de PENDIENTE
+// pasan a AUTORIZADO en minutos). Reutiliza soap::consultar_autorizacion.
+//
+// El ambiente se infiere del dígito en índice 23 de la clave de acceso:
+// fecha(8)+codDoc(2)+ruc(13)=23, luego viene ambiente(1). 1=pruebas, 2=prod.
+
+#[derive(serde::Serialize)]
+pub struct ResultadoValidacionSri {
+    pub autorizado: bool,
+    pub estado: String,
+    pub numero_autorizacion: Option<String>,
+    pub fecha_autorizacion: Option<String>,
+    pub mensaje: String,
+}
+
+#[tauri::command]
+pub async fn validar_clave_acceso_sri(
+    clave_acceso: String,
+) -> Result<ResultadoValidacionSri, String> {
+    let clave = clave_acceso.trim().to_string();
+    if clave.len() != 49 || !clave.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Clave de acceso inválida (deben ser 49 dígitos numéricos)".into());
+    }
+
+    let ambiente = clave.chars().nth(23).map(|c| c.to_string()).unwrap_or_else(|| "2".to_string());
+
+    let resultado = crate::sri::soap::consultar_autorizacion(&clave, &ambiente).await?;
+
+    Ok(ResultadoValidacionSri {
+        autorizado: resultado.exito,
+        estado: resultado.estado.clone(),
+        numero_autorizacion: resultado.numero_autorizacion,
+        fecha_autorizacion: resultado.fecha_autorizacion,
+        mensaje: resultado.mensaje.unwrap_or_else(|| {
+            if resultado.exito { "Comprobante AUTORIZADO por el SRI".to_string() }
+            else { format!("Estado SRI: {}", resultado.estado) }
+        }),
+    })
 }

@@ -566,6 +566,7 @@ pub fn run() {
             commands::compras::anular_compra,
             commands::compras::preview_xml_compra,
             commands::compras::importar_xml_compra,
+            commands::compras::validar_clave_acceso_sri,
             commands::compras::registrar_devolucion_compra,
             commands::compras::listar_devoluciones_compra,
             commands::compras::preview_xml_nc_compra,
