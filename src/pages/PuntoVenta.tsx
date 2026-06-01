@@ -1184,7 +1184,7 @@ export default function PuntoVenta() {
     };
     try {
       const res = await guardarGuiaRemision(nueva);
-      toastExito(`Guia ${res.venta.numero} creada - stock descontado`);
+      toastExito(`Nota de Entrega ${res.venta.numero} creada - stock descontado`);
       // Guardar chofer para autocompletar futuro
       if (guiaChofer.trim()) {
         guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});
@@ -1739,7 +1739,7 @@ export default function PuntoVenta() {
             </button>
             <button className="btn" style={{ fontSize: 11, padding: "5px 14px", background: "#ea580c", color: "#fff", border: "none" }}
               onClick={() => setMostrarModalGuia(true)}>
-              Guía R.
+              Nota Entrega
             </button>
             <button className="btn" style={{ fontSize: 11, padding: "5px 14px", background: "#2563eb", color: "#fff", border: "none" }}
               onClick={() => guardarComoDocumento("cotizacion")}>
@@ -2439,11 +2439,11 @@ export default function PuntoVenta() {
         <div className="modal-overlay" onClick={() => setMostrarModalGuia(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
             <div className="modal-header">
-              <h3>Guia de Remision</h3>
+              <h3>Nota de Entrega</h3>
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <p className="text-secondary" style={{ fontSize: 12, margin: 0 }}>
-                Se descontara stock al crear la guia. Todos los campos son opcionales.
+                Se descontara stock al crear la nota. Todos los campos son opcionales.
               </p>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
@@ -2552,7 +2552,7 @@ export default function PuntoVenta() {
               <button className="btn" disabled={guardandoGuia}
                 style={{ background: "rgba(251, 146, 60, 0.2)", color: "#fb923c", border: "1px solid rgba(251, 146, 60, 0.4)", fontWeight: 600 }}
                 onClick={confirmarGuiaRemision}>
-                {guardandoGuia ? "Guardando..." : "Crear Guia de Remision"}
+                {guardandoGuia ? "Guardando..." : "Crear Nota de Entrega"}
               </button>
             </div>
           </div>

@@ -59,7 +59,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
     // stock de nuevo (el stock ya se descontó al crear la guía).
     // Para facturar guías hay que usar el botón "💰 Facturar".
     if (doc.tipo_estado === "GUIA_REMISION") {
-      toastError("⚠ Las guías de remisión deben facturarse con el botón 💰 Facturar (no cargar al carrito — duplicaría el descuento de stock).");
+      toastError("⚠ Las notas de entrega deben facturarse con el botón 💰 Facturar (no cargar al carrito — duplicaría el descuento de stock).");
       return;
     }
     setCargando(true);
@@ -155,7 +155,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
         referenciaPago: convReferencia.trim() || undefined,
         itemsOverride,
       });
-      toastExito(`Guía convertida a venta ${res.venta.numero}`);
+      toastExito(`Nota convertida a venta ${res.venta.numero}`);
       setConvertir(null);
       cargar();
     } catch (err) {
@@ -259,7 +259,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
               }}
               onClick={() => setFiltro(f)}
             >
-              {f === "TODOS" ? "Todos" : f === "COMPLETADA" ? "Ventas" : f === "BORRADOR" ? "Borrador" : f === "COTIZACION" ? "Cotizacion" : "Guias"}
+              {f === "TODOS" ? "Todos" : f === "COMPLETADA" ? "Ventas" : f === "BORRADOR" ? "Borrador" : f === "COTIZACION" ? "Cotizacion" : "Notas Entrega"}
             </button>
           ))}
         </div>
@@ -318,7 +318,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                         background: "var(--color-primary)", color: "white", border: "none",
                       }}
                         disabled={cargando}
-                        title="Convertir a venta cobrada (no descuenta stock de nuevo, ya se descontó al crear la guía)"
+                        title="Convertir a venta cobrada (no descuenta stock de nuevo, ya se descontó al crear la nota de entrega)"
                         onClick={() => abrirConvertir(doc)}>
                         💰 Facturar
                       </button>
@@ -405,7 +405,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
           <div className="card" style={{ width: 550, maxHeight: "85vh", overflow: "auto" }}
                onClick={(e) => e.stopPropagation()}>
             <div className="card-header flex justify-between items-center">
-              <span>Facturar Guía {convertir.venta.numero}</span>
+              <span>Facturar Nota {convertir.venta.numero}</span>
               <button className="btn btn-outline" style={{ padding: "2px 8px" }}
                 onClick={() => setConvertir(null)}>x</button>
             </div>
@@ -415,8 +415,8 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                 background: "rgba(96, 165, 250, 0.08)", border: "1px solid rgba(96, 165, 250, 0.25)",
                 borderRadius: 6, color: "var(--color-primary)",
               }}>
-                ℹ El stock NO se descuenta de nuevo (ya se descontó al crear la guía).
-                Esto solo registra el cobro y marca la guía como FACTURADA.
+                ℹ El stock NO se descuenta de nuevo (ya se descontó al crear la nota de entrega).
+                Esto solo registra el cobro y marca la nota como FACTURADA.
               </div>
 
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>
@@ -428,8 +428,8 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                 color: convGuiaEstado === "PENDIENTE" ? "var(--color-warning)" : "var(--color-success)",
               }}>
                 {convGuiaEstado === "PENDIENTE"
-                  ? "🟡 Guía PENDIENTE — puedes editar cantidad, precio y descuento. El stock se ajustará."
-                  : "🟢 Guía ya ENTREGADA — solo puedes editar precio y descuento (cantidad fija porque ya fue entregada al cliente)."
+                  ? "🟡 Nota PENDIENTE — puedes editar cantidad, precio y descuento. El stock se ajustará."
+                  : "🟢 Nota ya ENTREGADA — solo puedes editar precio y descuento (cantidad fija porque ya fue entregada al cliente)."
                 }
               </div>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos (click en valores para editar)</div>

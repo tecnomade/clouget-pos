@@ -45,7 +45,7 @@ const navItems: NavItem[] = [
   { path: "/pos", label: "Venta", icon: Storefront, shortcut: "F1", todos: true, group: "ventas" },
   { path: "/ventas", label: "Ventas", icon: Receipt, shortcut: "F4", todos: true, group: "ventas" },
   { path: "/cuentas", label: "Cobrar", icon: Coins, shortcut: "F8", todos: true, group: "ventas" },
-  { path: "/guias", label: "Guías", icon: Truck, shortcut: "", todos: false, permiso: "ver_guias", group: "ventas" },
+  { path: "/guias", label: "Notas de Entrega", icon: Truck, shortcut: "", todos: false, permiso: "ver_guias", group: "ventas" },
   // GESTIÓN (productos, clientes, stock)
   { path: "/productos", label: "Productos", icon: Package, shortcut: "F2", todos: false, permiso: "gestionar_productos", group: "gestion" },
   { path: "/clientes", label: "Clientes", icon: Users, shortcut: "F3", todos: false, permiso: "gestionar_clientes", group: "gestion" },

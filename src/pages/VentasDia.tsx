@@ -430,7 +430,7 @@ export default function VentasDia() {
                   ...(certificadoSriCargado ? [{ key: "sin_autorizar", label: "🟡 Sin autorizar SRI" }] : []),
                   { key: "BORRADOR", label: "Borradores" },
                   { key: "COTIZACION", label: "Cotizaciones" },
-                  { key: "GUIA_REMISION", label: "Guías" },
+                  { key: "GUIA_REMISION", label: "Notas Entrega" },
                   { key: "nc", label: "N. Crédito" },
                   { key: "TODOS", label: "Todos" },
                 ].map(f => (

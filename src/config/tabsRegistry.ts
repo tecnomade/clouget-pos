@@ -16,7 +16,7 @@ export const TABS_METADATA: Record<string, TabMetadata> = {
   "/cuentas":               { title: "Cobrar",                  icon: "💰" },
   "/productos":             { title: "Productos",               icon: "📦" },
   "/clientes":              { title: "Clientes",                icon: "👥" },
-  "/guias":                 { title: "Guías",                   icon: "🚚" },
+  "/guias":                 { title: "Notas de Entrega",        icon: "🚚" },
   "/gastos":                { title: "Gastos",                  icon: "💸" },
   "/compras":               { title: "Compras",                 icon: "🛍" },
   "/pagar":                 { title: "Pagar",                   icon: "💳" },

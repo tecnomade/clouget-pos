@@ -192,7 +192,7 @@ export default function GuiasRemisionPage() {
       await guiaGuardarDatosSri(emitirGuia.id, datos);
       const res = await emitirGuiaRemisionSri(emitirGuia.id);
       if (res.exito) {
-        toastExito(`Guia autorizada por el SRI (${res.numero_factura || res.clave_acceso || ""})`);
+        toastExito(`Guia de Remision autorizada por el SRI (${res.numero_factura || res.clave_acceso || ""})`);
         setEmitirGuia(null);
         cargar();
       } else {
@@ -209,7 +209,7 @@ export default function GuiasRemisionPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Guias de Remision</h2>
+        <h2>Notas de Entrega</h2>
         <div className="flex gap-2 items-center">
           <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 8px" }}
             onClick={() => { setFechaDesde(fechaHoy()); setFechaHasta(fechaHoy()); }}>
@@ -272,7 +272,7 @@ export default function GuiasRemisionPage() {
         {/* Table */}
         <div className="card">
           <div className="card-header flex justify-between items-center">
-            <span>Guias de Remision</span>
+            <span>Notas de Entrega</span>
             <span className="text-secondary" style={{ fontSize: 12 }}>{guias.length} registro{guias.length !== 1 ? "s" : ""}</span>
           </div>
           <div style={{ maxHeight: 500, overflow: "auto" }}>
@@ -343,7 +343,7 @@ export default function GuiasRemisionPage() {
                               onClick={async () => {
                                 try {
                                   await cambiarEstadoGuia(g.id, "ENTREGADA");
-                                  toastExito("Guia marcada como entregada");
+                                  toastExito("Nota marcada como entregada");
                                   cargar();
                                 } catch (e) { toastError("Error: " + e); }
                               }}>
@@ -354,10 +354,10 @@ export default function GuiasRemisionPage() {
                               color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
                             }}
                               onClick={async () => {
-                                if (!confirm("Rechazar guia? Se devolvera el stock de los productos.")) return;
+                                if (!confirm("Rechazar nota de entrega? Se devolvera el stock de los productos.")) return;
                                 try {
                                   await cambiarEstadoGuia(g.id, "RECHAZADA");
-                                  toastExito("Guia rechazada, stock devuelto");
+                                  toastExito("Nota rechazada, stock devuelto");
                                   cargar();
                                 } catch (e) { toastError("Error: " + e); }
                               }}>
@@ -381,9 +381,9 @@ export default function GuiasRemisionPage() {
                             fontSize: 10, padding: "2px 8px", fontWeight: 600,
                             color: "var(--color-primary)", borderColor: "var(--color-primary)",
                           }}
-                            title="Emitir esta guia de remision electronicamente al SRI (codDoc 06)"
+                            title="Emitir una Guia de Remision electronica (SRI codDoc 06) a partir de esta nota de entrega"
                             onClick={() => abrirEmitir(g)}>
-                            📤 SRI
+                            📤 Guía SRI
                           </button>
                         )}
                       </div>
@@ -393,7 +393,7 @@ export default function GuiasRemisionPage() {
                 {guias.length === 0 && (
                   <tr>
                     <td colSpan={6} className="text-center text-secondary" style={{ padding: 30 }}>
-                      No hay guias de remision para este periodo
+                      No hay notas de entrega para este periodo
                     </td>
                   </tr>
                 )}
@@ -409,7 +409,7 @@ export default function GuiasRemisionPage() {
           onClick={(e) => { if (e.target === e.currentTarget) setDetalle(null); }}>
           <div className="card" style={{ width: 550, maxHeight: "85vh", overflow: "auto" }}>
             <div className="card-header flex justify-between items-center">
-              <span>Guia de Remision {detalle.venta.numero}</span>
+              <span>Nota de Entrega {detalle.venta.numero}</span>
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setDetalle(null)}>x</button>
             </div>
             <div className="card-body">
@@ -494,7 +494,7 @@ export default function GuiasRemisionPage() {
           onClick={(e) => { if (e.target === e.currentTarget) setConvertir(null); }}>
           <div className="card" style={{ width: 550, maxHeight: "85vh", overflow: "auto" }}>
             <div className="card-header flex justify-between items-center">
-              <span>Convertir Guia {convertir.venta.numero} a Venta</span>
+              <span>Convertir Nota {convertir.venta.numero} a Venta</span>
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setConvertir(null)}>x</button>
             </div>
             <div className="card-body">
@@ -609,13 +609,13 @@ export default function GuiasRemisionPage() {
           onClick={(e) => { if (e.target === e.currentTarget) setEmitirGuia(null); }}>
           <div className="card" style={{ width: 620, maxHeight: "90vh", overflow: "auto" }}>
             <div className="card-header flex justify-between items-center">
-              <span>Emitir Guia {emitirGuia.numero} al SRI</span>
+              <span>Emitir Guía de Remisión SRI (desde {emitirGuia.numero})</span>
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setEmitirGuia(null)}>x</button>
             </div>
             <div className="card-body">
               {emitEstado.estado_sri === "AUTORIZADA" ? (
                 <div style={{ background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.4)", borderRadius: 8, padding: 14, marginBottom: 12 }}>
-                  <div style={{ fontWeight: 700, color: "var(--color-success)", marginBottom: 4 }}>✓ Guia ya autorizada por el SRI</div>
+                  <div style={{ fontWeight: 700, color: "var(--color-success)", marginBottom: 4 }}>✓ Guía de Remisión ya autorizada por el SRI</div>
                   <div style={{ fontSize: 12 }} className="text-secondary">Nro SRI: {emitEstado.numero_sri || "-"}</div>
                 </div>
               ) : emitEstado.estado_sri && emitEstado.estado_sri !== "NO_APLICA" && (

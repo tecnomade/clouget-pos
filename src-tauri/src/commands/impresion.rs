@@ -1956,7 +1956,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
     // Verificar que sea guía de remisión
     let tipo_estado = venta.tipo_estado.as_deref().unwrap_or("");
     if tipo_estado != "GUIA_REMISION" {
-        return Err("Esta venta no es una Guia de Remision".to_string());
+        return Err("Esta venta no es una Nota de Entrega".to_string());
     }
 
     // Cargar detalles con nombre de producto
@@ -2200,10 +2200,14 @@ fn generar_guia_remision_pdf(
     col_izq.push(Break::new(0.5));
 
     // --- Columna derecha: Titulo documento + numero + fecha ---
+    // v2.5.68: el titulo depende de si es comprobante autorizado por SRI:
+    //   - estado_sri = AUTORIZADA (codDoc 06) -> "GUIA DE REMISION" (documento tributario)
+    //   - en otro caso -> "NOTA DE ENTREGA" (documento interno/logistico)
+    let titulo_doc = if venta.estado_sri == "AUTORIZADA" { "GUIA DE REMISION" } else { "NOTA DE ENTREGA" };
     let mut col_der = LinearLayout::vertical();
     col_der.push(Break::new(2));
     col_der.push(
-        Paragraph::new("GUIA DE REMISION")
+        Paragraph::new(titulo_doc)
             .aligned(Alignment::Center)
             .styled(s_doc_title)
             .padded(Margins::trbl(1, 3, 1, 3)),
