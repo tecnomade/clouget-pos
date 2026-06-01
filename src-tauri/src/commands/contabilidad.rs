@@ -491,6 +491,69 @@ pub async fn contabilidad_emitir_retencion_sri(
     db: State<'_, Database>,
     id: i64,
 ) -> Result<ResultadoEmisionRetencion, String> {
+    // ── v2.5.66: VALIDACIÓN PREVIA — la factura del proveedor (documento
+    // sustento de la retención) debe estar AUTORIZADA por el SRI antes de
+    // emitir la retención electrónica. Si emitimos sobre un documento que
+    // nunca se autoriza, el SRI rechazaría nuestra retención y quedaría una
+    // inconsistencia fiscal (retención sobre compra inexistente oficialmente).
+    //
+    // Lógica:
+    //   - Si la compra es FACTURA ELECTRÓNICA (clave de acceso 49 díg):
+    //       · Si estado_sri = AUTORIZADA → OK, continuar
+    //       · Si no → REVALIDAR contra SRI en vivo. Si pasó a AUTORIZADA,
+    //         actualizar la compra y continuar. Si sigue PENDIENTE/RECHAZADA,
+    //         BLOQUEAR con mensaje claro.
+    //   - Si la compra NO tiene clave de 49 díg (factura física con autorización
+    //     de 10 díg, o compra informal) → permitir (responsabilidad del user).
+    {
+        let (compra_estado, compra_clave): (Option<String>, Option<String>) = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT c.estado_sri, c.clave_acceso
+                 FROM retenciones_emitidas re
+                 JOIN compras c ON re.compra_id = c.id
+                 WHERE re.id = ?1",
+                params![id],
+                |r| Ok((r.get(0).ok(), r.get(1).ok())),
+            ).map_err(|_| "Retención no encontrada".to_string())?
+        };
+
+        let clave = compra_clave.unwrap_or_default();
+        let es_electronica = clave.len() == 49 && clave.chars().all(|c| c.is_ascii_digit());
+        let ya_autorizada = compra_estado.as_deref() == Some("AUTORIZADA");
+
+        if es_electronica && !ya_autorizada {
+            // Revalidar contra SRI en vivo
+            let amb = clave.chars().nth(23).map(|c| c.to_string()).unwrap_or_else(|| "2".to_string());
+            match crate::sri::soap::consultar_autorizacion(&clave, &amb).await {
+                Ok(res) if res.exito => {
+                    // ¡Pasó a AUTORIZADA! Actualizar la compra y continuar.
+                    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                    let _ = conn.execute(
+                        "UPDATE compras SET estado_sri = 'AUTORIZADA' WHERE clave_acceso = ?1",
+                        params![clave],
+                    );
+                }
+                Ok(res) => {
+                    return Err(format!(
+                        "La factura del proveedor (documento sustento) NO está autorizada por el SRI (estado actual: {}). \
+                         No se puede emitir la retención electrónica hasta que el proveedor la autorice. \
+                         Si el proveedor la anuló o el SRI la rechazó, esa factura no es válida para retener.",
+                        res.estado
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "No se pudo verificar el estado SRI de la factura del proveedor: {}. \
+                         Verifica tu conexión a internet e intenta de nuevo. \
+                         (No se emitió la retención para evitar inconsistencias fiscales.)",
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
     // ── 1. Leer todo lo necesario en un solo lock ────────────────────────────
     #[allow(dead_code)]
     struct DatosRet {

@@ -6,6 +6,51 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.66 — 2026-05-31 🛡 Blindaje: no emitir retención sobre factura sustento no autorizada
+
+Complemento de seguridad fiscal para v2.5.65. Pregunta del usuario: *"¿qué pasa si emito una retención sobre un documento PENDIENTE que nunca pasa a autorizado?"*
+
+### El riesgo
+
+Si emites un comprobante de retención electrónico usando como sustento una factura del proveedor que el SRI **nunca autoriza** (porque la rechazó, el proveedor la anuló, o era un XML intermedio):
+- El SRI puede **rechazar tu retención** (su docSustento no consta autorizado)
+- Quedas con una **inconsistencia fiscal**: retención sobre una compra que no existe oficialmente
+- No puedes usar el **crédito tributario** del IVA de esa compra
+- **Glosa/observación** en tu ATS mensual
+
+### La protección (en `contabilidad_emitir_retencion_sri`)
+
+Antes de enviar la retención al SRI, el sistema valida el documento sustento:
+
+1. ¿La factura del proveedor es **electrónica** (clave de acceso 49 díg)?
+   - **No** (factura física / informal) → permite emitir (responsabilidad del usuario)
+   - **Sí** → continúa al paso 2
+2. ¿Su `estado_sri` ya es **AUTORIZADA**?
+   - **Sí** → emite normal
+   - **No** → **revalida en vivo contra el SRI**:
+     - Si el SRI ahora dice AUTORIZADO → actualiza la compra en BD y emite ✅
+     - Si sigue PENDIENTE/RECHAZADO → **BLOQUEA** con mensaje claro
+     - Si no hay internet → bloquea (no emite a ciegas)
+
+### Mensaje de bloqueo
+
+> "La factura del proveedor (documento sustento) NO está autorizada por el SRI (estado actual: X). No se puede emitir la retención electrónica hasta que el proveedor la autorice. Si el proveedor la anuló o el SRI la rechazó, esa factura no es válida para retener."
+
+### Separación de conceptos
+
+| Acción | Sobre factura PENDIENTE |
+|---|---|
+| **Capturar** retención (registro interno + ajuste CXP) | ✅ Permitido |
+| **Enviar** retención al SRI | 🚫 Solo si sustento AUTORIZADO |
+
+Si capturaste una retención y el proveedor nunca autoriza su factura, simplemente **anulas la retención** (revierte la CXP) — nunca llegó a emitirse al SRI.
+
+### Por qué auto-revalida
+
+Las facturas PENDIENTE pasan a AUTORIZADO en minutos normalmente. Por eso el sistema **consulta el SRI en el momento** del envío en vez de confiar en el estado guardado — así si ya se autorizó, emite sin fricción; y si no, protege.
+
+---
+
 ## v2.5.65 — 2026-05-31 📥 Importar XML SRI con estado PENDIENTE / EN_PROCESO acepta como FACTURA
 
 ### El caso reportado
