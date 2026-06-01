@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, sugerirPorPlaca, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
 import { calcularDescuentoFormaPago, leerConfigDescuento, type DescuentoConfig } from "../utils/descuentoFormaPago";
 import type { DireccionCliente } from "../services/api";
 import type { AlertaStock } from "../services/api";
@@ -105,6 +105,8 @@ export default function PuntoVenta() {
   const [guiaDireccion, setGuiaDireccion] = useState("");
   const [guardandoGuia, setGuardandoGuia] = useState(false);
   const [choferesGuardados, setChoferesGuardados] = useState<[number, string, string | null][]>([]);
+  // v2.5.67: choferes sugeridos automaticamente segun la placa escrita
+  const [sugChoferesPlaca, setSugChoferesPlaca] = useState<{ chofer: string; veces: number }[]>([]);
   // v2.3.43: vehiculos guardados (placas) + direcciones del cliente
   const [vehiculosGuardados, setVehiculosGuardados] = useState<[number, string, string | null][]>([]);
   const [direccionesCliente, setDireccionesCliente] = useState<DireccionCliente[]>([]);
@@ -1205,7 +1207,7 @@ export default function PuntoVenta() {
       setEsFiado(false);
       setClienteSeleccionado(null);
       setMostrarModalGuia(false);
-      setGuiaPlaca(""); setGuiaChofer(""); setGuiaDireccion("");
+      setGuiaPlaca(""); setGuiaChofer(""); setGuiaDireccion(""); setSugChoferesPlaca([]);
     } catch (err) {
       toastError("Error: " + err);
     } finally {
@@ -2454,12 +2456,38 @@ export default function PuntoVenta() {
                 </label>
                 <input className="input" placeholder="Ej: ABC-1234" value={guiaPlaca}
                   list="vehiculos-list"
-                  onChange={(e) => setGuiaPlaca(e.target.value.toUpperCase())} autoFocus />
+                  onChange={async (e) => {
+                    const val = e.target.value.toUpperCase();
+                    setGuiaPlaca(val);
+                    if (val.trim().length >= 2) {
+                      try {
+                        const sugs = await sugerirPorPlaca(val.trim());
+                        setSugChoferesPlaca(sugs.map(s => ({ chofer: s.chofer, veces: s.veces })));
+                        // Si la placa coincide exacto con una conocida y no hay chofer, autocompletar el mas usado
+                        const exact = sugs.find(s => s.placa === val.trim());
+                        if (exact) setGuiaChofer(prev => prev.trim() ? prev : exact.chofer);
+                      } catch { /* ignore */ }
+                    } else {
+                      setSugChoferesPlaca([]);
+                    }
+                  }} autoFocus />
                 <datalist id="vehiculos-list">
                   {vehiculosGuardados.map(v => (
                     <option key={v[0]} value={v[1]}>{v[2] || ""}</option>
                   ))}
                 </datalist>
+                {sugChoferesPlaca.length > 0 && (
+                  <div style={{ marginTop: 5, fontSize: 11, display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }} className="text-secondary">
+                    <span>Choferes de esta placa:</span>
+                    {sugChoferesPlaca.map((s, i) => (
+                      <button key={i} type="button" className="btn btn-outline"
+                        style={{ fontSize: 10, padding: "1px 7px", fontWeight: 600 }}
+                        onClick={() => setGuiaChofer(s.chofer)}>
+                        {s.chofer}{s.veces > 1 ? ` (${s.veces})` : ""}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>

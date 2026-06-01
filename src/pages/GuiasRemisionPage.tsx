@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia, obtenerConfig, guiaGuardarDatosSri, guiaObtenerDatosSri, emitirGuiaRemisionSri } from "../services/api";
+import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia, obtenerConfig, guiaGuardarDatosSri, guiaObtenerDatosSri, emitirGuiaRemisionSri, sugerirPorPlaca } from "../services/api";
 import type { GuiaDatosSri } from "../services/api";
 import { useToast } from "../components/Toast";
 import type { VentaCompleta, CuentaBanco, ResumenGuias } from "../types";
@@ -642,7 +642,24 @@ export default function GuiasRemisionPage() {
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Placa</label>
                   <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.placa}
-                    onChange={(e) => setEmitForm(f => ({ ...f, placa: e.target.value }))} />
+                    onChange={async (e) => {
+                      const val = e.target.value.toUpperCase();
+                      setEmitForm(f => ({ ...f, placa: val }));
+                      if (val.trim().length >= 2) {
+                        try {
+                          const sugs = await sugerirPorPlaca(val.trim());
+                          const exact = sugs.find(s => s.placa === val.trim() && s.transportista_nombre);
+                          const withT = exact || sugs.find(s => s.transportista_nombre);
+                          if (withT) {
+                            setEmitForm(f => ({
+                              ...f,
+                              transportista: f.transportista.trim() ? f.transportista : (withT.transportista_nombre || ""),
+                              ruc_transportista: f.ruc_transportista.trim() ? f.ruc_transportista : (withT.transportista_ruc || ""),
+                            }));
+                          }
+                        } catch { /* ignore */ }
+                      }
+                    }} />
                 </div>
                 <div>
                   <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Motivo del traslado *</label>

@@ -707,6 +707,27 @@ export async function emitirGuiaRemisionSri(guiaId: number): Promise<ResultadoEm
   return smartInvoke("emitir_guia_remision_sri", { guiaId });
 }
 
+// === Aprendizaje placa <-> chofer <-> transportista ===
+export interface SugerenciaTransporte {
+  placa: string;
+  chofer: string;
+  transportista_ruc?: string | null;
+  transportista_nombre?: string | null;
+  veces: number;
+}
+
+export async function sugerirPorPlaca(placa: string): Promise<SugerenciaTransporte[]> {
+  return smartInvoke("sugerir_por_placa", { placa });
+}
+
+export async function sugerirPorChofer(chofer: string): Promise<SugerenciaTransporte[]> {
+  return smartInvoke("sugerir_por_chofer", { chofer });
+}
+
+export async function aprenderPlacaChofer(placa: string, chofer: string, transportistaRuc?: string, transportistaNombre?: string): Promise<void> {
+  return smartInvoke("aprender_placa_chofer", { placa, chofer, transportistaRuc, transportistaNombre });
+}
+
 export async function listarImpresoras(): Promise<string[]> {
   return invoke("listar_impresoras");
 }
