@@ -6,6 +6,17 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.72 — 2026-05-31 📱 Endpoints para la app móvil (consulta cédula + catálogo ST)
+
+Nuevos endpoints HTTP que consume la app móvil (Android/iOS):
+
+- `GET /api/v1/app/consultar-identificacion?id=<cedula_o_ruc>` — busca un cliente por cédula/RUC en la base local; la app autollena el cliente al crear órdenes/ventas.
+- `GET /api/v1/app/st/tipos-equipo` · `…/st/marcas?tipo_id=` · `…/st/modelos?marca_id=` — catálogo jerárquico de equipos del módulo Servicio Técnico, para que la app ofrezca tipo/marca/modelo predefinidos en vez de texto libre.
+
+Estos endpoints reutilizan datos que ya existen en el POS; no cambian nada del flujo de escritorio.
+
+---
+
 ## v2.5.71 — 2026-05-31 🧹 Corregir stock negativo en lote (1 clic)
 
 El aviso rojo **"X productos con stock NEGATIVO"** en Reportes → Inventario ahora es **clickeable**:
