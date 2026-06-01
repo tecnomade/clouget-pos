@@ -184,7 +184,7 @@ export default function ContabilidadPage() {
   return (
     <>
       <div className="page-header">
-        <h2>Contabilidad · Agente de Retención + ATS</h2>
+        <h2>Documentos Electrónicos SRI</h2>
       </div>
       <div className="page-body">
         {/* Tabs */}

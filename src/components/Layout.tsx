@@ -63,7 +63,7 @@ const navItems: NavItem[] = [
   { path: "/mesas", label: "Mesas", icon: ForkKnife, shortcut: "", todos: true, group: "restaurante" },
   { path: "/cocina", label: "Cocina", icon: CookingPot, shortcut: "", todos: true, group: "restaurante" },
   // CONTABILIDAD (v2.5.44, filtrado por modulo `contabilidad` en licencia)
-  { path: "/contabilidad", label: "Agente Retención", icon: Receipt, shortcut: "", todos: false, permiso: "gestionar_compras", group: "contabilidad" },
+  { path: "/contabilidad", label: "Documentos SRI", icon: Receipt, shortcut: "", todos: false, permiso: "gestionar_compras", group: "contabilidad" },
   // ANALÍTICA
   { path: "/reportes", label: "Reportes", icon: ChartLineUp, shortcut: "", todos: false, permiso: "ver_reportes", group: "analitica" },
 ];
