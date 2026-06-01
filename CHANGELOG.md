@@ -6,6 +6,39 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.69 — 2026-05-31 🧾 Los 6 tipos de comprobante SRI completos + "Documentos SRI"
+
+Clouget POS ahora emite **los 6 tipos de comprobantes electrónicos del SRI Ecuador**.
+
+### Cobertura SRI completa (6/6)
+
+| codDoc | Documento | |
+|---|---|---|
+| 01 | Factura | ✅ |
+| 03 | **Liquidación de Compra** | ✅ nuevo |
+| 04 | Nota de Crédito | ✅ |
+| 05 | **Nota de Débito** | ✅ nuevo |
+| 06 | Guía de Remisión | ✅ |
+| 07 | Comprobante de Retención | ✅ |
+
+### Liquidación de Compra (03)
+
+La emite el negocio cuando compra a un proveedor que **no puede facturar** (agricultor, reciclador, informal). Sustituye su factura ante el SRI. Pestaña con buscador de proveedor + productos (+ líneas libres), crea y emite en un paso.
+
+### Nota de Débito (05)
+
+La emite el vendedor para **cobrar un valor adicional** (interés por mora, recargo) sobre una factura ya emitida. Pestaña con cliente + factura referenciada + lista de motivos + IVA opcional.
+
+### Renombrado del módulo
+
+El menú **"Agente Retención"** ahora se llama **"Documentos SRI"** (ya no contiene solo retenciones). Sus pestañas: Configuración · Comprobantes · Guías de Remisión · Liquidaciones de Compra · Notas de Débito · ATS.
+
+### Gating
+
+Todos los documentos avanzados requieren el módulo **`contabilidad`** (validado en frontend Y backend). Sin el módulo no se ven ni se pueden emitir.
+
+---
+
 ## v2.5.68 — 2026-05-31 📦 Notas de Entrega, Guía SRI en Contabilidad, estados derivados y despacho
 
 Reorganización arquitectónica para separar correctamente **logística** de **tributación**, manteniendo todo lo avanzado gateado por su módulo.
