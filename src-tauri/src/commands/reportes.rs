@@ -1255,22 +1255,27 @@ pub fn reporte_kardex_multi(
     let mut sql = String::from(
         "SELECT m.id, m.producto_id, p.codigo, p.nombre, c.nombre as categoria,
                 m.tipo, m.cantidad, m.stock_anterior, m.stock_nuevo, m.costo_unitario,
-                COALESCE(
-                    NULLIF(m.motivo, ''),
-                    CASE
-                        WHEN v.numero IS NOT NULL THEN
-                            CASE
-                                WHEN m.tipo = 'GUIA_REMISION' OR m.tipo = 'AJUSTE_GUIA' THEN 'Guia ' || v.numero
-                                WHEN m.tipo = 'NOTA_CREDITO' OR m.tipo = 'DEVOLUCION' THEN 'NC referida a ' || v.numero
-                                WHEN m.tipo = 'ANULACION_VENTA' THEN 'Anulacion ' || v.numero
-                                ELSE 'Venta ' || COALESCE(NULLIF(v.numero_factura, ''), v.numero)
-                            END
-                        WHEN cp.numero IS NOT NULL THEN
-                            'Compra ' || COALESCE(NULLIF(cp.numero_factura, ''), cp.numero) ||
-                            CASE WHEN prov.nombre IS NOT NULL THEN ' - ' || prov.nombre ELSE '' END
-                        ELSE NULL
-                    END
-                ) as motivo,
+                CASE
+                    WHEN m.tipo IN ('DEVOLUCION_COMPRA','AJUSTE_PRECIO_NC') THEN
+                        COALESCE(NULLIF(m.motivo, ''), 'Devolucion compra')
+                        || CASE WHEN prov2.nombre IS NOT NULL THEN ' - Prov: ' || prov2.nombre ELSE '' END
+                    ELSE COALESCE(
+                        NULLIF(m.motivo, ''),
+                        CASE
+                            WHEN v.numero IS NOT NULL THEN
+                                CASE
+                                    WHEN m.tipo = 'GUIA_REMISION' OR m.tipo = 'AJUSTE_GUIA' THEN 'Guia ' || v.numero
+                                    WHEN m.tipo = 'NOTA_CREDITO' OR m.tipo = 'DEVOLUCION' THEN 'NC referida a ' || v.numero
+                                    WHEN m.tipo = 'ANULACION_VENTA' THEN 'Anulacion ' || v.numero
+                                    ELSE 'Venta ' || COALESCE(NULLIF(v.numero_factura, ''), v.numero)
+                                END
+                            WHEN cp.numero IS NOT NULL THEN
+                                'Compra ' || COALESCE(NULLIF(cp.numero_factura, ''), cp.numero) ||
+                                CASE WHEN prov.nombre IS NOT NULL THEN ' - ' || prov.nombre ELSE '' END
+                            ELSE NULL
+                        END
+                    )
+                END as motivo,
                 m.usuario, m.created_at
          FROM movimientos_inventario m
          INNER JOIN productos p ON m.producto_id = p.id
@@ -1280,6 +1285,9 @@ pub fn reporte_kardex_multi(
               AND m.tipo NOT IN ('ENTRADA','SALIDA','AJUSTE','AJUSTE_POSITIVO','AJUSTE_NEGATIVO','INGRESO_COMPRA')
          LEFT JOIN compras cp ON m.referencia_id = cp.id AND m.tipo LIKE 'COMPRA%'
          LEFT JOIN proveedores prov ON cp.proveedor_id = prov.id
+         LEFT JOIN compras cp2 ON m.referencia_id = cp2.id
+              AND m.tipo IN ('DEVOLUCION_COMPRA','AJUSTE_PRECIO_NC')
+         LEFT JOIN proveedores prov2 ON cp2.proveedor_id = prov2.id
          WHERE date(m.created_at) >= date(?1) AND date(m.created_at) <= date(?2)"
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(desde), Box::new(hasta)];
