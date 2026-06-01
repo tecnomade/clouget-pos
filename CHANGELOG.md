@@ -6,6 +6,20 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.71 — 2026-05-31 🧹 Corregir stock negativo en lote (1 clic)
+
+El aviso rojo **"X productos con stock NEGATIVO"** en Reportes → Inventario ahora es **clickeable**:
+
+- Abre un panel con esos productos **ya pre-cargados** (no hay que buscarlos uno por uno).
+- Por cada uno muestra el stock actual (negativo) y un campo **"Stock real"** (por defecto 0) para escribir lo que realmente tienes en bodega.
+- Una **explicación** del ajuste (sugerida) que queda en el historial.
+- Botón **"Aplicar ajuste a N productos"** → corrige todo de una vez.
+- Cada corrección genera un movimiento **AJUSTE auditable** en el kardex (diferencia, stock anterior/nuevo, motivo y usuario).
+
+Ideal para limpiar la "contabilidad sucia" cuando se vendió más de lo que había registrado.
+
+---
+
 ## v2.5.70 — 2026-05-31 🛠 Fix crítico Guía de Remisión + RIDE/email para Liquidación y Nota de Débito
 
 ### 🔴 Fix crítico: Guía de Remisión rechazada por el SRI
