@@ -576,6 +576,216 @@ pub fn generar_xml_retencion(datos: &DatosRetencion) -> String {
     xml
 }
 
+// ─── v2.5.67: Guía de Remisión electrónica SRI v2.0.0 ────────────────────────
+
+/// Datos necesarios para generar el XML de una guía de remisión SRI v2.0.0.
+///
+/// Schema oficial: https://www.sri.gob.ec → "Esquemas XSD" → guiaRemision v2.0.0
+///
+/// codDoc = "06" (guía de remisión)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatosGuiaRemision {
+    // infoTributaria
+    pub ambiente: String,            // "1" pruebas, "2" producción
+    pub tipo_emision: String,        // "1" normal
+    pub razon_social: String,        // emisor (quien transporta o remite)
+    pub nombre_comercial: String,
+    pub ruc: String,
+    pub clave_acceso: String,        // 49 dígitos, codDoc=06
+    pub estab: String,               // "001"
+    pub pto_emi: String,             // "001"
+    pub secuencial: String,          // "000000001"
+    pub dir_matriz: String,
+    pub contribuyente_rimpe: Option<String>,
+
+    // infoGuiaRemision
+    pub dir_establecimiento: String,
+    pub dir_partida: String,                         // dirección punto de partida
+    pub razon_social_transportista: String,
+    pub tipo_identificacion_transportista: String,   // "04"=RUC, "05"=cédula, "06"=pasaporte
+    pub ruc_transportista: String,                   // identificación del transportista
+    pub rise: Option<String>,                        // leyenda RISE (opcional)
+    pub obligado_contabilidad: Option<String>,       // "SI" / "NO" (opcional)
+    pub contribuyente_especial: Option<String>,      // número resolución (opcional)
+    pub fecha_ini_transporte: String,                // dd/mm/yyyy
+    pub fecha_fin_transporte: String,                // dd/mm/yyyy
+    pub placa: String,
+
+    // destinatarios (uno o varios)
+    pub destinatarios: Vec<DestinatarioGuia>,
+
+    // infoAdicional (opcional)
+    pub info_adicional: Vec<CampoAdicional>,
+}
+
+/// Un destinatario de la guía de remisión, con su motivo, ruta, doc sustento y detalles.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DestinatarioGuia {
+    pub identificacion_destinatario: String,
+    pub razon_social_destinatario: String,
+    pub dir_destinatario: String,
+    pub motivo_traslado: String,
+    pub doc_aduanero_unico: Option<String>,          // opcional
+    pub cod_estab_destino: Option<String>,           // opcional (3 dígitos)
+    pub ruta: Option<String>,                        // opcional (punto partida → llegada)
+    pub cod_doc_sustento: Option<String>,            // "01"=factura, etc (opcional)
+    pub num_doc_sustento: Option<String>,            // "estab(3)-pto(3)-sec(9)" (opcional)
+    pub num_aut_doc_sustento: Option<String>,        // 49 dígitos clave de la factura (opcional)
+    pub fecha_emision_doc_sustento: Option<String>,  // dd/mm/yyyy (opcional)
+    pub detalles: Vec<DetalleGuia>,
+}
+
+/// Una línea de mercadería transportada dentro de un destinatario.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DetalleGuia {
+    pub codigo_interno: Option<String>,   // opcional
+    pub codigo_adicional: Option<String>, // opcional
+    pub descripcion: String,
+    pub cantidad: f64,
+}
+
+/// Genera el XML de la guía de remisión electrónica SRI v2.0.0.
+///
+/// IMPORTANTE: No usa self-closing tags (<tag/>) porque el SRI los rechaza.
+/// Tag root: `guiaRemision`. El orden de los elementos respeta el XSD oficial.
+pub fn generar_xml_guia_remision(datos: &DatosGuiaRemision) -> String {
+    let mut xml = String::with_capacity(4096);
+
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<guiaRemision id=\"comprobante\" version=\"2.0.0\">\n");
+
+    // === infoTributaria ===
+    xml.push_str("  <infoTributaria>\n");
+    xml_tag(&mut xml, 4, "ambiente", &datos.ambiente);
+    xml_tag(&mut xml, 4, "tipoEmision", &datos.tipo_emision);
+    xml_tag(&mut xml, 4, "razonSocial", &xml_escape(&datos.razon_social));
+    xml_tag(&mut xml, 4, "nombreComercial", &xml_escape(&datos.nombre_comercial));
+    xml_tag(&mut xml, 4, "ruc", &datos.ruc);
+    xml_tag(&mut xml, 4, "claveAcceso", &datos.clave_acceso);
+    xml_tag(&mut xml, 4, "codDoc", "06");
+    xml_tag(&mut xml, 4, "estab", &datos.estab);
+    xml_tag(&mut xml, 4, "ptoEmi", &datos.pto_emi);
+    xml_tag(&mut xml, 4, "secuencial", &datos.secuencial);
+    xml_tag(&mut xml, 4, "dirMatriz", &xml_escape(&datos.dir_matriz));
+    if let Some(ref rimpe) = datos.contribuyente_rimpe {
+        if !rimpe.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteRimpe", &xml_escape(rimpe));
+        }
+    }
+    xml.push_str("  </infoTributaria>\n");
+
+    // === infoGuiaRemision ===
+    xml.push_str("  <infoGuiaRemision>\n");
+    xml_tag(&mut xml, 4, "dirEstablecimiento", &xml_escape(&datos.dir_establecimiento));
+    xml_tag(&mut xml, 4, "dirPartida", &xml_escape(&datos.dir_partida));
+    xml_tag(&mut xml, 4, "razonSocialTransportista", &xml_escape(&datos.razon_social_transportista));
+    xml_tag(&mut xml, 4, "tipoIdentificacionTransportista", &datos.tipo_identificacion_transportista);
+    xml_tag(&mut xml, 4, "rucTransportista", &datos.ruc_transportista);
+    if let Some(ref rise) = datos.rise {
+        if !rise.is_empty() {
+            xml_tag(&mut xml, 4, "rise", &xml_escape(rise));
+        }
+    }
+    if let Some(ref oc) = datos.obligado_contabilidad {
+        if !oc.is_empty() {
+            xml_tag(&mut xml, 4, "obligadoContabilidad", oc);
+        }
+    }
+    if let Some(ref ce) = datos.contribuyente_especial {
+        if !ce.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteEspecial", ce);
+        }
+    }
+    xml_tag(&mut xml, 4, "fechaIniTransporte", &datos.fecha_ini_transporte);
+    xml_tag(&mut xml, 4, "fechaFinTransporte", &datos.fecha_fin_transporte);
+    xml_tag(&mut xml, 4, "placa", &xml_escape(&datos.placa));
+    xml.push_str("  </infoGuiaRemision>\n");
+
+    // === destinatarios ===
+    xml.push_str("  <destinatarios>\n");
+    for dest in &datos.destinatarios {
+        xml.push_str("    <destinatario>\n");
+        xml_tag(&mut xml, 6, "identificacionDestinatario", &dest.identificacion_destinatario);
+        xml_tag(&mut xml, 6, "razonSocialDestinatario", &xml_escape(&dest.razon_social_destinatario));
+        xml_tag(&mut xml, 6, "dirDestinatario", &xml_escape(&dest.dir_destinatario));
+        xml_tag(&mut xml, 6, "motivoTraslado", &xml_escape(&dest.motivo_traslado));
+        if let Some(ref dau) = dest.doc_aduanero_unico {
+            if !dau.is_empty() {
+                xml_tag(&mut xml, 6, "docAduaneroUnico", &xml_escape(dau));
+            }
+        }
+        if let Some(ref ced) = dest.cod_estab_destino {
+            if !ced.is_empty() {
+                xml_tag(&mut xml, 6, "codEstabDestino", ced);
+            }
+        }
+        if let Some(ref ruta) = dest.ruta {
+            if !ruta.is_empty() {
+                xml_tag(&mut xml, 6, "ruta", &xml_escape(ruta));
+            }
+        }
+        if let Some(ref cds) = dest.cod_doc_sustento {
+            if !cds.is_empty() {
+                xml_tag(&mut xml, 6, "codDocSustento", cds);
+            }
+        }
+        if let Some(ref nds) = dest.num_doc_sustento {
+            if !nds.is_empty() {
+                xml_tag(&mut xml, 6, "numDocSustento", nds);
+            }
+        }
+        if let Some(ref nads) = dest.num_aut_doc_sustento {
+            if !nads.is_empty() {
+                xml_tag(&mut xml, 6, "numAutDocSustento", nads);
+            }
+        }
+        if let Some(ref feds) = dest.fecha_emision_doc_sustento {
+            if !feds.is_empty() {
+                xml_tag(&mut xml, 6, "fechaEmisionDocSustento", feds);
+            }
+        }
+
+        // detalles del destinatario
+        xml.push_str("      <detalles>\n");
+        for det in &dest.detalles {
+            xml.push_str("        <detalle>\n");
+            if let Some(ref ci) = det.codigo_interno {
+                if !ci.is_empty() {
+                    xml_tag(&mut xml, 10, "codigoInterno", &xml_escape(ci));
+                }
+            }
+            if let Some(ref ca) = det.codigo_adicional {
+                if !ca.is_empty() {
+                    xml_tag(&mut xml, 10, "codigoAdicional", &xml_escape(ca));
+                }
+            }
+            xml_tag(&mut xml, 10, "descripcion", &xml_escape(&det.descripcion));
+            xml_tag(&mut xml, 10, "cantidad", &format!("{:.6}", det.cantidad));
+            xml.push_str("        </detalle>\n");
+        }
+        xml.push_str("      </detalles>\n");
+
+        xml.push_str("    </destinatario>\n");
+    }
+    xml.push_str("  </destinatarios>\n");
+
+    // === infoAdicional (opcional) ===
+    if !datos.info_adicional.is_empty() {
+        xml.push_str("  <infoAdicional>\n");
+        for campo in &datos.info_adicional {
+            xml.push_str(&format!(
+                "    <campoAdicional nombre=\"{}\">{}</campoAdicional>\n",
+                xml_escape(&campo.nombre),
+                xml_escape(&campo.valor)
+            ));
+        }
+        xml.push_str("  </infoAdicional>\n");
+    }
+
+    xml.push_str("</guiaRemision>");
+    xml
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
