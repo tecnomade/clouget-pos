@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.73 — 2026-05-31 🏦 App móvil: endpoint de cuentas bancarias
+
+- `GET /api/v1/app/cuentas-banco` — lista las cuentas bancarias activas para que la app móvil permita cobrar con **transferencia/depósito** seleccionando la cuenta (sincronizada con el POS) y registrando la referencia. La venta guarda `banco_id` + `referencia_pago`, igual que en el escritorio.
+
+---
+
 ## v2.5.72 — 2026-05-31 📱 Endpoints para la app móvil (consulta cédula + catálogo ST)
 
 Nuevos endpoints HTTP que consume la app móvil (Android/iOS):
