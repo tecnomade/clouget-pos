@@ -14,6 +14,7 @@ import { useToast } from "../components/Toast";
 import { invoke } from "@tauri-apps/api/core";
 import GuiasRemisionContab from "../components/GuiasRemisionContab";
 import LiquidacionesCompraContab from "../components/LiquidacionesCompraContab";
+import NotasDebitoContab from "../components/NotasDebitoContab";
 
 // ─── Tipos (mirror del backend contabilidad.rs) ─────────────────────────────
 
@@ -74,7 +75,7 @@ const CODIGOS_IVA_COMUNES = [
 
 // ─── Componente principal ────────────────────────────────────────────────────
 
-type Tab = "config" | "comprobantes" | "guias" | "liquidaciones" | "ats";
+type Tab = "config" | "comprobantes" | "guias" | "liquidaciones" | "notasdebito" | "ats";
 
 export default function ContabilidadPage() {
   const { toastExito, toastError } = useToast();
@@ -195,6 +196,7 @@ export default function ContabilidadPage() {
             { k: "comprobantes" as Tab, label: "📋 Comprobantes emitidos" },
             { k: "guias" as Tab, label: "🚚 Guías de Remisión" },
             { k: "liquidaciones" as Tab, label: "🧾 Liquidaciones de Compra" },
+            { k: "notasdebito" as Tab, label: "➕ Notas de Débito" },
             { k: "ats" as Tab, label: "📊 Generador ATS" },
           ].map(t => (
             <button key={t.k}
@@ -446,6 +448,9 @@ export default function ContabilidadPage() {
 
         {/* TAB: Liquidaciones de Compra (v2.5.69) */}
         {tab === "liquidaciones" && <LiquidacionesCompraContab />}
+
+        {/* TAB: Notas de Débito (v2.5.69) */}
+        {tab === "notasdebito" && <NotasDebitoContab />}
 
         {/* TAB: ATS (v2.5.48) */}
         {tab === "ats" && <AtsGenerador />}

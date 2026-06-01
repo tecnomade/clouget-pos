@@ -667,6 +667,11 @@ pub fn run() {
             commands::contabilidad::contabilidad_listar_liquidaciones_compra,
             commands::contabilidad::contabilidad_anular_liquidacion_compra,
             commands::contabilidad::contabilidad_emitir_liquidacion_compra_sri,
+            // v2.5.69: nota de débito (codDoc 05)
+            commands::contabilidad::contabilidad_crear_nota_debito,
+            commands::contabilidad::contabilidad_listar_notas_debito,
+            commands::contabilidad::contabilidad_anular_nota_debito,
+            commands::contabilidad::contabilidad_emitir_nota_debito_sri,
             // v2.5.53: cuentas OAuth Gmail per-cliente
             commands::oauth_email::listar_oauth_email_cuentas,
             commands::oauth_email::guardar_oauth_email_cuenta,

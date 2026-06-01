@@ -752,6 +752,37 @@ export async function emitirLiquidacionCompraSri(id: number): Promise<ResultadoE
   return smartInvoke("contabilidad_emitir_liquidacion_compra_sri", { id });
 }
 
+// === Nota de Débito (SRI codDoc 05) ===
+export interface MotivoNd { razon: string; valor: number; }
+
+export interface NotaDebitoResumen {
+  id: number;
+  numero?: string;
+  fecha_emision: string;
+  cliente_nombre: string;
+  num_doc_modificado: string;
+  valor_total: number;
+  estado_sri: string;
+  numero_factura?: string;
+  anulada: boolean;
+}
+
+export async function crearNotaDebito(input: { cliente_id: number; venta_id?: number; num_doc_modificado: string; fecha_doc_modificado?: string; aplica_iva?: boolean; observacion?: string; motivos: MotivoNd[] }): Promise<{ id: number }> {
+  return smartInvoke("contabilidad_crear_nota_debito", { input });
+}
+
+export async function listarNotasDebito(fechaDesde: string, fechaHasta: string): Promise<NotaDebitoResumen[]> {
+  return smartInvoke("contabilidad_listar_notas_debito", { fechaDesde, fechaHasta });
+}
+
+export async function anularNotaDebito(id: number): Promise<void> {
+  return smartInvoke("contabilidad_anular_nota_debito", { id });
+}
+
+export async function emitirNotaDebitoSri(id: number): Promise<ResultadoEmision> {
+  return smartInvoke("contabilidad_emitir_nota_debito_sri", { id });
+}
+
 // === Aprendizaje placa <-> chofer <-> transportista ===
 export interface SugerenciaTransporte {
   placa: string;

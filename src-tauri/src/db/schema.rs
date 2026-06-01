@@ -1709,6 +1709,50 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_liq_compra_det ON liquidacion_compra_detalles(liquidacion_id);
     ");
 
+    // v2.5.69: Notas de Débito (codDoc 05). Cobra un valor adicional (interés,
+    // recargo) sobre una factura ya emitida al cliente.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS notas_debito (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT,
+            cliente_id INTEGER NOT NULL,
+            venta_id INTEGER,
+            cod_doc_modificado TEXT NOT NULL DEFAULT '01',
+            num_doc_modificado TEXT NOT NULL,
+            fecha_doc_modificado TEXT,
+            fecha_emision TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            establecimiento TEXT,
+            punto_emision TEXT,
+            secuencial TEXT,
+            numero_factura TEXT,
+            clave_acceso TEXT,
+            estado_sri TEXT NOT NULL DEFAULT 'NO_APLICA',
+            autorizacion_sri TEXT,
+            fecha_autorizacion TEXT,
+            xml_firmado TEXT,
+            total_sin_impuestos REAL NOT NULL DEFAULT 0,
+            iva REAL NOT NULL DEFAULT 0,
+            valor_total REAL NOT NULL DEFAULT 0,
+            aplica_iva INTEGER NOT NULL DEFAULT 0,
+            usuario TEXT,
+            observacion TEXT,
+            anulada INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (cliente_id) REFERENCES clientes(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_nd_cliente ON notas_debito(cliente_id);
+        CREATE INDEX IF NOT EXISTS idx_nd_fecha ON notas_debito(fecha_emision);
+
+        CREATE TABLE IF NOT EXISTS nota_debito_motivos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nota_debito_id INTEGER NOT NULL,
+            razon TEXT NOT NULL,
+            valor REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (nota_debito_id) REFERENCES notas_debito(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_nd_motivos ON nota_debito_motivos(nota_debito_id);
+    ");
+
     // v2.5.44: si existe la tabla vieja sri_avanzado_config (de v2.5.43 BETA),
     // migrar los datos y borrarla. Ignora errores si no existe (caso normal).
     let tabla_vieja_existe: bool = conn.query_row(

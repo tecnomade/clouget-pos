@@ -2049,3 +2049,378 @@ pub async fn contabilidad_emitir_liquidacion_compra_sri(
         }),
     })
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.5.69 — Nota de Débito (codDoc 05)
+// La emite el vendedor para cobrar un valor adicional (interés por mora,
+// recargo) sobre una factura ya emitida al cliente.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct MotivoNdInput {
+    pub razon: String,
+    pub valor: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NuevaNotaDebito {
+    pub cliente_id: i64,
+    #[serde(default)]
+    pub venta_id: Option<i64>,
+    pub num_doc_modificado: String,       // "001-001-000000001" de la factura
+    #[serde(default)]
+    pub fecha_doc_modificado: Option<String>, // YYYY-MM-DD
+    #[serde(default)]
+    pub aplica_iva: bool,                 // si los cargos llevan IVA 15%
+    #[serde(default)]
+    pub observacion: Option<String>,
+    pub motivos: Vec<MotivoNdInput>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NotaDebitoResumen {
+    pub id: i64,
+    pub numero: Option<String>,
+    pub fecha_emision: String,
+    pub cliente_nombre: String,
+    pub num_doc_modificado: String,
+    pub valor_total: f64,
+    pub estado_sri: String,
+    pub numero_factura: Option<String>,
+    pub anulada: bool,
+}
+
+/// Crea una nota de débito (borrador, estado_sri='NO_APLICA').
+#[tauri::command]
+pub fn contabilidad_crear_nota_debito(
+    db: State<'_, Database>,
+    sesion: State<'_, SesionState>,
+    input: NuevaNotaDebito,
+) -> Result<LiquidacionCreada, String> {
+    let usuario = {
+        let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        s.as_ref().map(|s| s.nombre.clone()).unwrap_or_else(|| "?".to_string())
+    };
+    if input.motivos.is_empty() {
+        return Err("Agregue al menos un motivo (cargo) a la nota de débito".into());
+    }
+    if input.num_doc_modificado.trim().is_empty() {
+        return Err("Indique el número de la factura sobre la que se cobra".into());
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let base: f64 = input.motivos.iter().map(|m| m.valor).sum();
+    let iva = if input.aplica_iva { base * 0.15 } else { 0.0 };
+    let total = base + iva;
+
+    conn.execute(
+        "INSERT INTO notas_debito
+            (cliente_id, venta_id, num_doc_modificado, fecha_doc_modificado,
+             total_sin_impuestos, iva, valor_total, aplica_iva, usuario, observacion)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            input.cliente_id, input.venta_id, input.num_doc_modificado.trim(),
+            input.fecha_doc_modificado, base, iva, total, input.aplica_iva as i32,
+            usuario, input.observacion,
+        ],
+    ).map_err(|e| format!("Error creando nota de débito: {}", e))?;
+    let nid = conn.last_insert_rowid();
+
+    for m in &input.motivos {
+        conn.execute(
+            "INSERT INTO nota_debito_motivos (nota_debito_id, razon, valor) VALUES (?1, ?2, ?3)",
+            params![nid, m.razon.trim(), m.valor],
+        ).map_err(|e| format!("Error guardando motivo: {}", e))?;
+    }
+
+    Ok(LiquidacionCreada { id: nid })
+}
+
+/// Lista notas de débito en un rango de fechas.
+#[tauri::command]
+pub fn contabilidad_listar_notas_debito(
+    db: State<'_, Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+) -> Result<Vec<NotaDebitoResumen>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT n.id, n.numero, n.fecha_emision, c.nombre, n.num_doc_modificado,
+                n.valor_total, n.estado_sri, n.numero_factura, n.anulada
+         FROM notas_debito n
+         JOIN clientes c ON n.cliente_id = c.id
+         WHERE date(n.fecha_emision) BETWEEN date(?1) AND date(?2)
+         ORDER BY n.fecha_emision DESC, n.id DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![fecha_desde, fecha_hasta], |r| {
+        Ok(NotaDebitoResumen {
+            id: r.get(0)?,
+            numero: r.get(1).ok(),
+            fecha_emision: r.get(2)?,
+            cliente_nombre: r.get(3)?,
+            num_doc_modificado: r.get(4)?,
+            valor_total: r.get(5)?,
+            estado_sri: r.get::<_, String>(6).unwrap_or_else(|_| "NO_APLICA".to_string()),
+            numero_factura: r.get(7).ok(),
+            anulada: r.get::<_, i32>(8).unwrap_or(0) != 0,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// Anula una nota de débito (solo si no está AUTORIZADA).
+#[tauri::command]
+pub fn contabilidad_anular_nota_debito(db: State<'_, Database>, id: i64) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let estado: String = conn.query_row(
+        "SELECT estado_sri FROM notas_debito WHERE id = ?1", params![id], |r| r.get(0),
+    ).map_err(|_| "Nota de débito no encontrada".to_string())?;
+    if estado == "AUTORIZADA" {
+        return Err("No se puede anular una nota de débito AUTORIZADA por el SRI".into());
+    }
+    conn.execute("UPDATE notas_debito SET anulada = 1 WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+struct DatosNd {
+    cliente_tipo_id: String,
+    cliente_identificacion: Option<String>,
+    cliente_nombre: String,
+    num_doc_modificado: String,
+    fecha_doc_modificado: Option<String>,
+    fecha_emision: String,
+    aplica_iva: i32,
+    total_sin_impuestos: f64,
+    valor_total: f64,
+    estado_sri: String,
+    clave_acceso_previa: Option<String>,
+    xml_firmado_previo: Option<String>,
+    establecimiento_prev: Option<String>,
+    punto_emision_prev: Option<String>,
+    numero_comprobante_prev: Option<String>,
+    anulada: i32,
+}
+
+/// Emite la nota de débito al SRI (firma + envío + autorización).
+#[tauri::command]
+pub async fn contabilidad_emitir_nota_debito_sri(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<ResultadoEmisionRetencion, String> {
+    let (datos, motivos, config, p12_data, p12_password) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+        let getc = |k: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key=?1", params![k], |r| r.get(0)).unwrap_or_default()
+        };
+        let demo = getc("demo_activo") == "1";
+        let mods = getc("licencia_modulos");
+        if !demo && !(mods.contains("contabilidad") || mods.contains("sri_avanzado")) {
+            return Err("La nota de débito electrónica requiere el módulo Contabilidad.".into());
+        }
+
+        let datos: DatosNd = conn.query_row(
+            "SELECT c.tipo_identificacion, c.identificacion, c.nombre,
+                    n.num_doc_modificado, n.fecha_doc_modificado, n.fecha_emision, n.aplica_iva,
+                    n.total_sin_impuestos, n.valor_total, n.estado_sri, n.clave_acceso, n.xml_firmado,
+                    n.establecimiento, n.punto_emision, n.numero_factura, n.anulada
+             FROM notas_debito n JOIN clientes c ON n.cliente_id = c.id
+             WHERE n.id = ?1",
+            params![id],
+            |r| Ok(DatosNd {
+                cliente_tipo_id: r.get::<_, String>(0).unwrap_or_default(),
+                cliente_identificacion: r.get(1).ok(),
+                cliente_nombre: r.get(2)?,
+                num_doc_modificado: r.get(3)?,
+                fecha_doc_modificado: r.get(4).ok(),
+                fecha_emision: r.get(5)?,
+                aplica_iva: r.get::<_, i32>(6).unwrap_or(0),
+                total_sin_impuestos: r.get(7)?,
+                valor_total: r.get(8)?,
+                estado_sri: r.get(9)?,
+                clave_acceso_previa: r.get(10).ok(),
+                xml_firmado_previo: r.get(11).ok(),
+                establecimiento_prev: r.get(12).ok(),
+                punto_emision_prev: r.get(13).ok(),
+                numero_comprobante_prev: r.get(14).ok(),
+                anulada: r.get::<_, i32>(15).unwrap_or(0),
+            }),
+        ).map_err(|_| "Nota de débito no encontrada".to_string())?;
+
+        if datos.anulada != 0 { return Err("La nota de débito está anulada".into()); }
+        if datos.estado_sri == "AUTORIZADA" { return Err("Esta nota de débito ya fue autorizada".into()); }
+
+        let mut stmt = conn.prepare("SELECT razon, valor FROM nota_debito_motivos WHERE nota_debito_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let motivos: Vec<(String, f64)> = stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        drop(stmt);
+        if motivos.is_empty() { return Err("La nota de débito no tiene motivos".into()); }
+
+        let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut sc = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+        let rows = sc.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+        for row in rows { let (k, v) = row.map_err(|e| e.to_string())?; config.insert(k, v); }
+        drop(sc);
+
+        let (p12, pass): (Vec<u8>, String) = conn.query_row(
+            "SELECT p12_data, password FROM sri_certificado WHERE id = 1", [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(|_| "No hay certificado digital cargado.".to_string())?;
+
+        (datos, motivos, config, p12, pass)
+    };
+
+    let cfg = |k: &str| config.get(k).cloned().unwrap_or_default();
+    let ruc = cfg("ruc");
+    if ruc.len() != 13 { return Err("Configure el RUC del negocio (13 dígitos).".into()); }
+    let ambiente = match cfg("sri_ambiente").as_str() { "produccion" => "2", _ => "1" };
+    let establecimiento_cfg = { let t = cfg("terminal_establecimiento"); if t.is_empty() { cfg("establecimiento") } else { t } };
+    let establecimiento_cfg = if establecimiento_cfg.is_empty() { "001".to_string() } else { establecimiento_cfg };
+    let punto_emision_cfg = { let t = cfg("terminal_punto_emision"); if t.is_empty() { cfg("punto_emision") } else { t } };
+    let punto_emision_cfg = if punto_emision_cfg.is_empty() { "001".to_string() } else { punto_emision_cfg };
+    let regimen = cfg("regimen");
+    let modo_demo = cfg("demo_activo") == "1";
+    let tipo_doc_sec = if ambiente == "1" { "NOTA_DEBITO_PRUEBAS" } else { "NOTA_DEBITO" };
+
+    let mut secuencial_sri: i64 = 0;
+    let mut numero_comprobante = datos.numero_comprobante_prev.clone().unwrap_or_default();
+    let mut establecimiento_usado = datos.establecimiento_prev.clone().unwrap_or_else(|| establecimiento_cfg.clone());
+    let mut punto_emision_usado = datos.punto_emision_prev.clone().unwrap_or_else(|| punto_emision_cfg.clone());
+    let mut es_primera = false;
+
+    let (clave_final, xml_firmado_final, resultado_sri) = if datos.estado_sri == "PENDIENTE"
+        && datos.clave_acceso_previa.is_some() && datos.xml_firmado_previo.is_some() && !modo_demo
+    {
+        let clave_prev = datos.clave_acceso_previa.clone().unwrap();
+        let xml_prev = datos.xml_firmado_previo.clone().unwrap();
+        let consulta = soap::consultar_autorizacion(&clave_prev, ambiente).await;
+        match consulta {
+            Ok(ref res) if res.exito => (clave_prev, xml_prev, consulta.unwrap()),
+            _ => { let r = soap::enviar_comprobante(&xml_prev, &clave_prev, ambiente).await?; (clave_prev, xml_prev, r) }
+        }
+    } else {
+        es_primera = true;
+        secuencial_sri = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, ?3, 1)",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+            ).map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+                |r| r.get::<_, i64>(0),
+            ).map_err(|e| e.to_string())?
+        };
+        establecimiento_usado = establecimiento_cfg.clone();
+        punto_emision_usado = punto_emision_cfg.clone();
+        let secuencial = format!("{:09}", secuencial_sri);
+        numero_comprobante = format!("{}-{}-{}", establecimiento_usado, punto_emision_usado, secuencial);
+
+        let fecha_emision = fmt_fecha_sri(&datos.fecha_emision)
+            .unwrap_or_else(|_| chrono::Local::now().format("%d/%m/%Y").to_string());
+
+        let clave = clave_acceso::generar_clave_acceso(
+            &fecha_emision, "05", &ruc, ambiente, &establecimiento_usado, &punto_emision_usado, &secuencial, "1",
+        );
+
+        let id_comprador = datos.cliente_identificacion.clone().unwrap_or_else(|| "9999999999999".to_string());
+        let tipo_id = if id_comprador == "9999999999999" { "07" } else {
+            match datos.cliente_tipo_id.as_str() { "RUC" => "04", "CEDULA" => "05", "PASAPORTE" => "06", _ => "07" }
+        };
+
+        let base = datos.total_sin_impuestos;
+        let mut impuestos_totales = Vec::new();
+        if datos.aplica_iva != 0 {
+            impuestos_totales.push(xml::ImpuestoTotal { codigo: "2".into(), codigo_porcentaje: "4".into(), base_imponible: base, valor: base * 0.15 });
+        } else {
+            impuestos_totales.push(xml::ImpuestoTotal { codigo: "2".into(), codigo_porcentaje: "0".into(), base_imponible: base, valor: 0.0 });
+        }
+
+        let fecha_doc_sustento = datos.fecha_doc_modificado.as_deref().unwrap_or(&datos.fecha_emision);
+        let fecha_doc_fmt = fmt_fecha_sri(fecha_doc_sustento).unwrap_or(fecha_emision.clone());
+
+        let contribuyente_rimpe = match regimen.as_str() {
+            "RIMPE_EMPRENDEDOR" => Some("CONTRIBUYENTE RÉGIMEN RIMPE".to_string()),
+            "RIMPE_POPULAR" => Some("CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE".to_string()),
+            _ => None,
+        };
+
+        let datos_xml = xml::DatosNotaDebito {
+            ambiente: ambiente.to_string(),
+            tipo_emision: "1".to_string(),
+            razon_social: cfg("nombre_negocio"),
+            nombre_comercial: cfg("nombre_negocio"),
+            ruc: ruc.clone(),
+            clave_acceso: clave.clone(),
+            estab: establecimiento_usado.clone(),
+            pto_emi: punto_emision_usado.clone(),
+            secuencial: secuencial.clone(),
+            dir_matriz: cfg("direccion"),
+            contribuyente_rimpe,
+            fecha_emision,
+            dir_establecimiento: cfg("direccion"),
+            tipo_identificacion_comprador: tipo_id.to_string(),
+            razon_social_comprador: datos.cliente_nombre.clone(),
+            identificacion_comprador: id_comprador,
+            obligado_contabilidad: "NO".to_string(),
+            cod_doc_modificado: "01".to_string(),
+            num_doc_modificado: datos.num_doc_modificado.clone(),
+            fecha_emision_doc_sustento: fecha_doc_fmt,
+            total_sin_impuestos: base,
+            impuestos_totales,
+            valor_total: datos.valor_total,
+            motivos: motivos.iter().map(|(r, v)| xml::MotivoNotaDebito { razon: r.clone(), valor: *v }).collect(),
+            info_adicional: vec![],
+        };
+
+        let xml_sin_firma = xml::generar_xml_nota_debito(&datos_xml);
+        soap::log_sri(&format!("XML nota débito sin firma ({} bytes)", xml_sin_firma.len()));
+        let firmado = firma::firmar_comprobante(&xml_sin_firma, &p12_data, &p12_password, "notaDebito")?;
+        let r = soap::enviar_comprobante(&firmado.xml, &clave, ambiente).await?;
+        (clave, firmado.xml, r)
+    };
+
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let nuevo_estado = if resultado_sri.exito { "AUTORIZADA" }
+                           else if resultado_sri.estado == "EN_PROCESO" { "PENDIENTE" } else { "RECHAZADA" };
+        let xml_guardar = if resultado_sri.exito || resultado_sri.estado == "EN_PROCESO" { Some(xml_firmado_final.clone()) } else { None };
+        conn.execute(
+            "UPDATE notas_debito SET estado_sri = ?1, clave_acceso = ?2, autorizacion_sri = ?3,
+                 fecha_autorizacion = ?4, xml_firmado = COALESCE(?5, xml_firmado),
+                 numero_factura = COALESCE(?6, numero_factura), numero = COALESCE(?6, numero),
+                 establecimiento = ?7, punto_emision = ?8, secuencial = ?9
+             WHERE id = ?10",
+            params![
+                nuevo_estado, clave_final, resultado_sri.numero_autorizacion,
+                resultado_sri.fecha_autorizacion.as_deref(), xml_guardar,
+                if numero_comprobante.is_empty() { None } else { Some(numero_comprobante.clone()) },
+                establecimiento_usado, punto_emision_usado, format!("{:09}", secuencial_sri), id,
+            ],
+        ).map_err(|e| format!("Error actualizando nota de débito: {}", e))?;
+
+        if resultado_sri.exito && es_primera && secuencial_sri > 0 {
+            conn.execute(
+                "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento_usado, punto_emision_usado, tipo_doc_sec],
+            ).ok();
+        }
+    }
+
+    Ok(ResultadoEmisionRetencion {
+        exito: resultado_sri.exito,
+        estado_sri: resultado_sri.estado.clone(),
+        clave_acceso: Some(clave_final),
+        numero_autorizacion: resultado_sri.numero_autorizacion,
+        fecha_autorizacion: resultado_sri.fecha_autorizacion,
+        numero_comprobante: if numero_comprobante.is_empty() { None } else { Some(numero_comprobante) },
+        mensaje: resultado_sri.mensaje.unwrap_or_else(|| {
+            if resultado_sri.exito { "Nota de débito autorizada".to_string() }
+            else { format!("Estado: {}", resultado_sri.estado) }
+        }),
+    })
+}

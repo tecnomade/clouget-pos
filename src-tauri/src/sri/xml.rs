@@ -744,6 +744,140 @@ pub fn generar_xml_liquidacion_compra(datos: &DatosLiquidacionCompra) -> String 
     xml
 }
 
+// ─── v2.5.69: Nota de Débito electrónica SRI v1.0.0 ──────────────────────────
+
+/// Un motivo (cargo) dentro de una nota de débito.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MotivoNotaDebito {
+    pub razon: String,
+    pub valor: f64,
+}
+
+/// Datos para generar el XML de una Nota de Débito (codDoc 05).
+///
+/// La emite el vendedor para COBRAR un valor adicional sobre una factura ya
+/// emitida (intereses por mora, recargos, gastos). Estructura: infoNotaDebito
+/// + lista de motivos + impuestos totales (NO lleva detalles de productos).
+///
+/// Tag root: `notaDebito` (version 1.0.0).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatosNotaDebito {
+    // infoTributaria
+    pub ambiente: String,
+    pub tipo_emision: String,
+    pub razon_social: String,
+    pub nombre_comercial: String,
+    pub ruc: String,
+    pub clave_acceso: String,        // 49 dígitos, codDoc=05
+    pub estab: String,
+    pub pto_emi: String,
+    pub secuencial: String,
+    pub dir_matriz: String,
+    pub contribuyente_rimpe: Option<String>,
+
+    // infoNotaDebito
+    pub fecha_emision: String,
+    pub dir_establecimiento: String,
+    pub tipo_identificacion_comprador: String,
+    pub razon_social_comprador: String,
+    pub identificacion_comprador: String,
+    pub obligado_contabilidad: String,
+    pub cod_doc_modificado: String,       // "01" factura
+    pub num_doc_modificado: String,       // "001-001-000000001"
+    pub fecha_emision_doc_sustento: String, // dd/mm/yyyy
+
+    pub total_sin_impuestos: f64,
+    pub impuestos_totales: Vec<ImpuestoTotal>,
+    pub valor_total: f64,
+
+    pub motivos: Vec<MotivoNotaDebito>,
+    pub info_adicional: Vec<CampoAdicional>,
+}
+
+/// Genera el XML de la Nota de Débito electrónica SRI v1.0.0.
+/// No usa self-closing tags. Tag root: `notaDebito`.
+pub fn generar_xml_nota_debito(datos: &DatosNotaDebito) -> String {
+    let mut xml = String::with_capacity(4096);
+
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<notaDebito id=\"comprobante\" version=\"1.0.0\">\n");
+
+    // === infoTributaria ===
+    xml.push_str("  <infoTributaria>\n");
+    xml_tag(&mut xml, 4, "ambiente", &datos.ambiente);
+    xml_tag(&mut xml, 4, "tipoEmision", &datos.tipo_emision);
+    xml_tag(&mut xml, 4, "razonSocial", &xml_escape(&datos.razon_social));
+    xml_tag(&mut xml, 4, "nombreComercial", &xml_escape(&datos.nombre_comercial));
+    xml_tag(&mut xml, 4, "ruc", &datos.ruc);
+    xml_tag(&mut xml, 4, "claveAcceso", &datos.clave_acceso);
+    xml_tag(&mut xml, 4, "codDoc", "05");
+    xml_tag(&mut xml, 4, "estab", &datos.estab);
+    xml_tag(&mut xml, 4, "ptoEmi", &datos.pto_emi);
+    xml_tag(&mut xml, 4, "secuencial", &datos.secuencial);
+    xml_tag(&mut xml, 4, "dirMatriz", &xml_escape(&datos.dir_matriz));
+    if let Some(ref rimpe) = datos.contribuyente_rimpe {
+        if !rimpe.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteRimpe", &xml_escape(rimpe));
+        }
+    }
+    xml.push_str("  </infoTributaria>\n");
+
+    // === infoNotaDebito ===
+    xml.push_str("  <infoNotaDebito>\n");
+    xml_tag(&mut xml, 4, "fechaEmision", &datos.fecha_emision);
+    xml_tag(&mut xml, 4, "dirEstablecimiento", &xml_escape(&datos.dir_establecimiento));
+    xml_tag(&mut xml, 4, "tipoIdentificacionComprador", &datos.tipo_identificacion_comprador);
+    xml_tag(&mut xml, 4, "razonSocialComprador", &xml_escape(&datos.razon_social_comprador));
+    xml_tag(&mut xml, 4, "identificacionComprador", &datos.identificacion_comprador);
+    xml_tag(&mut xml, 4, "obligadoContabilidad", &datos.obligado_contabilidad);
+    xml_tag(&mut xml, 4, "codDocModificado", &datos.cod_doc_modificado);
+    xml_tag(&mut xml, 4, "numDocModificado", &datos.num_doc_modificado);
+    xml_tag(&mut xml, 4, "fechaEmisionDocSustento", &datos.fecha_emision_doc_sustento);
+    xml_tag(&mut xml, 4, "totalSinImpuestos", &format!("{:.2}", datos.total_sin_impuestos));
+
+    // impuestos
+    xml.push_str("    <impuestos>\n");
+    for imp in &datos.impuestos_totales {
+        xml.push_str("      <impuesto>\n");
+        xml_tag(&mut xml, 8, "codigo", &imp.codigo);
+        xml_tag(&mut xml, 8, "codigoPorcentaje", &imp.codigo_porcentaje);
+        xml_tag(&mut xml, 8, "tarifa", &format!("{:.2}", tarifa_iva(&imp.codigo_porcentaje)));
+        xml_tag(&mut xml, 8, "baseImponible", &format!("{:.2}", imp.base_imponible));
+        xml_tag(&mut xml, 8, "valor", &format!("{:.2}", imp.valor));
+        xml.push_str("      </impuesto>\n");
+    }
+    xml.push_str("    </impuestos>\n");
+
+    xml_tag(&mut xml, 4, "valorTotal", &format!("{:.2}", datos.valor_total));
+    xml.push_str("  </infoNotaDebito>\n");
+
+    // === motivos ===
+    xml.push_str("  <motivos>\n");
+    for m in &datos.motivos {
+        xml.push_str("    <motivo>\n");
+        xml_tag(&mut xml, 6, "razon", &xml_escape(&m.razon));
+        xml_tag(&mut xml, 6, "valor", &format!("{:.2}", m.valor));
+        xml.push_str("    </motivo>\n");
+    }
+    xml.push_str("  </motivos>\n");
+
+    // === infoAdicional (opcional) ===
+    if !datos.info_adicional.is_empty() {
+        xml.push_str("  <infoAdicional>\n");
+        for campo in &datos.info_adicional {
+            xml.push_str(&format!(
+                "    <campoAdicional nombre=\"{}\">{}</campoAdicional>\n",
+                xml_escape(&campo.nombre),
+                xml_escape(&campo.valor)
+            ));
+        }
+        xml.push_str("  </infoAdicional>\n");
+    }
+
+    xml.push_str("</notaDebito>");
+    xml
+}
+
 // ─── v2.5.67: Guía de Remisión electrónica SRI v2.0.0 ────────────────────────
 
 /// Datos necesarios para generar el XML de una guía de remisión SRI v2.0.0.
