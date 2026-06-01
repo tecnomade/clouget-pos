@@ -2970,6 +2970,106 @@ pub fn cambiar_estado_guia(
     Ok(())
 }
 
+/// Datos SRI de una guía de remisión electrónica (codDoc 06).
+/// Cada campo es opcional: solo se actualiza el que viene con valor.
+#[derive(serde::Deserialize)]
+pub struct GuiaDatosSri {
+    pub transportista: Option<String>,
+    pub ruc_transportista: Option<String>,
+    pub tipo_id_transportista: Option<String>,
+    pub dir_partida: Option<String>,
+    pub fecha_inicio_transporte: Option<String>,
+    pub fecha_fin_transporte: Option<String>,
+    pub motivo_traslado: Option<String>,
+    pub ruta: Option<String>,
+    pub cod_doc_sustento: Option<String>,
+    pub num_doc_sustento: Option<String>,
+    pub num_aut_sustento: Option<String>,
+    pub fecha_emision_sustento: Option<String>,
+    pub placa: Option<String>,
+    pub direccion_destino: Option<String>,
+}
+
+/// Guarda/actualiza los datos SRI de una guía de remisión (transportista, fechas,
+/// motivo, ruta, doc sustento) antes de emitirla electrónicamente al SRI.
+/// No toca el flujo de creación; solo hace UPDATE de las columnas guia_*.
+#[tauri::command]
+pub fn guia_guardar_datos_sri(
+    db: State<Database>,
+    guia_id: i64,
+    datos: GuiaDatosSri,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let upd = |campo: &str, val: &Option<String>| -> Result<(), String> {
+        if let Some(v) = val {
+            // `campo` siempre es un literal hardcodeado (no input del usuario) → seguro.
+            conn.execute(
+                &format!("UPDATE ventas SET {} = ?1 WHERE id = ?2 AND tipo_estado = 'GUIA_REMISION'", campo),
+                rusqlite::params![v, guia_id],
+            ).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    upd("guia_transportista", &datos.transportista)?;
+    upd("guia_ruc_transportista", &datos.ruc_transportista)?;
+    upd("guia_tipo_id_transportista", &datos.tipo_id_transportista)?;
+    upd("guia_dir_partida", &datos.dir_partida)?;
+    upd("guia_fecha_inicio_transporte", &datos.fecha_inicio_transporte)?;
+    upd("guia_fecha_fin_transporte", &datos.fecha_fin_transporte)?;
+    upd("guia_motivo_traslado", &datos.motivo_traslado)?;
+    upd("guia_ruta", &datos.ruta)?;
+    upd("guia_cod_doc_sustento", &datos.cod_doc_sustento)?;
+    upd("guia_num_doc_sustento", &datos.num_doc_sustento)?;
+    upd("guia_num_aut_sustento", &datos.num_aut_sustento)?;
+    upd("guia_fecha_emision_sustento", &datos.fecha_emision_sustento)?;
+    upd("guia_placa", &datos.placa)?;
+    upd("guia_direccion_destino", &datos.direccion_destino)?;
+    Ok(())
+}
+
+/// Lee los datos SRI guardados de una guía (para precargar el modal de emisión).
+#[tauri::command]
+pub fn guia_obtener_datos_sri(
+    db: State<Database>,
+    guia_id: i64,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut m = std::collections::HashMap::new();
+    conn.query_row(
+        "SELECT COALESCE(guia_transportista,''), COALESCE(guia_ruc_transportista,''),
+                COALESCE(guia_tipo_id_transportista,''), COALESCE(guia_dir_partida,''),
+                COALESCE(guia_fecha_inicio_transporte,''), COALESCE(guia_fecha_fin_transporte,''),
+                COALESCE(guia_motivo_traslado,''), COALESCE(guia_ruta,''),
+                COALESCE(guia_cod_doc_sustento,''), COALESCE(guia_num_doc_sustento,''),
+                COALESCE(guia_num_aut_sustento,''), COALESCE(guia_fecha_emision_sustento,''),
+                COALESCE(guia_placa,''), COALESCE(guia_chofer,''), COALESCE(guia_direccion_destino,''),
+                COALESCE(estado_sri,''), COALESCE(numero_factura,'')
+         FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'",
+        rusqlite::params![guia_id],
+        |row| {
+            m.insert("transportista".to_string(), row.get::<_, String>(0)?);
+            m.insert("ruc_transportista".to_string(), row.get::<_, String>(1)?);
+            m.insert("tipo_id_transportista".to_string(), row.get::<_, String>(2)?);
+            m.insert("dir_partida".to_string(), row.get::<_, String>(3)?);
+            m.insert("fecha_inicio_transporte".to_string(), row.get::<_, String>(4)?);
+            m.insert("fecha_fin_transporte".to_string(), row.get::<_, String>(5)?);
+            m.insert("motivo_traslado".to_string(), row.get::<_, String>(6)?);
+            m.insert("ruta".to_string(), row.get::<_, String>(7)?);
+            m.insert("cod_doc_sustento".to_string(), row.get::<_, String>(8)?);
+            m.insert("num_doc_sustento".to_string(), row.get::<_, String>(9)?);
+            m.insert("num_aut_sustento".to_string(), row.get::<_, String>(10)?);
+            m.insert("fecha_emision_sustento".to_string(), row.get::<_, String>(11)?);
+            m.insert("placa".to_string(), row.get::<_, String>(12)?);
+            m.insert("chofer".to_string(), row.get::<_, String>(13)?);
+            m.insert("direccion_destino".to_string(), row.get::<_, String>(14)?);
+            m.insert("estado_sri".to_string(), row.get::<_, String>(15)?);
+            m.insert("numero_sri".to_string(), row.get::<_, String>(16)?);
+            Ok(())
+        },
+    ).map_err(|e| format!("Guía no encontrada: {}", e))?;
+    Ok(m)
+}
+
 /// Anula una venta NO autorizada por el SRI (FACTURA PENDIENTE/RECHAZADA o NOTA_VENTA).
 /// Reintegra el stock, elimina CXC/pagos asociados y marca anulada=1.
 /// Si la factura esta AUTORIZADA por SRI, NO permite anular (debe usar Nota de Credito).
