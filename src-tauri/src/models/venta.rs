@@ -49,6 +49,9 @@ pub struct Venta {
     pub guia_direccion_destino: Option<String>,
     #[serde(default)]
     pub anulada: Option<i64>,
+    /// v2.5.68 (Fase C): estado logístico de despacho (PREPARANDO/EN_TRANSITO/ENTREGADO/...).
+    #[serde(default)]
+    pub despacho_estado: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

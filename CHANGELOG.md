@@ -6,6 +6,39 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.68 — 2026-05-31 📦 Notas de Entrega, Guía SRI en Contabilidad, estados derivados y despacho
+
+Reorganización arquitectónica para separar correctamente **logística** de **tributación**, manteniendo todo lo avanzado gateado por su módulo.
+
+### Notas de Entrega vs Guía de Remisión (separación conceptual)
+
+- El documento interno/logístico (antes "Guía de Remisión" interna) ahora se llama **Nota de Entrega**: mueve stock, queda pendiente de venta, se convierte a venta sin doble descuento. **No es documento SRI.**
+- La **Guía de Remisión** queda reservada para el comprobante electrónico **autorizado por el SRI** (codDoc 06).
+
+### Guía de Remisión electrónica → en el módulo Contabilidad
+
+- Nueva pestaña **"🚚 Guías de Remisión"** dentro de Contabilidad (no satura el POS).
+- Crear desde cero con **buscador de productos propio** (descripción + cantidad, **sin precio** → soporta "camión, 5.5 ton chatarra ferrosa") y emitir al SRI en un paso.
+- **Gated por módulo `contabilidad`** (frontend + backend): sin el módulo no se ve ni se puede emitir.
+
+### Estados derivados automáticos (separados por contexto)
+
+- Los estados ya **no se mezclan** en un solo campo ni dependen de botones. Se derivan automáticamente de los datos y se separan en **Operativo / Comercial / Tributario**, visibles como chips en el detalle de la nota.
+
+### Despacho logístico (inventario avanzado)
+
+- Ciclo de despacho **Preparando → En tránsito → Entregado** (+ Devuelto/Parcial), con sellado automático de fechas de salida/entrega.
+- Solo acciones humanas son manuales (confirmar salida/entrega/devolución); el estado operativo se deriva solo.
+- **Gated por módulo `multi_almacen`** (frontend + backend): es inventario avanzado.
+
+### Además (incluye v2.5.67, aún no desplegada)
+
+- **Proveedor en devoluciones de compra**: visible en Inventario (kardex) y Reportes.
+- **Placa ↔ chofer/transportista automático**: aprende de las notas y autocompleta.
+- **Guía de Remisión electrónica** (motor XML 06 + firma + autorización + RIDE con barcode).
+
+---
+
 ## v2.5.67 — 2026-05-31 🚚 Guía de Remisión electrónica (SRI codDoc 06)
 
 Nuevo tipo de comprobante electrónico: la **Guía de Remisión** ahora se puede firmar y autorizar ante el SRI (antes solo era un remito interno con `estado_sri = NO_APLICA`). Con esto la app cubre **4 de los 6** tipos del SRI: Factura (01), Nota de Crédito (04), **Guía de Remisión (06)** y Retención (07).

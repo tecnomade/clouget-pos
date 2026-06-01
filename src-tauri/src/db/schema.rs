@@ -670,6 +670,15 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_num_aut_sustento TEXT", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_fecha_emision_sustento TEXT", []);
 
+    // v2.5.68 (Fase C): ciclo de vida logístico de despacho de la nota/guía.
+    // Estados: PREPARANDO -> EN_TRANSITO -> ENTREGADO  (+ DEVUELTO / PARCIAL).
+    // Es el estado OPERATIVO real del movimiento físico, independiente del estado
+    // comercial (venta) y tributario (SRI). NULL = sin despacho gestionado (notas viejas).
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN despacho_estado TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN despacho_fecha_salida TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN despacho_fecha_entrega TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN despacho_observacion TEXT", []);
+
     // Tabla de choferes/transportistas (autocompletar)
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS choferes (

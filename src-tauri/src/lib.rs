@@ -395,6 +395,7 @@ pub fn run() {
             commands::ventas::cambiar_estado_guia,
             commands::ventas::guia_guardar_datos_sri,
             commands::ventas::guia_obtener_datos_sri,
+            commands::ventas::guia_cambiar_despacho,
             // Caja
             commands::caja::abrir_caja,
             commands::caja::cerrar_caja,

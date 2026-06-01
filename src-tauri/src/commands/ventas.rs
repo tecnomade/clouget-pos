@@ -729,6 +729,7 @@ pub fn registrar_venta(
             tipo_estado: None,
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
         },
         detalles: detalles_guardados,
         cliente_nombre,
@@ -815,6 +816,7 @@ pub fn listar_ventas_dia(db: State<Database>, fecha: String) -> Result<Vec<Venta
                 comprobante_imagen: None,
                 tipo_estado: row.get(24).ok(),
                 anulada: row.get::<_, i64>(25).ok(),
+                despacho_estado: None,
                 caja_id: row.get(26).ok(),
                 cliente_nombre: None,
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
@@ -838,7 +840,8 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
              v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
              v.numero_factura, v.establecimiento, v.punto_emision,
              v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.comprobante_imagen,
-             v.caja_id
+             v.caja_id, COALESCE(v.tipo_estado, 'COMPLETADA') as tipo_estado,
+             COALESCE(v.anulada, 0) as anulada, v.despacho_estado
              FROM ventas v
              LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
              WHERE v.id = ?1",
@@ -872,8 +875,9 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                     comprobante_imagen: row.get(24).ok(),
                     caja_id: row.get(25).ok(),
                     cliente_nombre: None,
-                    tipo_estado: None,
-                    anulada: None,
+                    tipo_estado: row.get(26).ok(),
+                    anulada: row.get::<_, i64>(27).ok(),
+                    despacho_estado: row.get::<_, Option<String>>(28).ok().flatten(),
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 })
             },
@@ -1017,6 +1021,7 @@ pub fn listar_ventas_sesion_caja(
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -2044,6 +2049,7 @@ fn guardar_documento_pendiente(
             tipo_estado: Some(tipo_estado.to_string()),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
         },
         detalles: detalles_guardados, cliente_nombre,
     })
@@ -2258,6 +2264,7 @@ pub fn guardar_guia_remision(
             guia_placa: venta.guia_placa, guia_chofer: venta.guia_chofer,
             guia_direccion_destino: venta.guia_direccion_destino,
                 anulada: None,
+                despacho_estado: None,
         },
         detalles: detalles_guardados, cliente_nombre,
     })
@@ -2279,7 +2286,7 @@ pub fn listar_guias_remision(
          v.tipo_documento, v.estado_sri, v.autorizacion_sri, v.clave_acceso, v.observacion,
          v.numero_factura, v.establecimiento, v.punto_emision,
          v.banco_id, v.referencia_pago, cb.nombre as banco_nombre, v.tipo_estado,
-         cl.nombre as cliente_nombre
+         cl.nombre as cliente_nombre, v.despacho_estado
          FROM ventas v
          LEFT JOIN cuentas_banco cb ON v.banco_id = cb.id
          LEFT JOIN clientes cl ON v.cliente_id = cl.id
@@ -2347,6 +2354,7 @@ pub fn listar_guias_remision(
             tipo_estado: row.get(24).ok(),
             guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: row.get::<_, Option<String>>(26).ok().flatten(),
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()
@@ -2720,6 +2728,7 @@ pub fn convertir_guia_a_venta(
                 tipo_estado: row.get(24).ok(),
                 guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
             })
         },
     ).map_err(|e| e.to_string())?;
@@ -3160,6 +3169,78 @@ pub fn guia_guardar_datos_sri(
                     datos.transportista.as_deref().map(|s| s.trim()),
                 ],
             );
+        }
+    }
+    Ok(())
+}
+
+/// v2.5.68 (Fase C): cambia el estado logístico de despacho de una nota/guía.
+/// Estados válidos: PREPARANDO, EN_TRANSITO, ENTREGADO, DEVUELTO, PARCIAL.
+/// Sella automáticamente la fecha de salida (al pasar a EN_TRANSITO) y la de
+/// entrega (al pasar a ENTREGADO). No toca stock ni estado comercial/tributario.
+#[tauri::command]
+pub fn guia_cambiar_despacho(
+    db: State<Database>,
+    guia_id: i64,
+    nuevo_estado: String,
+    observacion: Option<String>,
+) -> Result<(), String> {
+    let estado = nuevo_estado.trim().to_uppercase();
+    let validos = ["PREPARANDO", "EN_TRANSITO", "ENTREGADO", "DEVUELTO", "PARCIAL"];
+    if !validos.contains(&estado.as_str()) {
+        return Err(format!("Estado de despacho inválido: {}", estado));
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Gating: el despacho logístico es inventario avanzado → requiere multi_almacen.
+    {
+        let getc = |k: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key=?1", rusqlite::params![k], |r| r.get(0))
+                .unwrap_or_default()
+        };
+        let demo = getc("demo_activo") == "1";
+        let mods = getc("licencia_modulos");
+        if !demo && !mods.contains("multi_almacen") {
+            return Err("El control de despacho requiere el módulo de inventario avanzado (multi-almacén). Actívelo en su licencia.".to_string());
+        }
+    }
+
+    // Verificar que es una guía/nota de entrega
+    let existe: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM ventas WHERE id = ?1 AND tipo_estado = 'GUIA_REMISION'",
+        rusqlite::params![guia_id], |r| r.get(0),
+    ).map_err(|e| e.to_string())?;
+    if existe == 0 {
+        return Err("Nota de entrega no encontrada".to_string());
+    }
+
+    // Sellar fechas según el estado destino (solo si aún no están puestas)
+    match estado.as_str() {
+        "EN_TRANSITO" => {
+            conn.execute(
+                "UPDATE ventas SET despacho_estado = ?1,
+                     despacho_fecha_salida = COALESCE(despacho_fecha_salida, datetime('now','localtime')),
+                     despacho_observacion = COALESCE(?2, despacho_observacion)
+                 WHERE id = ?3",
+                rusqlite::params![estado, observacion, guia_id],
+            ).map_err(|e| e.to_string())?;
+        }
+        "ENTREGADO" => {
+            conn.execute(
+                "UPDATE ventas SET despacho_estado = ?1,
+                     despacho_fecha_entrega = COALESCE(despacho_fecha_entrega, datetime('now','localtime')),
+                     despacho_observacion = COALESCE(?2, despacho_observacion)
+                 WHERE id = ?3",
+                rusqlite::params![estado, observacion, guia_id],
+            ).map_err(|e| e.to_string())?;
+        }
+        _ => {
+            conn.execute(
+                "UPDATE ventas SET despacho_estado = ?1,
+                     despacho_observacion = COALESCE(?2, despacho_observacion)
+                 WHERE id = ?3",
+                rusqlite::params![estado, observacion, guia_id],
+            ).map_err(|e| e.to_string())?;
         }
     }
     Ok(())

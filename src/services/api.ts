@@ -707,6 +707,13 @@ export async function emitirGuiaRemisionSri(guiaId: number): Promise<ResultadoEm
   return smartInvoke("emitir_guia_remision_sri", { guiaId });
 }
 
+// === Despacho (Fase C): ciclo logístico de la nota/guía ===
+export type DespachoEstado = "PREPARANDO" | "EN_TRANSITO" | "ENTREGADO" | "DEVUELTO" | "PARCIAL";
+
+export async function guiaCambiarDespacho(guiaId: number, nuevoEstado: DespachoEstado, observacion?: string): Promise<void> {
+  return smartInvoke("guia_cambiar_despacho", { guiaId, nuevoEstado, observacion: observacion ?? null });
+}
+
 // === Aprendizaje placa <-> chofer <-> transportista ===
 export interface SugerenciaTransporte {
   placa: string;

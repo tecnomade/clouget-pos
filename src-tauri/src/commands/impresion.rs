@@ -49,6 +49,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                     tipo_estado: row.get(21).ok(),
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
                 })
             },
         )
@@ -231,6 +232,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                     tipo_estado: row.get(21).ok(),
                     guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
                 anulada: None,
+                despacho_estado: None,
                 })
             },
         )
@@ -1948,6 +1950,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                     guia_chofer: row.get(23).ok(),
                     guia_direccion_destino: row.get(24).ok(),
                 anulada: None,
+                despacho_estado: None,
                 })
             },
         )
@@ -2666,6 +2669,7 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
         tipo_estado: None,
         guia_placa: None, guia_chofer: None, guia_direccion_destino: None,
         anulada: None,
+        despacho_estado: None,
     };
 
     let mut stmt = conn.prepare(
