@@ -6,6 +6,30 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.70 — 2026-05-31 🛠 Fix crítico Guía de Remisión + RIDE/email para Liquidación y Nota de Débito
+
+### 🔴 Fix crítico: Guía de Remisión rechazada por el SRI
+
+El SRI rechazaba la guía con *"Error 35 — no se ha encontrado esquema… versión 2.0.0"*. La versión del esquema estaba mal: la **Guía de Remisión usa versión 1.1.0**, no 2.0.0. La estructura del XML ya era correcta. **Ahora las guías pasan el esquema del SRI.**
+
+### RIDE PDF + envío de email (Liquidación 03 y Nota de Débito 05)
+
+- **RIDE PDF** imprimible para ambos documentos (con código de barras de la clave de acceso), al mismo nivel que factura/retención.
+- **Envío por email** del RIDE + XML firmado, con **cola de reenvío automático** si falla (sin internet, etc.). Soporta Gmail OAuth per-cliente.
+- Botones **PDF** y **✉ Email** en las filas autorizadas.
+
+### Mejoras UX en el modal de Guía de Remisión
+
+- Botón **"Soy yo"** para usar tu negocio como transportista (cuando transportas tú mismo).
+- Etiquetas más claras: **Transportista** (quién lleva) vs **Origen** (de dónde sale) vs **Destino** (a dónde llega = el destinatario/cliente).
+- Prellenado de la dirección de partida con la de tu negocio.
+
+### Otros
+
+- El servidor de red (puerto 8847) ya no genera un panic si el puerto está ocupado (otra instancia abierta) — registra un aviso y la app sigue normal.
+
+---
+
 ## v2.5.69 — 2026-05-31 🧾 Los 6 tipos de comprobante SRI completos + "Documentos SRI"
 
 Clouget POS ahora emite **los 6 tipos de comprobantes electrónicos del SRI Ecuador**.
