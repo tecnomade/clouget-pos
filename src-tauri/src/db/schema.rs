@@ -654,6 +654,22 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_chofer TEXT", []);
     let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_direccion_destino TEXT", []);
 
+    // v2.5.67: columnas SRI para guía de remisión electrónica (codDoc 06).
+    // estado_sri, clave_acceso, autorizacion_sri y xml_firmado se reutilizan de las
+    // columnas compartidas de ventas (mismas que factura). Estas son específicas de la guía:
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_transportista TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_ruc_transportista TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_tipo_id_transportista TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_dir_partida TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_fecha_inicio_transporte TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_fecha_fin_transporte TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_motivo_traslado TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_ruta TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_cod_doc_sustento TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_num_doc_sustento TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_num_aut_sustento TEXT", []);
+    let _ = conn.execute("ALTER TABLE ventas ADD COLUMN guia_fecha_emision_sustento TEXT", []);
+
     // Tabla de choferes/transportistas (autocompletar)
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS choferes (
