@@ -51,15 +51,31 @@ pub fn start_server(db: Database, sesion: SesionState, port: u16, token: String)
             let addr = format!("0.0.0.0:{}", port);
             eprintln!("[Clouget Server] Iniciando servidor en {}", addr);
 
-            let listener = tokio::net::TcpListener::bind(&addr)
-                .await
-                .expect(&format!("No se pudo iniciar servidor en puerto {}", port));
+            // v2.5.70: no paniquear si el puerto está ocupado (p. ej. otra
+            // instancia de Clouget ya corriendo). Antes un .expect() tumbaba el
+            // hilo con un panic feo. Ahora se registra una advertencia y la app
+            // sigue funcionando normal (solo sin el servidor de red Multi-POS).
+            let listener = match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::AddrInUse {
+                        eprintln!(
+                            "[Clouget Server] AVISO: el puerto {} ya está en uso (¿otra instancia de Clouget abierta?). \
+                             La app funcionará normalmente, pero el servidor Multi-POS/app móvil no estará disponible en esta sesión.",
+                            port
+                        );
+                    } else {
+                        eprintln!("[Clouget Server] No se pudo iniciar el servidor en el puerto {}: {}", port, e);
+                    }
+                    return; // termina el hilo del servidor sin paniquear
+                }
+            };
 
             eprintln!("[Clouget Server] Servidor activo en puerto {}", port);
 
-            axum::serve(listener, app)
-                .await
-                .expect("Server error");
+            if let Err(e) = axum::serve(listener, app).await {
+                eprintln!("[Clouget Server] El servidor se detuvo con error: {}", e);
+            }
         });
     });
 }
