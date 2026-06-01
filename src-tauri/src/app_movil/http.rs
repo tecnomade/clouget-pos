@@ -1698,6 +1698,28 @@ pub async fn st_marcas(
     Ok(Json(serde_json::json!({ "ok": true, "marcas": rows })))
 }
 
+/// `GET /api/v1/app/cuentas-banco` — cuentas bancarias activas para cobrar
+/// con transferencia/depósito desde la app (sincroniza con el POS de escritorio).
+pub async fn cuentas_banco_app(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, COALESCE(tipo_cuenta,''), COALESCE(numero_cuenta,''), COALESCE(titular,'')
+         FROM cuentas_banco WHERE activa = 1 ORDER BY nombre"
+    ).map_err(err500)?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?,
+        "nombre": r.get::<_, String>(1)?,
+        "tipo_cuenta": r.get::<_, String>(2)?,
+        "numero_cuenta": r.get::<_, String>(3)?,
+        "titular": r.get::<_, String>(4)?,
+    }))).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "cuentas": rows })))
+}
+
 /// `GET /api/v1/app/st/modelos?marca_id=<id>` — modelos de una marca.
 pub async fn st_modelos(
     AxumState(state): AxumState<Arc<ServerState>>,
@@ -2504,6 +2526,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/st/tipos-equipo", get(st_tipos_equipo))
         .route("/api/v1/app/st/marcas", get(st_marcas))
         .route("/api/v1/app/st/modelos", get(st_modelos))
+        .route("/api/v1/app/cuentas-banco", get(cuentas_banco_app))
         // ── v2.5.50: Caja (estado/abrir/cerrar) ─────────────────────────
         .route("/api/v1/app/caja/estado", get(caja_estado))
         .route("/api/v1/app/caja/abrir", post(caja_abrir))
