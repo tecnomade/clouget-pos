@@ -6,6 +6,29 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.67 — 2026-05-31 🚚 Guía de Remisión electrónica (SRI codDoc 06)
+
+Nuevo tipo de comprobante electrónico: la **Guía de Remisión** ahora se puede firmar y autorizar ante el SRI (antes solo era un remito interno con `estado_sri = NO_APLICA`). Con esto la app cubre **4 de los 6** tipos del SRI: Factura (01), Nota de Crédito (04), **Guía de Remisión (06)** y Retención (07).
+
+### Qué incluye
+
+1. **Generador XML** `guiaRemision` v2.0.0 (orden de elementos según XSD oficial): infoTributaria + infoGuiaRemision (transportista, fechas, placa, dir. partida) + destinatarios (motivo, ruta, doc sustento, detalles).
+2. **Emisión real al SRI** (`emitir_guia_remision_sri`): clave de acceso codDoc 06 → firma XAdES-BES (`signDeliveryGuideXml`) → envío → consulta de autorización → guarda estado. Incluye lógica de **reenvío** si quedó PENDIENTE.
+3. **RIDE PDF**: cuando la guía es autorizada, el PDF muestra "DOCUMENTO AUTORIZADO POR EL SRI", número de autorización, ambiente y **código de barras Code128** de la clave de acceso.
+4. **UI** en Guías de Remisión: botón **📤 SRI** (visible solo si el **módulo Contabilidad** está activo) que abre un modal para capturar transportista, placa, motivo, direcciones, fechas de transporte, ruta y documento de sustento, y emite con un clic.
+
+### Gating
+
+La emisión electrónica de la guía requiere el **módulo Contabilidad** activo en la licencia (o modo demo) — tanto en el backend como en la UI.
+
+### Notas técnicas
+
+- 12 columnas nuevas en `ventas` (idempotentes) para los datos SRI de la guía; reutiliza `estado_sri`, `clave_acceso`, `autorizacion_sri` y `xml_firmado`. El número SRI (001-001-XXXXXXXXX) se guarda en `numero_factura`.
+- Secuencial propio (`GUIA_REMISION` / `GUIA_REMISION_PRUEBAS`).
+- El script de firma ya soportaba `guiaRemision` y `notaDebito`, así que la infraestructura de firma para los tipos restantes ya estaba lista.
+
+---
+
 ## v2.5.66 — 2026-05-31 🛡 Blindaje: no emitir retención sobre factura sustento no autorizada
 
 Complemento de seguridad fiscal para v2.5.65. Pregunta del usuario: *"¿qué pasa si emito una retención sobre un documento PENDIENTE que nunca pasa a autorizado?"*
