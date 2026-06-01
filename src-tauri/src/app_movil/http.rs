@@ -1627,6 +1627,95 @@ pub async fn obtener_cliente(
     Ok(Json(serde_json::json!({ "ok": true, "cliente": cliente })))
 }
 
+/// `GET /api/v1/app/consultar-identificacion?id=<cedula_o_ruc>` — busca un
+/// cliente por cédula/RUC. Si ya existe en la base local, lo devuelve para
+/// autollenar el formulario. (No consulta el SRI externo; eso queda en el POS.)
+pub async fn consultar_identificacion_app(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let id = qp.get("id").map(|s| s.trim().to_string()).unwrap_or_default();
+    if !id.chars().all(|c| c.is_ascii_digit()) || (id.len() != 10 && id.len() != 13) {
+        return Err(err400("Ingrese una cédula (10 dígitos) o RUC (13 dígitos)"));
+    }
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let encontrado: Option<serde_json::Value> = conn.query_row(
+        "SELECT id, COALESCE(tipo_identificacion,''), COALESCE(identificacion,''),
+                nombre, COALESCE(email,''), COALESCE(telefono,''), COALESCE(direccion,'')
+         FROM clientes WHERE identificacion = ?1 AND activo = 1 LIMIT 1",
+        params![id],
+        |r| Ok(serde_json::json!({
+            "id": r.get::<_, i64>(0)?,
+            "tipo_identificacion": r.get::<_, String>(1)?,
+            "identificacion": r.get::<_, String>(2)?,
+            "nombre": r.get::<_, String>(3)?,
+            "email": r.get::<_, String>(4)?,
+            "telefono": r.get::<_, String>(5)?,
+            "direccion": r.get::<_, String>(6)?,
+        })),
+    ).ok();
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "existente": encontrado.is_some(),
+        "cliente": encontrado,
+        "tipo_identificacion": if id.len() == 13 { "RUC" } else { "CEDULA" },
+    })))
+}
+
+/// `GET /api/v1/app/st/tipos-equipo` — catálogo de tipos de equipo del ST.
+pub async fn st_tipos_equipo(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, COALESCE(icono,'') FROM st_tipos_equipo WHERE activo = 1 ORDER BY orden, nombre"
+    ).map_err(err500)?;
+    let rows: Vec<serde_json::Value> = stmt.query_map([], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "nombre": r.get::<_, String>(1)?, "icono": r.get::<_, String>(2)?,
+    }))).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "tipos": rows })))
+}
+
+/// `GET /api/v1/app/st/marcas?tipo_id=<id>` — marcas de un tipo de equipo.
+pub async fn st_marcas(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let tipo_id: i64 = qp.get("tipo_id").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre FROM st_marcas WHERE tipo_equipo_id = ?1 AND activo = 1 ORDER BY nombre"
+    ).map_err(err500)?;
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![tipo_id], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "nombre": r.get::<_, String>(1)?,
+    }))).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "marcas": rows })))
+}
+
+/// `GET /api/v1/app/st/modelos?marca_id=<id>` — modelos de una marca.
+pub async fn st_modelos(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(qp): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let marca_id: i64 = qp.get("marca_id").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre FROM st_modelos WHERE marca_id = ?1 AND activo = 1 ORDER BY nombre"
+    ).map_err(err500)?;
+    let rows: Vec<serde_json::Value> = stmt.query_map(params![marca_id], |r| Ok(serde_json::json!({
+        "id": r.get::<_, i64>(0)?, "nombre": r.get::<_, String>(1)?,
+    }))).map_err(err500)?.collect::<Result<Vec<_>, _>>().map_err(err500)?;
+    Ok(Json(serde_json::json!({ "ok": true, "modelos": rows })))
+}
+
 /// `POST /api/v1/app/clientes` — crea un cliente (INSERT directo a BD).
 /// Body: `{ tipo_identificacion, identificacion, nombre, email?, telefono?, direccion? }`
 /// Si la identificación ya existe, lo busca y devuelve el existente (idempotente).
@@ -2411,6 +2500,10 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         // ── v2.5.50: Clientes CRUD básico ───────────────────────────────
         .route("/api/v1/app/clientes", get(listar_clientes).post(crear_cliente))
         .route("/api/v1/app/clientes/:id", get(obtener_cliente))
+        .route("/api/v1/app/consultar-identificacion", get(consultar_identificacion_app))
+        .route("/api/v1/app/st/tipos-equipo", get(st_tipos_equipo))
+        .route("/api/v1/app/st/marcas", get(st_marcas))
+        .route("/api/v1/app/st/modelos", get(st_modelos))
         // ── v2.5.50: Caja (estado/abrir/cerrar) ─────────────────────────
         .route("/api/v1/app/caja/estado", get(caja_estado))
         .route("/api/v1/app/caja/abrir", post(caja_abrir))
