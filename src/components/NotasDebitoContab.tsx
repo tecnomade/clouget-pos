@@ -8,7 +8,8 @@
 import { useState, useEffect } from "react";
 import {
   listarNotasDebito, crearNotaDebito, emitirNotaDebitoSri, anularNotaDebito,
-  buscarClientes, type NotaDebitoResumen, type MotivoNd,
+  buscarClientes, generarRideNotaDebitoPdf, enviarEmailDocSri,
+  type NotaDebitoResumen, type MotivoNd,
 } from "../services/api";
 import { useToast } from "./Toast";
 import type { Cliente } from "../types";
@@ -104,6 +105,28 @@ export default function NotasDebitoContab() {
     catch (e) { toastError("Error: " + e); }
   };
 
+  const descargarPdf = async (id: number, numero: string) => {
+    try {
+      const bytes = await generarRideNotaDebitoPdf(id);
+      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `NotaDebito-${numero}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toastExito("PDF generado");
+    } catch (e) { toastError("Error generando PDF: " + e); }
+  };
+
+  const enviarEmail = async (id: number) => {
+    const email = prompt("Email del cliente para enviar la nota de débito:");
+    if (!email || !email.trim()) return;
+    try {
+      const msg = await enviarEmailDocSri("NOTA_DEBITO", id, email.trim());
+      toastExito(msg);
+    } catch (e) { toastError(String(e)); }
+  };
+
   const badge = (estadoSri: string, anulada: boolean) => {
     if (anulada) return <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 3, fontWeight: 600, background: "rgba(148,163,184,0.15)", color: "var(--color-text-secondary)" }}>Anulada</span>;
     const map: Record<string, { bg: string; col: string; txt: string }> = {
@@ -159,6 +182,14 @@ export default function NotasDebitoContab() {
                       {!n.anulada && n.estado_sri !== "AUTORIZADA" && (
                         <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)" }}
                           onClick={() => anular(n.id)}>Anular</button>
+                      )}
+                      {n.estado_sri === "AUTORIZADA" && (
+                        <>
+                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            onClick={() => descargarPdf(n.id, n.numero || n.numero_factura || String(n.id))}>PDF</button>
+                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            onClick={() => enviarEmail(n.id)}>✉ Email</button>
+                        </>
                       )}
                     </div>
                   </td>

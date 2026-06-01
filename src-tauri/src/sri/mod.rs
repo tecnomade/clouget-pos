@@ -5,4 +5,5 @@ pub mod soap;
 pub mod suscripcion;
 pub mod ride;
 pub mod ride_retencion;
+pub mod ride_generico;
 pub mod ats;

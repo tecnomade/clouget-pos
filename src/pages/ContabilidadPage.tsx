@@ -161,6 +161,9 @@ export default function ContabilidadPage() {
     invoke<ContabilidadConfig>("contabilidad_obtener_config")
       .then(setConfig)
       .catch((e) => toastError("Error cargando configuración: " + e));
+    // v2.5.70: reintentar emails de documentos que quedaron pendientes
+    // (liquidaciones / notas de débito) al abrir el módulo.
+    invoke("contabilidad_procesar_emails_doc").catch(() => {});
   }, []);
 
   useEffect(() => {

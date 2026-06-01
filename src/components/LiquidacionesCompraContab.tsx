@@ -9,6 +9,7 @@ import { useState, useEffect } from "react";
 import {
   listarLiquidacionesCompra, crearLiquidacionCompra, emitirLiquidacionCompraSri,
   anularLiquidacionCompra, buscarProveedores, buscarProductos,
+  generarRideLiquidacionPdf, enviarEmailDocSri,
   type LiquidacionResumen, type ItemLiquidacion,
 } from "../services/api";
 import { useToast } from "./Toast";
@@ -139,6 +140,28 @@ export default function LiquidacionesCompraContab() {
     catch (e) { toastError("Error: " + e); }
   };
 
+  const descargarPdf = async (id: number, numero: string) => {
+    try {
+      const bytes = await generarRideLiquidacionPdf(id);
+      const blob = new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Liquidacion-${numero}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toastExito("PDF generado");
+    } catch (e) { toastError("Error generando PDF: " + e); }
+  };
+
+  const enviarEmail = async (id: number) => {
+    const email = prompt("Email del proveedor para enviar la liquidación:");
+    if (!email || !email.trim()) return;
+    try {
+      const msg = await enviarEmailDocSri("LIQUIDACION", id, email.trim());
+      toastExito(msg);
+    } catch (e) { toastError(String(e)); }
+  };
+
   const badge = (estadoSri: string, anulada: boolean) => {
     if (anulada) return <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 3, fontWeight: 600, background: "rgba(148,163,184,0.15)", color: "var(--color-text-secondary)" }}>Anulada</span>;
     const map: Record<string, { bg: string; col: string; txt: string }> = {
@@ -194,6 +217,14 @@ export default function LiquidacionesCompraContab() {
                       {!l.anulada && l.estado_sri !== "AUTORIZADA" && (
                         <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", color: "var(--color-danger)" }}
                           onClick={() => anular(l.id)}>Anular</button>
+                      )}
+                      {l.estado_sri === "AUTORIZADA" && (
+                        <>
+                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            onClick={() => descargarPdf(l.id, l.numero || l.numero_factura || String(l.id))}>PDF</button>
+                          <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            onClick={() => enviarEmail(l.id)}>✉ Email</button>
+                        </>
                       )}
                     </div>
                   </td>

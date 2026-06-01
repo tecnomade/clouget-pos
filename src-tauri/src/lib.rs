@@ -672,6 +672,12 @@ pub fn run() {
             commands::contabilidad::contabilidad_listar_notas_debito,
             commands::contabilidad::contabilidad_anular_nota_debito,
             commands::contabilidad::contabilidad_emitir_nota_debito_sri,
+            // v2.5.70: RIDE PDF de liquidación y nota de débito
+            commands::contabilidad::contabilidad_generar_ride_liquidacion_pdf,
+            commands::contabilidad::contabilidad_generar_ride_nota_debito_pdf,
+            // v2.5.70: envío de email (RIDE+XML) con cola de reenvío
+            commands::contabilidad::contabilidad_enviar_email_doc,
+            commands::contabilidad::contabilidad_procesar_emails_doc,
             // v2.5.53: cuentas OAuth Gmail per-cliente
             commands::oauth_email::listar_oauth_email_cuentas,
             commands::oauth_email::guardar_oauth_email_cuenta,

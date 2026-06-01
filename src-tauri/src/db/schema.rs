@@ -1753,6 +1753,24 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_nd_motivos ON nota_debito_motivos(nota_debito_id);
     ");
 
+    // v2.5.70: cola GENÉRICA de emails para documentos de Contabilidad
+    // (liquidaciones, notas de débito, etc.). Permite reenvío automático.
+    // tipo_doc: 'LIQUIDACION' | 'NOTA_DEBITO'. doc_id: id en su tabla.
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS email_doc_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tipo_doc TEXT NOT NULL,
+            doc_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            estado TEXT NOT NULL DEFAULT 'PENDIENTE',
+            intentos INTEGER NOT NULL DEFAULT 0,
+            ultimo_error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            enviado_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_doc_estado ON email_doc_log(estado);
+    ");
+
     // v2.5.44: si existe la tabla vieja sri_avanzado_config (de v2.5.43 BETA),
     // migrar los datos y borrarla. Ignora errores si no existe (caso normal).
     let tabla_vieja_existe: bool = conn.query_row(

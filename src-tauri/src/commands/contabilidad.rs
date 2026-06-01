@@ -2424,3 +2424,322 @@ pub async fn contabilidad_emitir_nota_debito_sri(
         }),
     })
 }
+
+// ─── v2.5.70: RIDE PDF de Liquidación de Compra y Nota de Débito ──────────────
+
+fn leer_config_y_obligado(conn: &rusqlite::Connection) -> (std::collections::HashMap<String, String>, bool) {
+    let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if let Ok(mut sc) = conn.prepare("SELECT key, value FROM config") {
+        if let Ok(rows) = sc.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))) {
+            for row in rows.flatten() { config.insert(row.0, row.1); }
+        }
+    }
+    let obligado: i32 = conn.query_row(
+        "SELECT obligado_contabilidad FROM contabilidad_config WHERE id = 1", [], |r| r.get(0),
+    ).unwrap_or(0);
+    (config, obligado != 0)
+}
+
+/// Genera el RIDE (PDF A4) de una Liquidación de Compra. Devuelve los bytes.
+#[tauri::command]
+pub fn contabilidad_generar_ride_liquidacion_pdf(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<Vec<u8>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let (config, obligado) = leer_config_y_obligado(&conn);
+    let ambiente = match config.get("sri_ambiente").map(|s| s.as_str()).unwrap_or("") {
+        "produccion" => "2", _ => "1",
+    }.to_string();
+
+    let (numero, clave, autoriz, fecha_emi, fecha_aut, prov_nombre, prov_id, prov_tipo, prov_dir, total):
+        (Option<String>, Option<String>, Option<String>, String, Option<String>, String, Option<String>, Option<String>, Option<String>, f64) =
+        conn.query_row(
+            "SELECT l.numero, l.clave_acceso, l.autorizacion_sri, l.fecha_emision, l.fecha_autorizacion,
+                    p.nombre, p.ruc, p.tipo_identificacion, p.direccion, l.total
+             FROM liquidaciones_compra l JOIN proveedores p ON l.proveedor_id = p.id
+             WHERE l.id = ?1",
+            params![id],
+            |r| Ok((r.get(0).ok(), r.get(1).ok(), r.get(2).ok(), r.get(3)?, r.get(4).ok(),
+                    r.get(5)?, r.get(6).ok(), r.get(7).ok(), r.get(8).ok(), r.get(9)?)),
+        ).map_err(|_| "Liquidación no encontrada".to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT descripcion, cantidad, precio_unitario, descuento FROM liquidacion_compra_detalles WHERE liquidacion_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    let filas: Vec<crate::sri::ride_generico::FilaRideGenerico> = stmt.query_map(params![id], |r| {
+        let desc: String = r.get(0)?;
+        let cant: f64 = r.get(1)?;
+        let pu: f64 = r.get(2)?;
+        let desc_v: f64 = r.get(3)?;
+        Ok(crate::sri::ride_generico::FilaRideGenerico {
+            descripcion: desc, cantidad: Some(cant), precio: Some(pu), valor: cant * pu - desc_v,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let tipo_id = match prov_tipo.as_deref().unwrap_or("") {
+        "RUC" => "04", "CEDULA" => "05", "PASAPORTE" => "06", _ => "04",
+    }.to_string();
+
+    let datos = crate::sri::ride_generico::DatosRideGenerico {
+        tipo_doc_titulo: "LIQUIDACIÓN DE COMPRA".to_string(),
+        numero: numero.clone().unwrap_or_default(),
+        clave_acceso: clave.clone().unwrap_or_default(),
+        numero_autorizacion: autoriz.or(clave).unwrap_or_default(),
+        fecha_emision: fmt_fecha_sri(&fecha_emi).unwrap_or(fecha_emi),
+        fecha_autorizacion: fecha_aut.unwrap_or_default(),
+        ambiente,
+        receptor_label: "Proveedor".to_string(),
+        receptor_nombre: prov_nombre,
+        receptor_identificacion: prov_id.unwrap_or_default(),
+        receptor_tipo_id: tipo_id,
+        receptor_direccion: prov_dir,
+        receptor_email: None,
+        linea_extra: None,
+        total,
+        total_label: "IMPORTE TOTAL".to_string(),
+    };
+
+    crate::sri::ride_generico::generar_ride_generico(&datos, &filas, &config, obligado)
+}
+
+/// Genera el RIDE (PDF A4) de una Nota de Débito. Devuelve los bytes.
+#[tauri::command]
+pub fn contabilidad_generar_ride_nota_debito_pdf(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<Vec<u8>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let (config, obligado) = leer_config_y_obligado(&conn);
+    let ambiente = match config.get("sri_ambiente").map(|s| s.as_str()).unwrap_or("") {
+        "produccion" => "2", _ => "1",
+    }.to_string();
+
+    let (numero, clave, autoriz, fecha_emi, fecha_aut, num_mod, cli_nombre, cli_id, cli_tipo, cli_dir, cli_email, total):
+        (Option<String>, Option<String>, Option<String>, String, Option<String>, String, String, Option<String>, String, Option<String>, Option<String>, f64) =
+        conn.query_row(
+            "SELECT n.numero, n.clave_acceso, n.autorizacion_sri, n.fecha_emision, n.fecha_autorizacion,
+                    n.num_doc_modificado, c.nombre, c.identificacion, c.tipo_identificacion, c.direccion, c.email, n.valor_total
+             FROM notas_debito n JOIN clientes c ON n.cliente_id = c.id
+             WHERE n.id = ?1",
+            params![id],
+            |r| Ok((r.get(0).ok(), r.get(1).ok(), r.get(2).ok(), r.get(3)?, r.get(4).ok(),
+                    r.get(5)?, r.get(6)?, r.get(7).ok(), r.get::<_, String>(8).unwrap_or_default(),
+                    r.get(9).ok(), r.get(10).ok(), r.get(11)?)),
+        ).map_err(|_| "Nota de débito no encontrada".to_string())?;
+
+    let mut stmt = conn.prepare(
+        "SELECT razon, valor FROM nota_debito_motivos WHERE nota_debito_id = ?1"
+    ).map_err(|e| e.to_string())?;
+    let filas: Vec<crate::sri::ride_generico::FilaRideGenerico> = stmt.query_map(params![id], |r| {
+        Ok(crate::sri::ride_generico::FilaRideGenerico {
+            descripcion: r.get(0)?, cantidad: None, precio: None, valor: r.get(1)?,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    drop(stmt);
+
+    let id_comprador = cli_id.clone().unwrap_or_else(|| "9999999999999".to_string());
+    let tipo_id = if id_comprador == "9999999999999" { "07" } else {
+        match cli_tipo.as_str() { "RUC" => "04", "CEDULA" => "05", "PASAPORTE" => "06", _ => "07" }
+    }.to_string();
+
+    let datos = crate::sri::ride_generico::DatosRideGenerico {
+        tipo_doc_titulo: "NOTA DE DÉBITO".to_string(),
+        numero: numero.clone().unwrap_or_default(),
+        clave_acceso: clave.clone().unwrap_or_default(),
+        numero_autorizacion: autoriz.or(clave).unwrap_or_default(),
+        fecha_emision: fmt_fecha_sri(&fecha_emi).unwrap_or(fecha_emi),
+        fecha_autorizacion: fecha_aut.unwrap_or_default(),
+        ambiente,
+        receptor_label: "Cliente".to_string(),
+        receptor_nombre: cli_nombre,
+        receptor_identificacion: id_comprador,
+        receptor_tipo_id: tipo_id,
+        receptor_direccion: cli_dir,
+        receptor_email: cli_email,
+        linea_extra: Some(format!("Modifica documento: FACTURA {}", num_mod)),
+        total,
+        total_label: "VALOR TOTAL".to_string(),
+    };
+
+    crate::sri::ride_generico::generar_ride_generico(&datos, &filas, &config, obligado)
+}
+
+// ─── v2.5.70: Envío de email (RIDE+XML) con cola de reenvío ───────────────────
+
+/// Genera los bytes del RIDE según tipo, reusando la lógica de los comandos.
+fn generar_ride_pdf_por_tipo(db: &Database, tipo_doc: &str, doc_id: i64) -> Result<Vec<u8>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let (config, obligado) = leer_config_y_obligado(&conn);
+    let ambiente = match config.get("sri_ambiente").map(|s| s.as_str()).unwrap_or("") { "produccion" => "2", _ => "1" }.to_string();
+
+    match tipo_doc {
+        "LIQUIDACION" => {
+            let (numero, clave, autoriz, fecha_emi, fecha_aut, prov_nombre, prov_id, prov_tipo, prov_dir, total):
+                (Option<String>, Option<String>, Option<String>, String, Option<String>, String, Option<String>, Option<String>, Option<String>, f64) =
+                conn.query_row(
+                    "SELECT l.numero, l.clave_acceso, l.autorizacion_sri, l.fecha_emision, l.fecha_autorizacion,
+                            p.nombre, p.ruc, p.tipo_identificacion, p.direccion, l.total
+                     FROM liquidaciones_compra l JOIN proveedores p ON l.proveedor_id = p.id WHERE l.id = ?1",
+                    params![doc_id],
+                    |r| Ok((r.get(0).ok(), r.get(1).ok(), r.get(2).ok(), r.get(3)?, r.get(4).ok(),
+                            r.get(5)?, r.get(6).ok(), r.get(7).ok(), r.get(8).ok(), r.get(9)?)),
+                ).map_err(|_| "Liquidación no encontrada".to_string())?;
+            let mut stmt = conn.prepare("SELECT descripcion, cantidad, precio_unitario, descuento FROM liquidacion_compra_detalles WHERE liquidacion_id = ?1").map_err(|e| e.to_string())?;
+            let filas: Vec<crate::sri::ride_generico::FilaRideGenerico> = stmt.query_map(params![doc_id], |r| {
+                let cant: f64 = r.get(1)?; let pu: f64 = r.get(2)?; let dv: f64 = r.get(3)?;
+                Ok(crate::sri::ride_generico::FilaRideGenerico { descripcion: r.get(0)?, cantidad: Some(cant), precio: Some(pu), valor: cant*pu-dv })
+            }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+            drop(stmt);
+            let tipo_id = match prov_tipo.as_deref().unwrap_or("") { "CEDULA" => "05", "PASAPORTE" => "06", _ => "04" }.to_string();
+            let datos = crate::sri::ride_generico::DatosRideGenerico {
+                tipo_doc_titulo: "LIQUIDACIÓN DE COMPRA".into(), numero: numero.clone().unwrap_or_default(),
+                clave_acceso: clave.clone().unwrap_or_default(), numero_autorizacion: autoriz.or(clave).unwrap_or_default(),
+                fecha_emision: fmt_fecha_sri(&fecha_emi).unwrap_or(fecha_emi), fecha_autorizacion: fecha_aut.unwrap_or_default(),
+                ambiente, receptor_label: "Proveedor".into(), receptor_nombre: prov_nombre,
+                receptor_identificacion: prov_id.unwrap_or_default(), receptor_tipo_id: tipo_id,
+                receptor_direccion: prov_dir, receptor_email: None, linea_extra: None, total, total_label: "IMPORTE TOTAL".into(),
+            };
+            crate::sri::ride_generico::generar_ride_generico(&datos, &filas, &config, obligado)
+        }
+        "NOTA_DEBITO" => {
+            let (numero, clave, autoriz, fecha_emi, fecha_aut, num_mod, cli_nombre, cli_id, cli_tipo, cli_dir, cli_email, total):
+                (Option<String>, Option<String>, Option<String>, String, Option<String>, String, String, Option<String>, String, Option<String>, Option<String>, f64) =
+                conn.query_row(
+                    "SELECT n.numero, n.clave_acceso, n.autorizacion_sri, n.fecha_emision, n.fecha_autorizacion,
+                            n.num_doc_modificado, c.nombre, c.identificacion, c.tipo_identificacion, c.direccion, c.email, n.valor_total
+                     FROM notas_debito n JOIN clientes c ON n.cliente_id = c.id WHERE n.id = ?1",
+                    params![doc_id],
+                    |r| Ok((r.get(0).ok(), r.get(1).ok(), r.get(2).ok(), r.get(3)?, r.get(4).ok(),
+                            r.get(5)?, r.get(6)?, r.get(7).ok(), r.get::<_, String>(8).unwrap_or_default(), r.get(9).ok(), r.get(10).ok(), r.get(11)?)),
+                ).map_err(|_| "Nota de débito no encontrada".to_string())?;
+            let mut stmt = conn.prepare("SELECT razon, valor FROM nota_debito_motivos WHERE nota_debito_id = ?1").map_err(|e| e.to_string())?;
+            let filas: Vec<crate::sri::ride_generico::FilaRideGenerico> = stmt.query_map(params![doc_id], |r| {
+                Ok(crate::sri::ride_generico::FilaRideGenerico { descripcion: r.get(0)?, cantidad: None, precio: None, valor: r.get(1)? })
+            }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+            drop(stmt);
+            let id_comprador = cli_id.clone().unwrap_or_else(|| "9999999999999".to_string());
+            let tipo_id = if id_comprador == "9999999999999" { "07" } else { match cli_tipo.as_str() { "RUC" => "04", "CEDULA" => "05", "PASAPORTE" => "06", _ => "07" } }.to_string();
+            let datos = crate::sri::ride_generico::DatosRideGenerico {
+                tipo_doc_titulo: "NOTA DE DÉBITO".into(), numero: numero.clone().unwrap_or_default(),
+                clave_acceso: clave.clone().unwrap_or_default(), numero_autorizacion: autoriz.or(clave).unwrap_or_default(),
+                fecha_emision: fmt_fecha_sri(&fecha_emi).unwrap_or(fecha_emi), fecha_autorizacion: fecha_aut.unwrap_or_default(),
+                ambiente, receptor_label: "Cliente".into(), receptor_nombre: cli_nombre,
+                receptor_identificacion: id_comprador, receptor_tipo_id: tipo_id, receptor_direccion: cli_dir,
+                receptor_email: cli_email, linea_extra: Some(format!("Modifica documento: FACTURA {}", num_mod)),
+                total, total_label: "VALOR TOTAL".into(),
+            };
+            crate::sri::ride_generico::generar_ride_generico(&datos, &filas, &config, obligado)
+        }
+        _ => Err("Tipo de documento no soportado".into()),
+    }
+}
+
+/// Envía por email el RIDE (PDF) + XML firmado de un documento de Contabilidad.
+async fn enviar_email_doc_interno(db: &Database, tipo_doc: &str, doc_id: i64, email: &str) -> Result<(), String> {
+    let (email_url, email_api_key, nombre_negocio, numero, xml_firmado) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let get = |key: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key = ?1", params![key], |r| r.get(0)).unwrap_or_default()
+        };
+        let email_url = get("email_service_url");
+        let email_api_key = get("email_service_api_key");
+        if email_url.is_empty() || email_api_key.is_empty() {
+            return Err("Servicio de email no configurado.".to_string());
+        }
+        let tabla = match tipo_doc { "LIQUIDACION" => "liquidaciones_compra", "NOTA_DEBITO" => "notas_debito", _ => return Err("Tipo no soportado".into()) };
+        let (numero, xml): (Option<String>, Option<String>) = conn.query_row(
+            &format!("SELECT COALESCE(numero_factura, numero), xml_firmado FROM {} WHERE id = ?1", tabla),
+            params![doc_id], |r| Ok((r.get(0).ok(), r.get(1).ok())),
+        ).map_err(|_| "Documento no encontrado".to_string())?;
+        (email_url, email_api_key, get("nombre_negocio"), numero.unwrap_or_default(), xml)
+    };
+
+    let pdf = generar_ride_pdf_por_tipo(db, tipo_doc, doc_id)?;
+    let pdf_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &pdf);
+    let mut adjuntos = vec![serde_json::json!({
+        "nombre": format!("RIDE-{}.pdf", numero.replace(['/', '\\', ':'], "-")),
+        "contenido_base64": pdf_b64, "tipo": "application/pdf"
+    })];
+    if let Some(ref xml) = xml_firmado {
+        if !xml.is_empty() {
+            let xml_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, xml.as_bytes());
+            adjuntos.push(serde_json::json!({ "nombre": format!("{}.xml", numero.replace(['/', '\\', ':'], "-")), "contenido_base64": xml_b64, "tipo": "application/xml" }));
+        }
+    }
+
+    let doc_label = if tipo_doc == "LIQUIDACION" { "liquidación de compra" } else { "nota de débito" };
+    let cuerpo_html = format!(
+        r#"<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto"><h2 style="color:#1e40af">{}</h2><p>Estimado/a,</p><p>Adjunto su {} electrónica <strong>{}</strong>.</p><ul><li>RIDE (PDF)</li><li>XML firmado</li></ul><p style="color:#64748b;font-size:12px">Mensaje automático generado por Clouget POS.</p></div>"#,
+        nombre_negocio, doc_label, numero
+    );
+    let asunto = format!("{} {} - {}", if tipo_doc == "LIQUIDACION" { "Liquidación de Compra" } else { "Nota de Débito" }, numero, nombre_negocio);
+
+    let cuenta_oauth = crate::commands::oauth_email::obtener_cuenta_oauth_activa(db);
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().map_err(|e| format!("Error HTTP: {}", e))?;
+    let (endpoint, body) = if let Some(ref cuenta) = cuenta_oauth {
+        let from_name = cuenta.from_name.clone().unwrap_or_else(|| nombre_negocio.clone());
+        (format!("{}/enviar-email-oauth", email_url), serde_json::json!({
+            "refresh_token": cuenta.refresh_token, "email_remitente": cuenta.email, "from_name": from_name,
+            "destinatario": email, "asunto": asunto, "cuerpo_html": cuerpo_html, "adjuntos": adjuntos }))
+    } else {
+        (format!("{}/enviar-email", email_url), serde_json::json!({
+            "destinatario": email, "asunto": asunto, "cuerpo_html": cuerpo_html, "adjuntos": adjuntos }))
+    };
+    let resp = client.post(&endpoint).header("Authorization", format!("Bearer {}", email_api_key))
+        .header("Content-Type", "application/json").json(&body).send().await
+        .map_err(|e| format!("No se pudo conectar al servicio de email: {}", e))?;
+    if !resp.status().is_success() {
+        let err_body = resp.text().await.unwrap_or_default();
+        return Err(format!("Error enviando email: {}", err_body));
+    }
+    Ok(())
+}
+
+/// Comando: envía (o encola para reintento) el email de un documento.
+#[tauri::command]
+pub async fn contabilidad_enviar_email_doc(db: State<'_, Database>, tipo_doc: String, doc_id: i64, email: String) -> Result<String, String> {
+    if email.trim().is_empty() { return Err("Ingrese un email de destino".into()); }
+    match enviar_email_doc_interno(db.inner(), &tipo_doc, doc_id, email.trim()).await {
+        Ok(()) => {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO email_doc_log (tipo_doc, doc_id, email, estado, enviado_at) VALUES (?1, ?2, ?3, 'ENVIADO', datetime('now','localtime'))",
+                params![tipo_doc, doc_id, email.trim()]).ok();
+            Ok("Email enviado".to_string())
+        }
+        Err(e) => {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute("INSERT INTO email_doc_log (tipo_doc, doc_id, email, estado, intentos, ultimo_error) VALUES (?1, ?2, ?3, 'PENDIENTE', 1, ?4)",
+                params![tipo_doc, doc_id, email.trim(), e]).ok();
+            Err(format!("No se pudo enviar ahora (se reintentará): {}", e))
+        }
+    }
+}
+
+/// Comando: procesa la cola de emails pendientes de documentos (reenvío).
+#[tauri::command]
+pub async fn contabilidad_procesar_emails_doc(db: State<'_, Database>) -> Result<serde_json::Value, String> {
+    let pendientes: Vec<(i64, String, i64, String)> = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare("SELECT id, tipo_doc, doc_id, email FROM email_doc_log WHERE estado = 'PENDIENTE' AND intentos < 4 ORDER BY id LIMIT 5").map_err(|e| e.to_string())?;
+        let v = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        v
+    };
+    let mut enviados = 0; let mut fallidos = 0;
+    for (log_id, tipo_doc, doc_id, email) in &pendientes {
+        match enviar_email_doc_interno(db.inner(), tipo_doc, *doc_id, email).await {
+            Ok(()) => {
+                let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                conn.execute("UPDATE email_doc_log SET estado='ENVIADO', enviado_at=datetime('now','localtime') WHERE id=?1", params![log_id]).ok();
+                enviados += 1;
+            }
+            Err(e) => {
+                let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                conn.execute("UPDATE email_doc_log SET intentos = intentos + 1, ultimo_error = ?2, estado = CASE WHEN intentos + 1 >= 4 THEN 'ERROR' ELSE 'PENDIENTE' END WHERE id = ?1", params![log_id, e]).ok();
+                fallidos += 1;
+            }
+        }
+    }
+    Ok(serde_json::json!({ "total": pendientes.len(), "enviados": enviados, "fallidos": fallidos }))
+}

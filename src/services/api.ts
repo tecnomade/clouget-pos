@@ -783,6 +783,20 @@ export async function emitirNotaDebitoSri(id: number): Promise<ResultadoEmision>
   return smartInvoke("contabilidad_emitir_nota_debito_sri", { id });
 }
 
+// === RIDE PDF + email de documentos de Contabilidad (Liquidación 03 / Nota Débito 05) ===
+export async function generarRideLiquidacionPdf(id: number): Promise<number[]> {
+  return invoke("contabilidad_generar_ride_liquidacion_pdf", { id });
+}
+export async function generarRideNotaDebitoPdf(id: number): Promise<number[]> {
+  return invoke("contabilidad_generar_ride_nota_debito_pdf", { id });
+}
+export async function enviarEmailDocSri(tipoDoc: "LIQUIDACION" | "NOTA_DEBITO", docId: number, email: string): Promise<string> {
+  return smartInvoke("contabilidad_enviar_email_doc", { tipoDoc, docId, email });
+}
+export async function procesarEmailsDocSri(): Promise<{ total: number; enviados: number; fallidos: number }> {
+  return smartInvoke("contabilidad_procesar_emails_doc");
+}
+
 // === Aprendizaje placa <-> chofer <-> transportista ===
 export interface SugerenciaTransporte {
   placa: string;
