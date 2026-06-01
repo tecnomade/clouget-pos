@@ -677,6 +677,36 @@ export async function imprimirGuiaRemisionPdf(ventaId: number): Promise<string> 
   return invoke("imprimir_guia_remision_pdf", { ventaId });
 }
 
+// === Guía de Remisión electrónica SRI (codDoc 06) ===
+export interface GuiaDatosSri {
+  transportista?: string;
+  ruc_transportista?: string;
+  tipo_id_transportista?: string;
+  dir_partida?: string;
+  fecha_inicio_transporte?: string;
+  fecha_fin_transporte?: string;
+  motivo_traslado?: string;
+  ruta?: string;
+  cod_doc_sustento?: string;
+  num_doc_sustento?: string;
+  num_aut_sustento?: string;
+  fecha_emision_sustento?: string;
+  placa?: string;
+  direccion_destino?: string;
+}
+
+export async function guiaGuardarDatosSri(guiaId: number, datos: GuiaDatosSri): Promise<void> {
+  return smartInvoke("guia_guardar_datos_sri", { guiaId, datos });
+}
+
+export async function guiaObtenerDatosSri(guiaId: number): Promise<Record<string, string>> {
+  return smartInvoke("guia_obtener_datos_sri", { guiaId });
+}
+
+export async function emitirGuiaRemisionSri(guiaId: number): Promise<ResultadoEmision> {
+  return smartInvoke("emitir_guia_remision_sri", { guiaId });
+}
+
 export async function listarImpresoras(): Promise<string[]> {
   return invoke("listar_impresoras");
 }

@@ -1,7 +1,15 @@
 import { useState, useEffect } from "react";
-import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia } from "../services/api";
+import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia, obtenerConfig, guiaGuardarDatosSri, guiaObtenerDatosSri, emitirGuiaRemisionSri } from "../services/api";
+import type { GuiaDatosSri } from "../services/api";
 import { useToast } from "../components/Toast";
 import type { VentaCompleta, CuentaBanco, ResumenGuias } from "../types";
+
+const EMIT_FORM_VACIO = {
+  transportista: "", ruc_transportista: "", tipo_id_transportista: "",
+  dir_partida: "", fecha_inicio_transporte: "", fecha_fin_transporte: "",
+  motivo_traslado: "", ruta: "", cod_doc_sustento: "01", num_doc_sustento: "",
+  num_aut_sustento: "", fecha_emision_sustento: "", placa: "", direccion_destino: "",
+};
 
 function fechaHoy(): string {
   const now = new Date();
@@ -58,6 +66,13 @@ export default function GuiasRemisionPage() {
   const [convReferencia, setConvReferencia] = useState("");
   const [convirtiendo, setConvirtiendo] = useState(false);
   const [cuentasBanco, setCuentasBanco] = useState<CuentaBanco[]>([]);
+
+  // Emisión SRI (codDoc 06) — solo con módulo contabilidad
+  const [moduloContab, setModuloContab] = useState(false);
+  const [emitirGuia, setEmitirGuia] = useState<GuiaItem | null>(null);
+  const [emitForm, setEmitForm] = useState({ ...EMIT_FORM_VACIO });
+  const [emitEstado, setEmitEstado] = useState<{ estado_sri: string; numero_sri: string }>({ estado_sri: "", numero_sri: "" });
+  const [emitiendo, setEmitiendo] = useState(false);
 
   const cargar = async () => {
     try {
@@ -123,6 +138,71 @@ export default function GuiasRemisionPage() {
       toastError("Error al convertir: " + err);
     } finally {
       setConvirtiendo(false);
+    }
+  };
+
+  useEffect(() => {
+    obtenerConfig().then(cfg => {
+      const mods = (cfg.licencia_modulos || "").trim();
+      const demo = cfg.demo_activo === "1";
+      const tiene = mods.includes("contabilidad") || mods.includes("sri_avanzado");
+      setModuloContab(demo || tiene);
+    }).catch(() => {});
+  }, []);
+
+  const abrirEmitir = async (g: GuiaItem) => {
+    setEmitirGuia(g);
+    setEmitForm({ ...EMIT_FORM_VACIO });
+    setEmitEstado({ estado_sri: "", numero_sri: "" });
+    try {
+      const d = await guiaObtenerDatosSri(g.id);
+      setEmitForm({
+        transportista: d.transportista || "",
+        ruc_transportista: d.ruc_transportista || "",
+        tipo_id_transportista: d.tipo_id_transportista || "",
+        dir_partida: d.dir_partida || "",
+        fecha_inicio_transporte: d.fecha_inicio_transporte || fechaHoy(),
+        fecha_fin_transporte: d.fecha_fin_transporte || fechaHoy(),
+        motivo_traslado: d.motivo_traslado || "",
+        ruta: d.ruta || "",
+        cod_doc_sustento: d.cod_doc_sustento || "01",
+        num_doc_sustento: d.num_doc_sustento || "",
+        num_aut_sustento: d.num_aut_sustento || "",
+        fecha_emision_sustento: d.fecha_emision_sustento || "",
+        placa: d.placa || "",
+        direccion_destino: d.direccion_destino || "",
+      });
+      setEmitEstado({ estado_sri: d.estado_sri || "", numero_sri: d.numero_sri || "" });
+    } catch (e) {
+      toastError("Error cargando datos: " + e);
+    }
+  };
+
+  const guardarYEmitir = async () => {
+    if (!emitirGuia) return;
+    if (!emitForm.transportista.trim() || !emitForm.ruc_transportista.trim()) {
+      toastError("Ingrese el transportista (razon social e identificacion)");
+      return;
+    }
+    if (!emitForm.dir_partida.trim()) { toastError("Ingrese la direccion de partida"); return; }
+    if (!emitForm.motivo_traslado.trim()) { toastError("Ingrese el motivo del traslado"); return; }
+    setEmitiendo(true);
+    try {
+      const datos: GuiaDatosSri = { ...emitForm };
+      await guiaGuardarDatosSri(emitirGuia.id, datos);
+      const res = await emitirGuiaRemisionSri(emitirGuia.id);
+      if (res.exito) {
+        toastExito(`Guia autorizada por el SRI (${res.numero_factura || res.clave_acceso || ""})`);
+        setEmitirGuia(null);
+        cargar();
+      } else {
+        toastError(`SRI: ${res.mensaje || res.estado_sri}`);
+        setEmitEstado(s => ({ ...s, estado_sri: res.estado_sri }));
+      }
+    } catch (e) {
+      toastError("Error al emitir: " + e);
+    } finally {
+      setEmitiendo(false);
     }
   };
 
@@ -296,6 +376,16 @@ export default function GuiasRemisionPage() {
                           }}>
                           PDF
                         </button>
+                        {moduloContab && (
+                          <button className="btn btn-outline" style={{
+                            fontSize: 10, padding: "2px 8px", fontWeight: 600,
+                            color: "var(--color-primary)", borderColor: "var(--color-primary)",
+                          }}
+                            title="Emitir esta guia de remision electronicamente al SRI (codDoc 06)"
+                            onClick={() => abrirEmitir(g)}>
+                            📤 SRI
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -507,6 +597,129 @@ export default function GuiasRemisionPage() {
                   onClick={ejecutarConversion}>
                   {convirtiendo ? "Convirtiendo..." : "Convertir a Venta"}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Emission modal (SRI codDoc 06) */}
+      {emitirGuia && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={(e) => { if (e.target === e.currentTarget) setEmitirGuia(null); }}>
+          <div className="card" style={{ width: 620, maxHeight: "90vh", overflow: "auto" }}>
+            <div className="card-header flex justify-between items-center">
+              <span>Emitir Guia {emitirGuia.numero} al SRI</span>
+              <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setEmitirGuia(null)}>x</button>
+            </div>
+            <div className="card-body">
+              {emitEstado.estado_sri === "AUTORIZADA" ? (
+                <div style={{ background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.4)", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                  <div style={{ fontWeight: 700, color: "var(--color-success)", marginBottom: 4 }}>✓ Guia ya autorizada por el SRI</div>
+                  <div style={{ fontSize: 12 }} className="text-secondary">Nro SRI: {emitEstado.numero_sri || "-"}</div>
+                </div>
+              ) : emitEstado.estado_sri && emitEstado.estado_sri !== "NO_APLICA" && (
+                <div style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)", borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 12 }}>
+                  Estado SRI actual: <strong>{emitEstado.estado_sri}</strong> — puede reintentar la emision.
+                </div>
+              )}
+
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>Transportista</div>
+              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Razon social *</label>
+                  <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.transportista}
+                    onChange={(e) => setEmitForm(f => ({ ...f, transportista: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>RUC / Cedula *</label>
+                  <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.ruc_transportista}
+                    onChange={(e) => setEmitForm(f => ({ ...f, ruc_transportista: e.target.value }))} />
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Placa</label>
+                  <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.placa}
+                    onChange={(e) => setEmitForm(f => ({ ...f, placa: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Motivo del traslado *</label>
+                  <input className="input" style={{ width: "100%", fontSize: 13 }} placeholder="Venta, traslado..." value={emitForm.motivo_traslado}
+                    onChange={(e) => setEmitForm(f => ({ ...f, motivo_traslado: e.target.value }))} />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Direccion de partida *</label>
+                <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.dir_partida}
+                  onChange={(e) => setEmitForm(f => ({ ...f, dir_partida: e.target.value }))} />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Direccion de destino</label>
+                <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.direccion_destino}
+                  onChange={(e) => setEmitForm(f => ({ ...f, direccion_destino: e.target.value }))} />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Inicio transporte</label>
+                  <input type="date" className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.fecha_inicio_transporte}
+                    onChange={(e) => setEmitForm(f => ({ ...f, fecha_inicio_transporte: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Fin transporte</label>
+                  <input type="date" className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.fecha_fin_transporte}
+                    onChange={(e) => setEmitForm(f => ({ ...f, fecha_fin_transporte: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Ruta</label>
+                  <input className="input" style={{ width: "100%", fontSize: 13 }} placeholder="Quito - Guayaquil" value={emitForm.ruta}
+                    onChange={(e) => setEmitForm(f => ({ ...f, ruta: e.target.value }))} />
+                </div>
+              </div>
+
+              <details style={{ marginBottom: 12 }}>
+                <summary style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", cursor: "pointer" }}>Documento de sustento (opcional)</summary>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Tipo</label>
+                    <select className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.cod_doc_sustento}
+                      onChange={(e) => setEmitForm(f => ({ ...f, cod_doc_sustento: e.target.value }))}>
+                      <option value="01">Factura (01)</option>
+                      <option value="03">Liquidacion compra (03)</option>
+                      <option value="04">Nota de credito (04)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Numero (001-001-000000001)</label>
+                    <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.num_doc_sustento}
+                      onChange={(e) => setEmitForm(f => ({ ...f, num_doc_sustento: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Autorizacion (clave 49)</label>
+                    <input className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.num_aut_sustento}
+                      onChange={(e) => setEmitForm(f => ({ ...f, num_aut_sustento: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Fecha emision sustento</label>
+                    <input type="date" className="input" style={{ width: "100%", fontSize: 13 }} value={emitForm.fecha_emision_sustento}
+                      onChange={(e) => setEmitForm(f => ({ ...f, fecha_emision_sustento: e.target.value }))} />
+                  </div>
+                </div>
+              </details>
+
+              <button className="btn" style={{
+                width: "100%", padding: "10px 0", fontWeight: 700, fontSize: 14,
+                background: "var(--color-primary)", color: "white", border: "none",
+              }}
+                disabled={emitiendo}
+                onClick={guardarYEmitir}>
+                {emitiendo ? "Enviando al SRI..." : emitEstado.estado_sri === "AUTORIZADA" ? "Reemitir al SRI" : "Guardar y Emitir al SRI"}
+              </button>
+              <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 8, textAlign: "center" }}>
+                Se firma con tu certificado digital y se envia al SRI (ambiente segun configuracion).
               </div>
             </div>
           </div>
