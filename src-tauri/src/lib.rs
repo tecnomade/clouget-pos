@@ -536,6 +536,8 @@ pub fn run() {
             commands::inventario::registrar_movimiento,
             commands::inventario::listar_movimientos,
             commands::inventario::resumen_inventario,
+            commands::inventario::listar_productos_stock_negativo,
+            commands::inventario::ajustar_stock_lote,
             commands::inventario::exportar_kardex_csv,
             // Demo
             commands::demo::activar_demo,

@@ -332,3 +332,89 @@ pub fn resumen_inventario(db: State<Database>) -> Result<ResumenInventario, Stri
         valor_inventario,
     })
 }
+
+// ─── v2.5.71: Productos con stock negativo (corrección en lote) ──────────────
+
+#[derive(Debug, Serialize)]
+pub struct ProductoStockNegativo {
+    pub id: i64,
+    pub codigo: Option<String>,
+    pub nombre: String,
+    pub stock_actual: f64,
+    pub precio_costo: f64,
+}
+
+/// Lista los productos con stock_actual < 0, para corregirlos en lote.
+#[tauri::command]
+pub fn listar_productos_stock_negativo(db: State<Database>) -> Result<Vec<ProductoStockNegativo>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, codigo, nombre, stock_actual, COALESCE(precio_costo, 0)
+         FROM productos
+         WHERE stock_actual < 0 AND COALESCE(es_servicio, 0) = 0
+         ORDER BY stock_actual ASC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |r| {
+        Ok(ProductoStockNegativo {
+            id: r.get(0)?,
+            codigo: r.get(1).ok(),
+            nombre: r.get(2)?,
+            stock_actual: r.get(3)?,
+            precio_costo: r.get(4)?,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AjusteLoteItem {
+    pub producto_id: i64,
+    pub stock_real: f64,   // el stock físico real que debe quedar
+}
+
+/// Ajusta en lote el stock de varios productos al valor real contado.
+/// Registra un movimiento AJUSTE por cada uno (auditable) con el motivo dado.
+#[tauri::command]
+pub fn ajustar_stock_lote(
+    db: State<Database>,
+    items: Vec<AjusteLoteItem>,
+    motivo: String,
+    usuario: Option<String>,
+) -> Result<usize, String> {
+    if items.is_empty() {
+        return Err("No hay productos para ajustar".into());
+    }
+    let motivo = if motivo.trim().is_empty() { "Corrección de stock negativo".to_string() } else { motivo.trim().to_string() };
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut ajustados = 0;
+
+    for it in &items {
+        let stock_actual: f64 = match conn.query_row(
+            "SELECT stock_actual FROM productos WHERE id = ?1",
+            rusqlite::params![it.producto_id], |r| r.get(0),
+        ) {
+            Ok(s) => s,
+            Err(_) => continue, // producto no existe, saltar
+        };
+        let diferencia = it.stock_real - stock_actual;
+        if diferencia.abs() < 0.0001 { continue; } // sin cambio
+
+        // Registrar movimiento AJUSTE (auditable)
+        conn.execute(
+            "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario)
+             VALUES (?1, 'AJUSTE', ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![it.producto_id, diferencia, stock_actual, it.stock_real, motivo, usuario],
+        ).map_err(|e| format!("Error registrando movimiento: {}", e))?;
+
+        // Actualizar stock
+        conn.execute(
+            "UPDATE productos SET stock_actual = ?1, updated_at = datetime('now','localtime') WHERE id = ?2",
+            rusqlite::params![it.stock_real, it.producto_id],
+        ).map_err(|e| format!("Error actualizando stock: {}", e))?;
+
+        ajustados += 1;
+    }
+
+    Ok(ajustados)
+}

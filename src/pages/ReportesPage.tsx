@@ -10,6 +10,7 @@ import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteI
 import type { ReporteVentasResultado, VentaReporteRow, ResumenCancelaciones, ResumenGarantias } from "../services/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
+import ModalCorregirStockNegativo from "../components/ModalCorregirStockNegativo";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import type { ReporteUtilidad, ReporteBalance, ProductoRentabilidad } from "../types";
 
@@ -80,6 +81,7 @@ export default function ReportesPage() {
   // Inventario
   const [inventario, setInventario] = useState<any | null>(null);
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
+  const [modalStockNeg, setModalStockNeg] = useState(false);
   const [kardexExpandido, setKardexExpandido] = useState<number | null>(null);
   const [busquedaInv, setBusquedaInv] = useState("");
   const [filtroEstado, setFiltroEstado] = useState<"TODOS" | "OK" | "BAJO" | "SIN_STOCK" | "STOCK_NEGATIVO">("TODOS");
@@ -1281,9 +1283,11 @@ export default function ReportesPage() {
               {(inventario.productos_sin_stock > 0 || inventario.productos_stock_bajo > 0 || ((inventario as any).productos_stock_negativo ?? 0) > 0) && (
                 <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
                   {((inventario as any).productos_stock_negativo ?? 0) > 0 && (
-                    <div style={{ padding: "8px 14px", background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.5)", borderRadius: 6, fontSize: 12, color: "var(--color-danger)", fontWeight: 600 }}
-                         title="Productos con stock negativo (se vendieron mas de los que habia). Cuentan como 0 en el calculo del valor.">
-                      ⚠ <strong>{(inventario as any).productos_stock_negativo}</strong> productos con stock NEGATIVO (contabilidad sucia - revisar)
+                    <div style={{ padding: "8px 14px", background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.5)", borderRadius: 6, fontSize: 12, color: "var(--color-danger)", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
+                         title="Clic para corregir: contar el stock real y ajustar en lote."
+                         onClick={() => setModalStockNeg(true)}>
+                      ⚠ <strong>{(inventario as any).productos_stock_negativo}</strong> productos con stock NEGATIVO
+                      <span style={{ textDecoration: "underline", fontWeight: 700 }}>→ Corregir</span>
                     </div>
                   )}
                   {inventario.productos_sin_stock > 0 && (
@@ -2163,6 +2167,13 @@ export default function ReportesPage() {
           );
         })()}
       </div>
+
+      {modalStockNeg && (
+        <ModalCorregirStockNegativo
+          onClose={() => setModalStockNeg(false)}
+          onAplicado={() => { setModalStockNeg(false); cargar(); }}
+        />
+      )}
     </>
   );
 }

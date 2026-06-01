@@ -1342,6 +1342,23 @@ export async function resumenInventario(): Promise<ResumenInventario> {
   return smartInvoke("resumen_inventario");
 }
 
+// === Corrección de stock negativo (en lote) ===
+export interface ProductoStockNegativo {
+  id: number;
+  codigo?: string;
+  nombre: string;
+  stock_actual: number;
+  precio_costo: number;
+}
+
+export async function listarProductosStockNegativo(): Promise<ProductoStockNegativo[]> {
+  return smartInvoke("listar_productos_stock_negativo");
+}
+
+export async function ajustarStockLote(items: { producto_id: number; stock_real: number }[], motivo: string, usuario?: string): Promise<number> {
+  return smartInvoke("ajustar_stock_lote", { items, motivo, usuario: usuario ?? null });
+}
+
 export const exportarKardexCsv = (fechaDesde: string, fechaHasta: string, productoId?: number) =>
   smartInvoke<string>("exportar_kardex_csv", { fechaDesde, fechaHasta, productoId: productoId ?? null });
 
