@@ -2249,6 +2249,52 @@ fn generar_guia_remision_pdf(
     doc.push(Break::new(0.8));
 
     // ===================================================================
+    // SECCION 1b: AUTORIZACION SRI (solo si la guía fue autorizada como
+    // comprobante electrónico codDoc 06). Muestra clave de acceso, número
+    // de autorización, ambiente y código de barras Code128 (RIDE oficial).
+    // ===================================================================
+    if venta.estado_sri == "AUTORIZADA" {
+        if let Some(clave) = venta.clave_acceso.as_deref().filter(|c| c.len() == 49) {
+            doc.push(
+                Paragraph::new("DOCUMENTO AUTORIZADO POR EL SRI")
+                    .aligned(Alignment::Center)
+                    .styled(s_small_bold),
+            );
+            let num_aut = venta.autorizacion_sri.as_deref().filter(|s| !s.is_empty()).unwrap_or(clave);
+            doc.push(
+                Paragraph::new(format!("No. Autorizacion: {}", num_aut))
+                    .aligned(Alignment::Center)
+                    .styled(s_small),
+            );
+            let ambiente_txt = if clave.chars().nth(23) == Some('2') { "PRODUCCION" } else { "PRUEBAS" };
+            doc.push(
+                Paragraph::new(format!("Ambiente: {}    Emision: NORMAL", ambiente_txt))
+                    .aligned(Alignment::Center)
+                    .styled(s_small),
+            );
+            doc.push(Break::new(0.4));
+            // Código de barras Code128 de la clave de acceso
+            match crate::sri::ride::generar_barcode128_image(clave) {
+                Ok(barcode_path) => {
+                    if let Ok(mut barcode_img) = genpdf::elements::Image::from_path(&barcode_path) {
+                        barcode_img = barcode_img.with_alignment(Alignment::Center);
+                        barcode_img = barcode_img.with_scale(genpdf::Scale::new(1.8, 2.0));
+                        doc.push(barcode_img);
+                    }
+                    let _ = std::fs::remove_file(&barcode_path);
+                }
+                Err(e) => { eprintln!("Warning: barcode Code128 guia: {}", e); }
+            }
+            doc.push(
+                Paragraph::new(format!("Clave de Acceso: {}", clave))
+                    .aligned(Alignment::Center)
+                    .styled(s_small_italic),
+            );
+            doc.push(Break::new(0.8));
+        }
+    }
+
+    // ===================================================================
     // SECCION 2: DATOS DE TRANSPORTE (con bordes)
     // ===================================================================
     let placa = venta.guia_placa.as_deref().unwrap_or("-");
