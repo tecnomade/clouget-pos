@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { guiaGuardarDatosSri, guiaObtenerDatosSri, emitirGuiaRemisionSri, sugerirPorPlaca } from "../services/api";
+import { guiaGuardarDatosSri, guiaObtenerDatosSri, emitirGuiaRemisionSri, sugerirPorPlaca, obtenerConfig } from "../services/api";
 import type { GuiaDatosSri } from "../services/api";
 import { useToast } from "./Toast";
 
@@ -38,6 +38,27 @@ export default function ModalEmisionGuia({ guiaId, numero, titulo, onClose, onEm
   const [form, setForm] = useState({ ...EMIT_FORM_VACIO });
   const [estado, setEstado] = useState<{ estado_sri: string; numero_sri: string }>({ estado_sri: "", numero_sri: "" });
   const [emitiendo, setEmitiendo] = useState(false);
+  // Datos del negocio (para "Soy yo" como transportista y prellenar dir. de partida)
+  const [negocio, setNegocio] = useState<{ nombre: string; ruc: string; direccion: string }>({ nombre: "", ruc: "", direccion: "" });
+
+  useEffect(() => {
+    obtenerConfig().then((cfg) => {
+      setNegocio({
+        nombre: cfg.nombre_negocio || "",
+        ruc: cfg.ruc || "",
+        direccion: cfg.direccion || "",
+      });
+    }).catch(() => {});
+  }, []);
+
+  const usarMiNegocioComoTransportista = () => {
+    setForm((f) => ({
+      ...f,
+      transportista: negocio.nombre,
+      ruc_transportista: negocio.ruc,
+      tipo_id_transportista: negocio.ruc.length === 13 ? "04" : "05",
+    }));
+  };
 
   useEffect(() => {
     let cancelado = false;
@@ -49,6 +70,8 @@ export default function ModalEmisionGuia({ guiaId, numero, titulo, onClose, onEm
         transportista: d.transportista || "",
         ruc_transportista: d.ruc_transportista || "",
         tipo_id_transportista: d.tipo_id_transportista || "",
+        // Si no hay dirección de partida guardada, se prellenará con la del
+        // negocio en cuanto cargue la config (ver efecto de abajo).
         dir_partida: d.dir_partida || "",
         fecha_inicio_transporte: d.fecha_inicio_transporte || fechaHoy(),
         fecha_fin_transporte: d.fecha_fin_transporte || fechaHoy(),
@@ -65,6 +88,13 @@ export default function ModalEmisionGuia({ guiaId, numero, titulo, onClose, onEm
     }).catch((e) => { if (!cancelado) toastError("Error cargando datos: " + e); });
     return () => { cancelado = true; };
   }, [guiaId]);
+
+  // Prellenar dirección de PARTIDA con la del negocio si quedó vacía (origen = mi bodega).
+  useEffect(() => {
+    if (negocio.direccion) {
+      setForm((f) => f.dir_partida.trim() ? f : { ...f, dir_partida: negocio.direccion });
+    }
+  }, [negocio.direccion]);
 
   const guardarYEmitir = async () => {
     if (!form.transportista.trim() || !form.ruc_transportista.trim()) {
@@ -112,7 +142,16 @@ export default function ModalEmisionGuia({ guiaId, numero, titulo, onClose, onEm
             </div>
           )}
 
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--color-text-secondary)" }}>Transportista</div>
+          <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)" }}>🚚 Transportista (quién lleva la carga)</span>
+            {negocio.nombre && (
+              <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                title="Usar mi negocio como transportista (yo mismo transporto)"
+                onClick={usarMiNegocioComoTransportista}>
+                Soy yo
+              </button>
+            )}
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 8, marginBottom: 10 }}>
             <div>
               <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Razon social *</label>
@@ -156,14 +195,15 @@ export default function ModalEmisionGuia({ guiaId, numero, titulo, onClose, onEm
             </div>
           </div>
 
+          <div style={{ fontSize: 12, fontWeight: 600, margin: "4px 0 8px", color: "var(--color-text-secondary)" }}>📍 Ruta del traslado (de dónde sale → a dónde llega)</div>
           <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Direccion de partida *</label>
-            <input className="input" style={{ width: "100%", fontSize: 13 }} value={form.dir_partida}
+            <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Origen — Dirección de partida * <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>(de dónde sale la mercadería, normalmente tu bodega)</span></label>
+            <input className="input" style={{ width: "100%", fontSize: 13 }} placeholder="Dirección de tu negocio/bodega" value={form.dir_partida}
               onChange={(e) => setForm((f) => ({ ...f, dir_partida: e.target.value }))} />
           </div>
           <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Direccion de destino</label>
-            <input className="input" style={{ width: "100%", fontSize: 13 }} value={form.direccion_destino}
+            <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Destino — Dirección de entrega <span style={{ color: "var(--color-text-secondary)", fontWeight: 400 }}>(a dónde llega: el destinatario/cliente)</span></label>
+            <input className="input" style={{ width: "100%", fontSize: 13 }} placeholder="Dirección donde se entrega la carga" value={form.direccion_destino}
               onChange={(e) => setForm((f) => ({ ...f, direccion_destino: e.target.value }))} />
           </div>
 

@@ -954,7 +954,7 @@ pub fn generar_xml_guia_remision(datos: &DatosGuiaRemision) -> String {
     let mut xml = String::with_capacity(4096);
 
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str("<guiaRemision id=\"comprobante\" version=\"2.0.0\">\n");
+    xml.push_str("<guiaRemision id=\"comprobante\" version=\"1.1.0\">\n");
 
     // === infoTributaria ===
     xml.push_str("  <infoTributaria>\n");
