@@ -15,6 +15,10 @@ param(
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $ProjectRoot
+# Las APIs de .NET (ReadAllBytes, WriteAllText) usan el cwd del PROCESO, no la
+# ubicacion de PowerShell. Si el script se lanza desde otra carpeta, hay que
+# sincronizar ambos para que las rutas relativas resuelvan contra $ProjectRoot.
+[System.Environment]::CurrentDirectory = $ProjectRoot
 
 # --- Leer version actual ---
 $PackageJson = Get-Content "package.json" -Raw | ConvertFrom-Json
