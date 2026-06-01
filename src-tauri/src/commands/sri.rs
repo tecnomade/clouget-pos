@@ -810,6 +810,330 @@ pub async fn emitir_factura_sri_internal(
 }
 
 // ════════════════════════════════════════════════════════════════════
+// v2.5.67: Guía de Remisión electrónica SRI (codDoc 06)
+// Gated tras el módulo "contabilidad". Reutiliza estado_sri, clave_acceso,
+// autorizacion_sri y xml_firmado de la fila de ventas (tipo_estado=GUIA_REMISION).
+// El número SRI (001-001-000000001) se guarda en numero_factura.
+// ════════════════════════════════════════════════════════════════════
+
+struct DatosGuiaSri {
+    cliente_id: i64,
+    fecha: String,
+    estado_sri: String,
+    clave_acceso_previa: Option<String>,
+    xml_firmado_previo: Option<String>,
+    placa: String,
+    transportista: String,
+    ruc_transportista: String,
+    tipo_id_transportista: String,
+    dir_partida: String,
+    fecha_inicio: String,
+    fecha_fin: String,
+    motivo: String,
+    ruta: String,
+    cod_doc_sustento: String,
+    num_doc_sustento: String,
+    num_aut_sustento: String,
+    fecha_emision_sustento: String,
+    dir_destino: String,
+}
+
+/// Emite al SRI una guía de remisión electrónica (codDoc 06).
+/// Requiere el módulo `contabilidad` activo (o modo demo).
+#[tauri::command]
+pub async fn emitir_guia_remision_sri(
+    db: State<'_, Database>,
+    guia_id: i64,
+) -> Result<ResultadoEmision, String> {
+    // 0. Gating: módulo contabilidad
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let getc = |k: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key=?1", rusqlite::params![k], |r| r.get(0))
+                .unwrap_or_default()
+        };
+        let demo = getc("demo_activo") == "1";
+        let mods = getc("licencia_modulos");
+        let tiene_contab = mods.contains("contabilidad") || mods.contains("sri_avanzado");
+        if !demo && !tiene_contab {
+            return Err("La guía de remisión electrónica requiere el módulo Contabilidad. Actívelo en su licencia.".to_string());
+        }
+    }
+
+    // 1. Leer guía, detalles, cliente (destinatario), config y certificado P12
+    let (g, detalles_data, cliente_data, config_data, p12_data, p12_password) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+        let (g, tipo_estado): (DatosGuiaSri, String) = conn.query_row(
+            "SELECT cliente_id, fecha, estado_sri, clave_acceso, xml_firmado,
+                    COALESCE(guia_placa,''), COALESCE(guia_transportista,''), COALESCE(guia_ruc_transportista,''),
+                    COALESCE(guia_tipo_id_transportista,''), COALESCE(guia_dir_partida,''),
+                    COALESCE(guia_fecha_inicio_transporte,''), COALESCE(guia_fecha_fin_transporte,''),
+                    COALESCE(guia_motivo_traslado,''), COALESCE(guia_ruta,''),
+                    COALESCE(guia_cod_doc_sustento,''), COALESCE(guia_num_doc_sustento,''),
+                    COALESCE(guia_num_aut_sustento,''), COALESCE(guia_fecha_emision_sustento,''),
+                    COALESCE(guia_direccion_destino,''), COALESCE(tipo_estado,'')
+             FROM ventas WHERE id = ?1",
+            rusqlite::params![guia_id],
+            |row| Ok((
+                DatosGuiaSri {
+                    cliente_id: row.get::<_, Option<i64>>(0)?.unwrap_or(1),
+                    fecha: row.get(1)?,
+                    estado_sri: row.get::<_, String>(2).unwrap_or_else(|_| "NO_APLICA".to_string()),
+                    clave_acceso_previa: row.get(3)?,
+                    xml_firmado_previo: row.get(4)?,
+                    placa: row.get(5)?,
+                    transportista: row.get(6)?,
+                    ruc_transportista: row.get(7)?,
+                    tipo_id_transportista: row.get(8)?,
+                    dir_partida: row.get(9)?,
+                    fecha_inicio: row.get(10)?,
+                    fecha_fin: row.get(11)?,
+                    motivo: row.get(12)?,
+                    ruta: row.get(13)?,
+                    cod_doc_sustento: row.get(14)?,
+                    num_doc_sustento: row.get(15)?,
+                    num_aut_sustento: row.get(16)?,
+                    fecha_emision_sustento: row.get(17)?,
+                    dir_destino: row.get(18)?,
+                },
+                row.get::<_, String>(19)?,
+            )),
+        ).map_err(|e| format!("Guía no encontrada: {}", e))?;
+
+        if tipo_estado != "GUIA_REMISION" {
+            return Err("Este documento no es una guía de remisión".to_string());
+        }
+        if g.estado_sri == "AUTORIZADA" {
+            return Err("Esta guía ya fue autorizada por el SRI".to_string());
+        }
+
+        // detalles
+        let mut stmt = conn.prepare(
+            "SELECT p.codigo, p.nombre, d.cantidad
+             FROM venta_detalles d JOIN productos p ON d.producto_id = p.id
+             WHERE d.venta_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let detalles: Vec<(String, String, f64)> = stmt
+            .query_map(rusqlite::params![guia_id], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "SIN-COD".to_string()),
+                    row.get::<_, String>(1)?,
+                    row.get::<_, f64>(2)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        drop(stmt);
+
+        if detalles.is_empty() {
+            return Err("La guía no tiene productos para transportar".to_string());
+        }
+
+        // cliente (destinatario)
+        let cliente: (String, String, String) = conn.query_row(
+            "SELECT identificacion, nombre, direccion FROM clientes WHERE id = ?1",
+            rusqlite::params![g.cliente_id],
+            |row| Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            )),
+        ).map_err(|e| format!("Cliente no encontrado: {}", e))?;
+
+        // config
+        let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut sc = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+        let rows = sc.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?;
+        for r in rows { let (k, v) = r.map_err(|e| e.to_string())?; config.insert(k, v); }
+        drop(sc);
+
+        // certificado P12
+        let (p12_blob, p12_pass): (Vec<u8>, String) = conn.query_row(
+            "SELECT p12_data, password FROM sri_certificado WHERE id = 1", [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).map_err(|_| "No hay certificado digital cargado. Cargue un P12 primero.".to_string())?;
+
+        (g, detalles, cliente, config, p12_blob, p12_pass)
+    };
+
+    // 2. Validaciones
+    let cfg = |key: &str| -> String { config_data.get(key).cloned().unwrap_or_default() };
+    let ruc = cfg("ruc");
+    if ruc.is_empty() || ruc.len() != 13 {
+        return Err("Configure el RUC del negocio (13 dígitos) antes de emitir guías".to_string());
+    }
+    if g.transportista.trim().is_empty() || g.ruc_transportista.trim().is_empty() {
+        return Err("Falta el transportista (razón social e identificación) en la guía".to_string());
+    }
+    if g.dir_partida.trim().is_empty() {
+        return Err("Falta la dirección de partida en la guía".to_string());
+    }
+    if g.motivo.trim().is_empty() {
+        return Err("Falta el motivo del traslado en la guía".to_string());
+    }
+
+    let ambiente = match cfg("sri_ambiente").as_str() { "produccion" => "2", _ => "1" };
+    let establecimiento = { let t = cfg("terminal_establecimiento"); if t.is_empty() { cfg("establecimiento") } else { t } };
+    let establecimiento = if establecimiento.is_empty() { "001".to_string() } else { establecimiento };
+    let punto_emision = { let t = cfg("terminal_punto_emision"); if t.is_empty() { cfg("punto_emision") } else { t } };
+    let punto_emision = if punto_emision.is_empty() { "001".to_string() } else { punto_emision };
+    let regimen = cfg("regimen");
+    let tipo_doc_sec = if ambiente == "1" { "GUIA_REMISION_PRUEBAS" } else { "GUIA_REMISION" };
+
+    let fecha_emision = formatear_fecha_emision(&g.fecha)?;
+    let fecha_ini = if g.fecha_inicio.trim().is_empty() { fecha_emision.clone() }
+                    else { formatear_fecha_emision(&g.fecha_inicio).unwrap_or_else(|_| fecha_emision.clone()) };
+    let fecha_fin = if g.fecha_fin.trim().is_empty() { fecha_ini.clone() }
+                    else { formatear_fecha_emision(&g.fecha_fin).unwrap_or_else(|_| fecha_ini.clone()) };
+
+    let mut numero_sri = String::new();
+    let mut es_primera = false;
+
+    // 3. Emisión (con reenvío si estaba PENDIENTE)
+    let (clave, xml_firmado_final, resultado_sri) = if g.estado_sri == "PENDIENTE"
+        && g.clave_acceso_previa.is_some() && g.xml_firmado_previo.is_some()
+    {
+        let clave_previa = g.clave_acceso_previa.clone().unwrap();
+        let xml_previo = g.xml_firmado_previo.clone().unwrap();
+        soap::log_sri(&format!("=== REENVIO GUIA: consultando clave previa: {} ===", clave_previa));
+        let consulta = soap::consultar_autorizacion(&clave_previa, ambiente).await;
+        match consulta {
+            Ok(ref res) if res.exito => (clave_previa, xml_previo, consulta.unwrap()),
+            _ => {
+                let r = soap::enviar_comprobante(&xml_previo, &clave_previa, ambiente).await?;
+                (clave_previa, xml_previo, r)
+            }
+        }
+    } else {
+        es_primera = true;
+        let secuencial_sri = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            obtener_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_sec)?
+        };
+        let secuencial = format!("{:09}", secuencial_sri);
+        numero_sri = format!("{}-{}-{}", establecimiento, punto_emision, secuencial);
+
+        let clave_nueva = clave_acceso::generar_clave_acceso(
+            &fecha_emision, "06", &ruc, ambiente, &establecimiento, &punto_emision, &secuencial, "1",
+        );
+
+        let (cli_id, cli_nombre, cli_dir) = &cliente_data;
+        let ident_dest = if cli_id.trim().is_empty() { "9999999999999".to_string() } else { cli_id.clone() };
+        let dir_dest = if g.dir_destino.trim().is_empty() { cli_dir.clone() } else { g.dir_destino.clone() };
+
+        let detalles_guia: Vec<xml::DetalleGuia> = detalles_data.iter().map(|(cod, nom, cant)| xml::DetalleGuia {
+            codigo_interno: Some(cod.clone()),
+            codigo_adicional: None,
+            descripcion: nom.clone(),
+            cantidad: *cant,
+        }).collect();
+
+        let contribuyente_rimpe = match regimen.as_str() {
+            "RIMPE_EMPRENDEDOR" => Some("CONTRIBUYENTE RÉGIMEN RIMPE".to_string()),
+            "RIMPE_POPULAR" => Some("CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE".to_string()),
+            _ => None,
+        };
+
+        let destinatario = xml::DestinatarioGuia {
+            identificacion_destinatario: ident_dest,
+            razon_social_destinatario: cli_nombre.clone(),
+            dir_destinatario: dir_dest,
+            motivo_traslado: g.motivo.clone(),
+            doc_aduanero_unico: None,
+            cod_estab_destino: None,
+            ruta: if g.ruta.trim().is_empty() { None } else { Some(g.ruta.clone()) },
+            cod_doc_sustento: if g.cod_doc_sustento.trim().is_empty() { None } else { Some(g.cod_doc_sustento.clone()) },
+            num_doc_sustento: if g.num_doc_sustento.trim().is_empty() { None } else { Some(g.num_doc_sustento.clone()) },
+            num_aut_doc_sustento: if g.num_aut_sustento.trim().is_empty() { None } else { Some(g.num_aut_sustento.clone()) },
+            fecha_emision_doc_sustento: if g.fecha_emision_sustento.trim().is_empty() { None }
+                else { Some(formatear_fecha_emision(&g.fecha_emision_sustento).unwrap_or_else(|_| g.fecha_emision_sustento.clone())) },
+            detalles: detalles_guia,
+        };
+
+        let tipo_id_transp = if g.tipo_id_transportista.trim().is_empty() {
+            if g.ruc_transportista.len() == 13 { "04".to_string() }
+            else if g.ruc_transportista.len() == 10 { "05".to_string() }
+            else { "06".to_string() }
+        } else { g.tipo_id_transportista.clone() };
+
+        let datos = xml::DatosGuiaRemision {
+            ambiente: ambiente.to_string(),
+            tipo_emision: "1".to_string(),
+            razon_social: cfg("nombre_negocio"),
+            nombre_comercial: cfg("nombre_negocio"),
+            ruc: ruc.clone(),
+            clave_acceso: clave_nueva.clone(),
+            estab: establecimiento.clone(),
+            pto_emi: punto_emision.clone(),
+            secuencial: secuencial.clone(),
+            dir_matriz: cfg("direccion"),
+            contribuyente_rimpe,
+            dir_establecimiento: cfg("direccion"),
+            dir_partida: g.dir_partida.clone(),
+            razon_social_transportista: g.transportista.clone(),
+            tipo_identificacion_transportista: tipo_id_transp,
+            ruc_transportista: g.ruc_transportista.clone(),
+            rise: None,
+            obligado_contabilidad: Some("NO".to_string()),
+            contribuyente_especial: None,
+            fecha_ini_transporte: fecha_ini.clone(),
+            fecha_fin_transporte: fecha_fin.clone(),
+            placa: g.placa.clone(),
+            destinatarios: vec![destinatario],
+            info_adicional: vec![],
+        };
+
+        let xml_sin_firma = xml::generar_xml_guia_remision(&datos);
+        soap::log_sri(&format!("XML guía sin firma ({} bytes):\n{}", xml_sin_firma.len(), xml_sin_firma));
+        let firmado = firma::firmar_comprobante(&xml_sin_firma, &p12_data, &p12_password, "guiaRemision")?;
+        let r = soap::enviar_comprobante(&firmado.xml, &clave_nueva, ambiente).await?;
+        (clave_nueva, firmado.xml, r)
+    };
+
+    // 4. Actualizar la guía
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let nuevo_estado = if resultado_sri.exito { "AUTORIZADA" }
+                           else if resultado_sri.estado == "EN_PROCESO" { "PENDIENTE" }
+                           else { "RECHAZADA" };
+        let xml_guardar = if resultado_sri.exito || resultado_sri.estado == "EN_PROCESO" {
+            Some(xml_firmado_final.clone())
+        } else { None };
+        let nf_guardar = if !numero_sri.is_empty() { Some(numero_sri.clone()) } else { None };
+        conn.execute(
+            "UPDATE ventas SET estado_sri = ?1, clave_acceso = ?2, autorizacion_sri = ?3,
+                               xml_firmado = ?4, fecha_autorizacion = ?5,
+                               numero_factura = COALESCE(?6, numero_factura)
+             WHERE id = ?7",
+            rusqlite::params![
+                nuevo_estado, clave.clone(), resultado_sri.numero_autorizacion,
+                xml_guardar, resultado_sri.fecha_autorizacion.as_deref(), nf_guardar, guia_id,
+            ],
+        ).map_err(|e| format!("Error actualizando guía: {}", e))?;
+
+        if resultado_sri.exito && es_primera {
+            incrementar_secuencial(&conn, &establecimiento, &punto_emision, tipo_doc_sec).ok();
+        }
+    }
+
+    Ok(ResultadoEmision {
+        exito: resultado_sri.exito,
+        estado_sri: resultado_sri.estado.clone(),
+        clave_acceso: Some(clave),
+        numero_autorizacion: resultado_sri.numero_autorizacion,
+        fecha_autorizacion: resultado_sri.fecha_autorizacion,
+        mensaje: resultado_sri.mensaje.unwrap_or_else(|| {
+            if resultado_sri.exito { "Guía de remisión autorizada correctamente".to_string() }
+            else { format!("Estado: {}", resultado_sri.estado) }
+        }),
+        numero_factura: if !numero_sri.is_empty() { Some(numero_sri) } else { None },
+    })
+}
+
+// ════════════════════════════════════════════════════════════════════
 // v2.5.38: Envío SRI por lote (batch) — emitir múltiples ventas
 // ════════════════════════════════════════════════════════════════════
 

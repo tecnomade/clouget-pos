@@ -517,6 +517,7 @@ pub fn run() {
             commands::sri::obtener_emails_pendientes,
             commands::sri::emitir_nota_credito_sri,
             commands::sri::generar_ride_nc_pdf,
+            commands::sri::emitir_guia_remision_sri,
             // Listas de precios
             commands::listas_precios::listar_listas_precios,
             commands::listas_precios::crear_lista_precio,
