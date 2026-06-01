@@ -694,6 +694,48 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_vehiculos_placa ON vehiculos_transporte(placa);"
     ).ok();
 
+    // v2.5.67: Asociacion aprendida placa <-> chofer <-> transportista.
+    // Modela la relacion muchos-a-muchos (una placa puede tener varios choferes y
+    // viceversa) con un contador de frecuencia para sugerir el mas usado primero.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS placa_chofer_asoc (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            placa TEXT NOT NULL,
+            chofer TEXT NOT NULL,
+            transportista_ruc TEXT,
+            transportista_nombre TEXT,
+            veces INTEGER NOT NULL DEFAULT 1,
+            ultima_vez TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(placa, chofer)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pca_placa ON placa_chofer_asoc(placa);
+        CREATE INDEX IF NOT EXISTS idx_pca_chofer ON placa_chofer_asoc(chofer);"
+    ).ok();
+
+    // Backfill (idempotente via INSERT OR IGNORE + flag): sembrar la asociacion desde
+    // las guias historicas que ya tienen placa y chofer.
+    {
+        let ya: String = conn
+            .query_row("SELECT value FROM config WHERE key = 'migracion_v2_5_67_placa_chofer'", [], |r| r.get(0))
+            .unwrap_or_default();
+        if ya != "1" {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO placa_chofer_asoc (placa, chofer, veces)
+                 SELECT UPPER(TRIM(guia_placa)), TRIM(guia_chofer), COUNT(*)
+                 FROM ventas
+                 WHERE tipo_estado = 'GUIA_REMISION'
+                   AND guia_placa IS NOT NULL AND TRIM(guia_placa) <> ''
+                   AND guia_chofer IS NOT NULL AND TRIM(guia_chofer) <> ''
+                 GROUP BY UPPER(TRIM(guia_placa)), TRIM(guia_chofer)",
+                [],
+            );
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES ('migracion_v2_5_67_placa_chofer', '1')",
+                [],
+            );
+        }
+    }
+
     // Direcciones de entrega por cliente (autocompletar para guias, v2.3.39+).
     // Un cliente puede tener varias direcciones (casa, oficina, sucursal, etc.).
     conn.execute_batch(

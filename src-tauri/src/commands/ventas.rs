@@ -2227,6 +2227,19 @@ pub fn guardar_guia_remision(
         [],
     ).map_err(|e| e.to_string())?;
 
+    // v2.5.67: aprender la asociacion placa<->chofer automaticamente
+    if let (Some(pl), Some(ch)) = (venta.guia_placa.as_ref(), venta.guia_chofer.as_ref()) {
+        let pl = pl.trim().to_uppercase();
+        let ch = ch.trim();
+        if !pl.is_empty() && !ch.is_empty() {
+            let _ = conn.execute(
+                "INSERT INTO placa_chofer_asoc (placa, chofer) VALUES (?1, ?2)
+                 ON CONFLICT(placa, chofer) DO UPDATE SET veces = veces + 1, ultima_vez = datetime('now','localtime')",
+                rusqlite::params![pl, ch],
+            );
+        }
+    }
+
     let cliente_nombre: Option<String> = conn.query_row("SELECT nombre FROM clientes WHERE id = ?1", rusqlite::params![venta.cliente_id.unwrap_or(1)], |row| row.get(0)).ok();
 
     Ok(VentaCompleta {
@@ -2775,6 +2788,106 @@ pub fn guardar_chofer(db: State<Database>, nombre: String, placa: Option<String>
     Ok(())
 }
 
+// === Aprendizaje placa <-> chofer <-> transportista (v2.5.67) ===
+
+#[derive(serde::Serialize)]
+pub struct SugerenciaTransporte {
+    pub placa: String,
+    pub chofer: String,
+    pub transportista_ruc: Option<String>,
+    pub transportista_nombre: Option<String>,
+    pub veces: i64,
+}
+
+/// Aprende (o refuerza) la asociacion placa<->chofer<->transportista.
+/// Se llama automaticamente al guardar/emitir una guia. Idempotente: si el par
+/// (placa, chofer) ya existe, incrementa el contador y refresca el transportista.
+#[tauri::command]
+pub fn aprender_placa_chofer(
+    db: State<Database>,
+    placa: String,
+    chofer: String,
+    transportista_ruc: Option<String>,
+    transportista_nombre: Option<String>,
+) -> Result<(), String> {
+    let placa_n = placa.trim().to_uppercase();
+    let chofer_n = chofer.trim().to_string();
+    if placa_n.is_empty() || chofer_n.is_empty() {
+        return Ok(()); // nada que aprender
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO placa_chofer_asoc (placa, chofer, transportista_ruc, transportista_nombre)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(placa, chofer) DO UPDATE SET
+            veces = veces + 1,
+            ultima_vez = datetime('now','localtime'),
+            transportista_ruc = COALESCE(NULLIF(excluded.transportista_ruc, ''), transportista_ruc),
+            transportista_nombre = COALESCE(NULLIF(excluded.transportista_nombre, ''), transportista_nombre)",
+        rusqlite::params![
+            placa_n,
+            chofer_n,
+            transportista_ruc.as_deref().map(|s| s.trim()),
+            transportista_nombre.as_deref().map(|s| s.trim()),
+        ],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Dado una placa (o prefijo), sugiere los choferes/transportistas que la han
+/// conducido, ordenados por frecuencia. Devuelve uno o varios.
+#[tauri::command]
+pub fn sugerir_por_placa(db: State<Database>, placa: String) -> Result<Vec<SugerenciaTransporte>, String> {
+    let placa_n = placa.trim().to_uppercase();
+    if placa_n.is_empty() { return Ok(vec![]); }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT placa, chofer, transportista_ruc, transportista_nombre, veces
+         FROM placa_chofer_asoc
+         WHERE placa LIKE ?1 || '%'
+         ORDER BY veces DESC, ultima_vez DESC
+         LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![placa_n], |row| {
+        Ok(SugerenciaTransporte {
+            placa: row.get(0)?,
+            chofer: row.get(1)?,
+            transportista_ruc: row.get(2)?,
+            transportista_nombre: row.get(3)?,
+            veces: row.get(4)?,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// Dado un chofer (o fragmento del nombre), sugiere las placas que ha conducido,
+/// ordenadas por frecuencia. Devuelve una o varias.
+#[tauri::command]
+pub fn sugerir_por_chofer(db: State<Database>, chofer: String) -> Result<Vec<SugerenciaTransporte>, String> {
+    let chofer_n = chofer.trim().to_string();
+    if chofer_n.is_empty() { return Ok(vec![]); }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT placa, chofer, transportista_ruc, transportista_nombre, veces
+         FROM placa_chofer_asoc
+         WHERE chofer LIKE '%' || ?1 || '%'
+         ORDER BY veces DESC, ultima_vez DESC
+         LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![chofer_n], |row| {
+        Ok(SugerenciaTransporte {
+            placa: row.get(0)?,
+            chofer: row.get(1)?,
+            transportista_ruc: row.get(2)?,
+            transportista_nombre: row.get(3)?,
+            veces: row.get(4)?,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
 // === Vehiculos guardados (autocomplete de placas en guias) ===
 #[tauri::command]
 pub fn listar_vehiculos(db: State<Database>) -> Result<Vec<(i64, String, Option<String>)>, String> {
@@ -3024,6 +3137,31 @@ pub fn guia_guardar_datos_sri(
     upd("guia_fecha_emision_sustento", &datos.fecha_emision_sustento)?;
     upd("guia_placa", &datos.placa)?;
     upd("guia_direccion_destino", &datos.direccion_destino)?;
+
+    // v2.5.67: aprender placa<->chofer<->transportista al guardar datos SRI
+    let placa_l = datos.placa.as_deref().map(|s| s.trim().to_uppercase()).unwrap_or_default();
+    if !placa_l.is_empty() {
+        let chofer_l: String = conn.query_row(
+            "SELECT COALESCE(guia_chofer,'') FROM ventas WHERE id = ?1",
+            rusqlite::params![guia_id], |r| r.get(0),
+        ).unwrap_or_default();
+        if !chofer_l.trim().is_empty() {
+            let _ = conn.execute(
+                "INSERT INTO placa_chofer_asoc (placa, chofer, transportista_ruc, transportista_nombre)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(placa, chofer) DO UPDATE SET
+                    veces = veces + 1, ultima_vez = datetime('now','localtime'),
+                    transportista_ruc = COALESCE(NULLIF(excluded.transportista_ruc,''), transportista_ruc),
+                    transportista_nombre = COALESCE(NULLIF(excluded.transportista_nombre,''), transportista_nombre)",
+                rusqlite::params![
+                    placa_l,
+                    chofer_l.trim(),
+                    datos.ruc_transportista.as_deref().map(|s| s.trim()),
+                    datos.transportista.as_deref().map(|s| s.trim()),
+                ],
+            );
+        }
+    }
     Ok(())
 }
 
