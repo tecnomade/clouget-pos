@@ -576,6 +576,174 @@ pub fn generar_xml_retencion(datos: &DatosRetencion) -> String {
     xml
 }
 
+// ─── v2.5.69: Liquidación de Compra de bienes/servicios SRI v1.1.0 ───────────
+
+/// Datos para generar el XML de una Liquidación de Compra (codDoc 03).
+///
+/// La emite el COMPRADOR cuando adquiere a un proveedor que no puede emitir
+/// factura (agricultor, reciclador, informal, extranjero sin RUC EC). El sujeto
+/// es el PROVEEDOR (vendedor), y el emisor es el negocio (comprador).
+///
+/// Tag root: `liquidacionCompra` (version 1.1.0). Estructura muy parecida a la
+/// factura pero con `<infoLiquidacionCompra>` y datos del proveedor.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DatosLiquidacionCompra {
+    // infoTributaria
+    pub ambiente: String,
+    pub tipo_emision: String,
+    pub razon_social: String,        // mi negocio (comprador/emisor)
+    pub nombre_comercial: String,
+    pub ruc: String,
+    pub clave_acceso: String,        // 49 dígitos, codDoc=03
+    pub estab: String,
+    pub pto_emi: String,
+    pub secuencial: String,
+    pub dir_matriz: String,
+    pub contribuyente_rimpe: Option<String>,
+
+    // infoLiquidacionCompra
+    pub fecha_emision: String,
+    pub dir_establecimiento: String,
+    pub contribuyente_especial: Option<String>,
+    pub obligado_contabilidad: String,
+    pub tipo_identificacion_proveedor: String, // "04"=RUC, "05"=cédula, "06"=pasaporte, "08"=id exterior
+    pub razon_social_proveedor: String,
+    pub identificacion_proveedor: String,
+    pub direccion_proveedor: Option<String>,
+
+    // Totales
+    pub total_sin_impuestos: f64,
+    pub total_descuento: f64,
+    pub importe_total: f64,
+    pub impuestos_totales: Vec<ImpuestoTotal>,
+
+    // Pagos (reutiliza el de factura)
+    pub pagos: Vec<PagoFactura>,
+
+    // Detalles (reutiliza DetalleFactura)
+    pub detalles: Vec<DetalleFactura>,
+
+    pub info_adicional: Vec<CampoAdicional>,
+}
+
+/// Genera el XML de la Liquidación de Compra electrónica SRI v1.1.0.
+/// No usa self-closing tags. Tag root: `liquidacionCompra`.
+pub fn generar_xml_liquidacion_compra(datos: &DatosLiquidacionCompra) -> String {
+    let mut xml = String::with_capacity(8192);
+
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<liquidacionCompra id=\"comprobante\" version=\"1.1.0\">\n");
+
+    // === infoTributaria ===
+    xml.push_str("  <infoTributaria>\n");
+    xml_tag(&mut xml, 4, "ambiente", &datos.ambiente);
+    xml_tag(&mut xml, 4, "tipoEmision", &datos.tipo_emision);
+    xml_tag(&mut xml, 4, "razonSocial", &xml_escape(&datos.razon_social));
+    xml_tag(&mut xml, 4, "nombreComercial", &xml_escape(&datos.nombre_comercial));
+    xml_tag(&mut xml, 4, "ruc", &datos.ruc);
+    xml_tag(&mut xml, 4, "claveAcceso", &datos.clave_acceso);
+    xml_tag(&mut xml, 4, "codDoc", "03");
+    xml_tag(&mut xml, 4, "estab", &datos.estab);
+    xml_tag(&mut xml, 4, "ptoEmi", &datos.pto_emi);
+    xml_tag(&mut xml, 4, "secuencial", &datos.secuencial);
+    xml_tag(&mut xml, 4, "dirMatriz", &xml_escape(&datos.dir_matriz));
+    if let Some(ref rimpe) = datos.contribuyente_rimpe {
+        if !rimpe.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteRimpe", &xml_escape(rimpe));
+        }
+    }
+    xml.push_str("  </infoTributaria>\n");
+
+    // === infoLiquidacionCompra ===
+    xml.push_str("  <infoLiquidacionCompra>\n");
+    xml_tag(&mut xml, 4, "fechaEmision", &datos.fecha_emision);
+    xml_tag(&mut xml, 4, "dirEstablecimiento", &xml_escape(&datos.dir_establecimiento));
+    if let Some(ref ce) = datos.contribuyente_especial {
+        if !ce.is_empty() {
+            xml_tag(&mut xml, 4, "contribuyenteEspecial", ce);
+        }
+    }
+    xml_tag(&mut xml, 4, "obligadoContabilidad", &datos.obligado_contabilidad);
+    xml_tag(&mut xml, 4, "tipoIdentificacionProveedor", &datos.tipo_identificacion_proveedor);
+    xml_tag(&mut xml, 4, "razonSocialProveedor", &xml_escape(&datos.razon_social_proveedor));
+    xml_tag(&mut xml, 4, "identificacionProveedor", &datos.identificacion_proveedor);
+    if let Some(ref dir) = datos.direccion_proveedor {
+        if !dir.is_empty() {
+            xml_tag(&mut xml, 4, "direccionProveedor", &xml_escape(dir));
+        }
+    }
+    xml_tag(&mut xml, 4, "totalSinImpuestos", &format!("{:.2}", datos.total_sin_impuestos));
+    xml_tag(&mut xml, 4, "totalDescuento", &format!("{:.2}", datos.total_descuento));
+
+    // totalConImpuestos
+    xml.push_str("    <totalConImpuestos>\n");
+    for imp in &datos.impuestos_totales {
+        xml.push_str("      <totalImpuesto>\n");
+        xml_tag(&mut xml, 8, "codigo", &imp.codigo);
+        xml_tag(&mut xml, 8, "codigoPorcentaje", &imp.codigo_porcentaje);
+        xml_tag(&mut xml, 8, "baseImponible", &format!("{:.2}", imp.base_imponible));
+        xml_tag(&mut xml, 8, "valor", &format!("{:.2}", imp.valor));
+        xml.push_str("      </totalImpuesto>\n");
+    }
+    xml.push_str("    </totalConImpuestos>\n");
+
+    xml_tag(&mut xml, 4, "importeTotal", &format!("{:.2}", datos.importe_total));
+    xml_tag(&mut xml, 4, "moneda", "DOLAR");
+
+    // pagos
+    xml.push_str("    <pagos>\n");
+    for pago in &datos.pagos {
+        xml.push_str("      <pago>\n");
+        xml_tag(&mut xml, 8, "formaPago", &pago.forma_pago);
+        xml_tag(&mut xml, 8, "total", &format!("{:.2}", pago.total));
+        xml.push_str("      </pago>\n");
+    }
+    xml.push_str("    </pagos>\n");
+
+    xml.push_str("  </infoLiquidacionCompra>\n");
+
+    // === detalles ===
+    xml.push_str("  <detalles>\n");
+    for det in &datos.detalles {
+        xml.push_str("    <detalle>\n");
+        xml_tag(&mut xml, 6, "codigoPrincipal", &det.codigo_principal);
+        xml_tag(&mut xml, 6, "descripcion", &xml_escape(&det.descripcion));
+        xml_tag(&mut xml, 6, "cantidad", &format!("{:.2}", det.cantidad));
+        xml_tag(&mut xml, 6, "precioUnitario", &format!("{:.2}", det.precio_unitario));
+        xml_tag(&mut xml, 6, "descuento", &format!("{:.2}", det.descuento));
+        xml_tag(&mut xml, 6, "precioTotalSinImpuesto", &format!("{:.2}", det.precio_total_sin_impuesto));
+
+        xml.push_str("      <impuestos>\n");
+        xml.push_str("        <impuesto>\n");
+        xml_tag(&mut xml, 10, "codigo", "2");
+        xml_tag(&mut xml, 10, "codigoPorcentaje", &det.codigo_porcentaje_iva);
+        xml_tag(&mut xml, 10, "tarifa", &format!("{:.2}", det.tarifa_iva));
+        xml_tag(&mut xml, 10, "baseImponible", &format!("{:.2}", det.base_imponible));
+        xml_tag(&mut xml, 10, "valor", &format!("{:.2}", det.valor_iva));
+        xml.push_str("        </impuesto>\n");
+        xml.push_str("      </impuestos>\n");
+
+        xml.push_str("    </detalle>\n");
+    }
+    xml.push_str("  </detalles>\n");
+
+    // === infoAdicional (opcional) ===
+    if !datos.info_adicional.is_empty() {
+        xml.push_str("  <infoAdicional>\n");
+        for campo in &datos.info_adicional {
+            xml.push_str(&format!(
+                "    <campoAdicional nombre=\"{}\">{}</campoAdicional>\n",
+                xml_escape(&campo.nombre),
+                xml_escape(&campo.valor)
+            ));
+        }
+        xml.push_str("  </infoAdicional>\n");
+    }
+
+    xml.push_str("</liquidacionCompra>");
+    xml
+}
+
 // ─── v2.5.67: Guía de Remisión electrónica SRI v2.0.0 ────────────────────────
 
 /// Datos necesarios para generar el XML de una guía de remisión SRI v2.0.0.

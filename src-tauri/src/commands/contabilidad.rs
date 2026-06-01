@@ -1619,3 +1619,433 @@ fn ultimo_dia_mes(anio: i32, mes: i32) -> u32 {
         _ => 30,
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.5.69 — Liquidación de Compra (codDoc 03)
+// La emite el negocio (comprador) cuando adquiere a un proveedor que NO puede
+// emitir factura (agricultor, reciclador, informal, extranjero sin RUC EC).
+// Sigue el mismo patrón de emisión SRI que la retención.
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct ItemLiquidacionInput {
+    pub codigo: Option<String>,
+    pub descripcion: String,
+    pub cantidad: f64,
+    pub precio_unitario: f64,
+    #[serde(default)]
+    pub descuento: f64,
+    #[serde(default)]
+    pub iva_porcentaje: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NuevaLiquidacionCompra {
+    pub proveedor_id: i64,
+    #[serde(default)]
+    pub forma_pago: Option<String>,
+    #[serde(default)]
+    pub observacion: Option<String>,
+    pub items: Vec<ItemLiquidacionInput>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LiquidacionCreada {
+    pub id: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LiquidacionResumen {
+    pub id: i64,
+    pub numero: Option<String>,
+    pub fecha_emision: String,
+    pub proveedor_nombre: String,
+    pub proveedor_ruc: Option<String>,
+    pub total: f64,
+    pub estado_sri: String,
+    pub numero_factura: Option<String>,
+    pub anulada: bool,
+}
+
+/// Crea una liquidación de compra (borrador, estado_sri='NO_APLICA').
+#[tauri::command]
+pub fn contabilidad_crear_liquidacion_compra(
+    db: State<'_, Database>,
+    sesion: State<'_, SesionState>,
+    input: NuevaLiquidacionCompra,
+) -> Result<LiquidacionCreada, String> {
+    let usuario = {
+        let s = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        s.as_ref().map(|s| s.nombre.clone()).unwrap_or_else(|| "?".to_string())
+    };
+    if input.items.is_empty() {
+        return Err("Agregue al menos un producto a la liquidación".into());
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let mut subtotal = 0.0_f64;
+    let mut descuento_total = 0.0_f64;
+    let mut iva_total = 0.0_f64;
+    for it in &input.items {
+        let base = it.cantidad * it.precio_unitario - it.descuento;
+        subtotal += base;
+        descuento_total += it.descuento;
+        if it.iva_porcentaje > 0.0 {
+            iva_total += base * (it.iva_porcentaje / 100.0);
+        }
+    }
+    let total = subtotal + iva_total;
+
+    conn.execute(
+        "INSERT INTO liquidaciones_compra
+            (proveedor_id, subtotal_sin_impuestos, total_descuento, iva, total, forma_pago, usuario, observacion)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            input.proveedor_id, subtotal, descuento_total, iva_total, total,
+            input.forma_pago.clone().unwrap_or_else(|| "EFECTIVO".to_string()),
+            usuario, input.observacion,
+        ],
+    ).map_err(|e| format!("Error creando liquidación: {}", e))?;
+    let lid = conn.last_insert_rowid();
+
+    for it in &input.items {
+        conn.execute(
+            "INSERT INTO liquidacion_compra_detalles
+                (liquidacion_id, codigo, descripcion, cantidad, precio_unitario, descuento, iva_porcentaje)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![lid, it.codigo, it.descripcion, it.cantidad, it.precio_unitario, it.descuento, it.iva_porcentaje],
+        ).map_err(|e| format!("Error guardando detalle: {}", e))?;
+    }
+
+    Ok(LiquidacionCreada { id: lid })
+}
+
+/// Lista liquidaciones de compra en un rango de fechas.
+#[tauri::command]
+pub fn contabilidad_listar_liquidaciones_compra(
+    db: State<'_, Database>,
+    fecha_desde: String,
+    fecha_hasta: String,
+) -> Result<Vec<LiquidacionResumen>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT l.id, l.numero, l.fecha_emision, p.nombre, p.ruc, l.total, l.estado_sri,
+                l.numero_factura, l.anulada
+         FROM liquidaciones_compra l
+         JOIN proveedores p ON l.proveedor_id = p.id
+         WHERE date(l.fecha_emision) BETWEEN date(?1) AND date(?2)
+         ORDER BY l.fecha_emision DESC, l.id DESC"
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![fecha_desde, fecha_hasta], |r| {
+        Ok(LiquidacionResumen {
+            id: r.get(0)?,
+            numero: r.get(1).ok(),
+            fecha_emision: r.get(2)?,
+            proveedor_nombre: r.get(3)?,
+            proveedor_ruc: r.get(4).ok(),
+            total: r.get(5)?,
+            estado_sri: r.get::<_, String>(6).unwrap_or_else(|_| "NO_APLICA".to_string()),
+            numero_factura: r.get(7).ok(),
+            anulada: r.get::<_, i32>(8).unwrap_or(0) != 0,
+        })
+    }).map_err(|e| e.to_string())?
+    .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+/// Anula una liquidación (solo si no está AUTORIZADA por el SRI).
+#[tauri::command]
+pub fn contabilidad_anular_liquidacion_compra(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let estado: String = conn.query_row(
+        "SELECT estado_sri FROM liquidaciones_compra WHERE id = ?1",
+        params![id], |r| r.get(0),
+    ).map_err(|_| "Liquidación no encontrada".to_string())?;
+    if estado == "AUTORIZADA" {
+        return Err("No se puede anular una liquidación AUTORIZADA por el SRI".into());
+    }
+    conn.execute("UPDATE liquidaciones_compra SET anulada = 1 WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+struct DatosLiq {
+    proveedor_nombre: String,
+    proveedor_ruc: Option<String>,
+    proveedor_tipo_identificacion: Option<String>,
+    proveedor_direccion: Option<String>,
+    fecha_emision: String,
+    forma_pago: String,
+    estado_sri: String,
+    clave_acceso_previa: Option<String>,
+    xml_firmado_previo: Option<String>,
+    establecimiento_prev: Option<String>,
+    punto_emision_prev: Option<String>,
+    numero_comprobante_prev: Option<String>,
+    anulada: i32,
+}
+
+/// Emite la liquidación de compra al SRI (firma + envío + autorización).
+/// Requiere módulo `contabilidad` + certificado P12.
+#[tauri::command]
+pub async fn contabilidad_emitir_liquidacion_compra_sri(
+    db: State<'_, Database>,
+    id: i64,
+) -> Result<ResultadoEmisionRetencion, String> {
+    // ── 1. Leer todo bajo un lock ────────────────────────────────────────────
+    let (datos, detalles, config, p12_data, p12_password) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+        // Gating módulo contabilidad
+        let getc = |k: &str| -> String {
+            conn.query_row("SELECT value FROM config WHERE key=?1", params![k], |r| r.get(0)).unwrap_or_default()
+        };
+        let demo = getc("demo_activo") == "1";
+        let mods = getc("licencia_modulos");
+        if !demo && !(mods.contains("contabilidad") || mods.contains("sri_avanzado")) {
+            return Err("La liquidación de compra electrónica requiere el módulo Contabilidad.".into());
+        }
+
+        let datos: DatosLiq = conn.query_row(
+            "SELECT p.nombre, p.ruc, p.tipo_identificacion, p.direccion,
+                    l.fecha_emision, l.forma_pago, l.estado_sri, l.clave_acceso, l.xml_firmado,
+                    l.establecimiento, l.punto_emision, l.numero_factura, l.anulada
+             FROM liquidaciones_compra l
+             JOIN proveedores p ON l.proveedor_id = p.id
+             WHERE l.id = ?1",
+            params![id],
+            |r| Ok(DatosLiq {
+                proveedor_nombre: r.get(0)?,
+                proveedor_ruc: r.get(1).ok(),
+                proveedor_tipo_identificacion: r.get(2).ok(),
+                proveedor_direccion: r.get(3).ok(),
+                fecha_emision: r.get(4)?,
+                forma_pago: r.get::<_, String>(5).unwrap_or_else(|_| "EFECTIVO".to_string()),
+                estado_sri: r.get(6)?,
+                clave_acceso_previa: r.get(7).ok(),
+                xml_firmado_previo: r.get(8).ok(),
+                establecimiento_prev: r.get(9).ok(),
+                punto_emision_prev: r.get(10).ok(),
+                numero_comprobante_prev: r.get(11).ok(),
+                anulada: r.get::<_, i32>(12).unwrap_or(0),
+            }),
+        ).map_err(|_| "Liquidación no encontrada".to_string())?;
+
+        if datos.anulada != 0 {
+            return Err("La liquidación está anulada".into());
+        }
+        if datos.estado_sri == "AUTORIZADA" {
+            return Err("Esta liquidación ya fue autorizada por el SRI".into());
+        }
+
+        let mut stmt = conn.prepare(
+            "SELECT codigo, descripcion, cantidad, precio_unitario, descuento, iva_porcentaje
+             FROM liquidacion_compra_detalles WHERE liquidacion_id = ?1"
+        ).map_err(|e| e.to_string())?;
+        let detalles: Vec<(Option<String>, String, f64, f64, f64, f64)> = stmt.query_map(params![id], |r| {
+            Ok((r.get(0).ok(), r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        }).map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        drop(stmt);
+
+        if detalles.is_empty() {
+            return Err("La liquidación no tiene productos".into());
+        }
+
+        let mut config: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut sc = conn.prepare("SELECT key, value FROM config").map_err(|e| e.to_string())?;
+        let rows = sc.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(|e| e.to_string())?;
+        for row in rows { let (k, v) = row.map_err(|e| e.to_string())?; config.insert(k, v); }
+        drop(sc);
+
+        let (p12, pass): (Vec<u8>, String) = conn.query_row(
+            "SELECT p12_data, password FROM sri_certificado WHERE id = 1", [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).map_err(|_| "No hay certificado digital cargado. Cargue un P12 primero.".to_string())?;
+
+        (datos, detalles, config, p12, pass)
+    };
+
+    // ── 2. Resolver config ───────────────────────────────────────────────────
+    let cfg = |k: &str| config.get(k).cloned().unwrap_or_default();
+    let ruc = cfg("ruc");
+    if ruc.len() != 13 {
+        return Err("Configure el RUC del negocio (13 dígitos) antes de emitir.".into());
+    }
+    let ambiente = match cfg("sri_ambiente").as_str() { "produccion" => "2", _ => "1" };
+    let establecimiento_cfg = { let t = cfg("terminal_establecimiento"); if t.is_empty() { cfg("establecimiento") } else { t } };
+    let establecimiento_cfg = if establecimiento_cfg.is_empty() { "001".to_string() } else { establecimiento_cfg };
+    let punto_emision_cfg = { let t = cfg("terminal_punto_emision"); if t.is_empty() { cfg("punto_emision") } else { t } };
+    let punto_emision_cfg = if punto_emision_cfg.is_empty() { "001".to_string() } else { punto_emision_cfg };
+    let regimen = cfg("regimen");
+    let modo_demo = cfg("demo_activo") == "1";
+    let tipo_doc_sec = if ambiente == "1" { "LIQUIDACION_PRUEBAS" } else { "LIQUIDACION" };
+
+    let mut secuencial_sri: i64 = 0;
+    let mut numero_comprobante = datos.numero_comprobante_prev.clone().unwrap_or_default();
+    let mut establecimiento_usado = datos.establecimiento_prev.clone().unwrap_or_else(|| establecimiento_cfg.clone());
+    let mut punto_emision_usado = datos.punto_emision_prev.clone().unwrap_or_else(|| punto_emision_cfg.clone());
+    let mut es_primera = false;
+
+    let (clave_final, xml_firmado_final, resultado_sri) = if datos.estado_sri == "PENDIENTE"
+        && datos.clave_acceso_previa.is_some() && datos.xml_firmado_previo.is_some() && !modo_demo
+    {
+        let clave_prev = datos.clave_acceso_previa.clone().unwrap();
+        let xml_prev = datos.xml_firmado_previo.clone().unwrap();
+        soap::log_sri(&format!("=== REENVIO LIQUIDACION: clave previa {} ===", clave_prev));
+        let consulta = soap::consultar_autorizacion(&clave_prev, ambiente).await;
+        match consulta {
+            Ok(ref res) if res.exito => (clave_prev, xml_prev, consulta.unwrap()),
+            _ => { let r = soap::enviar_comprobante(&xml_prev, &clave_prev, ambiente).await?; (clave_prev, xml_prev, r) }
+        }
+    } else {
+        es_primera = true;
+        secuencial_sri = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT OR IGNORE INTO secuenciales (establecimiento_codigo, punto_emision_codigo, tipo_documento, secuencial) VALUES (?1, ?2, ?3, 1)",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+            ).map_err(|e| e.to_string())?;
+            conn.query_row(
+                "SELECT secuencial FROM secuenciales WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento_cfg, punto_emision_cfg, tipo_doc_sec],
+                |r| r.get::<_, i64>(0),
+            ).map_err(|e| e.to_string())?
+        };
+        establecimiento_usado = establecimiento_cfg.clone();
+        punto_emision_usado = punto_emision_cfg.clone();
+        let secuencial = format!("{:09}", secuencial_sri);
+        numero_comprobante = format!("{}-{}-{}", establecimiento_usado, punto_emision_usado, secuencial);
+
+        let fecha_emision = fmt_fecha_sri(&datos.fecha_emision)
+            .unwrap_or_else(|_| chrono::Local::now().format("%d/%m/%Y").to_string());
+
+        let clave = clave_acceso::generar_clave_acceso(
+            &fecha_emision, "03", &ruc, ambiente, &establecimiento_usado, &punto_emision_usado, &secuencial, "1",
+        );
+
+        let id_prov = datos.proveedor_ruc.clone().unwrap_or_default();
+        if id_prov.is_empty() {
+            return Err("El proveedor no tiene RUC/identificación configurada".into());
+        }
+        let tipo_id_prov = match datos.proveedor_tipo_identificacion.as_deref().unwrap_or("") {
+            "RUC" => "04", "CEDULA" => "05", "PASAPORTE" => "06",
+            _ => if id_prov.len() == 13 { "04" } else if id_prov.len() == 10 { "05" } else { "06" },
+        };
+
+        // Detalles + impuestos
+        let mut detalles_xml = Vec::new();
+        let mut sub0 = 0.0_f64; let mut sub15 = 0.0_f64; let mut iva = 0.0_f64;
+        for (cod, desc, cant, pu, desc_v, iva_pct) in &detalles {
+            let base = cant * pu - desc_v;
+            let cod_pct = if *iva_pct > 0.0 { "4" } else { "0" };
+            let tarifa = xml::tarifa_iva(cod_pct);
+            let val_iva = base * (tarifa / 100.0);
+            if *iva_pct > 0.0 { sub15 += base; iva += val_iva; } else { sub0 += base; }
+            detalles_xml.push(xml::DetalleFactura {
+                codigo_principal: cod.clone().unwrap_or_else(|| "SIN-COD".to_string()),
+                descripcion: desc.clone(),
+                cantidad: *cant,
+                precio_unitario: *pu,
+                descuento: *desc_v,
+                precio_total_sin_impuesto: base,
+                codigo_porcentaje_iva: cod_pct.to_string(),
+                tarifa_iva: tarifa,
+                base_imponible: base,
+                valor_iva: val_iva,
+            });
+        }
+        let mut impuestos_totales = Vec::new();
+        if sub0 > 0.0 { impuestos_totales.push(xml::ImpuestoTotal { codigo: "2".into(), codigo_porcentaje: "0".into(), base_imponible: sub0, valor: 0.0 }); }
+        if sub15 > 0.0 { impuestos_totales.push(xml::ImpuestoTotal { codigo: "2".into(), codigo_porcentaje: "4".into(), base_imponible: sub15, valor: iva }); }
+        let total_sin = sub0 + sub15;
+        let importe_total = total_sin + iva;
+
+        let contribuyente_rimpe = match regimen.as_str() {
+            "RIMPE_EMPRENDEDOR" => Some("CONTRIBUYENTE RÉGIMEN RIMPE".to_string()),
+            "RIMPE_POPULAR" => Some("CONTRIBUYENTE NEGOCIO POPULAR - RÉGIMEN RIMPE".to_string()),
+            _ => None,
+        };
+
+        let datos_xml = xml::DatosLiquidacionCompra {
+            ambiente: ambiente.to_string(),
+            tipo_emision: "1".to_string(),
+            razon_social: cfg("nombre_negocio"),
+            nombre_comercial: cfg("nombre_negocio"),
+            ruc: ruc.clone(),
+            clave_acceso: clave.clone(),
+            estab: establecimiento_usado.clone(),
+            pto_emi: punto_emision_usado.clone(),
+            secuencial: secuencial.clone(),
+            dir_matriz: cfg("direccion"),
+            contribuyente_rimpe,
+            fecha_emision,
+            dir_establecimiento: cfg("direccion"),
+            contribuyente_especial: None,
+            obligado_contabilidad: "NO".to_string(),
+            tipo_identificacion_proveedor: tipo_id_prov.to_string(),
+            razon_social_proveedor: datos.proveedor_nombre.clone(),
+            identificacion_proveedor: id_prov,
+            direccion_proveedor: datos.proveedor_direccion.clone(),
+            total_sin_impuestos: total_sin,
+            total_descuento: detalles.iter().map(|d| d.4).sum(),
+            importe_total,
+            impuestos_totales,
+            pagos: vec![xml::PagoFactura { forma_pago: xml::forma_pago_sri(&datos.forma_pago).to_string(), total: importe_total }],
+            detalles: detalles_xml,
+            info_adicional: vec![],
+        };
+
+        let xml_sin_firma = xml::generar_xml_liquidacion_compra(&datos_xml);
+        soap::log_sri(&format!("XML liquidación sin firma ({} bytes)", xml_sin_firma.len()));
+        let firmado = firma::firmar_comprobante(&xml_sin_firma, &p12_data, &p12_password, "liquidacionCompra")?;
+        let r = soap::enviar_comprobante(&firmado.xml, &clave, ambiente).await?;
+        (clave, firmado.xml, r)
+    };
+
+    // ── 3. Persistir ─────────────────────────────────────────────────────────
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let nuevo_estado = if resultado_sri.exito { "AUTORIZADA" }
+                           else if resultado_sri.estado == "EN_PROCESO" { "PENDIENTE" }
+                           else { "RECHAZADA" };
+        let xml_guardar = if resultado_sri.exito || resultado_sri.estado == "EN_PROCESO" { Some(xml_firmado_final.clone()) } else { None };
+        conn.execute(
+            "UPDATE liquidaciones_compra SET estado_sri = ?1, clave_acceso = ?2, autorizacion_sri = ?3,
+                 fecha_autorizacion = ?4, xml_firmado = COALESCE(?5, xml_firmado),
+                 numero_factura = COALESCE(?6, numero_factura), numero = COALESCE(?6, numero),
+                 establecimiento = ?7, punto_emision = ?8, secuencial = ?9
+             WHERE id = ?10",
+            params![
+                nuevo_estado, clave_final, resultado_sri.numero_autorizacion,
+                resultado_sri.fecha_autorizacion.as_deref(), xml_guardar,
+                if numero_comprobante.is_empty() { None } else { Some(numero_comprobante.clone()) },
+                establecimiento_usado, punto_emision_usado, format!("{:09}", secuencial_sri),
+                id,
+            ],
+        ).map_err(|e| format!("Error actualizando liquidación: {}", e))?;
+
+        if resultado_sri.exito && es_primera && secuencial_sri > 0 {
+            conn.execute(
+                "UPDATE secuenciales SET secuencial = secuencial + 1 WHERE establecimiento_codigo = ?1 AND punto_emision_codigo = ?2 AND tipo_documento = ?3",
+                params![establecimiento_usado, punto_emision_usado, tipo_doc_sec],
+            ).ok();
+        }
+    }
+
+    Ok(ResultadoEmisionRetencion {
+        exito: resultado_sri.exito,
+        estado_sri: resultado_sri.estado.clone(),
+        clave_acceso: Some(clave_final),
+        numero_autorizacion: resultado_sri.numero_autorizacion,
+        fecha_autorizacion: resultado_sri.fecha_autorizacion,
+        numero_comprobante: if numero_comprobante.is_empty() { None } else { Some(numero_comprobante) },
+        mensaje: resultado_sri.mensaje.unwrap_or_else(|| {
+            if resultado_sri.exito { "Liquidación de compra autorizada".to_string() }
+            else { format!("Estado: {}", resultado_sri.estado) }
+        }),
+    })
+}

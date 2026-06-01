@@ -20,6 +20,11 @@ const pkg = require('ec-sri-invoice-signer');
 const FIRMA_POR_TIPO = {
   'factura': pkg.signInvoiceXml,
   '01': pkg.signInvoiceXml,
+  // Liquidación de compra (03): la firma XAdES es idéntica a la de factura
+  // (referencia el nodo id="comprobante" del root). La librería no tiene una
+  // función dedicada, así que reutilizamos signInvoiceXml.
+  'liquidacionCompra': pkg.signInvoiceXml,
+  '03': pkg.signInvoiceXml,
   'notaCredito': pkg.signCreditNoteXml,
   '04': pkg.signCreditNoteXml,
   'notaDebito': pkg.signDebitNoteXml,

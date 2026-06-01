@@ -714,6 +714,44 @@ export async function guiaCambiarDespacho(guiaId: number, nuevoEstado: DespachoE
   return smartInvoke("guia_cambiar_despacho", { guiaId, nuevoEstado, observacion: observacion ?? null });
 }
 
+// === Liquidación de Compra (SRI codDoc 03) ===
+export interface ItemLiquidacion {
+  codigo?: string;
+  descripcion: string;
+  cantidad: number;
+  precio_unitario: number;
+  descuento?: number;
+  iva_porcentaje?: number;
+}
+
+export interface LiquidacionResumen {
+  id: number;
+  numero?: string;
+  fecha_emision: string;
+  proveedor_nombre: string;
+  proveedor_ruc?: string;
+  total: number;
+  estado_sri: string;
+  numero_factura?: string;
+  anulada: boolean;
+}
+
+export async function crearLiquidacionCompra(input: { proveedor_id: number; forma_pago?: string; observacion?: string; items: ItemLiquidacion[] }): Promise<{ id: number }> {
+  return smartInvoke("contabilidad_crear_liquidacion_compra", { input });
+}
+
+export async function listarLiquidacionesCompra(fechaDesde: string, fechaHasta: string): Promise<LiquidacionResumen[]> {
+  return smartInvoke("contabilidad_listar_liquidaciones_compra", { fechaDesde, fechaHasta });
+}
+
+export async function anularLiquidacionCompra(id: number): Promise<void> {
+  return smartInvoke("contabilidad_anular_liquidacion_compra", { id });
+}
+
+export async function emitirLiquidacionCompraSri(id: number): Promise<ResultadoEmision> {
+  return smartInvoke("contabilidad_emitir_liquidacion_compra_sri", { id });
+}
+
 // === Aprendizaje placa <-> chofer <-> transportista ===
 export interface SugerenciaTransporte {
   placa: string;

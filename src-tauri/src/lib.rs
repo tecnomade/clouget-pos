@@ -662,6 +662,11 @@ pub fn run() {
             commands::contabilidad::contabilidad_generar_ride_pdf,
             // v2.5.48: generador ATS mensual (XML para subir al DIMM Anexos del SRI)
             commands::contabilidad::contabilidad_generar_ats,
+            // v2.5.69: liquidación de compra (codDoc 03)
+            commands::contabilidad::contabilidad_crear_liquidacion_compra,
+            commands::contabilidad::contabilidad_listar_liquidaciones_compra,
+            commands::contabilidad::contabilidad_anular_liquidacion_compra,
+            commands::contabilidad::contabilidad_emitir_liquidacion_compra_sri,
             // v2.5.53: cuentas OAuth Gmail per-cliente
             commands::oauth_email::listar_oauth_email_cuentas,
             commands::oauth_email::guardar_oauth_email_cuenta,

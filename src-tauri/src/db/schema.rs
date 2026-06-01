@@ -1664,6 +1664,51 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_ret_emit_det_ret ON retencion_emitida_detalles(retencion_id);
     ");
 
+    // v2.5.69: Liquidaciones de Compra (codDoc 03). La emite el negocio cuando
+    // compra a un proveedor que no puede facturar (agricultor, reciclador, etc.).
+    let _ = conn.execute_batch("
+        CREATE TABLE IF NOT EXISTS liquidaciones_compra (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero TEXT,
+            proveedor_id INTEGER NOT NULL,
+            fecha_emision TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            establecimiento TEXT,
+            punto_emision TEXT,
+            secuencial TEXT,
+            numero_factura TEXT,
+            clave_acceso TEXT,
+            estado_sri TEXT NOT NULL DEFAULT 'NO_APLICA',
+            autorizacion_sri TEXT,
+            fecha_autorizacion TEXT,
+            xml_firmado TEXT,
+            subtotal_sin_impuestos REAL NOT NULL DEFAULT 0,
+            total_descuento REAL NOT NULL DEFAULT 0,
+            iva REAL NOT NULL DEFAULT 0,
+            total REAL NOT NULL DEFAULT 0,
+            forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO',
+            usuario TEXT,
+            observacion TEXT,
+            anulada INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_liq_compra_prov ON liquidaciones_compra(proveedor_id);
+        CREATE INDEX IF NOT EXISTS idx_liq_compra_fecha ON liquidaciones_compra(fecha_emision);
+
+        CREATE TABLE IF NOT EXISTS liquidacion_compra_detalles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            liquidacion_id INTEGER NOT NULL,
+            codigo TEXT,
+            descripcion TEXT NOT NULL,
+            cantidad REAL NOT NULL DEFAULT 1,
+            precio_unitario REAL NOT NULL DEFAULT 0,
+            descuento REAL NOT NULL DEFAULT 0,
+            iva_porcentaje REAL NOT NULL DEFAULT 0,
+            FOREIGN KEY (liquidacion_id) REFERENCES liquidaciones_compra(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_liq_compra_det ON liquidacion_compra_detalles(liquidacion_id);
+    ");
+
     // v2.5.44: si existe la tabla vieja sri_avanzado_config (de v2.5.43 BETA),
     // migrar los datos y borrarla. Ignora errores si no existe (caso normal).
     let tabla_vieja_existe: bool = conn.query_row(

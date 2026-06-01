@@ -13,6 +13,7 @@ import { useState, useEffect } from "react";
 import { useToast } from "../components/Toast";
 import { invoke } from "@tauri-apps/api/core";
 import GuiasRemisionContab from "../components/GuiasRemisionContab";
+import LiquidacionesCompraContab from "../components/LiquidacionesCompraContab";
 
 // ─── Tipos (mirror del backend contabilidad.rs) ─────────────────────────────
 
@@ -73,7 +74,7 @@ const CODIGOS_IVA_COMUNES = [
 
 // ─── Componente principal ────────────────────────────────────────────────────
 
-type Tab = "config" | "comprobantes" | "guias" | "ats";
+type Tab = "config" | "comprobantes" | "guias" | "liquidaciones" | "ats";
 
 export default function ContabilidadPage() {
   const { toastExito, toastError } = useToast();
@@ -193,6 +194,7 @@ export default function ContabilidadPage() {
             { k: "config" as Tab, label: "⚙ Configuración" },
             { k: "comprobantes" as Tab, label: "📋 Comprobantes emitidos" },
             { k: "guias" as Tab, label: "🚚 Guías de Remisión" },
+            { k: "liquidaciones" as Tab, label: "🧾 Liquidaciones de Compra" },
             { k: "ats" as Tab, label: "📊 Generador ATS" },
           ].map(t => (
             <button key={t.k}
@@ -441,6 +443,9 @@ export default function ContabilidadPage() {
 
         {/* TAB: Guías de Remisión (v2.5.68) */}
         {tab === "guias" && <GuiasRemisionContab />}
+
+        {/* TAB: Liquidaciones de Compra (v2.5.69) */}
+        {tab === "liquidaciones" && <LiquidacionesCompraContab />}
 
         {/* TAB: ATS (v2.5.48) */}
         {tab === "ats" && <AtsGenerador />}
