@@ -27,6 +27,11 @@ La emisión electrónica de la guía requiere el **módulo Contabilidad** activo
 - Secuencial propio (`GUIA_REMISION` / `GUIA_REMISION_PRUEBAS`).
 - El script de firma ya soportaba `guiaRemision` y `notaDebito`, así que la infraestructura de firma para los tipos restantes ya estaba lista.
 
+### Además en esta versión
+
+- **Proveedor en devoluciones de compra**: en Inventario (kardex) y en Reportes de movimientos, los movimientos `DEVOLUCION_COMPRA` / `AJUSTE_PRECIO_NC` ahora muestran el nombre del proveedor.
+- **Placa ↔ chofer/transportista automático**: nueva tabla de aprendizaje que vincula placas con choferes y transportistas (relación muchos-a-muchos con frecuencia). Al escribir una placa en la guía, sugiere los choferes que la han conducido y autocompleta el más usado; en el modal de emisión SRI autocompleta el transportista (razón social + RUC) conocido para esa placa. Aprende solo, de los datos que vas ingresando, y siembra el historial existente.
+
 ---
 
 ## v2.5.66 — 2026-05-31 🛡 Blindaje: no emitir retención sobre factura sustento no autorizada
