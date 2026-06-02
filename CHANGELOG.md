@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.75 — 2026-05-31 🔑 App móvil: login por contraseña
+
+- Nuevo endpoint `POST /api/v1/app/auth/password` — login por contraseña, para negocios que configuran **modo de login = contraseña** (o ambos), no solo PIN.
+- El `ping` ahora expone `modo_login` (`pin` / `password` / `ambos`) para que la app móvil muestre el método correcto automáticamente.
+
+---
+
 ## v2.5.74 — 2026-05-31 👥 App móvil: más usuarios en el login
 
 - El login de la app ahora también lista a los usuarios de **Servicio Técnico** (permisos `gestionar_servicio_tecnico` / `ver_servicio_tecnico` / `recibir_abonos_st`), no solo restaurante/venta.
