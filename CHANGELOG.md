@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.76 — 2026-06-02 🧾 Email y página web en recibos
+
+- **Configuración → Negocio**: dos campos nuevos opcionales, **Email** y **Página web**.
+- Si se llenan, aparecen automáticamente en el **ticket ESC/POS**, el **ticket PDF** de venta y la **guía de remisión** (bloque del emisor). Si se dejan vacíos, no se muestran.
+- El endpoint `/api/v1/app/me` ahora expone `email_negocio` y `pagina_web` para que el **comprobante de la app móvil** también los incluya.
+
+---
+
 ## v2.5.75 — 2026-05-31 🔑 App móvil: login por contraseña
 
 - Nuevo endpoint `POST /api/v1/app/auth/password` — login por contraseña, para negocios que configuran **modo de login = contraseña** (o ambos), no solo PIN.
