@@ -71,6 +71,10 @@ pub struct MeResponse {
     pub es_admin: bool,
     pub negocio: String,
     pub modulos_licencia: Vec<String>,
+    // Datos del negocio para encabezado de comprobantes desde la app
+    pub ruc: String,
+    pub direccion: String,
+    pub telefono: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -608,6 +612,14 @@ pub async fn me(
         .unwrap_or_default();
     let modulos: Vec<String> = serde_json::from_str(&modulos_json).unwrap_or_default();
 
+    let cfg = |k: &str| -> String {
+        conn.query_row("SELECT value FROM config WHERE key = ?1", [k], |r| r.get(0))
+            .unwrap_or_default()
+    };
+    let ruc = cfg("ruc");
+    let direccion = cfg("direccion");
+    let telefono = cfg("telefono");
+
     let es_admin = session.rol == "ADMIN";
     Ok(Json(MeResponse {
         usuario_id: session.usuario_id,
@@ -617,6 +629,9 @@ pub async fn me(
         es_admin,
         negocio,
         modulos_licencia: modulos,
+        ruc,
+        direccion,
+        telefono,
     }))
 }
 
