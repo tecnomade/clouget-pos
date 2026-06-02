@@ -276,8 +276,8 @@ pub async fn auth_usuarios_disponibles(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string()))))?;
 
-    let permisos_app = ["atiende_mesas", "ve_cocina", "vende_piso", "inventaria", "dueno_dashboard", "cobra_caja"];
-    let usuarios: Vec<serde_json::Value> = stmt
+    let permisos_app = ["atiende_mesas", "ve_cocina", "vende_piso", "inventaria", "dueno_dashboard", "cobra_caja", "gestionar_servicio_tecnico", "ver_servicio_tecnico", "recibir_abonos_st"];
+    let usuarios: Vec<(i64, String, String, String)> = stmt
         .query_map([], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -288,29 +288,34 @@ pub async fn auth_usuarios_disponibles(
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e.to_string()))))?
         .filter_map(|res| res.ok())
-        .filter_map(|(id, nombre, rol, permisos_json)| {
-            // Filtrar: solo ADMIN o usuarios con al menos un permiso de app
-            let es_admin = rol == "ADMIN";
-            let permisos: Vec<String> = serde_json::from_str::<serde_json::Value>(&permisos_json)
-                .ok()
-                .and_then(|v| {
-                    v.as_object().map(|map| {
-                        map.iter()
-                            .filter(|(_, v)| v.as_bool().unwrap_or(false))
-                            .map(|(k, _)| k.clone())
-                            .collect()
-                    })
-                })
-                .unwrap_or_default();
-            let tiene_app = es_admin || permisos.iter().any(|p| permisos_app.contains(&p.as_str()));
-            if !tiene_app {
-                return None;
-            }
-            Some(serde_json::json!({ "id": id, "nombre": nombre, "rol": rol, "es_admin": es_admin }))
-        })
-        .collect();
+        .collect::<Vec<_>>();
 
-    Ok(Json(serde_json::json!({ "ok": true, "usuarios": usuarios })))
+    // Separar: con acceso de app vs sin acceso (para informar al admin cuántos
+    // usuarios faltan habilitar, sin exponer sus datos completos).
+    let mut con_acceso: Vec<serde_json::Value> = Vec::new();
+    let mut sin_acceso = 0_i64;
+    for (id, nombre, rol, permisos_json) in usuarios {
+        let es_admin = rol == "ADMIN";
+        let permisos: Vec<String> = serde_json::from_str::<serde_json::Value>(&permisos_json)
+            .ok()
+            .and_then(|v| {
+                v.as_object().map(|map| {
+                    map.iter()
+                        .filter(|(_, v)| v.as_bool().unwrap_or(false))
+                        .map(|(k, _)| k.clone())
+                        .collect()
+                })
+            })
+            .unwrap_or_default();
+        let tiene_app = es_admin || permisos.iter().any(|p| permisos_app.contains(&p.as_str()));
+        if tiene_app {
+            con_acceso.push(serde_json::json!({ "id": id, "nombre": nombre, "rol": rol, "es_admin": es_admin }));
+        } else {
+            sin_acceso += 1;
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true, "usuarios": con_acceso, "sin_acceso": sin_acceso })))
 }
 
 /// `POST /api/v1/app/auth/pin` — login con PIN, devuelve token.
@@ -392,6 +397,9 @@ pub async fn auth_pin(
         "inventaria",
         "dueno_dashboard",
         "cobra_caja",
+        "gestionar_servicio_tecnico",
+        "ver_servicio_tecnico",
+        "recibir_abonos_st",
     ];
     let tiene_permiso_app = es_admin || permisos.iter().any(|p| permisos_app.contains(&p.as_str()));
     if !tiene_permiso_app {
