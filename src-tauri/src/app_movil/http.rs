@@ -244,11 +244,18 @@ pub async fn ping(
     let modulos: Vec<String> = serde_json::from_str(&modulos_json).unwrap_or_default();
     let app_movil_activo = modulos.iter().any(|m| m == "app_movil");
 
+    // Modo de login configurado en el POS: "pin" | "password" | "ambos".
+    let modo_login = conn
+        .as_ref()
+        .and_then(|c| c.query_row("SELECT value FROM config WHERE key = 'modo_login'", [], |r| r.get::<_, String>(0)).ok())
+        .unwrap_or_else(|| "pin".to_string());
+
     Json(serde_json::json!({
         "ok": true,
         "service": "clouget-pos",
         "negocio": nombre_negocio,
         "app_movil_activo": app_movil_activo,
+        "modo_login": modo_login,
         "version": env!("CARGO_PKG_VERSION"),
     }))
 }
@@ -442,6 +449,81 @@ pub async fn auth_pin(
         permisos,
         es_admin,
     }))
+}
+
+/// Body para login por contraseña: se identifica por la contraseña (no por id).
+#[derive(Debug, Deserialize)]
+pub struct LoginPasswordRequest {
+    pub password: String,
+    #[serde(default)]
+    pub dispositivo_nombre: Option<String>,
+    #[serde(default)]
+    pub dispositivo_modelo: Option<String>,
+    #[serde(default)]
+    pub dispositivo_so: Option<String>,
+}
+
+const PERMISOS_APP: [&str; 9] = [
+    "atiende_mesas", "ve_cocina", "vende_piso", "inventaria", "dueno_dashboard",
+    "cobra_caja", "gestionar_servicio_tecnico", "ver_servicio_tecnico", "recibir_abonos_st",
+];
+
+/// `POST /api/v1/app/auth/password` — login por contraseña (cuando el negocio
+/// usa modo_login = password o ambos). Identifica al usuario por la contraseña.
+pub async fn auth_password(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    Json(req): Json<LoginPasswordRequest>,
+) -> Result<Json<LoginPinResponse>, (StatusCode, Json<ApiError>)> {
+    if let Err(msg) = super::requiere_modulo_app_movil(&state.db) {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new(msg))));
+    }
+    let password = req.password.trim();
+    if password.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(ApiError::new("Ingrese su contraseña"))));
+    }
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+
+    // Recorrer usuarios activos con password configurada y comparar el hash.
+    let mut stmt = conn.prepare(
+        "SELECT id, nombre, rol, COALESCE(permisos,'{}'), password_hash, password_salt
+         FROM usuarios WHERE activo = 1 AND password_hash IS NOT NULL AND password_salt IS NOT NULL"
+    ).map_err(err500)?;
+    let filas: Vec<(i64, String, String, String, String, String)> = stmt.query_map([], |r| Ok((
+        r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
+    ))).map_err(err500)?.filter_map(|x| x.ok()).collect();
+    drop(stmt);
+
+    let mut encontrado: Option<(i64, String, String, String)> = None;
+    for (id, nombre, rol, permisos_json, pw_hash, pw_salt) in filas {
+        if crate::utils::hash_pin(&pw_salt, password) == pw_hash {
+            encontrado = Some((id, nombre, rol, permisos_json));
+            break;
+        }
+    }
+    let (id, nombre, rol, permisos_json) = encontrado.ok_or((
+        StatusCode::UNAUTHORIZED, Json(ApiError::new("Contraseña incorrecta")),
+    ))?;
+
+    let permisos: Vec<String> = serde_json::from_str::<serde_json::Value>(&permisos_json)
+        .ok()
+        .and_then(|v| v.as_object().map(|m| m.iter().filter(|(_, v)| v.as_bool().unwrap_or(false)).map(|(k, _)| k.clone()).collect()))
+        .unwrap_or_default();
+    let es_admin = rol == "ADMIN";
+    if !(es_admin || permisos.iter().any(|p| PERMISOS_APP.contains(&p.as_str()))) {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new(
+            "Este usuario no tiene permisos para usar la app móvil."
+        ))));
+    }
+
+    let token = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO app_tokens (usuario_id, token, dispositivo_nombre, dispositivo_modelo, dispositivo_so)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, token, req.dispositivo_nombre, req.dispositivo_modelo, req.dispositivo_so],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(format!("Error guardando token: {}", e)))))?;
+
+    Ok(Json(LoginPinResponse { token, usuario_id: id, nombre, rol, permisos, es_admin }))
 }
 
 /// `POST /api/v1/app/auth/logout` — revoca el token actual.
@@ -2495,6 +2577,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         // ── Sin auth ────────────────────────────────────────────────────
         .route("/api/v1/app/ping", get(ping))
         .route("/api/v1/app/auth/pin", post(auth_pin))
+        .route("/api/v1/app/auth/password", post(auth_password))
         .route("/api/v1/app/auth/logout", post(auth_logout))
         .route("/api/v1/app/auth/push-token", post(auth_set_push_token))
         .route("/api/v1/app/auth/usuarios-disponibles", get(auth_usuarios_disponibles))
