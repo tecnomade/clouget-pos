@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.74 — 2026-05-31 👥 App móvil: más usuarios en el login
+
+- El login de la app ahora también lista a los usuarios de **Servicio Técnico** (permisos `gestionar_servicio_tecnico` / `ver_servicio_tecnico` / `recibir_abonos_st`), no solo restaurante/venta.
+- El endpoint `usuarios-disponibles` informa cuántos usuarios activos **no** pueden entrar por falta de permiso de App Móvil, para que la app guíe al admin sobre cómo habilitarlos.
+
+---
+
 ## v2.5.73 — 2026-05-31 🏦 App móvil: endpoint de cuentas bancarias
 
 - `GET /api/v1/app/cuentas-banco` — lista las cuentas bancarias activas para que la app móvil permita cobrar con **transferencia/depósito** seleccionando la cuenta (sincronizada con el POS) y registrando la referencia. La venta guarda `banco_id` + `referencia_pago`, igual que en el escritorio.
