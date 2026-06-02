@@ -550,6 +550,18 @@ export default function Configuracion() {
                     onChange={(e) => update("telefono", e.target.value)} />
                 </div>
                 <div>
+                  <label className="text-secondary" style={{ fontSize: 12 }}>Email (opcional, se muestra en recibos)</label>
+                  <input className="input" type="email" value={config.email_negocio ?? ""}
+                    placeholder="correo@minegocio.com"
+                    onChange={(e) => update("email_negocio", e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-secondary" style={{ fontSize: 12 }}>Página web (opcional, se muestra en recibos)</label>
+                  <input className="input" value={config.pagina_web ?? ""}
+                    placeholder="www.minegocio.com"
+                    onChange={(e) => update("pagina_web", e.target.value)} />
+                </div>
+                <div>
                   <label className="text-secondary" style={{ fontSize: 12 }}>Régimen tributario {modoDemo && "🔒"}</label>
                   <select className="input" value={config.regimen ?? "RIMPE_POPULAR"} disabled={modoDemo}
                     onChange={(e) => update("regimen", e.target.value)}>

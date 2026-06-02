@@ -87,6 +87,16 @@ pub fn generar_ticket(
             ticket.extend_from_slice(format!("Tel: {}\n", tel).as_bytes());
         }
     }
+    if let Some(email) = config.get("email_negocio") {
+        if !email.is_empty() {
+            ticket.extend_from_slice(format!("{}\n", email).as_bytes());
+        }
+    }
+    if let Some(web) = config.get("pagina_web") {
+        if !web.is_empty() {
+            ticket.extend_from_slice(format!("{}\n", web).as_bytes());
+        }
+    }
 
     ticket.extend_from_slice(esc_left);
     ticket.extend_from_slice(linea_separador_doble(ancho).as_bytes());

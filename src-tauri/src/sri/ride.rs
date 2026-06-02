@@ -571,6 +571,9 @@ pub fn generar_ticket_pdf(
     let nombre_negocio = config.get("nombre_negocio").map(|s| s.as_str()).unwrap_or("MI NEGOCIO");
     let ruc = config.get("ruc").map(|s| s.as_str()).unwrap_or("");
     let direccion = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
+    let telefono = config.get("telefono").map(|s| s.as_str()).unwrap_or("");
+    let email_neg = config.get("email_negocio").map(|s| s.as_str()).unwrap_or("");
+    let web_neg = config.get("pagina_web").map(|s| s.as_str()).unwrap_or("");
 
     let tipo_estado = venta.venta.tipo_estado.as_deref().unwrap_or("");
     let es_cotizacion = venta.venta.tipo_documento == "COTIZACION" || tipo_estado == "COTIZACION";
@@ -584,6 +587,15 @@ pub fn generar_ticket_pdf(
     }
     if !direccion.is_empty() {
         doc.push(p_aligned(direccion, s_small, Alignment::Center));
+    }
+    if !telefono.is_empty() {
+        doc.push(p_aligned(&format!("Tel: {}", telefono), s_small, Alignment::Center));
+    }
+    if !email_neg.is_empty() {
+        doc.push(p_aligned(email_neg, s_small, Alignment::Center));
+    }
+    if !web_neg.is_empty() {
+        doc.push(p_aligned(web_neg, s_small, Alignment::Center));
     }
 
     doc.push(Break::new(0.2));

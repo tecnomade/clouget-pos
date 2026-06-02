@@ -75,6 +75,8 @@ pub struct MeResponse {
     pub ruc: String,
     pub direccion: String,
     pub telefono: String,
+    pub email_negocio: String,
+    pub pagina_web: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -619,6 +621,8 @@ pub async fn me(
     let ruc = cfg("ruc");
     let direccion = cfg("direccion");
     let telefono = cfg("telefono");
+    let email_negocio = cfg("email_negocio");
+    let pagina_web = cfg("pagina_web");
 
     let es_admin = session.rol == "ADMIN";
     Ok(Json(MeResponse {
@@ -632,6 +636,8 @@ pub async fn me(
         ruc,
         direccion,
         telefono,
+        email_negocio,
+        pagina_web,
     }))
 }
 

@@ -2141,6 +2141,8 @@ fn generar_guia_remision_pdf(
     let ruc = config.get("ruc").map(|s| s.as_str()).unwrap_or("");
     let direccion_neg = config.get("direccion").map(|s| s.as_str()).unwrap_or("");
     let telefono_neg = config.get("telefono").map(|s| s.as_str()).unwrap_or("");
+    let email_neg = config.get("email_negocio").map(|s| s.as_str()).unwrap_or("");
+    let web_neg = config.get("pagina_web").map(|s| s.as_str()).unwrap_or("");
 
     let fecha = venta.fecha.as_deref().unwrap_or("-");
 
@@ -2199,6 +2201,12 @@ fn generar_guia_remision_pdf(
     }
     if !telefono_neg.is_empty() {
         col_izq.push(pp(&format!("Tel: {}", telefono_neg), s_small));
+    }
+    if !email_neg.is_empty() {
+        col_izq.push(pp(email_neg, s_small));
+    }
+    if !web_neg.is_empty() {
+        col_izq.push(pp(web_neg, s_small));
     }
     col_izq.push(Break::new(0.5));
 
