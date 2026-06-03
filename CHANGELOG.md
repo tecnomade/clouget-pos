@@ -6,6 +6,16 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.80 — 2026-06-03 🔎 Filtros de stock más claros
+
+- En **Productos**, el filtro de stock se separó en tres opciones (antes solo había "Sin stock" que mezclaba todo):
+  - **Sin stock (0 o negativo)**
+  - **Stock negativo** (ventas de más / errores a corregir)
+  - **Stock bajo** (con stock pero por debajo del mínimo)
+- Los filtros de stock solo aplican a productos que controlan inventario (excluyen servicios, combos y "no controla stock").
+
+---
+
 ## v2.5.79 — 2026-06-03 📱 App: pantalla de Ventas + autorizar SRI
 
 - Nuevos endpoints para la app móvil: `GET /api/v1/app/ventas` (ventas del día con estado SRI) y `GET /api/v1/app/sri/estado` (si el POS está listo para emitir).

@@ -1637,7 +1637,7 @@ export default function Productos() {
   const [filtro, setFiltro] = useState("");
   const [filtroCategoriaId, setFiltroCategoriaId] = useState<number | null>(null);
   // v2.5.24: filtro por tipo de producto (todos / simple / servicio / combo)
-  const [filtroTipo, setFiltroTipo] = useState<"TODOS" | "SIMPLE" | "SERVICIO" | "COMBO" | "SIN_STOCK">("TODOS");
+  const [filtroTipo, setFiltroTipo] = useState<"TODOS" | "SIMPLE" | "SERVICIO" | "COMBO" | "SIN_STOCK" | "STOCK_NEGATIVO" | "STOCK_BAJO">("TODOS");
   const [ordenamiento, setOrdenamiento] = useState<string>("nombre_asc");
   const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
   const [vistaAgrupada, setVistaAgrupada] = useState(false);
@@ -1858,7 +1858,17 @@ export default function Productos() {
       if (filtroTipo === "SERVICIO" && !(p as any).es_servicio) return false;
       if (filtroTipo === "COMBO" && tp !== "COMBO_FIJO" && tp !== "COMBO_FLEXIBLE") return false;
       if (filtroTipo === "SIMPLE" && (tp !== "SIMPLE" || (p as any).es_servicio)) return false;
-      if (filtroTipo === "SIN_STOCK" && p.stock_actual > 0) return false;
+      // Filtros de stock: solo aplican a productos que controlan stock
+      // (no servicios, no combos, no marcados "no controla stock").
+      if (filtroTipo === "SIN_STOCK" || filtroTipo === "STOCK_NEGATIVO" || filtroTipo === "STOCK_BAJO") {
+        const controlaStock = tp === "SIMPLE" && !(p as any).es_servicio && !(p as any).no_controla_stock;
+        if (!controlaStock) return false;
+        const stock = p.stock_actual;
+        const minimo = p.stock_minimo ?? 0;
+        if (filtroTipo === "SIN_STOCK" && stock > 0) return false;            // 0 o negativo
+        if (filtroTipo === "STOCK_NEGATIVO" && stock >= 0) return false;       // solo negativo
+        if (filtroTipo === "STOCK_BAJO" && !(stock > 0 && minimo > 0 && stock <= minimo)) return false; // bajo pero con stock
+      }
       return true;
     });
 
@@ -2169,8 +2179,8 @@ export default function Productos() {
                 <option value="">Todas las categorías</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
-              {/* v2.5.24: filtro por tipo de producto */}
-              <select className="input" style={{ width: 150, fontSize: 12 }}
+              {/* v2.5.24: filtro por tipo de producto / estado de stock */}
+              <select className="input" style={{ width: 210, fontSize: 12 }}
                 value={filtroTipo}
                 onChange={(e) => setFiltroTipo(e.target.value as any)}
                 title="Filtrar por tipo de producto">
@@ -2178,7 +2188,9 @@ export default function Productos() {
                 <option value="SIMPLE">📦 Solo productos</option>
                 <option value="SERVICIO">🛎 Solo servicios</option>
                 <option value="COMBO">🎁 Solo combos</option>
-                <option value="SIN_STOCK">⚠ Sin stock</option>
+                <option value="SIN_STOCK">⛔ Sin stock (0 o negativo)</option>
+                <option value="STOCK_NEGATIVO">🔴 Stock negativo</option>
+                <option value="STOCK_BAJO">⚠ Stock bajo (bajo el mínimo)</option>
               </select>
               <select className="input" style={{ width: 160, fontSize: 12 }}
                 value={ordenamiento}
