@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.78 — 2026-06-03 📦 Integridad de inventario (stock por kardex)
+
+- **El stock inicial se captura una sola vez, al crear el producto** — y ahora genera un movimiento **INICIAL** en el kardex (origen trazable).
+- **Al editar un producto, el stock es de solo lectura.** Para cambiarlo hay un botón **Ajustar** que pide motivo y registra un movimiento **AJUSTE** en el kardex (con usuario y costo). Antes el stock se editaba a mano sin dejar rastro.
+- **No se puede eliminar un producto con stock > 0**: primero hay que ajustarlo a 0 (queda registrado). Así no desaparece inventario sin trazabilidad. Aplica también al borrado masivo (omite los que tienen stock e informa cuántos).
+- Esto además mantiene consistente el costo promedio y la valorización del inventario.
+
+---
+
 ## v2.5.77 — 2026-06-02 🎨 Nuevo icono de la aplicación
 
 - Se actualizó el **icono del programa** (logo Clouget) en la ventana, barra de tareas e instalador.

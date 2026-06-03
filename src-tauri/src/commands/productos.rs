@@ -94,7 +94,24 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(conn.last_insert_rowid())
+    let nuevo_id = conn.last_insert_rowid();
+
+    // Movimiento INICIAL en el kardex para que el stock inicial tenga origen
+    // trazable (stock_anterior=0 → stock_nuevo=stock_actual). Solo si el
+    // producto controla stock y tiene cantidad inicial > 0.
+    let controla_stock = !producto.no_controla_stock && !producto.es_servicio
+        && tipo_producto == "SIMPLE";
+    if controla_stock && producto.stock_actual > 0.0 {
+        conn.execute(
+            "INSERT INTO movimientos_inventario
+                (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, motivo, usuario)
+             VALUES (?1, 'INICIAL', ?2, 0, ?2, ?3, 'Stock inicial', NULL)",
+            rusqlite::params![nuevo_id, producto.stock_actual, producto.precio_costo],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(nuevo_id)
 }
 
 #[tauri::command]
@@ -143,14 +160,18 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
         _ => "COCINA".to_string(),
     };
 
+    // IMPORTANTE: NO se actualiza `stock_actual` desde la edición del producto.
+    // El stock solo cambia por movimientos de kardex (Ajuste/Entrada/Salida,
+    // compras, ventas) para mantener la trazabilidad del inventario. El valor
+    // que envíe el frontend se ignora aquí a propósito.
     conn.execute(
         "UPDATE productos SET codigo=?1, codigo_barras=?2, nombre=?3, descripcion=?4,
          categoria_id=?5, precio_costo=?6, precio_venta=?7, iva_porcentaje=?8,
-         incluye_iva=?9, stock_actual=?10, stock_minimo=?11, unidad_medida=?12,
-         es_servicio=?13, activo=?14, imagen=?15, requiere_serie=?16, requiere_caducidad=?17,
-         no_controla_stock=?18, tipo_producto=?19, destino_preparacion=?20,
+         incluye_iva=?9, stock_minimo=?10, unidad_medida=?11,
+         es_servicio=?12, activo=?13, imagen=?14, requiere_serie=?15, requiere_caducidad=?16,
+         no_controla_stock=?17, tipo_producto=?18, destino_preparacion=?19,
          updated_at=datetime('now','localtime')
-         WHERE id=?21",
+         WHERE id=?20",
         rusqlite::params![
             producto.codigo,
             codigo_barras,
@@ -161,7 +182,6 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
             producto.precio_venta,
             producto.iva_porcentaje,
             producto.incluye_iva as i32,
-            producto.stock_actual,
             producto.stock_minimo,
             producto.unidad_medida,
             producto.es_servicio as i32,
@@ -890,6 +910,24 @@ pub fn eliminar_tipo_unidad(db: State<Database>, id: i64) -> Result<(), String> 
 #[tauri::command]
 pub fn eliminar_producto(db: State<Database>, id: i64) -> Result<(), String> {
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    // Bloquear borrado si el producto todavía controla stock y tiene cantidad > 0.
+    // Así no se "evapora" inventario sin rastro: primero hay que ajustar a 0
+    // (lo que deja un movimiento de kardex). Productos sin control de stock o
+    // servicios sí pueden eliminarse directamente.
+    let (stock, no_controla, es_servicio): (f64, i32, i32) = conn
+        .query_row(
+            "SELECT COALESCE(stock_actual, 0), COALESCE(no_controla_stock, 0), COALESCE(es_servicio, 0)
+             FROM productos WHERE id = ?1",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| "Producto no encontrado".to_string())?;
+    if no_controla == 0 && es_servicio == 0 && stock.abs() > 0.0001 {
+        // Prefijo BLOCK_DELETE_STOCK para que el frontend muestre un mensaje claro.
+        return Err(format!("BLOCK_DELETE_STOCK:{}", stock));
+    }
+
     eliminar_producto_interno(&conn, id)
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import NumericInput from "../components/NumericInput";
-import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, guardarImagenProductoB64, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos } from "../services/api";
+import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, guardarImagenProductoB64, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos, registrarMovimiento } from "../services/api";
 import { save, open, ask } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
@@ -9,6 +9,17 @@ import { FEATURES } from "../config/branding";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 // v2.4.14: miniatura de imagen con lazy-load por viewport
 import ProductoMiniatura from "../components/ProductoMiniatura";
+
+/** Convierte el error del backend al eliminar producto en un mensaje claro. */
+function mensajeErrorEliminar(err: any): string {
+  const s = String(err?.message ?? err ?? "");
+  const m = s.match(/BLOCK_DELETE_STOCK:([\d.\-]+)/);
+  if (m) {
+    return `No se puede eliminar: el producto aún tiene ${m[1]} en stock. ` +
+      `Ajusta el stock a 0 primero (queda registrado en el kardex) y vuelve a intentar.`;
+  }
+  return "Error: " + s;
+}
 
 /** Helper: ¿el módulo Restaurante está activo? Requiere brand Clouget + licencia con módulo. */
 function moduloRestauranteActivo(licenciaModulosJson?: string): boolean {
@@ -39,6 +50,7 @@ function FormProducto({
   puedeVerCostos?: boolean;
 }) {
   const { toastError, toastExito } = useToast();
+  const { sesion } = useSesion();
   const [form, setForm] = useState<Producto>(
     productoEditar ?? {
       nombre: "",
@@ -54,6 +66,27 @@ function FormProducto({
     }
   );
   const [mostrarInfoIva, setMostrarInfoIva] = useState(false);
+  // Ajuste de stock por kardex (en edición; el stock no se edita a mano)
+  const [ajusteAbierto, setAjusteAbierto] = useState(false);
+  const [ajusteNuevoStock, setAjusteNuevoStock] = useState(0);
+  const [ajusteMotivo, setAjusteMotivo] = useState("");
+  const [ajusteGuardando, setAjusteGuardando] = useState(false);
+
+  const handleAjustarStock = async () => {
+    if (!form.id) return;
+    if (!ajusteMotivo.trim()) { alert("Indica el motivo del ajuste."); return; }
+    setAjusteGuardando(true);
+    try {
+      await registrarMovimiento(form.id, "AJUSTE", ajusteNuevoStock, ajusteMotivo.trim(), form.precio_costo, sesion?.nombre);
+      setForm((f) => ({ ...f, stock_actual: ajusteNuevoStock }));
+      setAjusteAbierto(false);
+      setAjusteMotivo("");
+    } catch (err: any) {
+      alert("No se pudo ajustar el stock: " + (err?.message || String(err)));
+    } finally {
+      setAjusteGuardando(false);
+    }
+  };
 
   // Multi-unidad de venta (presentaciones)
   type PrecioListaUnidad = { lista_precio_id: number; precio: number };
@@ -402,10 +435,58 @@ function FormProducto({
               {!form.es_servicio && !esCombo && (
                 <>
                   <div>
-                    <label className="text-secondary" style={{ fontSize: 12 }}>Stock actual</label>
-                    <NumericInput value={form.stock_actual} step={1} min={0}
-                      onChange={(v) => setForm({ ...form, stock_actual: v })} />
+                    <label className="text-secondary" style={{ fontSize: 12 }}>
+                      {form.id ? "Stock actual (solo kardex)" : "Stock inicial"}
+                    </label>
+                    {form.id ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input className="input" value={form.stock_actual} disabled
+                          style={{ flex: 1, opacity: 0.8 }} />
+                        <button type="button" className="btn btn-secondary"
+                          style={{ whiteSpace: "nowrap", fontSize: 12 }}
+                          onClick={() => { setAjusteNuevoStock(form.stock_actual); setAjusteMotivo(""); setAjusteAbierto(true); }}>
+                          Ajustar
+                        </button>
+                      </div>
+                    ) : (
+                      <NumericInput value={form.stock_actual} step={1} min={0}
+                        onChange={(v) => setForm({ ...form, stock_actual: v })} />
+                    )}
+                    {form.id && (
+                      <span className="text-secondary" style={{ fontSize: 10, marginTop: 2, display: "block" }}>
+                        El stock solo cambia por kardex (ajustes, compras, ventas).
+                      </span>
+                    )}
                   </div>
+
+                  {/* Modal: ajustar stock (registra movimiento AJUSTE en kardex) */}
+                  {ajusteAbierto && (
+                    <div onClick={() => !ajusteGuardando && setAjusteAbierto(false)}
+                      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+                      <div onClick={(e) => e.stopPropagation()}
+                        style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 8, padding: 20, width: 360, maxWidth: "90vw" }}>
+                        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4, color: "var(--color-text)" }}>Ajustar stock</div>
+                        <div className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                          {form.nombre} · Stock actual: <strong>{form.stock_actual}</strong>
+                        </div>
+                        <label className="text-secondary" style={{ fontSize: 12 }}>Nuevo stock (conteo real)</label>
+                        <NumericInput value={ajusteNuevoStock} step={1} min={0}
+                          onChange={(v) => setAjusteNuevoStock(v)} />
+                        <div style={{ fontSize: 12, margin: "8px 0", color: ajusteNuevoStock - form.stock_actual >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                          Diferencia: {ajusteNuevoStock - form.stock_actual >= 0 ? "+" : ""}{(ajusteNuevoStock - form.stock_actual).toFixed(2)}
+                        </div>
+                        <label className="text-secondary" style={{ fontSize: 12 }}>Motivo (obligatorio)</label>
+                        <input className="input" value={ajusteMotivo} placeholder="Ej: conteo físico, merma, corrección"
+                          onChange={(e) => setAjusteMotivo(e.target.value)} />
+                        <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+                          <button type="button" className="btn btn-secondary" disabled={ajusteGuardando}
+                            onClick={() => setAjusteAbierto(false)}>Cancelar</button>
+                          <button type="button" className="btn btn-primary" disabled={ajusteGuardando}
+                            onClick={handleAjustarStock}>{ajusteGuardando ? "Guardando..." : "Registrar ajuste"}</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-secondary" style={{ fontSize: 12 }}>Stock mínimo</label>
                     <NumericInput value={form.stock_minimo} step={1} min={0}
@@ -2126,12 +2207,15 @@ export default function Productos() {
                   <button className="btn btn-danger" style={{ fontSize: 11, padding: "4px 12px" }}
                     onClick={async () => {
                       if (!confirm(`¿Eliminar ${seleccionados.size} producto(s)?`)) return;
-                      try {
-                        for (const id of seleccionados) { await eliminarProducto(id); }
-                        toastExito(`${seleccionados.size} producto(s) eliminado(s)`);
-                        setSeleccionados(new Set());
-                        cargarDatos();
-                      } catch (err) { toastError("Error: " + err); }
+                      let okN = 0, bloqueados = 0;
+                      for (const id of seleccionados) {
+                        try { await eliminarProducto(id); okN++; }
+                        catch (err) { if (String((err as any)?.message ?? err).includes("BLOCK_DELETE_STOCK")) bloqueados++; }
+                      }
+                      if (okN > 0) toastExito(`${okN} producto(s) eliminado(s)`);
+                      if (bloqueados > 0) toastError(`${bloqueados} no se eliminaron porque tienen stock. Ajusta a 0 primero.`);
+                      setSeleccionados(new Set());
+                      cargarDatos();
                     }}>
                     Eliminar seleccionados
                   </button>
@@ -2142,12 +2226,15 @@ export default function Productos() {
                   onClick={async () => {
                     const cat = categorias.find(c => c.id === filtroCategoriaId);
                     if (!confirm(`¿Eliminar TODOS los productos de "${cat?.nombre}"? (${productosFiltrados.length} productos)`)) return;
-                    try {
-                      for (const p of productosFiltrados) { await eliminarProducto(p.id); }
-                      toastExito(`${productosFiltrados.length} producto(s) eliminado(s)`);
-                      setFiltroCategoriaId(null);
-                      cargarDatos();
-                    } catch (err) { toastError("Error: " + err); }
+                    let okN = 0, bloqueados = 0;
+                    for (const p of productosFiltrados) {
+                      try { await eliminarProducto(p.id); okN++; }
+                      catch (err) { if (String((err as any)?.message ?? err).includes("BLOCK_DELETE_STOCK")) bloqueados++; }
+                    }
+                    if (okN > 0) toastExito(`${okN} producto(s) eliminado(s)`);
+                    if (bloqueados > 0) toastError(`${bloqueados} no se eliminaron porque tienen stock. Ajusta a 0 primero.`);
+                    setFiltroCategoriaId(null);
+                    cargarDatos();
                   }}>
                   Eliminar categoría completa
                 </button>
@@ -2263,7 +2350,7 @@ export default function Productos() {
                                         await eliminarProducto(p.id);
                                         toastExito("Eliminado");
                                         cargarDatos();
-                                      } catch (err) { toastError("Error: " + err); }
+                                      } catch (err) { toastError(mensajeErrorEliminar(err)); }
                                     }}>x</button>
                                 </div>
                               </td>
@@ -2352,7 +2439,7 @@ export default function Productos() {
                                   await eliminarProducto(p.id);
                                   toastExito("Producto eliminado");
                                   cargarDatos();
-                                } catch (err) { toastError("Error: " + err); }
+                                } catch (err) { toastError(mensajeErrorEliminar(err)); }
                               }}>x</button>
                           </div>
                         </td>
