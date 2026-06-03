@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.83 — 2026-06-03 🔒 El permiso de eliminar también cubre categorías
+
+- El permiso "Eliminar productos y categorías" ahora también oculta/valida el botón de **eliminar categorías** (antes solo productos). Mismo comportamiento: admin siempre puede; cajero nuevo no, hasta que se le marque el permiso.
+
+---
+
 ## v2.5.82 — 2026-06-03 🔒 Permiso para eliminar productos
 
 - Nuevo permiso **"Eliminar productos (botón borrar)"**. Por defecto los usuarios nuevos (ej. cajeros) **NO** lo tienen → no ven el botón de borrar productos.

@@ -2009,6 +2009,7 @@ export default function Productos() {
                             <>
                               <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
                                 onClick={() => { setEditCatId(c.id!); setEditCatNombre(c.nombre); }}>Editar</button>
+                              {puedeEliminarProd && (
                               <button className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px", color: "var(--color-danger)" }}
                                 onClick={async () => {
                                   try {
@@ -2031,6 +2032,7 @@ export default function Productos() {
                                     cargarDatos();
                                   } catch (err: any) { toastError("" + err); }
                                 }}>Eliminar</button>
+                              )}
                             </>
                           )}
                         </div>

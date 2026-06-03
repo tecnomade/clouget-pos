@@ -764,7 +764,23 @@ pub fn actualizar_categoria(db: State<Database>, id: i64, nombre: String) -> Res
 }
 
 #[tauri::command]
-pub fn eliminar_categoria(db: State<Database>, id: i64, accion: Option<String>, mover_a: Option<i64>) -> Result<serde_json::Value, String> {
+pub fn eliminar_categoria(db: State<Database>, sesion: State<SesionState>, id: i64, accion: Option<String>, mover_a: Option<i64>) -> Result<serde_json::Value, String> {
+    // Mismo permiso que productos: solo ADMIN o 'eliminar_productos'.
+    {
+        let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        if let Some(s) = sesion_guard.as_ref() {
+            if s.rol != "ADMIN" {
+                let tiene = serde_json::from_str::<serde_json::Value>(&s.permisos)
+                    .ok()
+                    .and_then(|v| v.get("eliminar_productos")?.as_bool())
+                    .unwrap_or(false);
+                if !tiene {
+                    return Err("No tiene permiso para eliminar categorías.".to_string());
+                }
+            }
+        }
+    }
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM productos WHERE categoria_id = ?1", rusqlite::params![id], |r| r.get(0)).unwrap_or(0);
 
