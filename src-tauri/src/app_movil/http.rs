@@ -461,6 +461,10 @@ pub async fn auth_pin(
 #[derive(Debug, Deserialize)]
 pub struct LoginPasswordRequest {
     pub password: String,
+    /// Si se envía, valida la contraseña SOLO de ese usuario (más seguro y sin
+    /// ambigüedad si dos usuarios comparten contraseña). Si falta, busca en todos.
+    #[serde(default)]
+    pub usuario_id: Option<i64>,
     #[serde(default)]
     pub dispositivo_nombre: Option<String>,
     #[serde(default)]
@@ -502,6 +506,10 @@ pub async fn auth_password(
 
     let mut encontrado: Option<(i64, String, String, String)> = None;
     for (id, nombre, rol, permisos_json, pw_hash, pw_salt) in filas {
+        // Si la app envió usuario_id, validar SOLO ese usuario.
+        if let Some(uid) = req.usuario_id {
+            if uid != id { continue; }
+        }
         if crate::utils::hash_pin(&pw_salt, password) == pw_hash {
             encontrado = Some((id, nombre, rol, permisos_json));
             break;
