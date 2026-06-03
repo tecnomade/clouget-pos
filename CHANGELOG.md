@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.81 — 2026-06-03 💵 Cierre de caja: desglose del esperado que cuadra
+
+- En el cierre, el **desglose del monto esperado** (visible para admin) ahora muestra: *Inicial + Ventas efectivo + Cobros efectivo + Ingresos − Gastos − Retiros = Esperado*. El sistema te **explica el porqué** en pantalla.
+- **Fix de consistencia**: `obtener_resumen_caja` sumaba los **ingresos manuales dentro de "Retiros"**, lo que descuadraba el desglose respecto al esperado real. Ahora cuenta solo `tipo='RETIRO'` y muestra los ingresos aparte (igual que el cálculo del cierre). Esto también corrige el ticket impreso de cierre.
+- Si el desglose no cuadra con el esperado del sistema, se muestra un **aviso de desincronización** (en vez de un descuadre fantasma silencioso).
+
+---
+
 ## v2.5.80 — 2026-06-03 🔎 Filtros de stock más claros
 
 - En **Productos**, el filtro de stock se separó en tres opciones (antes solo había "Sin stock" que mezclaba todo):

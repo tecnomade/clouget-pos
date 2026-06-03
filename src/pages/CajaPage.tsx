@@ -829,6 +829,14 @@ export default function CajaPage() {
                   const totalCobrosBanco = b?.total_cobros_banco ?? 0;
                   const totalGastos = b?.total_gastos ?? 0;
                   const totalRetiros = b?.total_retiros ?? 0;
+                  const totalIngresos = b?.total_ingresos ?? 0;
+                  // Esperado calculado DESDE el desglose mostrado (para que la suma
+                  // siempre cuadre con las líneas de arriba). Debe coincidir con el
+                  // esperado del sistema (cajaAbierta.monto_esperado).
+                  const inicial = cajaAbierta.monto_inicial ?? 0;
+                  const esperadoDesglose = inicial + totalEfectivoVentas + totalCobrosEfectivo + totalIngresos - totalGastos - totalRetiros;
+                  const esperadoSistema = cajaAbierta.monto_esperado ?? 0;
+                  const difReconcilia = esperadoDesglose - esperadoSistema;
                   const numVentas = b?.num_ventas ?? 0;
                   const numTransfer = b?.num_ventas_transfer ?? 0;
                   const numCredito = b?.num_ventas_credito ?? 0;
@@ -865,6 +873,13 @@ export default function CajaPage() {
                         </div>
                       )}
 
+                      {totalIngresos > 0 && (
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                          <span className="text-secondary">(+) Ingresos manuales:</span>
+                          <span className="font-bold" style={{ color: "var(--color-success)" }}>+${totalIngresos.toFixed(2)}</span>
+                        </div>
+                      )}
+
                       {totalGastos > 0 && (
                         <>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "var(--color-danger)" }}>
@@ -898,9 +913,17 @@ export default function CajaPage() {
                       <div style={{ borderTop: "1px solid rgba(34, 197, 94, 0.3)", paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
                         <span style={{ fontWeight: 600, color: "var(--color-success)" }}>= Monto esperado (efectivo):</span>
                         <span style={{ fontWeight: 700, color: "var(--color-success)", fontSize: 16 }}>
-                          ${(cajaAbierta.monto_esperado ?? 0).toFixed(2)}
+                          ${esperadoSistema.toFixed(2)}
                         </span>
                       </div>
+
+                      {/* v2.5.81: si el desglose no cuadra con el esperado del sistema,
+                          avisar (cazaría una desincronización en vez de un descuadre fantasma). */}
+                      {Math.abs(difReconcilia) > 0.01 && (
+                        <div style={{ marginTop: 6, padding: "6px 8px", borderRadius: 6, background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", fontSize: 11, color: "var(--color-warning)" }}>
+                          ⚠ El desglose suma <strong>${esperadoDesglose.toFixed(2)}</strong> pero el sistema espera <strong>${esperadoSistema.toFixed(2)}</strong> (diferencia ${difReconcilia.toFixed(2)}). Avisa a soporte con una captura: indica una desincronización de la caja.
+                        </div>
+                      )}
 
                       {/* Info adicional: ventas que NO afectan efectivo */}
                       {(totalTransferencia > 0 || totalCredito > 0 || totalCobrosBanco > 0) && (

@@ -531,9 +531,23 @@ fn obtener_datos_reporte_caja(
         .unwrap_or(0.0);
 
     // Retiros de caja
+    // v2.5.81: contar SOLO retiros (tipo='RETIRO'), igual que el cálculo del
+    // esperado en el cierre. Antes sumaba también los INGRESOS, descuadrando el
+    // desglose respecto al monto esperado.
     let total_retiros: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja WHERE caja_id = ?1",
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND COALESCE(tipo, 'RETIRO') = 'RETIRO'",
+            rusqlite::params![caja_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0.0);
+
+    // Ingresos manuales (tipo='INGRESO') — suman al efectivo esperado.
+    let total_ingresos: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(monto), 0) FROM retiros_caja
+             WHERE caja_id = ?1 AND tipo = 'INGRESO'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -761,6 +775,7 @@ fn obtener_datos_reporte_caja(
         total_cobros_efectivo,
         total_cobros_banco,
         total_retiros,
+        total_ingresos,
         total_notas_credito,
         num_notas_credito,
         nombre_negocio,

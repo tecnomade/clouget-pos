@@ -41,6 +41,11 @@ pub struct ResumenCajaReporte {
     pub total_cobros_efectivo: f64,
     pub total_cobros_banco: f64,
     pub total_retiros: f64,
+    /// v2.5.81: ingresos manuales a caja (tipo='INGRESO'). Antes se sumaban por
+    /// error dentro de total_retiros; ahora van aparte para que el desglose
+    /// reconcilie con el monto esperado del cierre.
+    #[serde(default)]
+    pub total_ingresos: f64,
     pub total_notas_credito: f64,
     pub num_notas_credito: i64,
     pub nombre_negocio: String,
