@@ -2147,6 +2147,60 @@ pub async fn ventas_emitir_sri(
     Ok(Json(serde_json::json!({ "ok": true, "resultado": resultado })))
 }
 
+/// `GET /api/v1/app/ventas?fecha=YYYY-MM-DD` — lista las ventas de un día
+/// (por defecto hoy). Reusa la lógica del POS (incluye estado_sri, tipo_documento,
+/// numero_factura, etc.) para la pantalla de Ventas de la app.
+#[derive(Debug, Deserialize)]
+pub struct VentasListarQuery {
+    pub fecha: Option<String>,
+}
+
+pub async fn ventas_listar(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<VentasListarQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    if !session.tiene("vende_piso") && !session.tiene("cobra_caja") && !session.tiene("dueno_dashboard") {
+        return Err((StatusCode::FORBIDDEN, Json(ApiError::new("Falta permiso para ver ventas"))));
+    }
+    let fecha = q.fecha.unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    let resultado = crate::server::dispatch::dispatch_command(
+        &state, "listar_ventas_dia", serde_json::json!({ "fecha": fecha })
+    ).await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+    Ok(Json(serde_json::json!({ "ok": true, "fecha": fecha, "ventas": resultado })))
+}
+
+/// `GET /api/v1/app/sri/estado` — indica si el POS está listo para emitir
+/// comprobantes electrónicos (módulo activo + certificado), para que la app
+/// muestre u oculte el botón "Autorizar SRI".
+pub async fn sri_estado_app(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let _session = extract_app_session(&headers, &state)?;
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let cfg = |k: &str| -> String {
+        conn.query_row("SELECT value FROM config WHERE key = ?1", [k], |r| r.get(0)).unwrap_or_default()
+    };
+    let modulo_activo = cfg("sri_modulo_activo") == "1";
+    let certificado_cargado = cfg("sri_certificado_cargado") == "1";
+    let ambiente = cfg("sri_ambiente");
+    let suscripcion_autorizada = cfg("sri_suscripcion_autorizado") == "1";
+    // El POS puede emitir si el módulo está activo y el certificado cargado.
+    // La cuota/suscripción se valida realmente al emitir (server-side).
+    let puede_emitir = modulo_activo && certificado_cargado;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "puede_emitir": puede_emitir,
+        "modulo_activo": modulo_activo,
+        "certificado_cargado": certificado_cargado,
+        "suscripcion_autorizada": suscripcion_autorizada,
+        "ambiente": ambiente,
+    })))
+}
+
 // ─── v2.5.52 — Proveedores (listar/crear/obtener) ───────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -2638,7 +2692,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/cocina/items", get(cocina_listar))
         .route("/api/v1/app/cocina/items/:id/estado", post(cocina_marcar))
         // ── Vendedor de piso (Sprint 3b) ────────────────────────────────
-        .route("/api/v1/app/ventas", post(ventas_registrar))
+        .route("/api/v1/app/ventas", post(ventas_registrar).get(ventas_listar))
         // ── v2.5.50: Clientes CRUD básico ───────────────────────────────
         .route("/api/v1/app/clientes", get(listar_clientes).post(crear_cliente))
         .route("/api/v1/app/clientes/:id", get(obtener_cliente))
@@ -2652,6 +2706,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/caja/abrir", post(caja_abrir))
         .route("/api/v1/app/caja/cerrar", post(caja_cerrar))
         // ── v2.5.50: Emisión SRI + retenciones recibidas ────────────────
+        .route("/api/v1/app/sri/estado", get(sri_estado_app))
         .route("/api/v1/app/ventas/:id/emitir-sri", post(ventas_emitir_sri))
         .route("/api/v1/app/ventas/:id/retencion", post(ventas_registrar_retencion))
         .route("/api/v1/app/ventas/:id/retenciones", get(ventas_listar_retenciones))

@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.79 — 2026-06-03 📱 App: pantalla de Ventas + autorizar SRI
+
+- Nuevos endpoints para la app móvil: `GET /api/v1/app/ventas` (ventas del día con estado SRI) y `GET /api/v1/app/sri/estado` (si el POS está listo para emitir).
+- La app móvil ahora tiene una pestaña **Ventas** desde donde se puede **autorizar SRI** (emitir factura electrónica) de una venta, si la facturación electrónica está configurada en Windows.
+
+---
+
 ## v2.5.78 — 2026-06-03 📦 Integridad de inventario (stock por kardex)
 
 - **El stock inicial se captura una sola vez, al crear el producto** — y ahora genera un movimiento **INICIAL** en el kardex (origen trazable).
