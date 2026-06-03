@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.77 — 2026-06-02 🎨 Nuevo icono de la aplicación
+
+- Se actualizó el **icono del programa** (logo Clouget) en la ventana, barra de tareas e instalador.
+
+---
+
 ## v2.5.76 — 2026-06-02 🧾 Email y página web en recibos
 
 - **Configuración → Negocio**: dos campos nuevos opcionales, **Email** y **Página web**.
