@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use crate::db::Database;
+use crate::db::{Database, SesionState};
 use crate::models::{Categoria, Producto, ProductoBusqueda, ProductoTactil};
 use tauri::State;
 
@@ -908,7 +908,24 @@ pub fn eliminar_tipo_unidad(db: State<Database>, id: i64) -> Result<(), String> 
 ///   - "libera" el `codigo` y `codigo_barras` apendiéndoles `_DEL{id}` para
 ///     que el usuario pueda crear otro producto con el mismo código
 #[tauri::command]
-pub fn eliminar_producto(db: State<Database>, id: i64) -> Result<(), String> {
+pub fn eliminar_producto(db: State<Database>, sesion: State<SesionState>, id: i64) -> Result<(), String> {
+    // Permiso: solo ADMIN o usuarios con 'eliminar_productos'. Por defecto los
+    // usuarios nuevos (ej. cajeros) NO tienen este permiso → no pueden borrar.
+    {
+        let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        if let Some(s) = sesion_guard.as_ref() {
+            if s.rol != "ADMIN" {
+                let tiene = serde_json::from_str::<serde_json::Value>(&s.permisos)
+                    .ok()
+                    .and_then(|v| v.get("eliminar_productos")?.as_bool())
+                    .unwrap_or(false);
+                if !tiene {
+                    return Err("No tiene permiso para eliminar productos.".to_string());
+                }
+            }
+        }
+    }
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Bloquear borrado si el producto todavía controla stock y tiene cantidad > 0.

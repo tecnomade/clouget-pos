@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.82 — 2026-06-03 🔒 Permiso para eliminar productos
+
+- Nuevo permiso **"Eliminar productos (botón borrar)"**. Por defecto los usuarios nuevos (ej. cajeros) **NO** lo tienen → no ven el botón de borrar productos.
+- El **admin** siempre puede eliminar. Para que otro usuario pueda, marcar el permiso en Configuración → Usuarios.
+- Refuerzo en backend: aunque se intente saltar la interfaz, `eliminar_producto` valida el permiso.
+
+---
+
 ## v2.5.81 — 2026-06-03 💵 Cierre de caja: desglose del esperado que cuadra
 
 - En el cierre, el **desglose del monto esperado** (visible para admin) ahora muestra: *Inicial + Ventas efectivo + Cobros efectivo + Ingresos − Gastos − Retiros = Esperado*. El sistema te **explica el porqué** en pantalla.

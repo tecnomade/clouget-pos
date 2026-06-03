@@ -1627,6 +1627,9 @@ export default function Productos() {
   const { toastExito, toastError } = useToast();
   const { esAdmin: esAdminProd, tienePermiso: tienePermisoProd } = useSesion();
   const puedeVerCostos = esAdminProd || tienePermisoProd("ver_costos");
+  // Solo admin o usuarios con 'eliminar_productos' ven el botón de borrar.
+  // Por defecto un cajero nuevo NO tiene este permiso → no puede eliminar.
+  const puedeEliminarProd = esAdminProd || tienePermisoProd("eliminar_productos");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importando, setImportando] = useState(false);
   const [productos, setProductos] = useState<ProductoBusqueda[]>([]);
@@ -2213,7 +2216,7 @@ export default function Productos() {
               </span>
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-              {seleccionados.size > 0 && (
+              {seleccionados.size > 0 && puedeEliminarProd && (
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{seleccionados.size} seleccionado(s)</span>
                   <button className="btn btn-danger" style={{ fontSize: 11, padding: "4px 12px" }}
@@ -2233,7 +2236,7 @@ export default function Productos() {
                   </button>
                 </div>
               )}
-              {filtroCategoriaId !== null && (
+              {filtroCategoriaId !== null && puedeEliminarProd && (
                 <button className="btn btn-danger" style={{ fontSize: 11, padding: "4px 12px" }}
                   onClick={async () => {
                     const cat = categorias.find(c => c.id === filtroCategoriaId);
@@ -2347,6 +2350,7 @@ export default function Productos() {
                                 <div style={{ display: "flex", gap: 4 }}>
                                   <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
                                     onClick={() => handleEditar(p.id)}>Editar</button>
+                                  {puedeEliminarProd && (
                                   <button className="btn btn-danger" style={{ padding: "2px 6px", fontSize: 11 }}
                                     onClick={async () => {
                                       // v2.5.58: usar ask() de Tauri en vez de confirm() nativo.
@@ -2364,6 +2368,7 @@ export default function Productos() {
                                         cargarDatos();
                                       } catch (err) { toastError(mensajeErrorEliminar(err)); }
                                     }}>x</button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -2439,6 +2444,7 @@ export default function Productos() {
                             <button className="btn btn-outline" onClick={() => handleEditar(p.id)}>
                               Editar
                             </button>
+                            {puedeEliminarProd && (
                             <button className="btn btn-danger" style={{ padding: "2px 8px", fontSize: 11 }}
                               onClick={async () => {
                                 // v2.5.58: ver nota en el otro bot\u00f3n de eliminar de esta misma tabla
@@ -2453,6 +2459,7 @@ export default function Productos() {
                                   cargarDatos();
                                 } catch (err) { toastError(mensajeErrorEliminar(err)); }
                               }}>x</button>
+                            )}
                           </div>
                         </td>
                       </tr>
