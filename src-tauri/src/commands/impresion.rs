@@ -946,7 +946,7 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte, detallado:
     }
     if r.total_credito > 0.0 || r.num_ventas_credito > 0 {
         t.extend_from_slice(linea_monto_r(
-            &format!("Credito ({} vtas):", r.num_ventas_credito),
+            &format!("Fiado ({} vtas):", r.num_ventas_credito),
             &format!("${:.2}", r.total_credito), ancho
         ).as_bytes());
     }
@@ -1401,7 +1401,7 @@ fn generar_reporte_caja_pdf(
     if r.total_credito > 0.0 || r.num_ventas_credito > 0 {
         pago_table
             .row()
-            .element(Paragraph::new(format!("Credito ({} ventas):", r.num_ventas_credito)).styled(s_normal))
+            .element(Paragraph::new(format!("Fiado ({} ventas):", r.num_ventas_credito)).styled(s_normal))
             .element(
                 Paragraph::new(format!("${:.2}", r.total_credito))
                     .aligned(Alignment::Right)

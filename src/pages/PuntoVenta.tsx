@@ -2123,7 +2123,7 @@ export default function PuntoVenta() {
                           setFormaPago("EFECTIVO");
                         }
                       }}>
-                      Credito
+                      Fiado
                     </button>
                     {formaChequeActiva && (
                       <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "CHEQUE" && !esFiado ? "#0891b2" : "var(--color-surface)", color: formaPago === "CHEQUE" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
@@ -2170,7 +2170,7 @@ export default function PuntoVenta() {
                               padding: "4px 8px", background: colorBg, borderRadius: 4,
                               border: `1px solid ${colorTxt}33`,
                             }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: colorTxt, minWidth: 65 }}>{p.forma_pago}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: colorTxt, minWidth: 65 }}>{(({ EFECTIVO: "Efectivo", TRANSFER: "Transfer", CREDITO: "Fiado", TARJETA: "Tarjeta", CHEQUE: "Cheque" } as any)[p.forma_pago]) || p.forma_pago}</span>
                               {p.referencia && <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{p.referencia}</span>}
                               <span style={{ flex: 1, textAlign: "right", fontSize: 12, fontWeight: 700 }}>${p.monto.toFixed(2)}</span>
                               <button type="button" title="Quitar pago"
@@ -2228,7 +2228,7 @@ export default function PuntoVenta() {
                           setAddPagoMonto(falta > 0 ? falta.toFixed(2) : "");
                           setAddPagoBancoId(null); setAddPagoReferencia("");
                           setMostrarAddPago(true);
-                        }}>+ Credito</button>
+                        }}>+ Fiado</button>
                     </div>
                   </div>
                 );

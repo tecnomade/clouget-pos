@@ -263,7 +263,7 @@ pub fn generar_ticket(
                     "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
                     "TARJETA_DEBITO" | "DEBITO" => "T.Debito",
                     "CHEQUE" => "Cheque",
-                    "CREDITO" | "FIADO" => "Credito",
+                    "CREDITO" | "FIADO" => "Fiado",
                     other => other,
                 };
                 ticket.extend_from_slice(
@@ -295,7 +295,7 @@ pub fn generar_ticket(
                 "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
                 "TARJETA_DEBITO" | "DEBITO" => "Tarjeta debito",
                 "CHEQUE" => "Cheque",
-                "CREDITO" | "CRÉDITO" | "FIADO" => "Credito",
+                "CREDITO" | "CRÉDITO" | "FIADO" => "Fiado",
                 other => other,
             };
             ticket.extend_from_slice(format!("Forma pago: {}\n", forma_label).as_bytes());

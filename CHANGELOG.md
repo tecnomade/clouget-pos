@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.85 — 2026-06-03 🏷️ "Crédito" renombrado a "Fiado"
+
+- La forma de pago **fiado** ahora se muestra como **"Fiado"** en todo el POS (botón, pago mixto, Ventas, Dashboard, ticket y reporte de cierre), para no confundirla con la nueva **Tarjeta de crédito/débito**.
+- Es solo cambio de etiqueta: el valor interno y los datos históricos no cambian.
+
+---
+
 ## v2.5.84 — 2026-06-03 💳 Formas de pago: Tarjeta y Cheque
 
 - Nuevas formas de pago **Tarjeta** y **Cheque** en el POS. Layout: Efectivo grande + grilla compacta (Transferencia · Tarjeta · Crédito · Cheque), sin saturar.

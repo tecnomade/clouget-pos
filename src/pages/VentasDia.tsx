@@ -15,6 +15,19 @@ import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import type { ResumenDiario, ResumenPeriodo, ProductoMasVendido, AlertaStock, VentaDiaria } from "../services/api";
 import type { Venta, VentaCompleta, NotaCreditoInfo } from "../types";
 
+// Etiqueta legible de la forma de pago (el valor CREDITO = fiado).
+function labelForma(fp?: string): string {
+  switch ((fp || "").toUpperCase()) {
+    case "EFECTIVO": return "Efectivo";
+    case "TRANSFER": case "TRANSFERENCIA": return "Transferencia";
+    case "TARJETA": return "Tarjeta";
+    case "CHEQUE": return "Cheque";
+    case "CREDITO": case "FIADO": return "Fiado";
+    case "MIXTO": return "Mixto";
+    default: return fp || "";
+  }
+}
+
 function fechaHoy(): string {
   const now = new Date();
   const y = now.getFullYear();
@@ -308,7 +321,7 @@ export default function VentasDia() {
             {esAdmin && (
               <>
                 <div className="card" style={{ padding: 14 }}>
-                  <div className="text-secondary" style={{ fontSize: 11 }}>Credito</div>
+                  <div className="text-secondary" style={{ fontSize: 11 }}>Fiado</div>
                   <div className="text-xl font-bold" style={{ color: r.total_fiado > 0 ? "var(--color-warning)" : undefined }}>
                     ${r.total_fiado.toFixed(2)}
                   </div>
@@ -397,7 +410,7 @@ export default function VentasDia() {
                       data={[
                         { name: "Efectivo", value: r.total_efectivo },
                         { name: "Transferencia", value: r.total_transferencia },
-                        { name: "Credito", value: r.total_fiado },
+                        { name: "Fiado", value: r.total_fiado },
                       ].filter(d => d.value > 0)}
                       cx="50%" cy="50%" innerRadius={50} outerRadius={80}
                       paddingAngle={2} dataKey="value"
@@ -406,7 +419,7 @@ export default function VentasDia() {
                       {[
                         { name: "Efectivo", value: r.total_efectivo },
                         { name: "Transferencia", value: r.total_transferencia },
-                        { name: "Credito", value: r.total_fiado },
+                        { name: "Fiado", value: r.total_fiado },
                       ].filter(d => d.value > 0).map((_, i) => (
                         <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
                       ))}
@@ -733,7 +746,7 @@ export default function VentasDia() {
                           </span>
                         )}
                       </td>
-                      <td style={{ fontSize: 12 }}>{v.forma_pago}</td>
+                      <td style={{ fontSize: 12 }}>{labelForma(v.forma_pago)}</td>
                       <td className="text-right font-bold">${v.total.toFixed(2)}</td>
                       <td>
                         <div className="flex gap-1">
@@ -935,7 +948,7 @@ export default function VentasDia() {
                         <td colSpan={7} style={{ background: "var(--color-surface-alt)", padding: 12, fontSize: 11 }}>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
                             {(v as any).cliente_nombre && <div><strong>Cliente:</strong> {(v as any).cliente_nombre}</div>}
-                            <div><strong>Forma de pago:</strong> {v.forma_pago}{(v as any).banco_nombre ? ` · ${(v as any).banco_nombre}` : ""}</div>
+                            <div><strong>Forma de pago:</strong> {labelForma(v.forma_pago)}{(v as any).banco_nombre ? ` · ${(v as any).banco_nombre}` : ""}</div>
                             {(v as any).referencia_pago && <div><strong>Referencia:</strong> {(v as any).referencia_pago}</div>}
                             {v.tipo_documento === "FACTURA" && (
                               <>
@@ -1370,7 +1383,7 @@ export default function VentasDia() {
               <div style={{ background: "var(--color-surface-alt)", borderRadius: 8, padding: 12, marginBottom: 16 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Informacion de Pago</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 13 }}>
-                  <div><span className="text-secondary">Forma: </span>{ventaDetalle.venta.forma_pago}</div>
+                  <div><span className="text-secondary">Forma: </span>{labelForma(ventaDetalle.venta.forma_pago)}</div>
                   <div><span className="text-secondary">Recibido al cobro: </span>${ventaDetalle.venta.monto_recibido.toFixed(2)}</div>
                   {ventaDetalle.venta.cambio > 0 && (
                     <div><span className="text-secondary">Cambio: </span>${ventaDetalle.venta.cambio.toFixed(2)}</div>
