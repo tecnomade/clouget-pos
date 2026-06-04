@@ -564,7 +564,7 @@ export default function DashboardPage() {
                             background: v.forma_pago === "EFECTIVO" ? "rgba(34, 197, 94, 0.15)" : v.forma_pago === "TRANSFER" ? "rgba(59, 130, 246, 0.15)" : "rgba(245, 158, 11, 0.15)",
                             color: v.forma_pago === "EFECTIVO" ? "var(--color-success)" : v.forma_pago === "TRANSFER" ? "var(--color-primary)" : "var(--color-warning)",
                           }}>
-                            {v.forma_pago === "EFECTIVO" ? "Efectivo" : v.forma_pago === "TRANSFER" ? "Transfer" : "Credito"}
+                            {v.forma_pago === "EFECTIVO" ? "Efectivo" : v.forma_pago === "TRANSFER" ? "Transfer" : v.forma_pago === "TARJETA" ? "Tarjeta" : v.forma_pago === "CHEQUE" ? "Cheque" : v.forma_pago === "MIXTO" ? "Mixto" : "Credito"}
                           </span>
                         </td>
                       </tr>

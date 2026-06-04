@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.84 — 2026-06-03 💳 Formas de pago: Tarjeta y Cheque
+
+- Nuevas formas de pago **Tarjeta** y **Cheque** en el POS. Layout: Efectivo grande + grilla compacta (Transferencia · Tarjeta · Crédito · Cheque), sin saturar.
+- **Configurables**: en Configuración → Cuentas Bancarias se activan/desactivan los botones Tarjeta y Cheque (por defecto visibles).
+- Tarjeta/Cheque admiten referencia (voucher / n° de cheque) y **no afectan el efectivo en caja**.
+- Reportes y ticket de cierre ahora muestran Tarjeta y Cheque por separado (antes Cheque caía en "Otros").
+
+---
+
 ## v2.5.83 — 2026-06-03 🔒 El permiso de eliminar también cubre categorías
 
 - El permiso "Eliminar productos y categorías" ahora también oculta/valida el botón de **eliminar categorías** (antes solo productos). Mismo comportamiento: admin siempre puede; cajero nuevo no, hasta que se le marque el permiso.

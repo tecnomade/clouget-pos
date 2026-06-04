@@ -73,6 +73,8 @@ pub struct ResumenCajaReporte {
     #[serde(default)]
     pub total_tarjeta: f64,
     #[serde(default)]
+    pub total_cheque: f64,
+    #[serde(default)]
     pub total_otros: f64,
     /// Numero de ventas a credito (incluyendo MIXTO con porcion credito)
     #[serde(default)]

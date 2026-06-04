@@ -669,6 +669,25 @@ export default function Configuracion() {
               <p className="text-secondary" style={{ fontSize: 11, marginBottom: 12 }}>
                 Para pagos por transferencia en ventas y cobros de cuentas por cobrar.
               </p>
+              {/* v2.5.84: formas de pago opcionales en el POS */}
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, border: "1px solid var(--color-border)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Formas de pago en el POS</div>
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox" checked={config.forma_pago_tarjeta_activa !== "0"}
+                      onChange={(e) => { const v = e.target.checked ? "1" : "0"; update("forma_pago_tarjeta_activa", v); guardarConfig({ forma_pago_tarjeta_activa: v }); }} />
+                    Mostrar botón Tarjeta
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox" checked={config.forma_pago_cheque_activa !== "0"}
+                      onChange={(e) => { const v = e.target.checked ? "1" : "0"; update("forma_pago_cheque_activa", v); guardarConfig({ forma_pago_cheque_activa: v }); }} />
+                    Mostrar botón Cheque
+                  </label>
+                </div>
+                <span className="text-secondary" style={{ fontSize: 10, marginTop: 6, display: "block" }}>
+                  Efectivo, Transferencia y Crédito siempre están disponibles. Tarjeta y Cheque no afectan el efectivo en caja.
+                </span>
+              </div>
               {/* Reglas de transferencia */}
               <div style={{ display: "flex", gap: 16, marginBottom: 12, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, border: "1px solid var(--color-border)" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>

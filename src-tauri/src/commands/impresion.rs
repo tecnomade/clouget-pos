@@ -452,18 +452,19 @@ fn obtener_datos_reporte_caja(
     let total_transferencia: f64 = sum_directo(&["TRANSFER", "TRANSFERENCIA"]) + sum_mixto(&["TRANSFER", "TRANSFERENCIA"]);
     let total_credito: f64 = sum_directo(&["CREDITO", "FIADO"]) + sum_mixto(&["CREDITO", "FIADO"]);
     let total_tarjeta: f64 = sum_directo(&["TARJETA"]) + sum_mixto(&["TARJETA"]);
-    // total_otros: cualquier forma_pago no estandar
+    let total_cheque: f64 = sum_directo(&["CHEQUE"]) + sum_mixto(&["CHEQUE"]);
+    // total_otros: cualquier forma_pago no estandar (ya excluye CHEQUE)
     let total_otros: f64 = {
         let directo: f64 = conn.query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= ?1 AND anulada = 0
-             AND UPPER(forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','MIXTO')",
+             AND UPPER(forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','CHEQUE','MIXTO')",
             rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
         let mixto: f64 = conn.query_row(
             "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
              JOIN ventas v ON v.id = pv.venta_id
              WHERE v.created_at >= ?1 AND v.anulada = 0 AND v.forma_pago = 'MIXTO'
-             AND UPPER(pv.forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA')",
+             AND UPPER(pv.forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','CHEQUE')",
             rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
         directo + mixto
     };
@@ -791,6 +792,7 @@ fn obtener_datos_reporte_caja(
         depositos,
         total_credito,
         total_tarjeta,
+        total_cheque,
         total_otros,
         num_ventas_credito,
         num_ventas_transfer,
@@ -951,11 +953,14 @@ fn generar_ticket_reporte_caja(r: &crate::models::ResumenCajaReporte, detallado:
     if r.total_tarjeta > 0.0 {
         t.extend_from_slice(linea_monto_r("Tarjeta:", &format!("${:.2}", r.total_tarjeta), ancho).as_bytes());
     }
+    if r.total_cheque > 0.0 {
+        t.extend_from_slice(linea_monto_r("Cheque:", &format!("${:.2}", r.total_cheque), ancho).as_bytes());
+    }
     if r.total_otros > 0.0 {
         t.extend_from_slice(linea_monto_r("Otros:", &format!("${:.2}", r.total_otros), ancho).as_bytes());
     }
     // Sanity check: la suma debe coincidir con total_ventas
-    let suma_formas = r.total_efectivo + r.total_transferencia + r.total_credito + r.total_tarjeta + r.total_otros;
+    let suma_formas = r.total_efectivo + r.total_transferencia + r.total_credito + r.total_tarjeta + r.total_cheque + r.total_otros;
     if (suma_formas - r.total_ventas).abs() > 0.02 {
         t.extend_from_slice(format!("(! suma formas ${:.2} != ventas ${:.2})\n",
             suma_formas, r.total_ventas).as_bytes());
@@ -1410,6 +1415,14 @@ fn generar_reporte_caja_pdf(
             .row()
             .element(Paragraph::new("Tarjeta:").styled(s_normal))
             .element(Paragraph::new(format!("${:.2}", r.total_tarjeta)).aligned(Alignment::Right).styled(s_normal))
+            .push()
+            .map_err(|e| format!("Error: {}", e))?;
+    }
+    if r.total_cheque > 0.0 {
+        pago_table
+            .row()
+            .element(Paragraph::new("Cheque:").styled(s_normal))
+            .element(Paragraph::new(format!("${:.2}", r.total_cheque)).aligned(Alignment::Right).styled(s_normal))
             .push()
             .map_err(|e| format!("Error: {}", e))?;
     }

@@ -84,6 +84,9 @@ export default function PuntoVenta() {
   const [bancoSeleccionado, setBancoSeleccionado] = useState<number | null>(null);
   const [referenciaPago, setReferenciaPago] = useState("");
   const [requiereReferencia, setRequiereReferencia] = useState(false);
+  // v2.5.84: formas de pago opcionales configurables
+  const [formaTarjetaActiva, setFormaTarjetaActiva] = useState(true);
+  const [formaChequeActiva, setFormaChequeActiva] = useState(true);
   const [requiereComprobante, setRequiereComprobante] = useState(false);
   const [comprobanteImagen, setComprobanteImagen] = useState<string | null>(null);
   const [comprobanteFullscreen, setComprobanteFullscreen] = useState<string | null>(null);
@@ -261,6 +264,10 @@ export default function PuntoVenta() {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
+      // v2.5.84: formas de pago opcionales (tarjeta/cheque). Default: visibles
+      // salvo que el negocio las desactive explícitamente con "0".
+      setFormaTarjetaActiva(cfg.forma_pago_tarjeta_activa !== "0");
+      setFormaChequeActiva(cfg.forma_pago_cheque_activa !== "0");
       setAutoImprimirTicket(cfg.auto_imprimir === "1");
       setAutoImprimirSri(cfg.auto_imprimir_sri === "1");
       const modo = (cfg.stock_negativo_modo || "PERMITIR") as any;
@@ -917,7 +924,8 @@ export default function PuntoVenta() {
       // datos de transferencia que quedaron del state previo y no aplican al
       // crédito — todavía no sabemos cómo se va a pagar)
       banco_id: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? bancoSeleccionado : null),
-      referencia_pago: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? (referenciaPago.trim() || null) : null),
+      // v2.5.84: la referencia aplica a Transferencia, Tarjeta (voucher) y Cheque (n°).
+      referencia_pago: usarMixto ? null : (!esFiado && (formaPago === "TRANSFER" || formaPago === "TARJETA" || formaPago === "CHEQUE") ? (referenciaPago.trim() || null) : null),
       comprobante_imagen: usarMixto ? null : (!esFiado && formaPago === "TRANSFER" ? (comprobanteImagen || null) : null),
       pagos: usarMixto ? pagosMixtos.map(p => ({
         forma_pago: p.forma_pago,
@@ -2072,8 +2080,9 @@ export default function PuntoVenta() {
                     onClick={() => { setFormaPago("EFECTIVO"); setEsFiado(false); }}>
                     Efectivo
                   </button>
-                  <div className="flex gap-2">
-                    <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                  {/* v2.5.84: grilla compacta 2 columnas con el resto de formas */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TRANSFER" && !esFiado ? "#2563eb" : "var(--color-surface)", color: formaPago === "TRANSFER" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
                       onClick={() => {
                         setFormaPago("TRANSFER");
                         setEsFiado(false);
@@ -2087,7 +2096,16 @@ export default function PuntoVenta() {
                       }}>
                       Transferencia
                     </button>
-                    <button className="btn" style={{ flex: 1, justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                    {formaTarjetaActiva && (
+                      <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "TARJETA" && !esFiado ? "#7c3aed" : "var(--color-surface)", color: formaPago === "TARJETA" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                        onClick={() => {
+                          setFormaPago("TARJETA"); setEsFiado(false);
+                          setBancoSeleccionado(null); setComprobanteImagen(null);
+                        }}>
+                        Tarjeta
+                      </button>
+                    )}
+                    <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: esFiado ? "#d97706" : "var(--color-surface)", color: esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
                       onClick={() => {
                         // v2.5.48 FIX: al activar crédito, también marcar formaPago="CREDITO"
                         // y limpiar campos de transferencia. Antes el formaPago quedaba en
@@ -2107,7 +2125,23 @@ export default function PuntoVenta() {
                       }}>
                       Credito
                     </button>
+                    {formaChequeActiva && (
+                      <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "CHEQUE" && !esFiado ? "#0891b2" : "var(--color-surface)", color: formaPago === "CHEQUE" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
+                        onClick={() => {
+                          setFormaPago("CHEQUE"); setEsFiado(false);
+                          setBancoSeleccionado(null); setComprobanteImagen(null);
+                        }}>
+                        Cheque
+                      </button>
+                    )}
                   </div>
+                  {/* v2.5.84: referencia opcional para Tarjeta / Cheque */}
+                  {!esFiado && (formaPago === "TARJETA" || formaPago === "CHEQUE") && (
+                    <input className="input" style={{ marginTop: 6, fontSize: 12 }}
+                      value={referenciaPago}
+                      onChange={(e) => setReferenciaPago(e.target.value)}
+                      placeholder={formaPago === "TARJETA" ? "Referencia / voucher (opcional)" : "N° de cheque / banco"} />
+                  )}
                 </div>
               ) : (() => {
                 const sumaPagos = pagosMixtos.reduce((s, p) => s + p.monto, 0);
