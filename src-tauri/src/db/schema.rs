@@ -1082,6 +1082,49 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_combo_comp_hijo ON producto_componentes(producto_hijo_id);
     ");
 
+    // v2.5.89: precio por opción (extra que suma al precio del combo) + etiqueta
+    // para distinguir opciones del MISMO ingrediente (ej: Alitas Tipo1/2/3 = mismo
+    // hijo 'alita' con distinta cantidad). ALTER falla silencioso si ya existen.
+    let _ = conn.execute("ALTER TABLE producto_componentes ADD COLUMN precio_extra REAL NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE producto_componentes ADD COLUMN etiqueta TEXT", []);
+
+    // v2.5.89: quitar el UNIQUE(producto_padre_id, producto_hijo_id, grupo_id) que
+    // impedía tener varias opciones del mismo ingrediente en un grupo. SQLite no
+    // permite DROP CONSTRAINT, así que se recrea la tabla SOLO si aún tiene el UNIQUE.
+    let tiene_unique: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='producto_componentes' AND sql LIKE '%UNIQUE%'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    if tiene_unique {
+        let _ = conn.execute_batch("
+            CREATE TABLE producto_componentes_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_padre_id INTEGER NOT NULL,
+                producto_hijo_id INTEGER NOT NULL,
+                cantidad REAL NOT NULL DEFAULT 1,
+                grupo_id INTEGER,
+                orden INTEGER NOT NULL DEFAULT 0,
+                precio_extra REAL NOT NULL DEFAULT 0,
+                etiqueta TEXT,
+                FOREIGN KEY (producto_padre_id) REFERENCES productos(id) ON DELETE CASCADE,
+                FOREIGN KEY (producto_hijo_id) REFERENCES productos(id),
+                FOREIGN KEY (grupo_id) REFERENCES producto_componente_grupos(id) ON DELETE SET NULL
+            );
+            INSERT INTO producto_componentes_new (id, producto_padre_id, producto_hijo_id, cantidad, grupo_id, orden, precio_extra, etiqueta)
+                SELECT id, producto_padre_id, producto_hijo_id, cantidad, grupo_id, orden,
+                       COALESCE(precio_extra, 0), etiqueta
+                FROM producto_componentes;
+            DROP TABLE producto_componentes;
+            ALTER TABLE producto_componentes_new RENAME TO producto_componentes;
+            CREATE INDEX IF NOT EXISTS idx_combo_comp_padre ON producto_componentes(producto_padre_id);
+            CREATE INDEX IF NOT EXISTS idx_combo_comp_hijo ON producto_componentes(producto_hijo_id);
+        ");
+    }
+
     // Selecciones de combo flexible en cada venta (que escogio el cajero)
     let _ = conn.execute_batch("
         CREATE TABLE IF NOT EXISTS venta_detalle_combo (

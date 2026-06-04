@@ -167,7 +167,7 @@ export default function PuntoVenta() {
     componentes: any[];
   } | null>(null);
   // Selecciones del combo flexible: { grupoId: { hijoId: cantidad } }
-  const [comboSel, setComboSel] = useState<Record<string, Record<number, number>>>({});
+  const [comboSel, setComboSel] = useState<Record<string, Record<string, number>>>({});
 
   // Pago mixto: lista de pagos y modal para agregar
   const [pagosMixtos, setPagosMixtos] = useState<{ forma_pago: string; monto: number; banco_id?: number | null; referencia?: string | null }[]>([]);
@@ -474,7 +474,7 @@ export default function PuntoVenta() {
     }
   };
 
-  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any, loteElegido?: any, comboSeleccion?: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number | null; nombre?: string }>) => {
+  const agregarAlCarrito = async (producto: ProductoBusqueda, unidadElegida?: any, loteElegido?: any, comboSeleccion?: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number | null; nombre?: string }>, extraPrecioCombo?: number) => {
     // Debounce para scanner de código de barras
     const now = Date.now();
     if (lastAddRef.current.id === producto.id && now - lastAddRef.current.time < 500) {
@@ -614,6 +614,11 @@ export default function PuntoVenta() {
     } else {
       // Default: precio_venta unitario × factor (= precio de la presentación calculado)
       precioEfectivo = producto.precio_venta * factorUnidad;
+    }
+
+    // v2.5.89: combo flexible — sumar el precio de los extras/opciones elegidas.
+    if (extraPrecioCombo && extraPrecioCombo > 0) {
+      precioEfectivo += extraPrecioCombo;
     }
 
     // Check if already in cart MISMA unidad + MISMO lote
@@ -2749,7 +2754,7 @@ export default function PuntoVenta() {
       {/* Modal: Seleccionar componentes de un COMBO_FLEXIBLE */}
       {seleccionCombo && (() => {
         const { producto, unidadElegida, grupos, componentes } = seleccionCombo;
-        // Validacion mín/máx por grupo
+        // Validacion mín/máx por grupo (selecciones indexadas por id de componente)
         const validaciones = grupos.map((g: any) => {
           const sels = comboSel[String(g.id)] || {};
           const totalSel = Object.values(sels).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -2757,6 +2762,17 @@ export default function PuntoVenta() {
           return { grupo: g, total: totalSel, ok };
         });
         const todoOk = validaciones.every(v => v.ok);
+        // Precio = base del combo + suma de precio_extra de las opciones elegidas.
+        const precioBaseCombo = producto.precio_lista ?? producto.precio_venta ?? 0;
+        let extraTotal = 0;
+        grupos.forEach((g: any) => {
+          const sels = comboSel[String(g.id)] || {};
+          Object.entries(sels).forEach(([compIdStr, cant]) => {
+            const comp = componentes.find((c: any) => String(c.id) === compIdStr);
+            if (comp && Number(cant) > 0) extraTotal += (Number(comp.precio_extra) || 0) * Number(cant);
+          });
+        });
+        const precioTotalCombo = precioBaseCombo + extraTotal;
         return (
           <div className="modal-overlay" onClick={() => { setSeleccionCombo(null); setComboSel({}); }}>
             <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620, maxHeight: "85vh", overflowY: "auto" }}>
@@ -2785,21 +2801,26 @@ export default function PuntoVenta() {
                       {opciones.length === 0 ? (
                         <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Sin opciones configuradas en este grupo.</div>
                       ) : opciones.map((c: any) => {
-                        const cantSel = sels[c.producto_hijo_id] || 0;
+                        const cantSel = sels[String(c.id)] || 0;
                         const stockHijo = c.hijo_stock_actual ?? 0;
+                        const label = (c.etiqueta && c.etiqueta.trim()) ? c.etiqueta : c.hijo_nombre;
+                        const pe = Number(c.precio_extra) || 0;
                         return (
                           <div key={c.id ?? c.producto_hijo_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: "1px dashed var(--color-border)" }}>
                             <div style={{ flex: 1 }}>
-                              <div style={{ fontSize: 12, fontWeight: 600 }}>{c.hijo_nombre}</div>
+                              <div style={{ fontSize: 12, fontWeight: 600 }}>
+                                {label}
+                                {pe > 0 && <span style={{ color: "var(--color-success)", marginLeft: 6 }}>+${pe.toFixed(2)}</span>}
+                              </div>
                               <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-                                Cantidad por combo: {c.cantidad} · Stock: {stockHijo} {c.hijo_unidad_medida || ""}
+                                Consume: {c.cantidad} {c.hijo_unidad_medida || ""} de {c.hijo_nombre} · Stock: {stockHijo}
                               </div>
                             </div>
                             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                               <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
                                 onClick={() => {
                                   if (cantSel <= 0) return;
-                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [c.producto_hijo_id]: cantSel - 1 } });
+                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [String(c.id)]: cantSel - 1 } });
                                 }}>−</button>
                               <span style={{ minWidth: 24, textAlign: "center", fontWeight: 700, fontSize: 13 }}>{cantSel}</span>
                               <button type="button" className="btn btn-outline" style={{ fontSize: 11, padding: "2px 8px" }}
@@ -2807,7 +2828,7 @@ export default function PuntoVenta() {
                                 title={totalSel >= g.maximo ? "Máximo alcanzado en este grupo" : ""}
                                 onClick={() => {
                                   if (totalSel >= g.maximo) return;
-                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [c.producto_hijo_id]: cantSel + 1 } });
+                                  setComboSel({ ...comboSel, [String(g.id)]: { ...sels, [String(c.id)]: cantSel + 1 } });
                                 }}>+</button>
                             </div>
                           </div>
@@ -2817,37 +2838,44 @@ export default function PuntoVenta() {
                   );
                 })}
               </div>
-              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                 <button className="btn btn-outline" onClick={() => { setSeleccionCombo(null); setComboSel({}); }}>Cancelar</button>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    Base ${precioBaseCombo.toFixed(2)}{extraTotal > 0 ? ` + extras $${extraTotal.toFixed(2)}` : ""}
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Total: ${precioTotalCombo.toFixed(2)}</div>
+                </div>
                 <button className="btn btn-primary"
                   disabled={!todoOk}
                   title={todoOk ? "" : "Completa los grupos según mín/máx"}
                   onClick={() => {
-                    // Construir la seleccion final como array
+                    // Construir la seleccion final como array (por id de componente,
+                    // para soportar varias opciones del mismo ingrediente en un grupo).
                     const seleccion: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number; nombre?: string }> = [];
                     grupos.forEach((g: any) => {
                       const sels = comboSel[String(g.id)] || {};
-                      Object.entries(sels).forEach(([hijoIdStr, cant]) => {
+                      Object.entries(sels).forEach(([compIdStr, cant]) => {
                         if (Number(cant) > 0) {
-                          const compRef = componentes.find((c: any) => c.producto_hijo_id === Number(hijoIdStr) && c.grupo_id === g.id);
-                          // cantidad por unidad de combo = c.cantidad * (cant escogido)
-                          // Pero como cantidad de combos vendido es 1 aqui (se multiplica en backend con item.cantidad),
-                          // mandamos: cantidad_total_componente_por_combo = compRef.cantidad * cant
-                          const cantPorCombo = (compRef?.cantidad || 1) * Number(cant);
+                          const compRef = componentes.find((c: any) => String(c.id) === compIdStr);
+                          if (!compRef) return;
+                          // cantidad total del ingrediente = cantidad de la receta * veces elegida
+                          const cantPorCombo = (compRef.cantidad || 1) * Number(cant);
                           seleccion.push({
-                            producto_hijo_id: Number(hijoIdStr),
+                            producto_hijo_id: compRef.producto_hijo_id,
                             cantidad: cantPorCombo,
                             grupo_id: g.id,
-                            nombre: compRef?.hijo_nombre,
+                            nombre: (compRef.etiqueta && compRef.etiqueta.trim()) ? compRef.etiqueta : compRef.hijo_nombre,
                           });
                         }
                       });
                     });
                     const prod = producto;
                     const uni = unidadElegida;
+                    const extra = extraTotal;
                     setSeleccionCombo(null);
                     setComboSel({});
-                    agregarAlCarrito(prod, uni, undefined, seleccion);
+                    agregarAlCarrito(prod, uni, undefined, seleccion, extra);
                   }}>
                   Agregar al carrito
                 </button>

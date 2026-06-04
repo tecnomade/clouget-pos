@@ -995,14 +995,27 @@ function FormProducto({
                         {compsGrupo.length === 0 ? (
                           <div style={{ color: "var(--color-text-secondary)", marginBottom: 4 }}>Sin opciones aún.</div>
                         ) : compsGrupo.map((c, ix) => (
-                          <div key={`${c.id ?? c.producto_hijo_id}-${ix}`} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
-                            <span style={{ flex: 1 }}>{c.hijo_nombre || `Producto #${c.producto_hijo_id}`}</span>
-                            <input className="input" type="number" min="0.01" step="any" style={{ width: 70, fontSize: 11 }} title="Cantidad por unidad de combo"
-                              value={c.cantidad}
-                              onChange={(e) => setComboComponentes(comboComponentes.map(x => x === c ? { ...x, cantidad: parseFloat(e.target.value) || 1 } : x))} />
-                            <span style={{ fontSize: 10, color: "var(--color-text-secondary)", width: 60 }}>{c.hijo_unidad_medida || ""}</span>
-                            <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "1px 6px", color: "var(--color-danger)" }}
-                              onClick={() => setComboComponentes(comboComponentes.filter(x => x !== c))}>×</button>
+                          <div key={`${c.id ?? c.producto_hijo_id}-${ix}`} style={{ display: "flex", flexDirection: "column", gap: 2, padding: "5px 0", borderBottom: "1px dashed var(--color-border)" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input className="input" style={{ flex: 1, fontSize: 11 }} title="Etiqueta visible en el POS (opcional)"
+                                placeholder={c.hijo_nombre || `Producto #${c.producto_hijo_id}`}
+                                value={c.etiqueta ?? ""}
+                                onChange={(e) => setComboComponentes(comboComponentes.map(x => x === c ? { ...x, etiqueta: e.target.value } : x))} />
+                              <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "1px 6px", color: "var(--color-danger)" }}
+                                onClick={() => setComboComponentes(comboComponentes.filter(x => x !== c))}>×</button>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "var(--color-text-secondary)" }}>
+                              <span style={{ flex: 1 }}>🧾 {c.hijo_nombre || `#${c.producto_hijo_id}`}</span>
+                              <span>Cant</span>
+                              <input className="input" type="number" min="0.01" step="any" style={{ width: 56, fontSize: 11 }} title="Cantidad del ingrediente que consume (receta)"
+                                value={c.cantidad}
+                                onChange={(e) => setComboComponentes(comboComponentes.map(x => x === c ? { ...x, cantidad: parseFloat(e.target.value) || 1 } : x))} />
+                              <span style={{ width: 36 }}>{c.hijo_unidad_medida || ""}</span>
+                              <span>+$</span>
+                              <input className="input" type="number" min="0" step="any" style={{ width: 56, fontSize: 11 }} title="Precio que suma esta opción al combo"
+                                value={c.precio_extra ?? 0}
+                                onChange={(e) => setComboComponentes(comboComponentes.map(x => x === c ? { ...x, precio_extra: parseFloat(e.target.value) || 0 } : x))} />
+                            </div>
                           </div>
                         ))}
                         <button type="button" className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px", marginTop: 4 }}
@@ -1101,6 +1114,8 @@ function FormProducto({
                           producto_padre_id: form.id || 0,
                           producto_hijo_id: p.id,
                           cantidad: 1,
+                          precio_extra: 0,
+                          etiqueta: "",
                           grupo_id: comboBuscarGrupoId === "raiz" ? null : (comboBuscarGrupoId as number),
                           orden: comboComponentes.length,
                           hijo_nombre: p.nombre,

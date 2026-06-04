@@ -40,7 +40,8 @@ pub fn listar_combo_componentes(db: State<Database>, producto_padre_id: i64) -> 
     let mut stmt = conn.prepare(
         "SELECT c.id, c.producto_padre_id, c.producto_hijo_id, c.cantidad, c.grupo_id, c.orden,
                 p.nombre, p.codigo, p.precio_venta, p.precio_costo, p.stock_actual, p.unidad_medida,
-                p.no_controla_stock, p.es_servicio
+                p.no_controla_stock, p.es_servicio,
+                COALESCE(c.precio_extra, 0), c.etiqueta
          FROM producto_componentes c
          JOIN productos p ON c.producto_hijo_id = p.id
          WHERE c.producto_padre_id = ?1
@@ -53,6 +54,8 @@ pub fn listar_combo_componentes(db: State<Database>, producto_padre_id: i64) -> 
         cantidad: r.get(3)?,
         grupo_id: r.get(4)?,
         orden: r.get(5)?,
+        precio_extra: r.get(14)?,
+        etiqueta: r.get(15)?,
         hijo_nombre: r.get(6)?,
         hijo_codigo: r.get(7)?,
         hijo_precio_venta: r.get(8)?,
@@ -112,10 +115,11 @@ pub fn guardar_combo_estructura(
     // Insertar componentes (resolviendo grupo_id via id_map si aplica)
     for c in &componentes {
         let grupo_id_real = c.grupo_id.and_then(|gid| id_map.get(&gid).copied().or(Some(gid)));
+        let etiqueta = c.etiqueta.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
         tx.execute(
-            "INSERT INTO producto_componentes (producto_padre_id, producto_hijo_id, cantidad, grupo_id, orden)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![producto_padre_id, c.producto_hijo_id, c.cantidad, grupo_id_real, c.orden],
+            "INSERT INTO producto_componentes (producto_padre_id, producto_hijo_id, cantidad, grupo_id, orden, precio_extra, etiqueta)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![producto_padre_id, c.producto_hijo_id, c.cantidad, grupo_id_real, c.orden, c.precio_extra.max(0.0), etiqueta],
         ).map_err(|e| e.to_string())?;
     }
 

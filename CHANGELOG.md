@@ -6,6 +6,17 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.89 — 2026-06-03 🍗 Combos/recetas con opciones y precio por extra
+
+- **Combo flexible mejorado** para casos tipo restaurante/KFC:
+  - **Precio por opción**: cada opción/extra puede sumar al precio (ej: papas grandes +$2). El total del combo = precio base + extras elegidos.
+  - **Mismo ingrediente con distintas cantidades** en un grupo (ej: Alitas Tipo1=2, Tipo2=6, Tipo3=12, todas del mismo ingrediente "alita"). Antes la base lo impedía.
+  - **Etiqueta por opción** (nombre visible en el POS, ej: "Tipo 2 (6 alitas)").
+- Grupos obligatorios (bebida: elegir 1) y opcionales (extras: varios) ya existían; ahora con precio.
+- El POS muestra el total en vivo al armar el combo y descuenta el stock de los ingredientes elegidos.
+
+---
+
 ## v2.5.88 — 2026-06-03 📉 Dashboard: stock bajo vs sin stock + imprimir lista
 
 - El widget de stock del **Dashboard** ahora separa **⛔ Sin stock** (agotados, 0/negativo) de **⚠ Stock bajo** (con stock pero bajo el mínimo).

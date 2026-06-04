@@ -60,6 +60,13 @@ pub struct ComboComponente {
     pub grupo_id: Option<i64>,
     #[serde(default)]
     pub orden: i64,
+    /// v2.5.89: precio que esta opción suma al precio base del combo (extras).
+    #[serde(default)]
+    pub precio_extra: f64,
+    /// v2.5.89: etiqueta opcional para distinguir opciones del mismo ingrediente
+    /// (ej: "Tipo 1 (2 alitas)" vs "Tipo 2 (6 alitas)"). Si vacío, se usa el nombre del hijo.
+    #[serde(default)]
+    pub etiqueta: Option<String>,
     // Campos enriquecidos en lecturas (no se serializan al insert):
     #[serde(default)]
     pub hijo_nombre: Option<String>,
