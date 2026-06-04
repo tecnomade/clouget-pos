@@ -11,6 +11,8 @@ interface PosGridTactilProps {
   onBusquedaChange: (v: string) => void;
   resultados: ProductoBusqueda[];
   inputRef: React.RefObject<HTMLInputElement | null>;
+  /** Modo BLOQUEAR_OCULTAR: ocultar agotados en la vista normal (el filtro "Sin stock" los muestra igual). */
+  ocultarSinStock?: boolean;
 }
 
 export default function PosGridTactil({
@@ -23,8 +25,10 @@ export default function PosGridTactil({
   onBusquedaChange,
   resultados,
   inputRef,
+  ocultarSinStock,
 }: PosGridTactilProps) {
   const [categoriaActiva, setCategoriaActiva] = useState<number | null>(null);
+  const [soloSinStock, setSoloSinStock] = useState(false);
   const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
   const categoriasRef = useRef<HTMLDivElement>(null);
 
@@ -38,6 +42,22 @@ export default function PosGridTactil({
     let lista = productosTactil;
     if (categoriaActiva !== null) {
       lista = lista.filter((p) => p.categoria_id === categoriaActiva);
+    }
+    // Filtro "sin stock": productos agotados (stock <= 0) que controlan inventario
+    // (excluye servicios, combos y "no controla stock"). Para saber qué reponer.
+    if (soloSinStock) {
+      lista = lista.filter((p) => {
+        const esServicio = (p as any).es_servicio;
+        const noControla = (p as any).no_controla_stock;
+        const esCombo = p.tipo_producto === "COMBO_FIJO" || p.tipo_producto === "COMBO_FLEXIBLE";
+        if (esServicio || noControla || esCombo) return false;
+        return (p.stock_actual ?? 0) <= 0;
+      });
+    } else if (ocultarSinStock) {
+      // Modo BLOQUEAR_OCULTAR: en vista normal, ocultar agotados (igual que antes).
+      lista = lista.filter((p) =>
+        (p as any).es_servicio || (p as any).no_controla_stock || (p.stock_actual ?? 0) > 0
+      );
     }
     if (busqueda.trim()) {
       const term = busqueda.toLowerCase();
@@ -56,7 +76,7 @@ export default function PosGridTactil({
         .map(x => x.p);
     }
     return lista;
-  }, [productosTactil, categoriaActiva, busqueda]);
+  }, [productosTactil, categoriaActiva, busqueda, soloSinStock, ocultarSinStock]);
 
   const handleTap = (p: ProductoTactil) => {
     // Para COMBO_FIJO usamos el stock_combo (MIN componentes) como stock_actual efectivo
@@ -141,6 +161,20 @@ export default function PosGridTactil({
           >
             Todos
           </button>
+          {/* Filtro de productos agotados (sin stock) */}
+          <button
+            className="btn"
+            title="Mostrar solo productos sin stock (agotados)"
+            style={{
+              fontSize: 12, padding: "4px 12px", whiteSpace: "nowrap", flexShrink: 0,
+              background: soloSinStock ? "var(--color-danger)" : "var(--color-surface)",
+              color: soloSinStock ? "#fff" : "var(--color-danger)",
+              border: `1px solid var(--color-danger)`,
+            }}
+            onClick={() => setSoloSinStock((v) => !v)}
+          >
+            ⛔ Sin stock
+          </button>
           {categorias.map((c) => (
             <button
               key={c.id}
@@ -172,7 +206,9 @@ export default function PosGridTactil({
       }}>
         {productosFiltrados.length === 0 ? (
           <div style={{ gridColumn: "1 / -1", textAlign: "center", color: "var(--color-text-secondary)", padding: 40 }}>
-            No hay productos {categoriaActiva !== null ? "en esta categoria" : ""}
+            {soloSinStock
+              ? "🎉 No hay productos sin stock"
+              : `No hay productos ${categoriaActiva !== null ? "en esta categoria" : ""}`}
           </div>
         ) : (
           productosFiltrados.map((p) => (

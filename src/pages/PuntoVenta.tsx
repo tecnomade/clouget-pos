@@ -1707,11 +1707,8 @@ export default function PuntoVenta() {
           <div style={{ flex: 1, overflow: "hidden", position: "relative", minHeight: 0, minWidth: 0 }}>
             <PosGridTactil
               categorias={categoriasTactil}
-              productosTactil={
-                stockModo === "BLOQUEAR_OCULTAR"
-                  ? productosTactil.filter(p => (p as any).es_servicio || (p as any).no_controla_stock || p.stock_actual > 0)
-                  : productosTactil
-              }
+              productosTactil={productosTactil}
+              ocultarSinStock={stockModo === "BLOQUEAR_OCULTAR"}
               onAgregarProducto={agregarAlCarrito}
               puedeVerDetalle={esAdmin}
               onVerDetalle={async (pid) => {

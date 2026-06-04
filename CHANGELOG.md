@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.87 — 2026-06-03 ⛔ Filtro "Sin stock" en el Punto de Venta
+
+- Nuevo chip **⛔ Sin stock** en la barra de categorías del POS: muestra solo los productos **agotados** (stock ≤ 0) que controlan inventario — para saber qué reponer sin confundir con stock bajo.
+- Funciona incluso si el modo de stock oculta los agotados: el filtro los muestra igual.
+
+---
+
 ## v2.5.86 — 2026-06-03 🧾 Cheque oculto por defecto
 
 - El botón **Cheque** ahora viene **oculto por defecto**. El **administrador siempre lo ve**; para que lo vean los **cajeros**, el admin lo activa en Configuración → Cuentas Bancarias → "Mostrar botón Cheque".
