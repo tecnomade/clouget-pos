@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.86 — 2026-06-03 🧾 Cheque oculto por defecto
+
+- El botón **Cheque** ahora viene **oculto por defecto**. El **administrador siempre lo ve**; para que lo vean los **cajeros**, el admin lo activa en Configuración → Cuentas Bancarias → "Mostrar botón Cheque".
+
+---
+
 ## v2.5.85 — 2026-06-03 🏷️ "Crédito" renombrado a "Fiado"
 
 - La forma de pago **fiado** ahora se muestra como **"Fiado"** en todo el POS (botón, pago mixto, Ventas, Dashboard, ticket y reporte de cierre), para no confundirla con la nueva **Tarjeta de crédito/débito**.

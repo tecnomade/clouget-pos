@@ -679,13 +679,14 @@ export default function Configuracion() {
                     Mostrar botón Tarjeta
                   </label>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}>
-                    <input type="checkbox" checked={config.forma_pago_cheque_activa !== "0"}
+                    <input type="checkbox" checked={config.forma_pago_cheque_activa === "1"}
                       onChange={(e) => { const v = e.target.checked ? "1" : "0"; update("forma_pago_cheque_activa", v); guardarConfig({ forma_pago_cheque_activa: v }); }} />
-                    Mostrar botón Cheque
+                    Mostrar botón Cheque (a los cajeros)
                   </label>
                 </div>
                 <span className="text-secondary" style={{ fontSize: 10, marginTop: 6, display: "block" }}>
-                  Efectivo, Transferencia y Crédito siempre están disponibles. Tarjeta y Cheque no afectan el efectivo en caja.
+                  Efectivo, Transferencia y Fiado siempre están disponibles. Tarjeta no afecta el efectivo en caja.
+                  El botón <strong>Cheque viene oculto por defecto</strong>: actívalo aquí para que lo vean los cajeros. El administrador siempre lo ve.
                 </span>
               </div>
               {/* Reglas de transferencia */}

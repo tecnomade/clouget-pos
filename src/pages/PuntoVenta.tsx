@@ -264,10 +264,11 @@ export default function PuntoVenta() {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setRequiereReferencia(cfg.transferencia_requiere_referencia === "1");
       setRequiereComprobante(cfg.transferencia_requiere_comprobante === "1");
-      // v2.5.84: formas de pago opcionales (tarjeta/cheque). Default: visibles
-      // salvo que el negocio las desactive explícitamente con "0".
+      // v2.5.84: Tarjeta visible por defecto (salvo que se desactive con "0").
       setFormaTarjetaActiva(cfg.forma_pago_tarjeta_activa !== "0");
-      setFormaChequeActiva(cfg.forma_pago_cheque_activa !== "0");
+      // v2.5.86: Cheque OCULTO por defecto. Solo se muestra si el admin lo activa
+      // ("1"); además el admin siempre lo ve (ver condición del botón).
+      setFormaChequeActiva(cfg.forma_pago_cheque_activa === "1");
       setAutoImprimirTicket(cfg.auto_imprimir === "1");
       setAutoImprimirSri(cfg.auto_imprimir_sri === "1");
       const modo = (cfg.stock_negativo_modo || "PERMITIR") as any;
@@ -2125,7 +2126,7 @@ export default function PuntoVenta() {
                       }}>
                       Fiado
                     </button>
-                    {formaChequeActiva && (
+                    {(formaChequeActiva || esAdmin) && (
                       <button className="btn" style={{ justifyContent: "center", fontSize: 11, padding: "6px 0", background: formaPago === "CHEQUE" && !esFiado ? "#0891b2" : "var(--color-surface)", color: formaPago === "CHEQUE" && !esFiado ? "#fff" : "var(--color-text)", border: "1px solid var(--color-border)" }}
                         onClick={() => {
                           setFormaPago("CHEQUE"); setEsFiado(false);
