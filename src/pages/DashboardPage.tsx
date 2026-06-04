@@ -346,28 +346,66 @@ export default function DashboardPage() {
                 </div>
               </div>
             )}
-            {alertas.length > 0 && (esAdmin || tienePermiso("gestionar_inventario") || tienePermiso("gestionar_productos")) && (
+            {alertas.length > 0 && (esAdmin || tienePermiso("gestionar_inventario") || tienePermiso("gestionar_productos")) && (() => {
+              const sinStock = alertas.filter((a) => a.stock_actual <= 0);
+              const stockBajo = alertas.filter((a) => a.stock_actual > 0);
+              const irAStock = (filtro: string) => {
+                sessionStorage.setItem("productos_filtro_stock", filtro);
+                navigate("/productos");
+              };
+              return (
               <div className="card" style={{ flex: 1, borderLeft: "4px solid var(--color-warning)" }}>
                 <div className="card-body" style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 700, color: "var(--color-warning)", marginBottom: 8 }}>
-                    Stock Bajo ({alertas.length})
-                  </div>
-                  {alertas.slice(0, 3).map((a) => (
-                    <div key={a.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                      <span>{a.nombre}</span>
-                      <span style={{ fontWeight: 600, color: a.stock_actual <= 0 ? "var(--color-danger)" : "var(--color-warning)" }}>
-                        {a.stock_actual} / {a.stock_minimo}
-                      </span>
+                  {/* Sin stock (agotados): 0 o negativo */}
+                  {sinStock.length > 0 && (
+                    <div style={{ marginBottom: stockBajo.length > 0 ? 10 : 0 }}>
+                      <div
+                        onClick={() => irAStock("SIN_STOCK")}
+                        style={{ fontWeight: 700, color: "var(--color-danger)", marginBottom: 6, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                        title="Ver y exportar los productos sin stock">
+                        <span>⛔ Sin stock ({sinStock.length})</span>
+                        <span style={{ fontSize: 11, textDecoration: "underline" }}>ver / exportar →</span>
+                      </div>
+                      {sinStock.slice(0, 3).map((a) => (
+                        <div key={a.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                          <span>{a.nombre}</span>
+                          <span style={{ fontWeight: 600, color: "var(--color-danger)" }}>{a.stock_actual}</span>
+                        </div>
+                      ))}
+                      {sinStock.length > 3 && (
+                        <div onClick={() => irAStock("SIN_STOCK")} style={{ fontSize: 11, color: "var(--color-primary)", cursor: "pointer" }}>
+                          y {sinStock.length - 3} mas...
+                        </div>
+                      )}
                     </div>
-                  ))}
-                  {alertas.length > 3 && (
-                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                      y {alertas.length - 3} mas...
+                  )}
+                  {/* Stock bajo: con stock pero por debajo del mínimo */}
+                  {stockBajo.length > 0 && (
+                    <div>
+                      <div
+                        onClick={() => irAStock("STOCK_BAJO")}
+                        style={{ fontWeight: 700, color: "var(--color-warning)", marginBottom: 6, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                        title="Ver y exportar los productos con stock bajo">
+                        <span>⚠ Stock bajo ({stockBajo.length})</span>
+                        <span style={{ fontSize: 11, textDecoration: "underline" }}>ver / exportar →</span>
+                      </div>
+                      {stockBajo.slice(0, 3).map((a) => (
+                        <div key={a.id} style={{ fontSize: 12, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                          <span>{a.nombre}</span>
+                          <span style={{ fontWeight: 600, color: "var(--color-warning)" }}>{a.stock_actual} / {a.stock_minimo}</span>
+                        </div>
+                      ))}
+                      {stockBajo.length > 3 && (
+                        <div onClick={() => irAStock("STOCK_BAJO")} style={{ fontSize: 11, color: "var(--color-primary)", cursor: "pointer" }}>
+                          y {stockBajo.length - 3} mas...
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
         )}
 

@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.88 — 2026-06-03 📉 Dashboard: stock bajo vs sin stock + imprimir lista
+
+- El widget de stock del **Dashboard** ahora separa **⛔ Sin stock** (agotados, 0/negativo) de **⚠ Stock bajo** (con stock pero bajo el mínimo).
+- Al hacer click en cualquiera, va a **Productos** con ese filtro ya aplicado (listo para revisar/exportar).
+- Nuevo botón **🖨️ Imprimir lista** en Productos: imprime la lista filtrada actual (código, nombre, categoría, stock, mínimo) — sirve para reponer o guardar como PDF.
+
+---
+
 ## v2.5.87 — 2026-06-03 ⛔ Filtro "Sin stock" en el Punto de Venta
 
 - Nuevo chip **⛔ Sin stock** en la barra de categorías del POS: muestra solo los productos **agotados** (stock ≤ 0) que controlan inventario — para saber qué reponer sin confundir con stock bajo.

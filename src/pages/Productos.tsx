@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import NumericInput from "../components/NumericInput";
 import { listarProductos, crearProducto, obtenerProducto, actualizarProducto, listarCategorias, crearCategoria, actualizarCategoria, eliminarCategoria, listarTiposUnidad, crearTipoUnidad, actualizarTipoUnidad, eliminarTipoUnidad, exportarInventarioCsv, listarListasPrecios, obtenerPreciosProducto, guardarPreciosProducto, cargarImagenProducto, leerImagenArchivo, eliminarImagenProducto, guardarImagenProductoB64, generarEtiquetasPdf, exportarPlantillaProductos, exportarProductosExcel, importarProductosExcel, eliminarProducto, listarSeriesProducto, registrarSeries, obtenerConfig, listarLotesProducto, registrarLoteCaducidad, eliminarLoteCaducidad, listarUnidadesProducto, guardarUnidadesProducto, listarComboGrupos, listarComboComponentes, guardarComboEstructura, buscarProductos, registrarMovimiento } from "../services/api";
 import { save, open, ask } from "@tauri-apps/plugin-dialog";
@@ -1762,9 +1762,22 @@ export default function Productos() {
     }
   }, []);
 
+  // v2.5.88: aplicar filtro de stock cuando se llega desde el Dashboard
+  // (sessionStorage 'productos_filtro_stock' = SIN_STOCK / STOCK_BAJO / STOCK_NEGATIVO).
+  const aplicarFiltroStockGuardado = useCallback(() => {
+    const f = sessionStorage.getItem("productos_filtro_stock");
+    if (f) {
+      setFiltroTipo(f as any);
+      setFiltro("");
+      setFiltroCategoriaId(null);
+      sessionStorage.removeItem("productos_filtro_stock");
+    }
+  }, []);
+  useEffect(() => { aplicarFiltroStockGuardado(); }, [aplicarFiltroStockGuardado]);
+
   // v2.5.3: refrescar lista al volver a esta pestaña (puede haberse importado
   // productos desde Excel, hecho ventas que cambian stock, etc. desde otra tab).
-  useTabActivated("/productos", () => { cargarDatos(); });
+  useTabActivated("/productos", () => { cargarDatos(); aplicarFiltroStockGuardado(); });
 
   // v2.5.32: refrescar tambien al detectar cambios de compras/ventas en otras tabs
   // (anular compra, devolucion, importar XML, NC venta) — el stock pudo haberse
@@ -1822,6 +1835,29 @@ export default function Productos() {
       descargarExcel(bytes, `productos_${new Date().toISOString().slice(0,10)}.xlsx`);
       toastExito("Productos exportados");
     } catch (err) { toastError("Error: " + err); }
+  };
+
+  // v2.5.88: imprimir la LISTA FILTRADA actual (respeta el filtro de stock/categoría/búsqueda).
+  const handleImprimirLista = () => {
+    const filaTit: Record<string, string> = {
+      TODOS: "Todos los productos", SIMPLE: "Productos", SERVICIO: "Servicios", COMBO: "Combos",
+      SIN_STOCK: "Productos SIN STOCK (0 o negativo)", STOCK_NEGATIVO: "Productos con STOCK NEGATIVO", STOCK_BAJO: "Productos con STOCK BAJO",
+    };
+    const titulo = filaTit[filtroTipo] || "Productos";
+    const filas = productosFiltrados.map((p) =>
+      `<tr><td>${p.codigo ?? ""}</td><td>${(p.nombre ?? "").replace(/</g, "&lt;")}</td><td>${p.categoria_nombre ?? ""}</td><td style="text-align:right">${p.stock_actual ?? 0}</td><td style="text-align:right">${(p as any).stock_minimo ?? 0}</td></tr>`
+    ).join("");
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
+      <style>body{font-family:Arial,sans-serif;font-size:12px;padding:16px}h2{margin:0 0 4px}
+      table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #999;padding:4px 6px}
+      th{background:#eee;text-align:left}.sub{color:#555;font-size:11px;margin-bottom:8px}</style></head>
+      <body><h2>${titulo}</h2><div class="sub">${productosFiltrados.length} producto(s) · ${new Date().toLocaleString("es-EC")}</div>
+      <table><thead><tr><th>Código</th><th>Nombre</th><th>Categoría</th><th>Stock</th><th>Mínimo</th></tr></thead>
+      <tbody>${filas}</tbody></table>
+      <script>window.onload=function(){window.print();}<\/script></body></html>`;
+    const w = window.open("", "_blank", "width=800,height=600");
+    if (!w) { toastError("Permite las ventanas emergentes para imprimir."); return; }
+    w.document.write(html); w.document.close();
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1943,6 +1979,11 @@ export default function Productos() {
           <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
             onClick={handleExportar}>
             Exportar Excel
+          </button>
+          <button className="btn btn-outline" style={{ fontSize: 11, padding: "4px 10px" }}
+            title="Imprimir la lista filtrada actual"
+            onClick={handleImprimirLista}>
+            🖨️ Imprimir lista
           </button>
           <button className="btn btn-primary" style={{ fontSize: 11, padding: "4px 10px" }}
             onClick={() => fileInputRef.current?.click()} disabled={importando}>
