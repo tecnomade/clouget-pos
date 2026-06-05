@@ -703,7 +703,43 @@ pub fn rest_cerrar_pedido(
         params![venta_id, pedido_id],
     )
     .map_err(|e| e.to_string())?;
+    // v2.5.91 — los abonos en HOLDING pasan a APLICADO (ya forman parte de la venta).
+    conn.execute(
+        "UPDATE rest_pedido_abonos
+         SET estado = 'APLICADO', venta_id_aplicado = ?1, fecha_aplicado = datetime('now', 'localtime')
+         WHERE pedido_id = ?2 AND estado = 'HOLDING'",
+        params![venta_id, pedido_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// v2.5.91 — Registra un abono (pago parcial) sobre una mesa desde el escritorio.
+/// Devuelve el detalle actualizado del pedido (con saldo/abonado).
+#[tauri::command]
+pub fn rest_registrar_abono(
+    db: State<'_, Database>,
+    sesion: State<'_, crate::db::SesionState>,
+    pedido_id: i64,
+    monto: f64,
+    forma_pago: String,
+    banco_id: Option<i64>,
+    referencia_pago: Option<String>,
+) -> Result<crate::restaurante::models::PedidoDetalle, String> {
+    requiere_modulo_restaurante(&db)?;
+    let (usuario_id, usuario_nombre) = {
+        let g = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        match g.as_ref() {
+            Some(s) => (Some(s.usuario_id), Some(s.nombre.clone())),
+            None => (None, None),
+        }
+    };
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    registrar_abono_pedido(
+        &conn, pedido_id, monto, &forma_pago, banco_id,
+        referencia_pago.as_deref(), usuario_id, usuario_nombre.as_deref(),
+    )?;
+    obtener_pedido_detalle(&conn, pedido_id)
 }
 
 // ─── Impresión ──────────────────────────────────────────────────────────
@@ -1481,6 +1517,14 @@ pub(crate) fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Resul
         .unwrap_or(0);
     let capacidad_total: i32 = capacidad_principal + mesas_extra.iter().map(|m| m.capacidad).sum::<i32>();
 
+    // v2.5.91 — abonos (pagos parciales) en HOLDING sobre este pedido.
+    let abonos = listar_abonos_pedido(conn, pedido_id).unwrap_or_default();
+    let total_abonado: f64 = abonos.iter()
+        .filter(|a| a.estado == "HOLDING")
+        .map(|a| a.monto)
+        .sum();
+    let saldo = (total - total_abonado).max(0.0);
+
     Ok(PedidoDetalle {
         pedido,
         items,
@@ -1491,8 +1535,91 @@ pub(crate) fn obtener_pedido_detalle(conn: &Connection, pedido_id: i64) -> Resul
         total,
         mesas_extra,
         capacidad_total,
+        total_abonado: r2(total_abonado),
+        saldo: r2(saldo),
+        abonos,
     })
 }
+
+/// v2.5.91 — Lista los abonos de un pedido (con nombre del banco).
+pub fn listar_abonos_pedido(conn: &rusqlite::Connection, pedido_id: i64) -> Result<Vec<crate::restaurante::models::AbonoPedido>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.monto, a.forma_pago, a.banco_id, cb.nombre, a.referencia_pago,
+                a.estado, a.fecha, a.usuario_nombre
+         FROM rest_pedido_abonos a
+         LEFT JOIN cuentas_banco cb ON a.banco_id = cb.id
+         WHERE a.pedido_id = ?1
+         ORDER BY a.id ASC",
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(rusqlite::params![pedido_id], |r| {
+        Ok(crate::restaurante::models::AbonoPedido {
+            id: r.get(0)?,
+            monto: r.get(1)?,
+            forma_pago: r.get(2)?,
+            banco_id: r.get(3)?,
+            banco_nombre: r.get(4)?,
+            referencia_pago: r.get(5)?,
+            estado: r.get(6)?,
+            fecha: r.get(7)?,
+            usuario_nombre: r.get(8)?,
+        })
+    }).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// v2.5.91 — Registra un abono (pago parcial) sobre un pedido. El dinero entra
+/// a la caja activa como HOLDING (anticipo), igual que los abonos de ST.
+/// Devuelve el id del abono. Valida que el abono no supere el saldo pendiente.
+pub fn registrar_abono_pedido(
+    conn: &rusqlite::Connection,
+    pedido_id: i64,
+    monto: f64,
+    forma_pago: &str,
+    banco_id: Option<i64>,
+    referencia_pago: Option<&str>,
+    usuario_id: Option<i64>,
+    usuario_nombre: Option<&str>,
+) -> Result<i64, String> {
+    if monto <= 0.0 {
+        return Err("El monto del abono debe ser mayor a 0".to_string());
+    }
+    // Estado del pedido debe estar abierto.
+    let estado: String = conn.query_row(
+        "SELECT estado FROM rest_pedidos_abiertos WHERE id = ?1",
+        rusqlite::params![pedido_id], |r| r.get(0),
+    ).map_err(|_| "Pedido no encontrado".to_string())?;
+    if estado != "ABIERTO" && estado != "CUENTA_PEDIDA" {
+        return Err("El pedido ya no está abierto".to_string());
+    }
+    // Saldo actual = total consumido − abonos HOLDING.
+    let total: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(cantidad * precio_unit), 0) FROM rest_pedido_items WHERE pedido_id = ?1",
+        rusqlite::params![pedido_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let abonado: f64 = conn.query_row(
+        "SELECT COALESCE(SUM(monto), 0) FROM rest_pedido_abonos WHERE pedido_id = ?1 AND estado = 'HOLDING'",
+        rusqlite::params![pedido_id], |r| r.get(0),
+    ).unwrap_or(0.0);
+    let saldo = r2(total - abonado);
+    if monto > saldo + 0.01 {
+        return Err(format!("El abono (${:.2}) supera el saldo pendiente (${:.2}).", monto, saldo));
+    }
+    // Caja activa (a la que entra el dinero).
+    let caja_id: Option<i64> = conn.query_row(
+        "SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1", [], |r| r.get(0),
+    ).ok();
+
+    conn.execute(
+        "INSERT INTO rest_pedido_abonos
+            (pedido_id, monto, forma_pago, banco_id, referencia_pago, caja_id, estado, usuario_id, usuario_nombre)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'HOLDING', ?7, ?8)",
+        rusqlite::params![pedido_id, r2(monto), forma_pago, banco_id, referencia_pago, caja_id, usuario_id, usuario_nombre],
+    ).map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[inline]
+fn r2(n: f64) -> f64 { (n * 100.0).round() / 100.0 }
 
 /// v2.3.69 — Lista las sub-cuentas del pedido con datos enriquecidos
 /// (nombre del banco, número de venta) — usado por `rest_listar_subcuentas`

@@ -101,6 +101,35 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_mesa ON rest_pedido_mesas_extra(mesa_id);
         CREATE INDEX IF NOT EXISTS idx_rest_pedido_mesas_extra_pedido ON rest_pedido_mesas_extra(pedido_id);
 
+        -- ─── Abonos / pagos parciales sobre la mesa (v2.5.91) ──────────
+        -- Espejo de st_abonos: el cliente puede pagar por partes mientras la
+        -- mesa sigue consumiendo. El dinero entra a la caja como HOLDING
+        -- (anticipo) y al COBRAR el pedido pasa a APLICADO (se descuenta del
+        -- total). Así el arqueo cuadra igual que con los anticipos de ST.
+        --   estado: HOLDING | APLICADO | DEVUELTO
+        CREATE TABLE IF NOT EXISTS rest_pedido_abonos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            monto REAL NOT NULL,
+            forma_pago TEXT NOT NULL DEFAULT 'EFECTIVO',
+            banco_id INTEGER,
+            referencia_pago TEXT,
+            caja_id INTEGER,
+            estado TEXT NOT NULL DEFAULT 'HOLDING',
+            venta_id_aplicado INTEGER,
+            fecha TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            fecha_aplicado TEXT,
+            usuario_id INTEGER,
+            usuario_nombre TEXT,
+            observacion TEXT,
+            FOREIGN KEY (pedido_id) REFERENCES rest_pedidos_abiertos(id) ON DELETE CASCADE,
+            FOREIGN KEY (banco_id) REFERENCES cuentas_banco(id),
+            FOREIGN KEY (caja_id) REFERENCES caja(id),
+            FOREIGN KEY (venta_id_aplicado) REFERENCES ventas(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rest_pedido_abonos_pedido ON rest_pedido_abonos(pedido_id);
+        CREATE INDEX IF NOT EXISTS idx_rest_pedido_abonos_estado ON rest_pedido_abonos(estado);
+
         -- ─── Sub-cuentas (división de cuenta v2.3.69) ──────────────
         -- Cuando un grupo decide pagar por separado, el pedido se divide en N
         -- sub-cuentas. Cada una se cobra de forma independiente (su propia

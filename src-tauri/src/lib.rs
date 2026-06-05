@@ -724,6 +724,7 @@ pub fn run() {
             restaurante::commands::rest_marcar_item_cocina,
             restaurante::commands::rest_pedir_cuenta,
             restaurante::commands::rest_cerrar_pedido,
+            restaurante::commands::rest_registrar_abono,
             restaurante::commands::rest_imprimir_pre_cuenta,
             restaurante::commands::rest_imprimir_comanda_cocina,
             // v2.3.68 — Unir mesas

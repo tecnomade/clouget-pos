@@ -136,6 +136,29 @@ pub struct PedidoDetalle {
     /// v2.3.68 — Capacidad efectiva del grupo: mesa principal + extras.
     #[serde(default)]
     pub capacidad_total: i32,
+    /// v2.5.91 — Pagos parciales (abonos) ya recibidos sobre esta mesa.
+    #[serde(default)]
+    pub total_abonado: f64,
+    /// v2.5.91 — Saldo pendiente = total − total_abonado (mín. 0).
+    #[serde(default)]
+    pub saldo: f64,
+    /// v2.5.91 — Lista de abonos registrados (historial).
+    #[serde(default)]
+    pub abonos: Vec<AbonoPedido>,
+}
+
+/// v2.5.91 — Un abono (pago parcial) sobre un pedido de mesa.
+#[derive(Debug, Serialize, Clone)]
+pub struct AbonoPedido {
+    pub id: i64,
+    pub monto: f64,
+    pub forma_pago: String,
+    pub banco_id: Option<i64>,
+    pub banco_nombre: Option<String>,
+    pub referencia_pago: Option<String>,
+    pub estado: String,
+    pub fecha: String,
+    pub usuario_nombre: Option<String>,
 }
 
 // ─── v2.3.69 — Sub-cuentas (división de cuenta) ──────────────────────────

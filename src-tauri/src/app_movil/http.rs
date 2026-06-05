@@ -1169,20 +1169,59 @@ pub async fn pedidos_cobrar(
         })
     }).collect();
 
-    let venta_args = serde_json::json!({
-        "venta": {
-            "items": items_venta,
-            "forma_pago": req.forma_pago,
-            "monto_recibido": if req.es_fiado { 0.0 } else { total },
-            "descuento": 0.0,
-            "tipo_documento": req.tipo_documento.unwrap_or_else(|| "NOTA_VENTA".to_string()),
-            "es_fiado": req.es_fiado,
-            "observacion": observacion,
-            "banco_id": req.banco_id,
-            "referencia_pago": req.referencia_pago,
-            "cliente_id": req.cliente_id,
+    // v2.5.91 — si la mesa tiene abonos (pagos parciales), la venta se arma como
+    // MIXTO: cada abono con su forma de pago + el SALDO con la forma del cierre.
+    // Así el arqueo refleja correctamente cada forma (efectivo/transfer/etc.).
+    let abonos_holding: Vec<&crate::restaurante::models::AbonoPedido> =
+        detalle.abonos.iter().filter(|a| a.estado == "HOLDING").collect();
+    let total_abonado: f64 = abonos_holding.iter().map(|a| a.monto).sum();
+    let saldo = (total - total_abonado).max(0.0);
+
+    let venta_args = if total_abonado > 0.01 {
+        // Pagos: abonos previos + saldo final (o crédito si es fiado el saldo).
+        let mut pagos: Vec<serde_json::Value> = abonos_holding.iter().map(|a| serde_json::json!({
+            "forma_pago": a.forma_pago,
+            "monto": a.monto,
+            "banco_id": a.banco_id,
+            "referencia": a.referencia_pago,
+        })).collect();
+        if saldo > 0.01 {
+            pagos.push(serde_json::json!({
+                "forma_pago": if req.es_fiado { "CREDITO" } else { req.forma_pago.as_str() },
+                "monto": saldo,
+                "banco_id": req.banco_id,
+                "referencia": req.referencia_pago,
+            }));
         }
-    });
+        serde_json::json!({
+            "venta": {
+                "items": items_venta,
+                "forma_pago": "MIXTO",
+                "monto_recibido": total,
+                "descuento": 0.0,
+                "tipo_documento": req.tipo_documento.unwrap_or_else(|| "NOTA_VENTA".to_string()),
+                "es_fiado": false,
+                "observacion": observacion,
+                "cliente_id": req.cliente_id,
+                "pagos": pagos,
+            }
+        })
+    } else {
+        serde_json::json!({
+            "venta": {
+                "items": items_venta,
+                "forma_pago": req.forma_pago,
+                "monto_recibido": if req.es_fiado { 0.0 } else { total },
+                "descuento": 0.0,
+                "tipo_documento": req.tipo_documento.unwrap_or_else(|| "NOTA_VENTA".to_string()),
+                "es_fiado": req.es_fiado,
+                "observacion": observacion,
+                "banco_id": req.banco_id,
+                "referencia_pago": req.referencia_pago,
+                "cliente_id": req.cliente_id,
+            }
+        })
+    };
 
     // 3. Registrar venta vía dispatch (reusa toda la lógica del POS: SRI, secuencial, kardex, etc.)
     let resultado = crate::server::dispatch::dispatch_command(
@@ -1205,6 +1244,13 @@ pub async fn pedidos_cobrar(
              WHERE id = ?2",
             params![venta_id, pedido_id],
         ).map_err(err500)?;
+        // v2.5.91 — los abonos en HOLDING pasan a APLICADO (ya forman parte de la venta).
+        conn.execute(
+            "UPDATE rest_pedido_abonos
+             SET estado = 'APLICADO', venta_id_aplicado = ?1, fecha_aplicado = datetime('now', 'localtime')
+             WHERE pedido_id = ?2 AND estado = 'HOLDING'",
+            params![venta_id, pedido_id],
+        ).map_err(err500)?;
     }
 
     Ok(Json(serde_json::json!({
@@ -1212,6 +1258,41 @@ pub async fn pedidos_cobrar(
         "venta_id": venta_id,
         "venta": resultado.get("venta"),
     })))
+}
+
+/// `POST /api/v1/app/pedidos/:id/abono` — registra un pago parcial (abono) sobre
+/// la mesa. El dinero entra a la caja como HOLDING; al cobrar el pedido se aplica.
+#[derive(Debug, Deserialize)]
+pub struct AbonoPedidoRequest {
+    pub monto: f64,
+    pub forma_pago: String,
+    #[serde(default)]
+    pub banco_id: Option<i64>,
+    #[serde(default)]
+    pub referencia_pago: Option<String>,
+}
+
+pub async fn pedidos_abono(
+    AxumState(state): AxumState<Arc<ServerState>>,
+    headers: HeaderMap,
+    Path(pedido_id): Path<i64>,
+    Json(req): Json<AbonoPedidoRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    let session = extract_app_session(&headers, &state)?;
+    requiere_restaurante(&state)?;
+    session.requiere("cobra_caja")?;
+
+    let conn = state.db.conn.lock().map_err(err500)?;
+    let abono_id = crate::restaurante::commands::registrar_abono_pedido(
+        &conn, pedido_id, req.monto, &req.forma_pago,
+        req.banco_id, req.referencia_pago.as_deref(),
+        Some(session.usuario_id), Some(&session.nombre),
+    ).map_err(err400)?;
+
+    let detalle = crate::restaurante::commands::obtener_pedido_detalle(&conn, pedido_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiError::new(e))))?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "abono_id": abono_id, "detalle": detalle })))
 }
 
 // ─── Cocina (Sprint 3b) ──────────────────────────────────────────────────
@@ -2679,6 +2760,7 @@ pub fn rutas() -> Router<Arc<ServerState>> {
         .route("/api/v1/app/pedidos/:id/pedir-cuenta", post(pedidos_pedir_cuenta))
         .route("/api/v1/app/pedidos/:id/cancelar", post(pedidos_cancelar))
         .route("/api/v1/app/pedidos/:id/cobrar", post(pedidos_cobrar))
+        .route("/api/v1/app/pedidos/:id/abono", post(pedidos_abono))
         // ── Unir mesas (Sprint 3b) ──────────────────────────────────────
         .route("/api/v1/app/pedidos/:id/unir-mesas", post(pedidos_unir_mesas))
         .route("/api/v1/app/pedidos/:pedido_id/mesas-extra/:mesa_id", delete(pedidos_desunir_mesa))
