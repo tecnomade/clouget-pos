@@ -98,6 +98,24 @@ export interface PedidoDetalle {
   mesas_extra: MesaResumen[];
   /** v2.3.68 — Capacidad total efectiva (principal + extras) */
   capacidad_total: number;
+  /** v2.5.91 — Pagos parciales (abonos) ya recibidos sobre la mesa */
+  total_abonado?: number;
+  /** v2.5.91 — Saldo pendiente = total − total_abonado */
+  saldo?: number;
+  /** v2.5.91 — Historial de abonos */
+  abonos?: AbonoPedido[];
+}
+
+export interface AbonoPedido {
+  id: number;
+  monto: number;
+  forma_pago: string;
+  banco_id?: number | null;
+  banco_nombre?: string | null;
+  referencia_pago?: string | null;
+  estado: string;
+  fecha: string;
+  usuario_nombre?: string | null;
 }
 
 export interface ItemCocina {

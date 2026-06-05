@@ -20,6 +20,7 @@ import {
   pedirCuenta,
   cancelarPedido,
   cerrarPedido,
+  registrarAbono,
   imprimirPreCuenta,
   imprimirComandaCocina,
   unirMesas,
@@ -70,6 +71,44 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const [postCobroEstadoSri, setPostCobroEstadoSri] = useState<string | null>(null);
   const [postCobroMostrarRet, setPostCobroMostrarRet] = useState(false);
   const [certificadoSriCargado, setCertificadoSriCargado] = useState(false);
+  // v2.5.91 — abonos / pagos parciales sobre la mesa
+  const [cuentasAbono, setCuentasAbono] = useState<CuentaBanco[]>([]);
+  useEffect(() => { listarCuentasBanco().then(setCuentasAbono).catch(() => setCuentasAbono([])); }, []);
+  const [mostrarAbono, setMostrarAbono] = useState(false);
+  const [abonoMonto, setAbonoMonto] = useState("");
+  const [abonoForma, setAbonoForma] = useState("EFECTIVO");
+  const [abonoBancoId, setAbonoBancoId] = useState<number | null>(null);
+  const [abonoReferencia, setAbonoReferencia] = useState("");
+  const [abonoGuardando, setAbonoGuardando] = useState(false);
+
+  const handleRegistrarAbono = async () => {
+    if (!detalle) return;
+    const monto = parseFloat(abonoMonto.replace(",", ".")) || 0;
+    if (monto <= 0) { toastWarning("Ingresa un monto válido"); return; }
+    const saldo = (detalle.total ?? 0) - (detalle.total_abonado ?? 0);
+    if (monto > saldo + 0.01) { toastError(`El abono no puede superar el saldo ($${saldo.toFixed(2)})`); return; }
+    if (abonoForma === "TRANSFER" && !abonoBancoId) { toastError("Selecciona la cuenta bancaria"); return; }
+    try {
+      const caja = await obtenerCajaAbierta();
+      if (!caja) { toastError("Debes abrir una caja antes de recibir abonos"); return; }
+    } catch { toastError("Error verificando caja"); return; }
+    setAbonoGuardando(true);
+    try {
+      const actualizado = await registrarAbono({
+        pedidoId, monto, formaPago: abonoForma,
+        bancoId: abonoForma === "TRANSFER" ? abonoBancoId : null,
+        referenciaPago: abonoReferencia.trim() || null,
+      });
+      setDetalle(actualizado);
+      setMostrarAbono(false);
+      setAbonoMonto(""); setAbonoReferencia(""); setAbonoBancoId(null); setAbonoForma("EFECTIVO");
+      toastExito(`Abono de $${monto.toFixed(2)} registrado · Saldo $${(actualizado.saldo ?? 0).toFixed(2)}`);
+    } catch (err: any) {
+      toastError("No se pudo registrar el abono: " + (err?.message || err));
+    } finally {
+      setAbonoGuardando(false);
+    }
+  };
 
   const cargar = useCallback(async () => {
     try {
@@ -366,20 +405,55 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
     }));
 
     const total = items.reduce((s, i) => s + i.subtotal, 0);
+    const observacion = `Mesa: ${detalle.mesa_nombre}${detalle.zona_nombre ? ` (${detalle.zona_nombre})` : ""} · Pedido #${pedidoId}`;
 
-    const payload: NuevaVenta = {
-      items,
-      forma_pago: formaPago,
-      monto_recibido: esFiado ? 0 : total,
-      descuento: 0,
-      tipo_documento: "NOTA_VENTA",
-      es_fiado: esFiado,
-      observacion: `Mesa: ${detalle.mesa_nombre}${detalle.zona_nombre ? ` (${detalle.zona_nombre})` : ""} · Pedido #${pedidoId}`,
-      // Transferencia: pasar banco + referencia para que aparezca en
-      // /movimientos-bancarios y /verificacion (panel admin) — mismo flujo POS.
-      banco_id: extras?.bancoId ?? null,
-      referencia_pago: extras?.referencia?.trim() || null,
-    };
+    // v2.5.91 — si la mesa tiene abonos (pagos parciales), la venta es MIXTO:
+    // cada abono con su forma + el SALDO con la forma del cierre.
+    const abonosHolding = (detalle.abonos ?? []).filter((a) => a.estado === "HOLDING");
+    const totalAbonado = abonosHolding.reduce((s, a) => s + a.monto, 0);
+    const saldo = Math.max(0, total - totalAbonado);
+
+    let payload: NuevaVenta;
+    if (totalAbonado > 0.01) {
+      const pagos = abonosHolding.map((a) => ({
+        forma_pago: a.forma_pago,
+        monto: a.monto,
+        banco_id: a.banco_id ?? null,
+        referencia: a.referencia_pago ?? null,
+      }));
+      if (saldo > 0.01) {
+        pagos.push({
+          forma_pago: esFiado ? "CREDITO" : formaPago,
+          monto: saldo,
+          banco_id: extras?.bancoId ?? null,
+          referencia: extras?.referencia?.trim() || null,
+        });
+      }
+      payload = {
+        items,
+        forma_pago: "MIXTO",
+        monto_recibido: total,
+        descuento: 0,
+        tipo_documento: "NOTA_VENTA",
+        es_fiado: false,
+        observacion,
+        pagos,
+      };
+    } else {
+      payload = {
+        items,
+        forma_pago: formaPago,
+        monto_recibido: esFiado ? 0 : total,
+        descuento: 0,
+        tipo_documento: "NOTA_VENTA",
+        es_fiado: esFiado,
+        observacion,
+        // Transferencia: pasar banco + referencia para que aparezca en
+        // /movimientos-bancarios y /verificacion (panel admin) — mismo flujo POS.
+        banco_id: extras?.bancoId ?? null,
+        referencia_pago: extras?.referencia?.trim() || null,
+      };
+    }
 
     try {
       const resultado = await registrarVenta(payload);
@@ -601,11 +675,42 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
                 alignItems: "baseline",
               }}
             >
-              <span style={{ fontSize: 14, fontWeight: 600 }}>Total</span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{(detalle.total_abonado ?? 0) > 0 ? "Consumido" : "Total"}</span>
               <strong style={{ fontSize: 24, color: "var(--color-primary)" }}>
                 ${detalle.total.toFixed(2)}
               </strong>
             </div>
+
+            {/* v2.5.91 — Abonos / pagos parciales */}
+            {(detalle.total_abonado ?? 0) > 0 && (
+              <div style={{ marginTop: 4, padding: "6px 10px", background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                  <span style={{ color: "var(--color-text-secondary)" }}>Abonado (parcial)</span>
+                  <strong style={{ color: "var(--color-success)" }}>− ${(detalle.total_abonado ?? 0).toFixed(2)}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, marginTop: 2 }}>
+                  <strong>Saldo a cobrar</strong>
+                  <strong style={{ color: "var(--color-danger)" }}>${(detalle.saldo ?? detalle.total).toFixed(2)}</strong>
+                </div>
+                {(detalle.abonos ?? []).filter(a => a.estado === "HOLDING").map((a) => (
+                  <div key={a.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                    <span>· {a.fecha?.slice(11, 16)} {a.forma_pago}{a.banco_nombre ? ` (${a.banco_nombre})` : ""}{a.usuario_nombre ? ` — ${a.usuario_nombre}` : ""}</span>
+                    <span>${a.monto.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Botón registrar pago parcial (mesa con consumo) */}
+            {detalle.items.length > 0 && (detalle.saldo ?? detalle.total) > 0.01 && (
+              <button
+                className="btn btn-outline"
+                style={{ width: "100%", fontSize: 12 }}
+                onClick={() => { setAbonoMonto(((detalle.saldo ?? detalle.total)).toFixed(2)); setMostrarAbono(true); }}
+              >
+                ＋ Registrar pago parcial (abono)
+              </button>
+            )}
 
             {/* Botón Agregar productos.
                 Si la mesa ya pidió cuenta, pedir confirmación antes de agregar
@@ -817,7 +922,8 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
                   cursor: detalle.items.length === 0 ? "not-allowed" : "pointer",
                 }}
               >
-                💰 Cobrar ${detalle.total.toFixed(2)}
+                💰 Cobrar ${((detalle.total_abonado ?? 0) > 0 ? (detalle.saldo ?? detalle.total) : detalle.total).toFixed(2)}
+                {(detalle.total_abonado ?? 0) > 0 && <span style={{ fontSize: 10, opacity: 0.85 }}> (saldo)</span>}
               </button>
               <button
                 onClick={() => setConfirmCancelar(true)}
@@ -1062,6 +1168,47 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
           totalCobrado={postCobro.total}
           onClose={() => setPostCobroMostrarRet(false)}
         />
+      )}
+
+      {/* v2.5.91 — Modal: registrar abono (pago parcial) */}
+      {mostrarAbono && detalle && (
+        <div className="modal-overlay" onClick={() => !abonoGuardando && setMostrarAbono(false)}>
+          <div className="modal-content" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Registrar pago parcial</h3>
+            <p className="text-secondary" style={{ fontSize: 12, marginTop: -6 }}>
+              {detalle.mesa_nombre} · Saldo actual: <strong>${(detalle.saldo ?? detalle.total).toFixed(2)}</strong>
+            </p>
+            <label className="text-secondary" style={{ fontSize: 12 }}>Monto del abono</label>
+            <input className="input" type="number" step="0.01" value={abonoMonto}
+              onChange={(e) => setAbonoMonto(e.target.value)} placeholder="0.00" autoFocus />
+            <label className="text-secondary" style={{ fontSize: 12, marginTop: 10, display: "block" }}>Forma de pago</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              {[["EFECTIVO", "Efectivo"], ["TRANSFER", "Transferencia"], ["TARJETA", "Tarjeta"]].map(([v, l]) => (
+                <button key={v} type="button" className={`btn ${abonoForma === v ? "btn-primary" : "btn-outline"}`}
+                  style={{ fontSize: 12, padding: "4px 12px" }} onClick={() => setAbonoForma(v)}>{l}</button>
+              ))}
+            </div>
+            {abonoForma === "TRANSFER" && (
+              <div style={{ marginTop: 8 }}>
+                <select className="input" value={abonoBancoId ?? ""} onChange={(e) => setAbonoBancoId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Selecciona cuenta…</option>
+                  {cuentasAbono.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              </div>
+            )}
+            {(abonoForma === "TRANSFER" || abonoForma === "TARJETA") && (
+              <input className="input" style={{ marginTop: 8 }} value={abonoReferencia}
+                onChange={(e) => setAbonoReferencia(e.target.value)}
+                placeholder={abonoForma === "TARJETA" ? "Voucher (opcional)" : "Referencia (opcional)"} />
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+              <button className="btn btn-secondary" disabled={abonoGuardando} onClick={() => setMostrarAbono(false)}>Cancelar</button>
+              <button className="btn btn-primary" disabled={abonoGuardando} onClick={handleRegistrarAbono}>
+                {abonoGuardando ? "Guardando…" : "Registrar abono"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

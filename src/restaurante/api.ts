@@ -114,6 +114,18 @@ export const pedirCuenta = (pedidoId: number) =>
 export const cerrarPedido = (pedidoId: number, ventaId: number) =>
   invoke<void>("rest_cerrar_pedido", { pedidoId, ventaId });
 
+/** v2.5.91 — Registra un abono (pago parcial) sobre una mesa. Devuelve el detalle actualizado. */
+export const registrarAbono = (args: {
+  pedidoId: number; monto: number; formaPago: string; bancoId?: number | null; referenciaPago?: string | null;
+}) =>
+  invoke<PedidoDetalle>("rest_registrar_abono", {
+    pedidoId: args.pedidoId,
+    monto: args.monto,
+    formaPago: args.formaPago,
+    bancoId: args.bancoId ?? null,
+    referenciaPago: args.referenciaPago ?? null,
+  });
+
 // ─── Impresión ───────────────────────────────────────────────────────────
 
 /** Imprime el ticket de pre-cuenta (cortesía, no fiscal) en la térmica configurada. */

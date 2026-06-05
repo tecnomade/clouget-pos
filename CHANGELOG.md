@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.91 — 2026-06-03 🍽️ Pagos parciales por mesa (abonos) — escritorio
+
+- En el detalle de una mesa, botón **Registrar pago parcial (abono)**: el cliente puede pagar por partes mientras sigue consumiendo.
+- La mesa muestra **Consumido / Abonado / Saldo** + historial de abonos. El botón Cobrar pasa a cobrar solo el **saldo**.
+- Al cobrar, la venta se arma como **MIXTO** (abonos + saldo), reflejando cada forma de pago en el arqueo. El dinero del abono entra a caja como anticipo (holding), igual que en Servicio Técnico.
+- (Móvil y badge de mesa: en camino.)
+
+---
+
 ## v2.5.90 — 2026-06-03 💵 Apertura de caja no repite la justificación del faltante
 
 - Si la caja anterior se cerró con un **descuadre ya justificado** (faltante explicado al cerrar), al **abrir** la nueva caja ya **no se vuelve a pedir** justificar la diferencia. Queda una nota automática en la auditoría para conservar el rastro.
