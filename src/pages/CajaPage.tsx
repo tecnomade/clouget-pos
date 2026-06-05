@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
-import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja, stListarHoldingsCaja } from "../services/api";
+import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja, stListarHoldingsCaja, restListarAbonosHoldingCaja, type AbonoHoldingCaja } from "../services/api";
 import type { HoldingCaja } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
@@ -81,6 +81,9 @@ export default function CajaPage() {
   const [holdingsCaja, setHoldingsCaja] = useState<HoldingCaja[]>([]);
   const [moduloServicioTecnicoActivo, setModuloServicioTecnicoActivo] = useState(false);
   const totalHoldingsCaja = holdingsCaja.reduce((s, h) => s + h.monto, 0);
+  // v2.5.92 — abonos de mesa (restaurante) en HOLDING en esta caja
+  const [abonosMesaCaja, setAbonosMesaCaja] = useState<AbonoHoldingCaja[]>([]);
+  const totalAbonosMesaCaja = abonosMesaCaja.reduce((s, a) => s + a.monto, 0);
 
   const cargar = async () => {
     setCargando(true);
@@ -101,14 +104,16 @@ export default function CajaPage() {
           }
         } catch { /* ignore */ }
         setHoldingsCaja([]);
-      } else if (moduloServicioTecnicoActivo) {
-        // v2.4.13 ST-5 / v2.4.14: solo cargar holdings si el modulo ST esta habilitado
-        try {
-          const hs = await stListarHoldingsCaja(caja.id);
-          setHoldingsCaja(hs);
-        } catch { setHoldingsCaja([]); }
+        setAbonosMesaCaja([]);
       } else {
-        setHoldingsCaja([]);
+        if (moduloServicioTecnicoActivo) {
+          try { setHoldingsCaja(await stListarHoldingsCaja(caja.id)); } catch { setHoldingsCaja([]); }
+        } else {
+          setHoldingsCaja([]);
+        }
+        // v2.5.92 — abonos de mesa en holding (si hay módulo restaurante, el comando
+        // devuelve []; si no, también []). Silencioso ante error.
+        try { setAbonosMesaCaja(await restListarAbonosHoldingCaja(caja.id)); } catch { setAbonosMesaCaja([]); }
       }
     } catch (err) {
       // Cualquier error al cargar no debe romper la pagina
@@ -1008,6 +1013,41 @@ export default function CajaPage() {
                         <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           <strong>${h.monto.toFixed(2)}</strong>
                           <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{h.forma_pago}</div>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* v2.5.92 — Abonos de mesa (restaurante) en holding en esta caja */}
+              {abonosMesaCaja.length > 0 && (
+                <div style={{
+                  marginTop: 12, padding: "10px 12px",
+                  background: "rgba(34, 197, 94, 0.10)",
+                  border: "1px solid rgba(34, 197, 94, 0.4)",
+                  borderRadius: 6, fontSize: 12,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, color: "var(--color-success)" }}>
+                      💵 Abonos de mesa sin cerrar ({abonosMesaCaja.length})
+                    </span>
+                    <span style={{ fontWeight: 700, color: "var(--color-success)" }}>
+                      ${totalAbonosMesaCaja.toFixed(2)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+                    Pagos parciales recibidos en mesas todavía abiertas. Ese efectivo está en la caja
+                    pero la venta se registra al cerrar la mesa. No lo cuentes como sobrante.
+                  </div>
+                  <div style={{ maxHeight: 140, overflowY: "auto", fontSize: 11 }}>
+                    {abonosMesaCaja.map(a => (
+                      <div key={a.id}
+                        style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px dashed rgba(34,197,94,0.2)" }}>
+                        <span><strong>{a.mesa_nombre}</strong> <span style={{ color: "var(--color-text-secondary)" }}>· {a.fecha?.slice(11, 16)}</span></span>
+                        <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          <strong>${a.monto.toFixed(2)}</strong>
+                          <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>{a.forma_pago}</div>
                         </span>
                       </div>
                     ))}

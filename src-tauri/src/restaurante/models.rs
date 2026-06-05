@@ -50,6 +50,9 @@ pub struct MesaConEstado {
     pub mesero_nombre: Option<String>,
     pub comensales: Option<i32>,
     pub total_actual: f64,
+    /// v2.5.92 — abonos (pagos parciales) en HOLDING sobre la mesa. >0 = "Cuenta parcial".
+    #[serde(default)]
+    pub total_abonado: f64,
     pub items_pendientes_cocina: i32,
     pub fecha_apertura: Option<String>,
     pub minutos_abierta: Option<i64>,

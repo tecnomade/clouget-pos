@@ -36,6 +36,8 @@ export interface MesaConEstado {
   mesero_nombre: string | null;
   comensales: number | null;
   total_actual: number;
+  /** v2.5.92 — abonos en holding sobre la mesa. >0 = "Cuenta parcial" */
+  total_abonado?: number;
   items_pendientes_cocina: number;
   fecha_apertura: string | null;
   minutos_abierta: number | null;

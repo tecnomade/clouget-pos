@@ -413,6 +413,12 @@ function CardMesa({ mesa, onClick }: { mesa: MesaConEstado; onClick: () => void 
                 👤 {mesa.mesero_nombre}
               </div>
             )}
+            {/* v2.5.92 — badge "Cuenta parcial" si la mesa tiene abonos */}
+            {(mesa.total_abonado ?? 0) > 0 && (
+              <div style={{ marginTop: 4, alignSelf: "flex-start", fontSize: 10, fontWeight: 700, color: "#fff", background: "#16a34a", padding: "1px 7px", borderRadius: 999 }}>
+                💵 Cuenta parcial · saldo ${(mesa.total_actual - (mesa.total_abonado ?? 0)).toFixed(2)}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: "auto" }}>
               <strong style={{ fontSize: 18, color: "var(--color-primary)" }}>
                 ${mesa.total_actual.toFixed(2)}

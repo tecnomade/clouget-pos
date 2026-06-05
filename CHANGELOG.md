@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.92 — 2026-06-03 🍽️ Mesas: badge "Cuenta parcial" + aviso de abonos al cerrar caja
+
+- En la grilla de mesas (escritorio y app) aparece un badge **💵 Cuenta parcial · saldo $X** cuando la mesa tiene pagos parciales.
+- Al **cerrar caja**, se muestra un aviso con los **abonos de mesa sin cerrar** (ese efectivo está en caja pero la venta se registra al cerrar la mesa) — para que el arqueo sea claro, igual que los anticipos de Servicio Técnico.
+
+---
+
 ## v2.5.91 — 2026-06-03 🍽️ Pagos parciales por mesa (abonos) — escritorio
 
 - En el detalle de una mesa, botón **Registrar pago parcial (abono)**: el cliente puede pagar por partes mientras sigue consumiendo.

@@ -2103,6 +2103,18 @@ export const stCancelarOrden = (ordenId: number, observacion?: string | null) =>
 export const stListarHoldingsCaja = (cajaId?: number | null) =>
   smartInvoke<HoldingCaja[]>("st_listar_holdings_caja", { cajaId: cajaId ?? null });
 
+// v2.5.92 — abonos de mesa (restaurante) en HOLDING en la caja
+export interface AbonoHoldingCaja {
+  id: number;
+  pedido_id: number;
+  mesa_nombre: string;
+  monto: number;
+  forma_pago: string;
+  fecha: string;
+}
+export const restListarAbonosHoldingCaja = (cajaId?: number | null) =>
+  smartInvoke<AbonoHoldingCaja[]>("rest_listar_abonos_holding_caja", { cajaId: cajaId ?? null });
+
 // === ST: Reporte de cancelaciones (v2.4.14) ===
 export interface OrdenCancelada {
   orden_id: number;

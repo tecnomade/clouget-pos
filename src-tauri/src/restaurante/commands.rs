@@ -240,6 +240,7 @@ pub(crate) fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<
                 mesero_nombre: row.get(8)?,
                 comensales: row.get(9)?,
                 total_actual: 0.0,
+                total_abonado: 0.0,
                 items_pendientes_cocina: 0,
                 fecha_apertura: row.get(11)?,
                 minutos_abierta: None,
@@ -280,6 +281,16 @@ pub(crate) fn listar_mesas_con_estado_internal(conn: &Connection) -> Result<Vec<
                     )
                     .unwrap_or(0.0);
                 m.total_actual = total;
+
+                // v2.5.92: abonos (pagos parciales) en HOLDING → para badge "Cuenta parcial"
+                let abonado: f64 = conn
+                    .query_row(
+                        "SELECT COALESCE(SUM(monto), 0) FROM rest_pedido_abonos WHERE pedido_id = ?1 AND estado = 'HOLDING'",
+                        params![pid],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(0.0);
+                m.total_abonado = abonado;
 
                 let pendientes: i32 = conn
                     .query_row(
@@ -740,6 +751,44 @@ pub fn rest_registrar_abono(
         referencia_pago.as_deref(), usuario_id, usuario_nombre.as_deref(),
     )?;
     obtener_pedido_detalle(&conn, pedido_id)
+}
+
+/// v2.5.92 — Abonos de mesa en HOLDING en una caja (para el aviso al cerrar caja).
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct AbonoHoldingCaja {
+    pub id: i64,
+    pub pedido_id: i64,
+    pub mesa_nombre: String,
+    pub monto: f64,
+    pub forma_pago: String,
+    pub fecha: String,
+}
+
+#[tauri::command]
+pub fn rest_listar_abonos_holding_caja(
+    db: State<'_, Database>,
+    caja_id: Option<i64>,
+) -> Result<Vec<AbonoHoldingCaja>, String> {
+    requiere_modulo_restaurante(&db)?;
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let caja_efectiva: Option<i64> = match caja_id {
+        Some(id) => Some(id),
+        None => conn.query_row("SELECT id FROM caja WHERE estado = 'ABIERTA' LIMIT 1", [], |r| r.get(0)).ok(),
+    };
+    let cid = match caja_efectiva { Some(c) => c, None => return Ok(vec![]) };
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.pedido_id, m.nombre, a.monto, a.forma_pago, a.fecha
+         FROM rest_pedido_abonos a
+         JOIN rest_pedidos_abiertos p ON p.id = a.pedido_id
+         JOIN rest_mesas m ON m.id = p.mesa_id
+         WHERE a.estado = 'HOLDING' AND a.caja_id = ?1
+         ORDER BY a.id",
+    ).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map(params![cid], |r| Ok(AbonoHoldingCaja {
+        id: r.get(0)?, pedido_id: r.get(1)?, mesa_nombre: r.get(2)?,
+        monto: r.get(3)?, forma_pago: r.get(4)?, fecha: r.get(5)?,
+    })).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
 // ─── Impresión ──────────────────────────────────────────────────────────
