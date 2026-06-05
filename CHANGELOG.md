@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.90 — 2026-06-03 💵 Apertura de caja no repite la justificación del faltante
+
+- Si la caja anterior se cerró con un **descuadre ya justificado** (faltante explicado al cerrar), al **abrir** la nueva caja ya **no se vuelve a pedir** justificar la diferencia. Queda una nota automática en la auditoría para conservar el rastro.
+- Si el cierre anterior cuadró, la apertura sigue pidiendo justificación cuando el monto difiere (control intacto).
+
+---
+
 ## v2.5.89 — 2026-06-03 🍗 Combos/recetas con opciones y precio por extra
 
 - **Combo flexible mejorado** para casos tipo restaurante/KFC:

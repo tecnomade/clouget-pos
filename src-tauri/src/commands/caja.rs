@@ -118,16 +118,21 @@ pub fn abrir_caja(
     // Buscar ultimo cierre para validar continuidad.
     // v2.4.27: descontamos TODOS los retiros post-cierre (cualquier motivo/estado),
     // no solo depositos a banco. Cualquier retiro fisico saca dinero de la caja.
-    let ultimo: Option<(i64, f64, Option<String>)> = conn.query_row(
-        "SELECT id, COALESCE(monto_real, 0), COALESCE(cerrada_at, fecha_cierre) FROM caja
+    // v2.5.90: traer también la diferencia y el motivo del cierre anterior, para
+    // NO volver a pedir justificación al abrir si ese cierre ya fue un descuadre
+    // justificado (la explicación del faltante ya quedó registrada al cerrar).
+    let ultimo: Option<(i64, f64, Option<String>, f64, Option<String>)> = conn.query_row(
+        "SELECT id, COALESCE(monto_real, 0), COALESCE(cerrada_at, fecha_cierre),
+                COALESCE(diferencia, 0), motivo_descuadre FROM caja
          WHERE estado = 'CERRADA' AND monto_real IS NOT NULL
          ORDER BY id DESC LIMIT 1",
         [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
     ).ok();
 
+    let mut cierre_anterior_descuadrado = false;
     let (caja_anterior_id, monto_esperado_apertura) = match ultimo {
-        Some((id, m, cerrada_at_opt)) => {
+        Some((id, m, cerrada_at_opt, dif_anterior, motivo_anterior)) => {
             let cerrada_at_str = cerrada_at_opt.unwrap_or_default();
             let depositos_post: f64 = if !cerrada_at_str.is_empty() {
                 conn.query_row(
@@ -136,14 +141,18 @@ pub fn abrir_caja(
                     rusqlite::params![id, cerrada_at_str], |r| r.get(0),
                 ).unwrap_or(0.0)
             } else { 0.0 };
+            // El cierre anterior fue un descuadre ya justificado (tiene motivo).
+            cierre_anterior_descuadrado = dif_anterior.abs() > 0.01
+                && motivo_anterior.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
             (Some(id), (m - depositos_post).max(0.0))
         }
         None => (None, 0.0),
     };
 
-    // Si difiere del cierre anterior, exigir motivo
+    // Si difiere del cierre anterior, exigir motivo — SALVO que el cierre anterior
+    // ya haya sido un descuadre justificado (no pedir dos veces lo mismo).
     let difiere = (monto_inicial - monto_esperado_apertura).abs() > 0.01;
-    if difiere && caja_anterior_id.is_some() {
+    if difiere && caja_anterior_id.is_some() && !cierre_anterior_descuadrado {
         let motivo_str = motivo_diferencia.as_deref().map(|s| s.trim()).unwrap_or("");
         if motivo_str.len() < 5 {
             return Err(format!(
@@ -154,10 +163,19 @@ pub fn abrir_caja(
         }
     }
 
+    // Si hubo diferencia pero no se pidió motivo (cierre anterior ya descuadrado),
+    // dejar una nota automática para conservar el rastro de auditoría.
+    let motivo_apertura_final: Option<String> = if difiere
+        && motivo_diferencia.as_deref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        Some("Continuación tras cierre con descuadre ya justificado".to_string())
+    } else {
+        motivo_diferencia.clone()
+    };
+
     conn.execute(
         "INSERT INTO caja (monto_inicial, monto_esperado, estado, usuario, usuario_id, motivo_diferencia_apertura, caja_anterior_id, desglose_apertura)
          VALUES (?1, ?1, 'ABIERTA', ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![monto_inicial, usuario_nombre, usuario_id, motivo_diferencia, caja_anterior_id, desglose],
+        rusqlite::params![monto_inicial, usuario_nombre, usuario_id, motivo_apertura_final, caja_anterior_id, desglose],
     )
     .map_err(|e| e.to_string())?;
 

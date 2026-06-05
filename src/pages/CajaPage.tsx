@@ -205,14 +205,17 @@ export default function CajaPage() {
     const diff = cierreEsperado != null ? monto - cierreEsperado : 0;
     const hayDif = cierreEsperado != null && Math.abs(diff) > 0.01;
     const esExceso = diff > 0;
+    // v2.5.90: si el cierre anterior YA fue un descuadre (justificado al cerrar),
+    // no volver a pedir justificación al abrir — sería pedir lo mismo dos veces.
+    const cierreAnteriorDescuadrado = Math.abs(Number(ultimoCierre?.diferencia_cierre ?? 0)) > 0.01;
 
     // Si hay exceso (sobrante o ingreso), exigir que el usuario elija tipo
-    if (hayDif && esExceso && !tipoApertura) {
+    if (hayDif && esExceso && !tipoApertura && !cierreAnteriorDescuadrado) {
       toastError("Indica si el excedente es un Ingreso de caja o un Sobrante.");
       return;
     }
-    // Para faltante (negativo), siempre exigir motivo de mín 5 chars
-    if (hayDif && !esExceso && motivoApertura.trim().length < 5) {
+    // Para faltante (negativo), exigir motivo de mín 5 chars (salvo cierre anterior ya descuadrado)
+    if (hayDif && !esExceso && motivoApertura.trim().length < 5 && !cierreAnteriorDescuadrado) {
       toastError(`El monto inicial es menor al disponible ($${cierreEsperado!.toFixed(2)}). Debe explicar el motivo (mínimo 5 caracteres).`);
       return;
     }
