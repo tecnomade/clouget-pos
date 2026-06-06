@@ -106,7 +106,6 @@ pub async fn st_mis_ordenes(
                     fecha_ingreso, fecha_promesa, tecnico_id, tecnico_nombre
              FROM ordenes_servicio
              WHERE tecnico_id = ?1
-               AND estado NOT IN ('ENTREGADO', 'ENTREGADO_PARCIAL', 'CANCELADA', 'CANCELADO')
              ORDER BY
                CASE estado
                  WHEN 'EN_REPARACION' THEN 1
@@ -117,14 +116,14 @@ pub async fn st_mis_ordenes(
                  ELSE 6
                END,
                fecha_promesa ASC NULLS LAST,
-               id DESC"
+               id DESC
+             LIMIT 500"
         } else {
             "SELECT id, numero, estado, cliente_nombre, cliente_telefono,
                     equipo_descripcion, equipo_marca, equipo_modelo, equipo_serie, equipo_placa,
                     problema_reportado, COALESCE(presupuesto,0), COALESCE(monto_final,0),
                     fecha_ingreso, fecha_promesa, tecnico_id, tecnico_nombre
              FROM ordenes_servicio
-             WHERE estado NOT IN ('ENTREGADO', 'ENTREGADO_PARCIAL', 'CANCELADA', 'CANCELADO')
              ORDER BY
                CASE estado
                  WHEN 'EN_REPARACION' THEN 1
@@ -135,7 +134,8 @@ pub async fn st_mis_ordenes(
                  ELSE 6
                END,
                fecha_promesa ASC NULLS LAST,
-               id DESC"
+               id DESC
+             LIMIT 500"
         };
         let mut stmt = conn.prepare(sql).map_err(err500)?;
         let mapper = |r: &rusqlite::Row| -> rusqlite::Result<OrdenResumen> {

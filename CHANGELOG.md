@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.0 — 2026-06-06 📱 App móvil: el admin ve TODAS las órdenes de servicio + estados igual que en PC
+
+- **Servidor (app móvil):** el listado de órdenes de servicio ya **no oculta las entregadas/canceladas**. El admin/coordinador ve **todas** las órdenes (igual que en la PC); el técnico ve las suyas, en todos los estados.
+- Esto corrige que un admin no viera órdenes en el móvil (antes solo se mostraban las "activas").
+
+> Requiere actualizar también la app móvil (se publica por separado) para ver los nuevos filtros de estado (Entregadas / Canceladas).
+
+---
+
 ## v2.5.99 — 2026-06-06 🍽 Restaurante: cobrar sin liberar la mesa + Consumidor Final en reporte de ventas
 
 - **Restaurante — cobro flexible (prepago / mixto):** al **Cobrar** una mesa, ahora se imprime un **comprobante** (lo pagado + total) y el sistema **pregunta si liberar la mesa**. Si eliges **No**, la mesa **sigue ocupada con una cuenta nueva** para que los comensales sigan pidiendo (ideal para pago previo, o mixto: prepago + extras al final). Si piden factura, se entrega al final.
