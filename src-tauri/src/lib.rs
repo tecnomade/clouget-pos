@@ -25,7 +25,11 @@ use std::sync::{Arc, Mutex};
 /// versiones stable nuevas si no habia una beta posterior — quedaba atras del stable.
 #[tauri::command]
 async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<Option<String>, String> {
-    let endpoint_base = "https://zakquzflkvfqflqnxpxj.supabase.co/functions/v1/update-manifest";
+    // v2.5.93 — consultar DIRECTO los manifiestos de GitHub (release.ps1 los mantiene
+    // al día). Antes se consultaba un proxy de Supabase que quedaba desfasado una
+    // versión (cacheaba), por eso la app "no actualizaba a la última".
+    let manifest_stable = "https://github.com/tecnomade/clouget-pos/releases/latest/download/latest.json";
+    let manifest_beta = "https://github.com/tecnomade/clouget-pos/releases/download/beta-channel/latest.json";
 
     // Helper: parsear "X.Y.Z" a tupla (mayor, menor, parche) para comparar versiones.
     // Si falla el parseo, devuelve (0,0,0) que pierde contra cualquier version real.
@@ -41,12 +45,10 @@ async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<
     // - stable: solo el endpoint stable
     // - beta: stable Y beta (asi el usuario beta nunca pierde versiones estables nuevas)
     let endpoints_a_consultar: Vec<String> = if canal == "beta" {
-        vec![
-            format!("{}?canal=stable", endpoint_base),
-            format!("{}?canal=beta", endpoint_base),
-        ]
+        // beta ve stable Y beta (así nunca pierde una estable nueva)
+        vec![manifest_stable.to_string(), manifest_beta.to_string()]
     } else {
-        vec![format!("{}?canal=stable", endpoint_base)]
+        vec![manifest_stable.to_string()]
     };
 
     // Consultar cada endpoint por separado, buscar el update con version mas alta
@@ -84,9 +86,25 @@ async fn verificar_update_canal(app: tauri::AppHandle, canal: String) -> Result<
 
     match mejor_update {
         Some(update) => {
+            use tauri::Emitter;
             let new_version = update.version.clone();
-            update.download_and_install(|_, _| {}, || {}).await
-                .map_err(|e| e.to_string())?;
+            // v2.5.93 — emitir progreso de descarga a la UI (canal beta). Antes el
+            // callback estaba vacío y el usuario veía "0%" todo el tiempo.
+            let app_emit = app.clone();
+            let descargado = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let desc_cb = descargado.clone();
+            update.download_and_install(
+                move |chunk: usize, total: Option<u64>| {
+                    let acc = desc_cb.fetch_add(chunk as u64, std::sync::atomic::Ordering::Relaxed) + chunk as u64;
+                    let pct: u32 = match total {
+                        Some(t) if t > 0 => ((acc as f64 / t as f64) * 100.0).min(100.0) as u32,
+                        _ => 0,
+                    };
+                    let _ = app_emit.emit("update-beta-progress", pct);
+                },
+                || {},
+            ).await.map_err(|e| e.to_string())?;
+            let _ = app.emit("update-beta-progress", 100u32);
             Ok(Some(new_version))
         }
         None => Ok(None),

@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.93 — 2026-06-06 🔄 Auto-update: lee el manifiesto directo de GitHub + progreso real
+
+- El actualizador del escritorio ahora consulta el manifiesto **directo de GitHub** (que el release mantiene al día), en vez de un intermediario que quedaba desfasado una versión. Esto corrige el "no actualiza a la última".
+- El canal beta ahora **muestra el progreso real** de descarga (antes se quedaba en 0% aunque sí descargara).
+
+---
+
 ## v2.5.92 — 2026-06-03 🍽️ Mesas: badge "Cuenta parcial" + aviso de abonos al cerrar caja
 
 - En la grilla de mesas (escritorio y app) aparece un badge **💵 Cuenta parcial · saldo $X** cuando la mesa tiene pagos parciales.

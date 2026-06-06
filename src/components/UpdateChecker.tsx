@@ -127,12 +127,23 @@ export default function UpdateChecker() {
       } catch { /* fallback stable */ }
 
       if (canal === "beta") {
+        let unlistenProg: (() => void) | null = null;
         try {
           console.log("[Updater] Canal BETA: verificando via comando Rust...");
           if (esStartup || !manualRef.current) {
             setEstado("descargando");
             setProgreso(0);
           }
+          // v2.5.93 — escuchar el progreso real de descarga emitido por Rust.
+          try {
+            const { listen } = await import("@tauri-apps/api/event");
+            unlistenProg = await listen<number>("update-beta-progress", (e) => {
+              if (typeof e.payload === "number") {
+                setEstado("descargando");
+                setProgreso(e.payload);
+              }
+            });
+          } catch { /* sin listener: seguirá en 0%, no crítico */ }
           const nuevaVersion = await invoke<string | null>("verificar_update_canal", { canal: "beta" });
           if (nuevaVersion) {
             setUpdate({ version: nuevaVersion } as any);
@@ -155,6 +166,8 @@ export default function UpdateChecker() {
           } else {
             setEstado("idle");
           }
+        } finally {
+          unlistenProg?.();
         }
         return;
       }
