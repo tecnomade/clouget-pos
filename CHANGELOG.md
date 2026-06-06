@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.2 — 2026-06-06 🧭 Menú: "Cerrar sesión" siempre visible (no se corta en pantallas pequeñas)
+
+- **Corregido:** en algunas pantallas (resoluciones bajas o con escalado de Windows) no se podía bajar el menú lateral para ver el botón **Cerrar sesión** — quedaba cortado. Ahora **"Cerrar sesión" queda fijo al fondo del menú** (siempre visible) y solo los ítems del menú hacen scroll.
+
+---
+
 ## v2.6.1 — 2026-06-06 🧯 Caja: corregido el desborde de la tabla "Movimientos de caja"
 
 - La tabla de **Movimientos de caja** ya no se desborda (la columna **Usuario** se salía del recuadro). Ahora se ajusta con scroll horizontal dentro de la tarjeta.

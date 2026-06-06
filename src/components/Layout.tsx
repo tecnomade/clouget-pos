@@ -381,12 +381,27 @@ export default function Layout({ children }: { children?: ReactNode }) {
         style={{
           width: sidebarWidth,
           transition: "width 0.18s ease",
-          // SIEMPRE permitir scroll vertical para items que no caben en pantalla.
-          // overflowX:hidden evita que tooltips/indicadores se escapen lateralmente.
-          overflowY: "auto",
+          // El scroll vive en el contenedor interno (abajo) para que "Cerrar
+          // sesión" quede SIEMPRE fijo y visible al fondo, sin importar la altura
+          // de pantalla / escalado de Windows. overflowX:hidden evita que
+          // tooltips/indicadores se escapen lateralmente.
+          overflowY: "hidden",
           overflowX: "hidden",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
+        {/* Contenedor scrollable de items (todo menos "Cerrar sesión") */}
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
         {/* Botón toggle expandir/colapsar */}
         <button
           onClick={() => setSidebarExpandido(v => !v)}
@@ -497,7 +512,9 @@ export default function Layout({ children }: { children?: ReactNode }) {
 
         <div className="nav-spacer" />
 
-        {/* Cerrar sesión - siempre al final */}
+        </div>{/* fin contenedor scrollable */}
+
+        {/* Cerrar sesión - SIEMPRE fijo y visible al fondo (no scrollea) */}
         <div
           className="nav-item"
           onClick={cerrarSesion}
@@ -515,6 +532,8 @@ export default function Layout({ children }: { children?: ReactNode }) {
             gap: sidebarExpandido ? 12 : 0,
             justifyContent: sidebarExpandido ? "flex-start" : "center",
             padding: sidebarExpandido ? "8px 14px" : undefined,
+            flexShrink: 0,
+            borderTop: "1px solid rgba(255,255,255,0.08)",
           }}
         >
           <SignOut size={22} />
