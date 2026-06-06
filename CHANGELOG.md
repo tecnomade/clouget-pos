@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.97 — 2026-06-06 🧮 Caja: el cuadre forzado es solo para admin (cajeros cierran sin bloqueo)
+
+- Ahora, **por defecto, los cajeros pueden cerrar caja aunque el efectivo no coincida**, sin tener que escribir un motivo. La diferencia **igual queda registrada** para que el admin la revise.
+- Al **admin** se le sigue exigiendo justificar el descuadre (igual que antes).
+- Nuevo interruptor en **Configuración → Caja: "Exigir cuadre de caja a cajeros"** (desactivado por defecto) por si quiere volver a exigirles que expliquen el faltante/sobrante.
+
+---
+
 ## v2.5.96 — 2026-06-06 ✅ Suscripción SRI: validación automática al emitir + ID del equipo visible
 
 - **Al emitir una factura**, si se agotó la prueba gratuita y no hay validación en caché, el POS ahora **valida la suscripción online automáticamente** (ya que para enviar al SRI se necesita internet). Con la suscripción activa en el panel, el cliente **factura sin pasos manuales** — ya no es obligatorio pulsar "Verificar suscripción" primero.

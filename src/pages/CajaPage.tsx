@@ -26,6 +26,10 @@ export default function CajaPage() {
   // toda la info para auditoría. Sin banner para admin (ruido innecesario).
   const [ocultarMontoEsperado, setOcultarMontoEsperado] = useState(false);
   const ocultarParaCajero = ocultarMontoEsperado && !esAdmin;
+  // El cuadre forzado (motivo obligatorio si el conteo no coincide) aplica SOLO
+  // a admin por defecto. Para cajeros se puede exigir activando esta config.
+  const [forzarCuadreCajero, setForzarCuadreCajero] = useState(false);
+  const enforceCuadre = esAdmin || forzarCuadreCajero;
   const [imprimiendo, setImprimiendo] = useState(false);
   const [mostrarRetiro, setMostrarRetiro] = useState(false);
   const [retiroMonto, setRetiroMonto] = useState("");
@@ -179,6 +183,7 @@ export default function CajaPage() {
     obtenerConfig().then((cfg) => {
       setTicketUsarPdf(cfg.ticket_usar_pdf === "1");
       setOcultarMontoEsperado(cfg.ocultar_monto_esperado_caja === "1");
+      setForzarCuadreCajero(cfg.caja_forzar_cuadre_cajero === "1");
       // v2.4.14 / v2.4.17: gating del panel de holdings. Licencia es la fuente
       // de verdad (ver Layout.tsx). Fallback al flag legacy si no hay licencia.
       const licStr = (cfg.licencia_modulos || "").trim();
@@ -262,7 +267,10 @@ export default function CajaPage() {
     // NO restar retiros aqui porque ya estan dentro de monto_esperado.
     const esperado = cajaAbierta?.monto_esperado ?? 0;
     const dif = monto - esperado;
-    if (Math.abs(dif) > 0.01) {
+    // Cuadre forzado solo para admin (o si se activó para cajeros en Config).
+    // Los cajeros pueden cerrar con descuadre sin justificar; la diferencia
+    // queda registrada para que el admin la revise.
+    if (Math.abs(dif) > 0.01 && enforceCuadre) {
       // v2.3.65 anti-fuga: cuando modo activo Y NO admin, el cajero NO ve el
       // campo "Motivo del descuadre" (estaria delatando que hay descuadre).
       // En ese caso usamos el campo "Observación adicional" como motivo y

@@ -374,6 +374,33 @@ export default function Configuracion() {
                     </div>
                   </div>
                 </label>
+                {/* Cuadre forzado: por defecto solo el admin debe justificar un
+                    descuadre. Activar esto exige también a los cajeros explicar
+                    el motivo cuando el conteo no coincide. */}
+                <label style={{ gridColumn: "1 / -1", display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={config.caja_forzar_cuadre_cajero === "1"}
+                    onChange={(e) => {
+                      const v = e.target.checked ? "1" : "0";
+                      setConfig({ ...config, caja_forzar_cuadre_cajero: v });
+                      guardarConfig({ caja_forzar_cuadre_cajero: v });
+                      toastExito(e.target.checked
+                        ? "Los cajeros también deberán justificar descuadres al cerrar"
+                        : "Solo el admin justifica descuadres; los cajeros cierran sin bloqueo");
+                    }}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>🧮 Exigir cuadre de caja a cajeros</div>
+                    <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                      Por defecto <b>desactivado</b>: los cajeros pueden cerrar caja aunque el efectivo no
+                      coincida, sin tener que escribir un motivo (la diferencia igual queda registrada para
+                      que el admin la revise). Al <b>admin</b> siempre se le exige justificar el descuadre.
+                      Active esto si quiere que los cajeros también expliquen el faltante/sobrante.
+                    </div>
+                  </div>
+                </label>
                 {config.modulo_servicio_tecnico === "1" && (
                   <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginLeft: 24, background: "var(--color-surface-alt)", borderRadius: 8 }}>
                     <label style={{ fontSize: 12, fontWeight: 600 }}>Tipo de taller:</label>

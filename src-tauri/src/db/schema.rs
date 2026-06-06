@@ -1033,6 +1033,9 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caja_descuadre_umbral_pct', '2')", []);
     // Config: si requiere PIN admin para cerrar con descuadre > umbral
     let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caja_requiere_pin_descuadre', '0')", []);
+    // Config: si se exige el cuadre (motivo obligatorio en descuadre) tambien a
+    // los cajeros. Por defecto '0' = solo admin cuadra; los cajeros cierran libre.
+    let _ = conn.execute("INSERT OR IGNORE INTO config (key, value) VALUES ('caja_forzar_cuadre_cajero', '0')", []);
 
     // Control de stock negativo:
     //   PERMITIR (default): puede vender aunque deje stock < 0 (comportamiento historico)

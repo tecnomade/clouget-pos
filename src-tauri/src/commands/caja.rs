@@ -213,7 +213,7 @@ pub fn cerrar_caja(
     sesion: State<SesionState>,
     monto_real: f64,
     observacion: Option<String>,
-    motivo_descuadre: Option<String>,
+    mut motivo_descuadre: Option<String>,
     desglose: Option<String>,
     pin_supervisor: Option<String>,
 ) -> Result<ResumenCaja, String> {
@@ -382,9 +382,24 @@ pub fn cerrar_caja(
     let monto_esperado = monto_inicial + total_efectivo + total_cobros_efectivo + total_ingresos_manuales - total_gastos - total_retiros;
     let diferencia = monto_real - monto_esperado;
 
-    // Anti-fraude: si hay descuadre, exigir motivo (mínimo 5 caracteres)
+    // Anti-fraude: si hay descuadre, exigir motivo (mínimo 5 caracteres).
+    // El cuadre forzado aplica SOLO a admin por defecto. Para cajeros (roles
+    // subordinados) se puede activar con la config 'caja_forzar_cuadre_cajero'='1'.
     let descuadra = diferencia.abs() > 0.01;
-    if descuadra {
+    let forzar_cuadre_cajero: bool = conn
+        .query_row("SELECT value FROM config WHERE key = 'caja_forzar_cuadre_cajero'", [], |r| r.get::<_, String>(0))
+        .map(|v| v == "1").unwrap_or(false);
+    let enforce_cuadre = es_admin || forzar_cuadre_cajero;
+
+    // Cajero sin cuadre forzado: cerrar igual, pero registrar la diferencia con
+    // un motivo automatico para que el admin la vea en la auditoria.
+    if descuadra && !enforce_cuadre {
+        if motivo_descuadre.as_deref().map(|s| s.trim().len()).unwrap_or(0) < 1 {
+            motivo_descuadre = Some("Cierre de cajero (cuadre no exigido)".to_string());
+        }
+    }
+
+    if descuadra && enforce_cuadre {
         let motivo_str = motivo_descuadre.as_deref().map(|s| s.trim()).unwrap_or("");
         if motivo_str.len() < 5 {
             return Err(format!(
