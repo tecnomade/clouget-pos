@@ -1292,8 +1292,16 @@ export default function CajaPage() {
                   </span>
                 </div>
                 <div className="card-body" style={{ padding: 0, overflowX: "auto" }}>
-                  <table className="table" style={{ width: "100%" }}>
-                    <thead><tr><th>Hora</th><th>Tipo</th><th>Monto</th><th>Motivo</th><th>Cuenta</th><th>Estado</th><th>Usuario</th></tr></thead>
+                  <table className="table" style={{ width: "100%", tableLayout: "fixed" }}>
+                    <thead><tr>
+                      <th style={{ width: "9%" }}>Hora</th>
+                      <th style={{ width: "13%" }}>Tipo</th>
+                      <th style={{ width: "12%" }}>Monto</th>
+                      <th style={{ width: "22%" }}>Motivo</th>
+                      <th style={{ width: "12%" }}>Cuenta</th>
+                      <th style={{ width: "15%" }}>Estado</th>
+                      <th style={{ width: "17%", wordBreak: "break-word" }}>Usuario</th>
+                    </tr></thead>
                     <tbody>
                       {retiros.map((r: any) => {
                         const esIngreso = r.tipo === "INGRESO";
@@ -1332,7 +1340,7 @@ export default function CajaPage() {
                                 <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(148, 148, 148, 0.15)", color: "var(--color-text-secondary)", fontSize: 11, fontWeight: 600 }}>Sin depósito</span>
                               )}
                             </td>
-                            <td style={{ fontSize: 12 }}>{r.usuario}</td>
+                            <td style={{ fontSize: 12, wordBreak: "break-word" }}>{r.usuario}</td>
                           </tr>
                           {confirmandoRetiroId === r.id && (
                             <tr>

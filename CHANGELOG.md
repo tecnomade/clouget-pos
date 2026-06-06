@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.6 — 2026-06-06 🧮 Caja: tabla "Movimientos" ajustada (columna Usuario ya no se recorta)
+
+- La tabla de **Movimientos de caja** ahora **ajusta sus columnas al ancho** de la tarjeta (anchos fijos por columna). Ya no se recorta la columna **Usuario** ni necesita scroll horizontal en pantallas normales.
+
+---
+
 ## v2.6.5 — 2026-06-06 🔗 Compras: acceso directo al Reporte de Compras
 
 - En **Compras** se agregó el botón **"📊 Reporte de Compras"** que abre directamente el reporte (Reportes → pestaña Compras), sin tener que buscarlo entre las pestañas.
