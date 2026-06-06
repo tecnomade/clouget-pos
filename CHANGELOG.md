@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.3 — 2026-06-06 💵 Ticket: redondeo a centavos del monto recibido y el vuelto
+
+- **Endurecido el redondeo** del **monto recibido** y el **vuelto/cambio** a 2 decimales (centavos), tanto al registrar la venta como al imprimir el ticket. Evita que un arrastre de coma flotante muestre, por ejemplo, $24.99 / vuelto $2.99 cuando debería ser $25.00 / vuelto $3.00.
+
+---
+
 ## v2.6.2 — 2026-06-06 🧭 Menú: "Cerrar sesión" siempre visible (no se corta en pantallas pequeñas)
 
 - **Corregido:** en algunas pantallas (resoluciones bajas o con escalado de Windows) no se podía bajar el menú lateral para ver el botón **Cerrar sesión** — quedaba cortado. Ahora **"Cerrar sesión" queda fijo al fondo del menú** (siempre visible) y solo los ítems del menú hacen scroll.

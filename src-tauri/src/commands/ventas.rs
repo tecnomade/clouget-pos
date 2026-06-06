@@ -190,17 +190,18 @@ pub fn registrar_venta(
     // Antes la validacion v2.3.50 bloqueaba esto con error "monto < total" innecesariamente.
     let usa_mixto = venta.pagos.as_ref().map(|p| !p.is_empty()).unwrap_or(false);
     let forma_up = venta.forma_pago.to_uppercase();
-    let monto_recibido_efectivo = if !venta.es_fiado && !usa_mixto
+    let monto_recibido_efectivo = r2(if !venta.es_fiado && !usa_mixto
         && matches!(forma_up.as_str(), "EFECTIVO" | "TARJETA")
         && venta.monto_recibido < 0.01
     {
         total // asumir monto exacto
     } else {
         venta.monto_recibido
-    };
+    });
 
+    // Redondear el cambio a centavos para evitar arrastre de float (ej. 2.9999 -> 3.00)
     let cambio = if monto_recibido_efectivo > total {
-        monto_recibido_efectivo - total
+        r2(monto_recibido_efectivo - total)
     } else {
         0.0
     };

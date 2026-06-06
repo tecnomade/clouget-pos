@@ -918,7 +918,8 @@ export default function PuntoVenta() {
       // inconsistente). Esto garantiza que VentasDia muestre "Crédito" y NO
       // "Transfer" para ventas a crédito.
       forma_pago: usarMixto ? "MIXTO" : (esFiado ? "CREDITO" : formaPago),
-      monto_recibido: usarMixto ? total : (esFiado ? 0 : parseFloat(montoRecibido || "0")),
+      // Redondear a centavos para evitar arrastre de float (ej. 24.9999 -> 25.00)
+      monto_recibido: usarMixto ? total : (esFiado ? 0 : Math.round((parseFloat(montoRecibido || "0")) * 100) / 100),
       // v2.3.63: descuento automático por forma de pago (helper calcula 0 si
       // no aplica: feature off, mixto, % no configurado, o monto < mínimo).
       descuento: descuentoAplicado,
