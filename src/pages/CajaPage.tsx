@@ -1291,8 +1291,8 @@ export default function CajaPage() {
                     )}
                   </span>
                 </div>
-                <div className="card-body" style={{ padding: 0 }}>
-                  <table className="table">
+                <div className="card-body" style={{ padding: 0, overflowX: "auto" }}>
+                  <table className="table" style={{ width: "100%" }}>
                     <thead><tr><th>Hora</th><th>Tipo</th><th>Monto</th><th>Motivo</th><th>Cuenta</th><th>Estado</th><th>Usuario</th></tr></thead>
                     <tbody>
                       {retiros.map((r: any) => {
@@ -1336,7 +1336,7 @@ export default function CajaPage() {
                           </tr>
                           {confirmandoRetiroId === r.id && (
                             <tr>
-                              <td colSpan={6} style={{ padding: "8px 12px", background: "rgba(245, 158, 11, 0.05)" }}>
+                              <td colSpan={7} style={{ padding: "8px 12px", background: "rgba(245, 158, 11, 0.05)" }}>
                                 <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
                                   <div style={{ flex: 1, minWidth: 150 }}>
                                     <label className="text-secondary" style={{ fontSize: 11 }}>Nro. Comprobante *</label>

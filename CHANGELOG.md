@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.1 — 2026-06-06 🧯 Caja: corregido el desborde de la tabla "Movimientos de caja"
+
+- La tabla de **Movimientos de caja** ya no se desborda (la columna **Usuario** se salía del recuadro). Ahora se ajusta con scroll horizontal dentro de la tarjeta.
+
+---
+
 ## v2.6.0 — 2026-06-06 📱 App móvil: el admin ve TODAS las órdenes de servicio + estados igual que en PC
 
 - **Servidor (app móvil):** el listado de órdenes de servicio ya **no oculta las entregadas/canceladas**. El admin/coordinador ve **todas** las órdenes (igual que en la PC); el técnico ve las suyas, en todos los estados.
