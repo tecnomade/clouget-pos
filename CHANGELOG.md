@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.99 — 2026-06-06 🍽 Restaurante: cobrar sin liberar la mesa + Consumidor Final en reporte de ventas
+
+- **Restaurante — cobro flexible (prepago / mixto):** al **Cobrar** una mesa, ahora se imprime un **comprobante** (lo pagado + total) y el sistema **pregunta si liberar la mesa**. Si eliges **No**, la mesa **sigue ocupada con una cuenta nueva** para que los comensales sigan pidiendo (ideal para pago previo, o mixto: prepago + extras al final). Si piden factura, se entrega al final.
+  - Nuevo interruptor en **Configuración → Cocina (Restaurante): "Imprimir comprobante automático al cobrar"** (activado por defecto).
+- **Reporte de ventas detalladas:** ahora muestra correctamente **"CONSUMIDOR FINAL"** y su RUC **9999999999999** en las ventas sin cliente (antes salían en blanco).
+
+---
+
 ## v2.5.98 — 2026-06-06 📦 Reporte de Compras + búsqueda por código de barras en Productos
 
 - **Nuevo reporte de Compras** (Reportes → Compras): filtra por **rango de fechas** y por **proveedor**, con 3 vistas: **Detalle**, **Por proveedor** (con subtotales) y **Por fecha** (con totales por día), más total general. Exportable a Excel y PDF.

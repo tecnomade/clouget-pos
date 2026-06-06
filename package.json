@@ -1,7 +1,7 @@
 {
   "name": "clouget-pos",
   "private": true,
-  "version": "2.5.98",
+  "version": "2.5.99",
   "type": "module",
   "scripts": {
     "dev": "vite",

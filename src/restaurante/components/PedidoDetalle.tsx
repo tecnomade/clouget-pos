@@ -20,6 +20,7 @@ import {
   pedirCuenta,
   cancelarPedido,
   cerrarPedido,
+  abrirPedido,
   registrarAbono,
   imprimirPreCuenta,
   imprimirComandaCocina,
@@ -32,7 +33,7 @@ import {
   marcarSubcuentaCobrada,
   productoDivisionId,
 } from "../api";
-import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig, emitirFacturaSri, enviarNotificacionSri } from "../../services/api";
+import { registrarVenta, obtenerCajaAbierta, listarCuentasBanco, obtenerConfig, emitirFacturaSri, enviarNotificacionSri, imprimirTicket } from "../../services/api";
 // v2.5.36: post-cobro con SRI + retenciones
 import ModalRetenciones from "../../components/ModalRetenciones";
 // v2.3.64+ pendiente: aplicar descuento por forma de pago al cobrar mesa.
@@ -71,6 +72,8 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   const [postCobroEstadoSri, setPostCobroEstadoSri] = useState<string | null>(null);
   const [postCobroMostrarRet, setPostCobroMostrarRet] = useState(false);
   const [certificadoSriCargado, setCertificadoSriCargado] = useState(false);
+  // v2.5.99 — imprimir comprobante automaticamente tras cobrar (configurable, default ON)
+  const [comprobanteAuto, setComprobanteAuto] = useState(true);
   // v2.5.91 — abonos / pagos parciales sobre la mesa
   const [cuentasAbono, setCuentasAbono] = useState<CuentaBanco[]>([]);
   useEffect(() => { listarCuentasBanco().then(setCuentasAbono).catch(() => setCuentasAbono([])); }, []);
@@ -134,6 +137,7 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
   useEffect(() => {
     obtenerConfig().then((cfg: any) => {
       setCertificadoSriCargado(cfg.sri_certificado_cargado === "1" && cfg.sri_modulo_activo === "1");
+      setComprobanteAuto(cfg.rest_comprobante_auto !== "0"); // default ON
     }).catch(() => {});
   }, []);
 
@@ -368,6 +372,35 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
     }
   };
 
+  // v2.5.99 — Post-cobro: imprime el comprobante (si está en automático) y luego
+  // pregunta si liberar la mesa. Si NO se libera, reabre un pedido vacío en la
+  // misma mesa para que los comensales sigan pidiendo (modelo prepago / mixto:
+  // se cobra lo prepagado, la mesa sigue ocupada y los extras se cobran al final).
+  const finalizarCobro = async (ventaId: number | undefined | null) => {
+    if (comprobanteAuto && ventaId) {
+      try { await imprimirTicket(ventaId); } catch { /* impresora opcional */ }
+    }
+    const liberar = confirm(
+      `¿Liberar la ${detalle?.mesa_nombre ?? "mesa"}?\n\n` +
+      `• Aceptar = la mesa queda LIBRE.\n` +
+      `• Cancelar = la mesa SIGUE OCUPADA con una cuenta nueva (los comensales pueden seguir pidiendo; si piden factura, se entrega al final).`
+    );
+    if (!liberar && detalle) {
+      try {
+        await abrirPedido({
+          mesaId: detalle.pedido.mesa_id,
+          meseroId: detalle.pedido.mesero_id ?? null,
+          meseroNombre: detalle.pedido.mesero_nombre ?? null,
+          comensales: detalle.pedido.comensales ?? 1,
+        });
+        toastExito("Mesa sigue ocupada — cuenta nueva abierta");
+      } catch (err: any) {
+        toastError("Cobrado, pero no se pudo reabrir la mesa: " + (err?.message || err));
+      }
+    }
+    onCerrar(true);
+  };
+
   const handleCobrar = async (
     formaPago: string,
     esFiado: boolean,
@@ -457,9 +490,9 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
 
     try {
       const resultado = await registrarVenta(payload);
-      // Vincular venta con pedido y liberar mesa
+      // Vincular venta con pedido (cierra el pedido cobrado)
       await cerrarPedido(pedidoId, resultado.venta.id!);
-      toastExito(`Venta ${resultado.venta.numero} registrada · Mesa liberada`);
+      toastExito(`Venta ${resultado.venta.numero} registrada`);
 
       // v2.5.36: si hay certificado SRI cargado, abrir post-cobro con opciones SRI/retenciones
       if (resultado.venta.id && certificadoSriCargado) {
@@ -471,11 +504,12 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
           iva: resultado.venta.iva,
         });
         setPostCobroEstadoSri(null);
-        // NO cerrar aún — el modal post-cobro maneja el cierre
+        // NO cerrar aún — el modal post-cobro maneja el cierre (y luego finalizarCobro)
         return;
       }
 
-      onCerrar(true);
+      // v2.5.99 — imprime comprobante y pregunta si liberar la mesa
+      await finalizarCobro(resultado.venta.id);
     } catch (err: any) {
       toastError("No se pudo cobrar: " + (err?.message || err));
     }
@@ -1066,8 +1100,10 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
       {postCobro && (
         <div className="modal-overlay" onClick={() => {
           if (postCobroEmitiendo) return;
+          const vid = postCobro.ventaId;
           setPostCobro(null);
-          onCerrar(true);
+          // v2.5.99 — tras cerrar el modal SRI: comprobante + preguntar liberar mesa
+          finalizarCobro(vid);
         }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="modal-header">
@@ -1146,8 +1182,9 @@ export default function PedidoDetalle({ pedidoId, onCerrar }: Props) {
                 )}
 
                 <button className="btn btn-outline" onClick={() => {
+                  const vid = postCobro.ventaId;
                   setPostCobro(null);
-                  onCerrar(true);
+                  finalizarCobro(vid);
                 }}>
                   Cerrar
                 </button>

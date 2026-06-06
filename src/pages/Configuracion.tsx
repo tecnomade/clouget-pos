@@ -1095,6 +1095,31 @@ export default function Configuracion() {
                 desde el módulo Restaurante. Si no usas mesas, ignora esta sección.
               </p>
 
+              {/* v2.5.99 — Comprobante automático al cobrar una mesa */}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--color-surface-alt)", borderRadius: 8, cursor: "pointer", marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={config.rest_comprobante_auto !== "0"}
+                  onChange={(e) => {
+                    const v = e.target.checked ? "1" : "0";
+                    setConfig({ ...config, rest_comprobante_auto: v });
+                    guardarConfig({ rest_comprobante_auto: v });
+                    toastExito(e.target.checked
+                      ? "Se imprimirá el comprobante automáticamente al cobrar"
+                      : "No se imprimirá comprobante automático al cobrar");
+                  }}
+                  style={{ marginTop: 3 }}
+                />
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>🧾 Imprimir comprobante automático al cobrar</div>
+                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                    Al cobrar una mesa se imprime un comprobante con lo pagado y el total del pedido.
+                    Luego el sistema pregunta si liberar la mesa (si no, sigue ocupada para que los
+                    comensales sigan pidiendo). Activado por defecto.
+                  </div>
+                </div>
+              </label>
+
               {/* Impresora de cocina (puede ser distinta a la del POS) */}
               <div style={{ marginBottom: 12 }}>
                 <label className="text-secondary" style={{ fontSize: 12 }}>
