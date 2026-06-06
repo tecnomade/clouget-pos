@@ -43,8 +43,10 @@ pub fn firmar_comprobante(
     soap::log_sri(&format!("P12 temp: {}", p12_temp_path.display()));
     soap::log_sri(&format!("Root tag: {}", root_tag));
 
-    // 3. Ejecutar Node.js con el script
-    let mut cmd = Command::new("node");
+    // 3. Ejecutar Node.js con el script (preferir Node bundleado)
+    let node_bin = encontrar_node();
+    soap::log_sri(&format!("Node bin: {}", node_bin.display()));
+    let mut cmd = Command::new(&node_bin);
     cmd.arg(&script_path)
         .arg(root_tag)
         .arg(&p12_temp_path)
@@ -63,7 +65,7 @@ pub fn firmar_comprobante(
     let mut child = cmd.spawn()
         .map_err(|e| {
             let _ = std::fs::remove_file(&p12_temp_path);
-            format!("Error ejecutando Node.js para firma: {}. Verifique que Node.js esta instalado.", e)
+            format!("Error ejecutando Node.js para firma ({}): {}. Reinstale la aplicacion.", node_bin.display(), e)
         })?;
 
     // 4. Enviar XML por stdin
@@ -106,10 +108,12 @@ pub fn firmar_comprobante(
     Ok(XmlFirmado { xml: xml_firmado })
 }
 
-/// Encuentra la ruta del script firmar-xml.cjs
-/// Busca en varios lugares segun si es dev o produccion
+/// Encuentra la ruta del script firmar-xml.cjs (version autocontenida).
+///
+/// En produccion se empaqueta como recurso Tauri en `firma/firmar-xml.cjs`
+/// (junto al .exe). En desarrollo se resuelve via CARGO_MANIFEST_DIR o el repo.
 fn encontrar_script_firma() -> Result<std::path::PathBuf, String> {
-    // Opcion 1: Variable de entorno (para override)
+    // Opcion 1: Variable de entorno (para override / pruebas)
     if let Ok(path) = std::env::var("CLOUGET_FIRMA_SCRIPT") {
         let p = std::path::PathBuf::from(path);
         if p.exists() {
@@ -117,34 +121,73 @@ fn encontrar_script_firma() -> Result<std::path::PathBuf, String> {
         }
     }
 
-    // Opcion 2: Relativo al directorio de trabajo (desarrollo)
-    let dev_path = std::path::PathBuf::from("scripts/firmar-xml.cjs");
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
+    // Candidatos en orden de preferencia (produccion primero)
+    let mut candidatos: Vec<std::path::PathBuf> = Vec::new();
 
-    // Opcion 3: Relativo al ejecutable (produccion)
+    // Opcion 2: Recurso Tauri junto al ejecutable (produccion)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            let prod_path = exe_dir.join("scripts").join("firmar-xml.cjs");
-            if prod_path.exists() {
-                return Ok(prod_path);
-            }
-            // Tambien buscar un nivel arriba
+            candidatos.push(exe_dir.join("firma").join("firmar-xml.cjs"));
+            candidatos.push(exe_dir.join("resources").join("firma").join("firmar-xml.cjs"));
             if let Some(parent_dir) = exe_dir.parent() {
-                let prod_path2 = parent_dir.join("scripts").join("firmar-xml.cjs");
-                if prod_path2.exists() {
-                    return Ok(prod_path2);
-                }
+                candidatos.push(parent_dir.join("firma").join("firmar-xml.cjs"));
+            }
+            // Compatibilidad con instalaciones viejas que usaban scripts/
+            candidatos.push(exe_dir.join("scripts").join("firmar-xml.cjs"));
+        }
+    }
+
+    // Opcion 3: Desarrollo (relativo a src-tauri y al repo)
+    candidatos.push(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("firma")
+            .join("firmar-xml.cjs"),
+    );
+    candidatos.push(std::path::PathBuf::from("src-tauri/firma/firmar-xml.cjs"));
+    candidatos.push(std::path::PathBuf::from("scripts/firmar-xml.cjs"));
+
+    for c in &candidatos {
+        if c.exists() {
+            return Ok(c.clone());
+        }
+    }
+
+    Err("No se encontro el script de firma (firma/firmar-xml.cjs). Reinstale la aplicacion.".to_string())
+}
+
+/// Encuentra el ejecutable de Node.js a usar para la firma.
+///
+/// Prefiere el Node bundleado como recurso (`firma/node.exe`) para no depender
+/// de que el cliente tenga Node instalado. Si no existe (p.ej. en desarrollo),
+/// cae al `node` del PATH del sistema.
+fn encontrar_node() -> std::path::PathBuf {
+    #[cfg(windows)]
+    let node_name = "node.exe";
+    #[cfg(not(windows))]
+    let node_name = "node";
+
+    // 1. Node bundleado junto al ejecutable (produccion)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let bundled = exe_dir.join("firma").join(node_name);
+            if bundled.exists() {
+                return bundled;
+            }
+            let bundled_res = exe_dir.join("resources").join("firma").join(node_name);
+            if bundled_res.exists() {
+                return bundled_res;
             }
         }
     }
 
-    // Opcion 4: Directorio del proyecto hardcoded (solo desarrollo Windows)
-    let hardcoded = std::path::PathBuf::from("C:/proyectos/clouget-pos/scripts/firmar-xml.cjs");
-    if hardcoded.exists() {
-        return Ok(hardcoded);
+    // 2. Node bundleado en desarrollo (src-tauri/firma)
+    let dev_bundled = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("firma")
+        .join(node_name);
+    if dev_bundled.exists() {
+        return dev_bundled;
     }
 
-    Err("No se encontro el script de firma (scripts/firmar-xml.cjs). Verifique la instalacion.".to_string())
+    // 3. Fallback: node del PATH del sistema
+    std::path::PathBuf::from("node")
 }

@@ -38,3 +38,7 @@ sign-file.ps1
 *.njsproj
 *.sln
 *.sw?
+
+# Firma SRI: Node portatil bundleado (descargado por release.ps1, no versionar)
+src-tauri/firma/node.exe
+scripts/firmar-xml.bundled.cjs

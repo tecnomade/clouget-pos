@@ -51,6 +51,27 @@ if (-not (Test-Path $KeyPath)) {
 }
 Write-Host "OK" -ForegroundColor Green
 
+# --- Paso 1.5: Preparar recursos de firma SRI (script autocontenido + Node bundleado) ---
+Write-Host "`n[1.5/6] Preparando recursos de firma SRI..." -ForegroundColor Yellow
+# Regenerar el bundle autocontenido del firmador (incluye ec-sri-invoice-signer)
+npx --yes esbuild scripts/firmar-xml.cjs --bundle --platform=node --target=node18 --outfile=src-tauri/firma/firmar-xml.cjs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: No se pudo generar el bundle de firma (esbuild)" -ForegroundColor Red
+    exit 1
+}
+# Asegurar Node.js portatil bundleado (para clientes sin Node instalado)
+$NodeBundled = "src-tauri/firma/node.exe"
+if (-not (Test-Path $NodeBundled)) {
+    $NodeUrl = "https://nodejs.org/dist/v20.18.1/win-x64/node.exe"
+    Write-Host "  Descargando Node.js portatil ($NodeUrl)..." -ForegroundColor DarkGray
+    Invoke-WebRequest -Uri $NodeUrl -OutFile $NodeBundled
+    if (-not (Test-Path $NodeBundled)) {
+        Write-Host "ERROR: No se pudo descargar Node.js portatil" -ForegroundColor Red
+        exit 1
+    }
+}
+Write-Host "OK - firmar-xml.cjs + node.exe listos" -ForegroundColor Green
+
 # --- Paso 2: Build de produccion ---
 Write-Host "`n[2/6] Compilando app..." -ForegroundColor Yellow
 npm run tauri build

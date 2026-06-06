@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.94 — 2026-06-06 🔏 Firma electrónica SRI: corregida en instalaciones de clientes
+
+- **Corregido el error "No se encontró el script de firma (scripts/firmar-xml.cjs)"** que aparecía al autorizar Facturas/Notas con firma electrónica en equipos de clientes.
+- El firmador XAdES-BES del SRI ahora se **empaqueta dentro del instalador** (script autocontenido + Node.js portátil incluido). Ya **no requiere** tener Node.js instalado en la PC del cliente ni depende de rutas del entorno de desarrollo.
+- Se mantiene exactamente la misma librería de firma (`ec-sri-invoice-signer`), probada en producción, por lo que la firma generada es idéntica a la aceptada por el SRI.
+
+---
+
 ## v2.5.93 — 2026-06-06 🔄 Auto-update: lee el manifiesto directo de GitHub + progreso real
 
 - El actualizador del escritorio ahora consulta el manifiesto **directo de GitHub** (que el release mantiene al día), en vez de un intermediario que quedaba desfasado una versión. Esto corrige el "no actualiza a la última".
