@@ -31,6 +31,17 @@ document.addEventListener("focusin", (e) => {
   }
 });
 
+// v2.6.4: evitar que la RUEDA del mouse cambie el valor de un <input type="number">
+// enfocado (causaba bugs tipo "tecleé 25 pero quedó 24.99" al rozar el scroll).
+// Al hacer scroll sobre el campo enfocado, lo desenfocamos: el valor no cambia y
+// la página sigue desplazándose normalmente.
+document.addEventListener("wheel", (e) => {
+  const el = document.activeElement as HTMLInputElement | null;
+  if (el && el.tagName === "INPUT" && el.type === "number" && el === e.target) {
+    el.blur();
+  }
+}, { passive: true });
+
 function AppGate() {
   const [licencia, setLicencia] = useState<LicenciaInfo | null>(null);
   const [verificando, setVerificando] = useState(true);

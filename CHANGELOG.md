@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.4 — 2026-06-06 🖱️ Cobro: la rueda del mouse ya no altera el monto recibido (25 → 24.99)
+
+- **Corregida la causa real** del ticket que mostraba, por ejemplo, **Recibido $24.99 / Cambio $2.99** cuando se había recibido **$25.00**: el campo numérico cambiaba su valor al **rozar la rueda del mouse** estando enfocado (restaba un centavo). 
+  - El campo "Monto recibido" ahora es de texto con teclado decimal (sin rueda/flechas) y acepta coma o punto.
+  - Además, a nivel global, **la rueda del mouse ya no modifica ningún campo numérico** enfocado (protege también monto inicial de caja, retiros, ingresos, etc.).
+
+---
+
 ## v2.6.3 — 2026-06-06 💵 Ticket: redondeo a centavos del monto recibido y el vuelto
 
 - **Endurecido el redondeo** del **monto recibido** y el **vuelto/cambio** a 2 decimales (centavos), tanto al registrar la venta como al imprimir el ticket. Evita que un arrastre de coma flotante muestre, por ejemplo, $24.99 / vuelto $2.99 cuando debería ser $25.00 / vuelto $3.00.

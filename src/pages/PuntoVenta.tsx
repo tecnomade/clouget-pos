@@ -2275,10 +2275,14 @@ export default function PuntoVenta() {
                 <label className="text-secondary" style={{ fontSize: 11, display: "block", marginBottom: 2 }}>Monto recibido</label>
                 <div style={{ display: "flex", gap: 4 }}>
                   <div style={{ flex: 1, position: "relative" }}>
-                    <input className="input text-right" type="number" step="0.01" placeholder="0.00"
+                    {/* v2.6.4: type=text + inputMode=decimal en vez de type=number.
+                        type=number cambiaba el valor con la RUEDA del mouse (scroll
+                        sobre el campo enfocado restaba 0.01: 25 -> 24.99). Esto lo
+                        elimina y normaliza coma->punto. */}
+                    <input className="input text-right" type="text" inputMode="decimal" placeholder="0.00"
                       style={{ fontSize: 14, width: "100%", paddingLeft: 130 }}
                       value={montoRecibido}
-                      onChange={(e) => setMontoRecibido(e.target.value)}
+                      onChange={(e) => setMontoRecibido(e.target.value.replace(",", ".").replace(/[^0-9.]/g, ""))}
                       onKeyDown={(e) => { if (e.key === "Enter") procesarVenta(); }} />
                     {/* Denominaciones rapidas FLOTANDO dentro del input alineadas a la izquierda */}
                     {total > 0 && (() => {
