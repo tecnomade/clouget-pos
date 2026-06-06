@@ -6,6 +6,16 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.95 — 2026-06-06 🔎 Configuración SRI: detalles de la firma + último secuencial autorizado
+
+- **Firma electrónica:** ahora Configuración muestra el **titular** del certificado y su **fecha de vencimiento**, con días restantes y aviso en rojo si está **vencida** (el SRI rechaza comprobantes con firma vencida).
+- **Último secuencial autorizado:** se muestra el número de la **última factura** y la **última nota de crédito** que el SRI autorizó (formato establecimiento-punto-secuencial). Los secuenciales *próximos* (editables) siguen en la configuración de documentos.
+- Incluye el fix de firma de la v2.5.94 (firmador empaquetado en el instalador).
+
+> Nota sobre el aviso "No se puede verificar su suscripción SRI": aparece cuando se agotó la prueba gratuita y no hay validación de suscripción en caché. Solución: en Configuración → SRI, con internet, pulse **Verificar suscripción**.
+
+---
+
 ## v2.5.94 — 2026-06-06 🔏 Firma electrónica SRI: corregida en instalaciones de clientes
 
 - **Corregido el error "No se encontró el script de firma (scripts/firmar-xml.cjs)"** que aparecía al autorizar Facturas/Notas con firma electrónica en equipos de clientes.

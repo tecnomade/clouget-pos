@@ -398,6 +398,13 @@ export interface EstadoSri {
   suscripcion_docs_restantes: number | null;
   suscripcion_es_lifetime: boolean;
   suscripcion_mensaje: string;
+  // Firma electronica
+  firma_nombre: string;
+  firma_vencimiento: string;            // ISO YYYY-MM-DD ("" si no hay)
+  firma_dias_restantes: number | null;  // dias hasta vencimiento (negativo si expiro)
+  // Ultimo secuencial AUTORIZADO por el SRI
+  ultimo_secuencial_factura: string;
+  ultimo_secuencial_nc: string;
 }
 
 // Planes SRI - Contratación

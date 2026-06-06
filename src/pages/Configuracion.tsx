@@ -1983,9 +1983,42 @@ export default function Configuracion() {
                     <>
                       <hr style={{ border: "none", borderTop: "1px solid var(--color-border)", margin: "4px 0" }} />
                       <div className="flex justify-between items-center">
-                        <span className="text-secondary">Certificado:</span>
-                        <span style={{ color: "var(--color-success)", fontWeight: 600 }}>Cargado</span>
+                        <span className="text-secondary">Firma electrónica:</span>
+                        <span style={{ color: "var(--color-success)", fontWeight: 600 }}>Cargada</span>
                       </div>
+                      {estadoSri.firma_nombre && (
+                        <div className="flex justify-between items-center" style={{ gap: 8 }}>
+                          <span className="text-secondary">Titular:</span>
+                          <span style={{ fontWeight: 600, fontSize: 12, textAlign: "right", wordBreak: "break-word" }}>{estadoSri.firma_nombre}</span>
+                        </div>
+                      )}
+                      {estadoSri.firma_vencimiento && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-secondary">Vence:</span>
+                          <span style={{
+                            fontWeight: 600,
+                            color: estadoSri.firma_dias_restantes != null && estadoSri.firma_dias_restantes < 0
+                              ? "var(--color-danger)"
+                              : estadoSri.firma_dias_restantes != null && estadoSri.firma_dias_restantes <= 30
+                                ? "var(--color-warning)"
+                                : "var(--color-text)",
+                          }}>
+                            {estadoSri.firma_vencimiento}
+                            {estadoSri.firma_dias_restantes != null && (
+                              <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6 }}>
+                                {estadoSri.firma_dias_restantes < 0
+                                  ? `(¡VENCIDA hace ${Math.abs(estadoSri.firma_dias_restantes)} días!)`
+                                  : `(${estadoSri.firma_dias_restantes} días)`}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {estadoSri.firma_dias_restantes != null && estadoSri.firma_dias_restantes < 0 && (
+                        <p style={{ fontSize: 11, color: "var(--color-danger)", margin: 0 }}>
+                          ⚠️ La firma está vencida. El SRI rechazará los comprobantes. Renueve su certificado y cárguelo de nuevo.
+                        </p>
+                      )}
                       <div className="flex justify-between items-center">
                         <span className="text-secondary">Ambiente: {modoDemo && "🔒"}</span>
                         <select className="input" style={{ width: 160, fontSize: 12 }}
@@ -2027,6 +2060,18 @@ export default function Configuracion() {
                       <div className="flex justify-between items-center">
                         <span className="text-secondary">Total facturas emitidas:</span>
                         <span style={{ fontWeight: 600 }}>{estadoSri.facturas_usadas}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-secondary">Última factura autorizada:</span>
+                        <span style={{ fontWeight: 600, fontFamily: "monospace" }}>
+                          {estadoSri.ultimo_secuencial_factura || "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-secondary">Última nota de crédito autorizada:</span>
+                        <span style={{ fontWeight: 600, fontFamily: "monospace" }}>
+                          {estadoSri.ultimo_secuencial_nc || "—"}
+                        </span>
                       </div>
                       <button className="btn btn-outline" style={{ fontSize: 12 }}
                         onClick={async () => {

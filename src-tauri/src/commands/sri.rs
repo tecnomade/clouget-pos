@@ -67,6 +67,13 @@ pub struct EstadoSri {
     pub suscripcion_docs_restantes: Option<i64>,
     pub suscripcion_es_lifetime: bool,
     pub suscripcion_mensaje: String,
+    // Firma electronica (certificado P12)
+    pub firma_nombre: String,
+    pub firma_vencimiento: String,        // ISO YYYY-MM-DD ("" si no hay)
+    pub firma_dias_restantes: Option<i64>, // dias hasta vencimiento (negativo si expiro)
+    // Ultimo secuencial AUTORIZADO por el SRI (formato estab-pto-secuencial)
+    pub ultimo_secuencial_factura: String,
+    pub ultimo_secuencial_nc: String,
 }
 
 /// Carga un certificado P12 para facturacion electronica.
@@ -1302,6 +1309,19 @@ pub fn consultar_estado_sri(db: State<Database>) -> Result<EstadoSri, String> {
 
     let docs_rest_str = get("sri_suscripcion_docs_restantes");
 
+    // Info de la firma electronica (nombre del titular + vencimiento)
+    let (firma_nombre, firma_vencimiento, firma_dias_restantes) = leer_info_firma(&conn);
+
+    // Ultimo secuencial AUTORIZADO por el SRI
+    let ultimo_secuencial_factura = ultimo_secuencial_autorizado(
+        &conn,
+        "SELECT clave_acceso FROM ventas WHERE tipo_documento = 'FACTURA' AND estado_sri = 'AUTORIZADA' AND clave_acceso IS NOT NULL AND length(clave_acceso) >= 39 ORDER BY id DESC LIMIT 1",
+    );
+    let ultimo_secuencial_nc = ultimo_secuencial_autorizado(
+        &conn,
+        "SELECT clave_acceso FROM notas_credito WHERE estado_sri = 'AUTORIZADA' AND clave_acceso IS NOT NULL AND length(clave_acceso) >= 39 ORDER BY id DESC LIMIT 1",
+    );
+
     Ok(EstadoSri {
         modulo_activo: get("sri_modulo_activo") == "1",
         certificado_cargado: get("sri_certificado_cargado") == "1",
@@ -1314,7 +1334,82 @@ pub fn consultar_estado_sri(db: State<Database>) -> Result<EstadoSri, String> {
         suscripcion_docs_restantes: if docs_rest_str.is_empty() { None } else { docs_rest_str.parse::<i64>().ok() },
         suscripcion_es_lifetime: get("sri_suscripcion_es_lifetime") == "1",
         suscripcion_mensaje: get("sri_suscripcion_mensaje"),
+        firma_nombre,
+        firma_vencimiento,
+        firma_dias_restantes,
+        ultimo_secuencial_factura,
+        ultimo_secuencial_nc,
     })
+}
+
+/// Lee la info del certificado P12 cargado: (nombre_titular, vencimiento_iso, dias_restantes).
+/// Re-parsea el certificado para obtener datos precisos (funciona con instalaciones existentes).
+fn leer_info_firma(conn: &Connection) -> (String, String, Option<i64>) {
+    use rusqlite::OptionalExtension;
+    let row: Option<(Vec<u8>, String, String, String)> = conn
+        .query_row(
+            "SELECT p12_data, password, nombre, fecha_expiracion FROM sri_certificado WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .unwrap_or(None);
+
+    let (p12_data, password, nombre_archivo, fecha_exp_cache) = match row {
+        Some(v) => v,
+        None => return (String::new(), String::new(), None),
+    };
+
+    // Intentar re-parsear el certificado para datos precisos
+    if let Ok(keystore) = p12_keystore::KeyStore::from_pkcs12(&p12_data, &password) {
+        if let Some((_alias, chain)) = keystore.private_key_chain() {
+            let certs = chain.chain();
+            if !certs.is_empty() {
+                if let Ok((_, x509)) =
+                    x509_parser::certificate::X509Certificate::from_der(certs[0].as_der())
+                {
+                    // Nombre del titular (CN del subject), con fallback al archivo
+                    let cn = x509
+                        .subject()
+                        .iter_common_name()
+                        .next()
+                        .and_then(|a| a.as_str().ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| nombre_archivo.clone());
+
+                    let exp_ts = x509.validity().not_after.timestamp();
+                    let now_ts = chrono::Local::now().timestamp();
+                    let dias = (exp_ts - now_ts) / 86_400;
+                    let iso = chrono::DateTime::from_timestamp(exp_ts, 0)
+                        .map(|d| d.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default();
+
+                    return (cn, iso, Some(dias));
+                }
+            }
+        }
+    }
+
+    // Fallback: usar lo guardado en cache (formato puede ser crudo)
+    (nombre_archivo, fecha_exp_cache, None)
+}
+
+/// Extrae el secuencial (formato estab-pto-secuencial) del clave_acceso del ultimo
+/// documento AUTORIZADO. El clave de acceso SRI tiene 49 digitos: la serie va en
+/// las posiciones 24..30 (estab 3 + punto 3) y el secuencial en 30..39.
+fn ultimo_secuencial_autorizado(conn: &Connection, sql: &str) -> String {
+    use rusqlite::OptionalExtension;
+    let clave: Option<String> = conn
+        .query_row(sql, [], |r| r.get(0))
+        .optional()
+        .unwrap_or(None);
+
+    match clave {
+        Some(c) if c.len() >= 39 => {
+            format!("{}-{}-{}", &c[24..27], &c[27..30], &c[30..39])
+        }
+        _ => String::new(),
+    }
 }
 
 /// Cambia el ambiente del SRI (pruebas/produccion)
@@ -1457,6 +1552,16 @@ pub async fn validar_suscripcion_sri(
     let facturas_usadas: i64 = get_config("sri_facturas_usadas").parse().unwrap_or(0);
     let facturas_gratis: i64 = get_config("sri_facturas_gratis").parse().unwrap_or(30);
 
+    let (firma_nombre, firma_vencimiento, firma_dias_restantes) = leer_info_firma(&conn);
+    let ultimo_secuencial_factura = ultimo_secuencial_autorizado(
+        &conn,
+        "SELECT clave_acceso FROM ventas WHERE tipo_documento = 'FACTURA' AND estado_sri = 'AUTORIZADA' AND clave_acceso IS NOT NULL AND length(clave_acceso) >= 39 ORDER BY id DESC LIMIT 1",
+    );
+    let ultimo_secuencial_nc = ultimo_secuencial_autorizado(
+        &conn,
+        "SELECT clave_acceso FROM notas_credito WHERE estado_sri = 'AUTORIZADA' AND clave_acceso IS NOT NULL AND length(clave_acceso) >= 39 ORDER BY id DESC LIMIT 1",
+    );
+
     Ok(EstadoSri {
         modulo_activo,
         certificado_cargado,
@@ -1469,6 +1574,11 @@ pub async fn validar_suscripcion_sri(
         suscripcion_docs_restantes: estado.docs_restantes,
         suscripcion_es_lifetime: estado.es_lifetime,
         suscripcion_mensaje: estado.mensaje,
+        firma_nombre,
+        firma_vencimiento,
+        firma_dias_restantes,
+        ultimo_secuencial_factura,
+        ultimo_secuencial_nc,
     })
 }
 
