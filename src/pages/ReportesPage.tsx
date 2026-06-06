@@ -6,8 +6,11 @@ import { reporteUtilidad, reporteBalance, reporteProductosRentabilidad, reporteI
   exportarInventarioXlsx, exportarInventarioPdf, exportarTablaXlsx, exportarTablaPdf, reporteVentasPorCajero,
   reporteVentasFiltrable, reporteVentasFiltrosDisponibles,
   // v2.4.14: reportes de servicio tecnico
-  stReporteCancelaciones, stReporteGarantiasActivas } from "../services/api";
+  stReporteCancelaciones, stReporteGarantiasActivas,
+  // Reporte de compras (frontend-only, reusa comandos existentes)
+  listarCompras, listarProveedores } from "../services/api";
 import type { ReporteVentasResultado, VentaReporteRow, ResumenCancelaciones, ResumenGarantias } from "../services/api";
+import type { Compra, Proveedor } from "../types";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import ModalCorregirStockNegativo from "../components/ModalCorregirStockNegativo";
@@ -36,7 +39,7 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "gastos" | "cancelaciones_st" | "garantias_st">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "compras" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "gastos" | "cancelaciones_st" | "garantias_st">("utilidad");
   // v2.5.54: reporte de gastos
   const [gastosReporte, setGastosReporte] = useState<import("../services/api").ResumenGastos | null>(null);
   // v2.5.22: estado para reporte de valuación de inventario
@@ -78,6 +81,11 @@ export default function ReportesPage() {
   const [cxpProveedorDetalle, setCxpProveedorDetalle] = useState<{ proveedor: any; cuentas: any[] } | null>(null);
   const [busquedaCliente, setBusquedaCliente] = useState("");
   const [busquedaProveedor, setBusquedaProveedor] = useState("");
+  // Reporte de Compras (frontend-only)
+  const [comprasData, setComprasData] = useState<Compra[]>([]);
+  const [comprasProveedores, setComprasProveedores] = useState<Proveedor[]>([]);
+  const [comprasProveedorFiltro, setComprasProveedorFiltro] = useState<string>("TODOS");
+  const [comprasAgrupacion, setComprasAgrupacion] = useState<"detalle" | "proveedor" | "fecha">("detalle");
   // Inventario
   const [inventario, setInventario] = useState<any | null>(null);
   const [kardexProducto, setKardexProducto] = useState<{ producto: any; movimientos: any[] } | null>(null);
@@ -117,6 +125,15 @@ export default function ReportesPage() {
         const r = await reporteCxpPorProveedor();
         setCxpResumen(r);
         setCxpProveedorDetalle(null);
+      }
+      else if (tab === "compras") {
+        // Cargar proveedores (para el filtro) + compras del rango en paralelo
+        const [provs, compras] = await Promise.all([
+          listarProveedores(),
+          listarCompras(desde, hasta),
+        ]);
+        setComprasProveedores(provs);
+        setComprasData(compras);
       }
       else if (tab === "inventario") {
         const inv = await reporteInventarioValorizado();
@@ -373,6 +390,28 @@ export default function ReportesPage() {
         encabezados: [], filas: [], // backend se encarga
       };
     }
+    if (tab === "compras") {
+      const provNombre = comprasProveedorFiltro === "TODOS"
+        ? "Todos los proveedores"
+        : (comprasProveedores.find((p) => String(p.id) === comprasProveedorFiltro)?.nombre || "");
+      return {
+        titulo: "Reporte de Compras",
+        subtitulo: `${periodo}${comprasProveedorFiltro !== "TODOS" ? ` · ${provNombre}` : ""}`,
+        archivo: `compras-${desde}-${hasta}`,
+        encabezados: ["Fecha", "N°", "Factura", "Proveedor", "Tipo", "Subtotal", "IVA", "Total"],
+        filas: comprasFiltradas.map((c) => [
+          comprasFechaCorta(c.fecha),
+          c.numero || "",
+          c.numero_factura || "",
+          c.proveedor_nombre || "",
+          c.tipo_documento || "",
+          (c.subtotal ?? 0).toFixed(2),
+          (c.iva ?? 0).toFixed(2),
+          (c.total ?? 0).toFixed(2),
+        ]),
+        cols_numericas: [5, 6, 7],
+      };
+    }
     return null;
   };
 
@@ -450,6 +489,32 @@ export default function ReportesPage() {
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
   const fmtPct = (n: number) => `${n.toFixed(1)}%`;
+
+  // --- Reporte de Compras: helpers (frontend-only) ---
+  const comprasFiltradas: Compra[] = comprasData.filter(
+    (c) => comprasProveedorFiltro === "TODOS" || String(c.proveedor_id) === comprasProveedorFiltro
+  );
+  const comprasTotalGeneral = comprasFiltradas.reduce((s, c) => s + (c.total ?? 0), 0);
+  const comprasFechaCorta = (f?: string) => {
+    if (!f) return "";
+    const d = new Date(f);
+    return isNaN(d.getTime()) ? (f.slice(0, 10)) : d.toLocaleDateString("es-EC");
+  };
+  // Agrupa por una clave y devuelve [clave, compras[]] ordenado
+  const agruparCompras = (
+    keyFn: (c: Compra) => string,
+    ordenDesc = false
+  ): Array<[string, Compra[]]> => {
+    const mapa = new Map<string, Compra[]>();
+    for (const c of comprasFiltradas) {
+      const k = keyFn(c);
+      if (!mapa.has(k)) mapa.set(k, []);
+      mapa.get(k)!.push(c);
+    }
+    const entradas = Array.from(mapa.entries());
+    entradas.sort((a, b) => ordenDesc ? b[0].localeCompare(a[0]) : a[0].localeCompare(b[0]));
+    return entradas;
+  };
 
   // Helper generico para exportar CSV
   const exportarCsvGeneric = async (nombreArchivo: string, encabezados: string[], filas: (string | number)[][]) => {
@@ -634,6 +699,7 @@ export default function ReportesPage() {
             ["iva", "Declaracion IVA"],
             ["cxc", "Cuentas por Cobrar"],
             ["cxp", "Cuentas por Pagar"],
+            ["compras", "Compras"],
             ["inventario", "Inventario"],
             ["valuacion", "💼 Valuación"],
             ["kardex", "Kardex Multi"],
@@ -1627,6 +1693,175 @@ export default function ReportesPage() {
               <div className="card">
                 <div className="card-body" style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)" }}>
                   Selecciona filtros y presiona <strong>Generar Kardex</strong>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB: Compras — reporte frontend-only (detalle / por proveedor / por fecha) */}
+        {!cargando && tab === "compras" && (
+          <div>
+            {/* Filtros: proveedor + agrupación */}
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <select className="input" style={{ fontSize: 12, padding: "5px 8px", minWidth: 220 }}
+                value={comprasProveedorFiltro} onChange={(e) => setComprasProveedorFiltro(e.target.value)}>
+                <option value="TODOS">Todos los proveedores</option>
+                {comprasProveedores.map((p) => (
+                  <option key={p.id} value={String(p.id)}>{p.nombre}</option>
+                ))}
+              </select>
+              <select className="input" style={{ fontSize: 12, padding: "5px 8px", minWidth: 160 }}
+                value={comprasAgrupacion} onChange={(e) => setComprasAgrupacion(e.target.value as typeof comprasAgrupacion)}>
+                <option value="detalle">Detalle</option>
+                <option value="proveedor">Por proveedor</option>
+                <option value="fecha">Por fecha</option>
+              </select>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                {comprasFiltradas.length} compras · <strong style={{ color: "var(--color-text)" }}>{fmt(comprasTotalGeneral)}</strong>
+              </span>
+            </div>
+
+            {comprasFiltradas.length === 0 ? (
+              <div className="card">
+                <div className="card-body" style={{ textAlign: "center", padding: 40, color: "var(--color-text-secondary)" }}>
+                  Sin compras en el rango seleccionado.
+                </div>
+              </div>
+            ) : comprasAgrupacion === "detalle" ? (
+              <div className="card">
+                <table className="table" style={{ width: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th><th>N°</th><th>Factura</th><th>Proveedor</th><th>Tipo</th>
+                      <th className="text-right">Subtotal</th><th className="text-right">IVA</th><th className="text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comprasFiltradas.map((c) => (
+                      <tr key={c.id}>
+                        <td style={{ fontSize: 11 }}>{comprasFechaCorta(c.fecha)}</td>
+                        <td>{c.numero}</td>
+                        <td style={{ fontSize: 11 }}>{c.numero_factura || "—"}</td>
+                        <td style={{ fontWeight: 600 }}>{c.proveedor_nombre || "—"}</td>
+                        <td style={{ fontSize: 11 }}>{c.tipo_documento || "—"}</td>
+                        <td className="text-right">{fmt(c.subtotal ?? 0)}</td>
+                        <td className="text-right">{fmt(c.iva ?? 0)}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.total ?? 0)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ borderTop: "2px solid var(--color-border)", fontWeight: 700 }}>
+                      <td colSpan={5} className="text-right">TOTALES</td>
+                      <td className="text-right">{fmt(comprasFiltradas.reduce((s, c) => s + (c.subtotal ?? 0), 0))}</td>
+                      <td className="text-right">{fmt(comprasFiltradas.reduce((s, c) => s + (c.iva ?? 0), 0))}</td>
+                      <td className="text-right" style={{ color: "var(--color-primary)" }}>{fmt(comprasTotalGeneral)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : comprasAgrupacion === "proveedor" ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {agruparCompras((c) => c.proveedor_nombre || "Sin proveedor").map(([nombre, grupo]) => {
+                  const sub = grupo.reduce((s, c) => s + (c.subtotal ?? 0), 0);
+                  const ivaG = grupo.reduce((s, c) => s + (c.iva ?? 0), 0);
+                  const totG = grupo.reduce((s, c) => s + (c.total ?? 0), 0);
+                  return (
+                    <div className="card" key={nombre}>
+                      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>{nombre} <span style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 400 }}>({grupo.length} compras)</span></span>
+                        <strong style={{ color: "var(--color-primary)" }}>{fmt(totG)}</strong>
+                      </div>
+                      <table className="table" style={{ width: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>Fecha</th><th>N°</th><th>Factura</th><th>Tipo</th>
+                            <th className="text-right">Subtotal</th><th className="text-right">IVA</th><th className="text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grupo.map((c) => (
+                            <tr key={c.id}>
+                              <td style={{ fontSize: 11 }}>{comprasFechaCorta(c.fecha)}</td>
+                              <td>{c.numero}</td>
+                              <td style={{ fontSize: 11 }}>{c.numero_factura || "—"}</td>
+                              <td style={{ fontSize: 11 }}>{c.tipo_documento || "—"}</td>
+                              <td className="text-right">{fmt(c.subtotal ?? 0)}</td>
+                              <td className="text-right">{fmt(c.iva ?? 0)}</td>
+                              <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.total ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ borderTop: "1px solid var(--color-border)", fontWeight: 700 }}>
+                            <td colSpan={4} className="text-right">Subtotal proveedor</td>
+                            <td className="text-right">{fmt(sub)}</td>
+                            <td className="text-right">{fmt(ivaG)}</td>
+                            <td className="text-right" style={{ color: "var(--color-primary)" }}>{fmt(totG)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })}
+                <div className="card">
+                  <div className="card-body" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 700 }}>
+                    <span>TOTAL GENERAL</span>
+                    <span style={{ color: "var(--color-primary)" }}>{fmt(comprasTotalGeneral)}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {agruparCompras((c) => (c.fecha || "").slice(0, 10), true).map(([dia, grupo]) => {
+                  const sub = grupo.reduce((s, c) => s + (c.subtotal ?? 0), 0);
+                  const ivaG = grupo.reduce((s, c) => s + (c.iva ?? 0), 0);
+                  const totG = grupo.reduce((s, c) => s + (c.total ?? 0), 0);
+                  return (
+                    <div className="card" key={dia || "sin-fecha"}>
+                      <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span>{comprasFechaCorta(dia) || "Sin fecha"} <span style={{ fontSize: 11, color: "var(--color-text-secondary)", fontWeight: 400 }}>({grupo.length} compras)</span></span>
+                        <strong style={{ color: "var(--color-primary)" }}>{fmt(totG)}</strong>
+                      </div>
+                      <table className="table" style={{ width: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>N°</th><th>Factura</th><th>Proveedor</th><th>Tipo</th>
+                            <th className="text-right">Subtotal</th><th className="text-right">IVA</th><th className="text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {grupo.map((c) => (
+                            <tr key={c.id}>
+                              <td>{c.numero}</td>
+                              <td style={{ fontSize: 11 }}>{c.numero_factura || "—"}</td>
+                              <td style={{ fontWeight: 600 }}>{c.proveedor_nombre || "—"}</td>
+                              <td style={{ fontSize: 11 }}>{c.tipo_documento || "—"}</td>
+                              <td className="text-right">{fmt(c.subtotal ?? 0)}</td>
+                              <td className="text-right">{fmt(c.iva ?? 0)}</td>
+                              <td className="text-right" style={{ fontWeight: 700 }}>{fmt(c.total ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr style={{ borderTop: "1px solid var(--color-border)", fontWeight: 700 }}>
+                            <td colSpan={4} className="text-right">Subtotal día</td>
+                            <td className="text-right">{fmt(sub)}</td>
+                            <td className="text-right">{fmt(ivaG)}</td>
+                            <td className="text-right" style={{ color: "var(--color-primary)" }}>{fmt(totG)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })}
+                <div className="card">
+                  <div className="card-body" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontWeight: 700 }}>
+                    <span>TOTAL GENERAL</span>
+                    <span style={{ color: "var(--color-primary)" }}>{fmt(comprasTotalGeneral)}</span>
+                  </div>
                 </div>
               </div>
             )}

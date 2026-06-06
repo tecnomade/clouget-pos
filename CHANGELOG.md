@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.98 — 2026-06-06 📦 Reporte de Compras + búsqueda por código de barras en Productos
+
+- **Nuevo reporte de Compras** (Reportes → Compras): filtra por **rango de fechas** y por **proveedor**, con 3 vistas: **Detalle**, **Por proveedor** (con subtotales) y **Por fecha** (con totales por día), más total general. Exportable a Excel y PDF.
+- **Productos:** el buscador ahora encuentra por **código de barras** (y también por descripción), no solo por nombre/código. Antes no aparecían los productos al escribir/escanear el código de barras.
+
+---
+
 ## v2.5.97 — 2026-06-06 🧮 Caja: el cuadre forzado es solo para admin (cajeros cierran sin bloqueo)
 
 - Ahora, **por defecto, los cajeros pueden cerrar caja aunque el efectivo no coincida**, sin tener que escribir un motivo. La diferencia **igual queda registrada** para que el admin la revise.

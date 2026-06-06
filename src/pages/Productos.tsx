@@ -1904,8 +1904,17 @@ export default function Productos() {
 
   const productosFiltrados = useMemo(() => {
     let lista = productos.filter(p => {
-      if (filtro && !p.nombre.toLowerCase().includes(filtro.toLowerCase()) &&
-          !(p.codigo && p.codigo.toLowerCase().includes(filtro.toLowerCase()))) return false;
+      if (filtro) {
+        const q = filtro.toLowerCase().trim();
+        const cb = (p as any).codigo_barras as string | undefined;
+        const desc = (p as any).descripcion as string | undefined;
+        const match =
+          p.nombre.toLowerCase().includes(q) ||
+          (p.codigo && p.codigo.toLowerCase().includes(q)) ||
+          (cb && cb.toLowerCase().includes(q)) ||
+          (desc && desc.toLowerCase().includes(q));
+        if (!match) return false;
+      }
       if (categoriaNombreFiltro !== null && p.categoria_nombre !== categoriaNombreFiltro) return false;
       // v2.5.24: filtro por tipo
       const tp = (p as any).tipo_producto || "SIMPLE";
