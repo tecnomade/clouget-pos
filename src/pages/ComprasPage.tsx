@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   listarProveedores,
   buscarProveedores,
@@ -66,6 +67,7 @@ function fechaHace(dias: number): string {
 export default function ComprasPage() {
   const { toastExito, toastError, toastWarning } = useToast();
   const { esAdmin } = useSesion();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<"compras" | "proveedores">("compras");
 
   // ==================== PROVEEDORES TAB ====================
@@ -748,6 +750,18 @@ export default function ComprasPage() {
               style={{ display: "none" }}
               onChange={handleXmlUpload}
             />
+            <button
+              className="btn btn-outline"
+              onClick={() => {
+                // Abrir directamente el reporte de Compras (Reportes → pestaña Compras).
+                sessionStorage.setItem("reportes_tab", "compras");
+                window.dispatchEvent(new CustomEvent("clouget:reportes-tab", { detail: "compras" }));
+                navigate("/reportes");
+              }}
+              title="Ver el reporte de compras (por fecha y proveedor)"
+            >
+              📊 Reporte de Compras
+            </button>
             <button
               className="btn btn-outline"
               onClick={() => xmlFileRef.current?.click()}

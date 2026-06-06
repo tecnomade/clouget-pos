@@ -192,6 +192,29 @@ export default function ReportesPage() {
 
   useEffect(() => { cargar(); }, [tab, desde, hasta]);
 
+  // Abrir una pestaña concreta al llegar desde otra página (ej. Compras →
+  // "Reporte de Compras"). Funciona tanto al montar como si Reportes ya estaba
+  // abierto (vía evento). Se limpia el flag para no re-aplicarlo después.
+  useEffect(() => {
+    const aplicarTabGuardado = () => {
+      const t = sessionStorage.getItem("reportes_tab");
+      if (t) {
+        setTab(t as typeof tab);
+        sessionStorage.removeItem("reportes_tab");
+      }
+    };
+    aplicarTabGuardado();
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as string | undefined;
+      if (detail) {
+        setTab(detail as typeof tab);
+        sessionStorage.removeItem("reportes_tab");
+      }
+    };
+    window.addEventListener("clouget:reportes-tab", handler);
+    return () => window.removeEventListener("clouget:reportes-tab", handler);
+  }, []);
+
   // Cargar maestro de categorías al montar
   useEffect(() => {
     listarCategoriasSimple().then(setCategoriasMaestro).catch(() => {});

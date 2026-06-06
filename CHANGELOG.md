@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.5 — 2026-06-06 🔗 Compras: acceso directo al Reporte de Compras
+
+- En **Compras** se agregó el botón **"📊 Reporte de Compras"** que abre directamente el reporte (Reportes → pestaña Compras), sin tener que buscarlo entre las pestañas.
+
+---
+
 ## v2.6.4 — 2026-06-06 🖱️ Cobro: la rueda del mouse ya no altera el monto recibido (25 → 24.99)
 
 - **Corregida la causa real** del ticket que mostraba, por ejemplo, **Recibido $24.99 / Cambio $2.99** cuando se había recibido **$25.00**: el campo numérico cambiaba su valor al **rozar la rueda del mouse** estando enfocado (restaba un centavo). 
