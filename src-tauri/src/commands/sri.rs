@@ -195,30 +195,34 @@ pub async fn emitir_factura_sri_internal(
 ) -> Result<ResultadoEmision, String> {
     // 0. Enforcement de suscripcion SRI
     {
-        let conn = db.conn.lock().map_err(|e| e.to_string())?;
-        let get_cfg = |key: &str| -> String {
-            conn.query_row(
-                "SELECT value FROM config WHERE key = ?1",
-                rusqlite::params![key],
-                |row| row.get(0),
+        // Leer toda la config necesaria y SOLTAR el lock antes de cualquier await
+        let (gratis, usadas, autorizado, plan, hasta, es_lifetime, cuota_str, ultima_validacion, api_url, api_key) = {
+            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+            let get_cfg = |key: &str| -> String {
+                conn.query_row(
+                    "SELECT value FROM config WHERE key = ?1",
+                    rusqlite::params![key],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default()
+            };
+            (
+                get_cfg("sri_facturas_gratis").parse::<i64>().unwrap_or(30),
+                get_cfg("sri_facturas_usadas").parse::<i64>().unwrap_or(0),
+                get_cfg("sri_suscripcion_autorizado") == "1",
+                get_cfg("sri_suscripcion_plan"),
+                get_cfg("sri_suscripcion_hasta"),
+                get_cfg("sri_suscripcion_es_lifetime") == "1",
+                get_cfg("sri_suscripcion_docs_restantes"),
+                get_cfg("sri_suscripcion_ultima_validacion"),
+                get_cfg("sri_suscripcion_url"),
+                get_cfg("licencia_api_key"),
             )
-            .unwrap_or_default()
         };
-
-        let gratis: i64 = get_cfg("sri_facturas_gratis").parse().unwrap_or(30);
-        let usadas: i64 = get_cfg("sri_facturas_usadas").parse().unwrap_or(0);
 
         // Dentro del trial gratis: siempre permitir
         if usadas >= gratis {
-            // Trial agotado — verificar suscripcion con cache
-            let autorizado = get_cfg("sri_suscripcion_autorizado") == "1";
-            let plan = get_cfg("sri_suscripcion_plan");
-            let hasta = get_cfg("sri_suscripcion_hasta");
-            let es_lifetime = get_cfg("sri_suscripcion_es_lifetime") == "1";
-            let cuota_str = get_cfg("sri_suscripcion_docs_restantes");
-            let ultima_validacion = get_cfg("sri_suscripcion_ultima_validacion");
-
-            // Verificar que la cache no ha expirado (7 dias de gracia)
+            // Trial agotado — primero intentar con cache offline (gracia 7 dias)
             let cache_valida = suscripcion::evaluar_cache_offline(
                 &ultima_validacion,
                 autorizado,
@@ -229,51 +233,97 @@ pub async fn emitir_factura_sri_internal(
                 "",
             );
 
-            match cache_valida {
+            // Si no hay cache valida, intentar VALIDAR ONLINE automaticamente.
+            // (Para enviar al SRI igual se necesita internet, asi que con
+            //  suscripcion activa en el admin factura sin pasos manuales.)
+            let estado = match cache_valida {
+                Some(e) => e,
                 None => {
-                    return Err(
-                        "No se puede verificar su suscripcion SRI. Conectese a internet y verifique en Configuracion."
-                            .to_string(),
-                    );
+                    let machine_id = crate::commands::licencia::obtener_machine_id()?;
+                    match suscripcion::validar_suscripcion(&machine_id, &api_url, &api_key).await {
+                        Ok(est) => {
+                            // Guardar resultado en cache local
+                            let conn = db.conn.lock().map_err(|e| e.to_string())?;
+                            let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+                            let docs_str = est
+                                .docs_restantes
+                                .map(|d| d.to_string())
+                                .unwrap_or_default();
+                            let configs = [
+                                ("sri_suscripcion_autorizado", if est.autorizado { "1" } else { "0" }),
+                                ("sri_suscripcion_plan", est.plan.as_str()),
+                                ("sri_suscripcion_hasta", est.fecha_hasta.as_deref().unwrap_or("")),
+                                ("sri_suscripcion_docs_restantes", docs_str.as_str()),
+                                ("sri_suscripcion_es_lifetime", if est.es_lifetime { "1" } else { "0" }),
+                                ("sri_suscripcion_ultima_validacion", hoy.as_str()),
+                                ("sri_suscripcion_mensaje", est.mensaje.as_str()),
+                            ];
+                            for (k, v) in &configs {
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+                                    rusqlite::params![k, v],
+                                )
+                                .ok();
+                            }
+                            if est.autorizado {
+                                conn.execute(
+                                    "UPDATE config SET value = '1' WHERE key = 'sri_modulo_activo'",
+                                    [],
+                                )
+                                .ok();
+                            }
+                            drop(conn);
+                            est
+                        }
+                        // Sin internet u otro error de red → no se puede verificar
+                        Err(_) => {
+                            return Err(
+                                "No se puede verificar su suscripcion SRI. Conectese a internet y verifique en Configuracion."
+                                    .to_string(),
+                            );
+                        }
+                    }
                 }
-                Some(estado) => {
-                    if !estado.autorizado {
-                        return Err(
-                            "Su prueba gratuita ha terminado. Adquiera una suscripcion SRI para continuar facturando."
-                                .to_string(),
-                        );
-                    }
+            };
 
-                    // Verificar segun tipo de plan
-                    let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
-                    match estado.plan.as_str() {
-                        "lifetime" => {
-                            // Siempre permitido
-                        }
-                        "mensual" | "semestral" | "anual" => {
-                            if let Some(ref fecha_hasta) = estado.fecha_hasta {
-                                if fecha_hasta.as_str() < hoy.as_str() {
-                                    return Err(format!(
-                                        "Su suscripcion SRI ({}) expiro el {}. Renueve su suscripcion para continuar.",
-                                        estado.plan, fecha_hasta
-                                    ));
-                                }
-                            }
-                        }
-                        "paquete" => {
-                            if let Some(docs) = estado.docs_restantes {
-                                if docs <= 0 {
-                                    return Err(
-                                        "Ha agotado sus documentos del paquete. Adquiera un nuevo paquete para continuar."
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        _ => {
-                            // Plan desconocido — permitir si autorizado
+            if !estado.autorizado {
+                // Mostrar el mensaje del servidor si existe (mas claro)
+                let msg = if estado.mensaje.trim().is_empty() {
+                    "Su prueba gratuita ha terminado. Adquiera una suscripcion SRI para continuar facturando.".to_string()
+                } else {
+                    estado.mensaje.clone()
+                };
+                return Err(msg);
+            }
+
+            // Verificar segun tipo de plan
+            let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+            match estado.plan.as_str() {
+                "lifetime" => {
+                    // Siempre permitido
+                }
+                "mensual" | "semestral" | "anual" => {
+                    if let Some(ref fecha_hasta) = estado.fecha_hasta {
+                        if fecha_hasta.as_str() < hoy.as_str() {
+                            return Err(format!(
+                                "Su suscripcion SRI ({}) expiro el {}. Renueve su suscripcion para continuar.",
+                                estado.plan, fecha_hasta
+                            ));
                         }
                     }
+                }
+                "paquete" => {
+                    if let Some(docs) = estado.docs_restantes {
+                        if docs <= 0 {
+                            return Err(
+                                "Ha agotado sus documentos del paquete. Adquiera un nuevo paquete para continuar."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                _ => {
+                    // Plan desconocido — permitir si autorizado
                 }
             }
         }

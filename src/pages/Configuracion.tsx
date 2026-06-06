@@ -1914,6 +1914,25 @@ export default function Configuracion() {
                     </div>
                   )}
 
+                  {/* ID del equipo (para registrar la suscripcion en el panel admin) */}
+                  {licencia?.machine_id && (
+                    <div className="flex justify-between items-center" style={{ gap: 8 }}>
+                      <span className="text-secondary">ID del equipo:</span>
+                      <span
+                        title="Clic para copiar. Úselo para registrar la suscripción SRI en el panel."
+                        style={{ fontFamily: "monospace", fontWeight: 700, letterSpacing: 1, cursor: "pointer" }}
+                        onClick={() => {
+                          navigator.clipboard?.writeText(licencia.machine_id || "").then(
+                            () => toastExito("ID del equipo copiado: " + licencia.machine_id),
+                            () => {}
+                          );
+                        }}
+                      >
+                        {licencia.machine_id} 📋
+                      </span>
+                    </div>
+                  )}
+
                   {/* Boton verificar suscripcion */}
                   <button className="btn btn-outline" style={{ fontSize: 12, justifyContent: "center" }}
                     disabled={verificandoSri}

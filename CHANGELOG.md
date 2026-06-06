@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.5.96 — 2026-06-06 ✅ Suscripción SRI: validación automática al emitir + ID del equipo visible
+
+- **Al emitir una factura**, si se agotó la prueba gratuita y no hay validación en caché, el POS ahora **valida la suscripción online automáticamente** (ya que para enviar al SRI se necesita internet). Con la suscripción activa en el panel, el cliente **factura sin pasos manuales** — ya no es obligatorio pulsar "Verificar suscripción" primero.
+- Si el servidor responde que no hay suscripción activa, se muestra **ese mensaje claro**; si no hay internet, el aviso de reconectar.
+- **ID del equipo** ahora visible en Configuración → SRI (clic para copiar). Sirve para registrar la suscripción SRI en el panel admin con el identificador exacto.
+- La suscripción SRI es un permiso **global** para todos los comprobantes (factura, NC), independiente de los módulos.
+
+---
+
 ## v2.5.95 — 2026-06-06 🔎 Configuración SRI: detalles de la firma + último secuencial autorizado
 
 - **Firma electrónica:** ahora Configuración muestra el **titular** del certificado y su **fecha de vencimiento**, con días restantes y aviso en rojo si está **vencida** (el SRI rechaza comprobantes con firma vencida).
