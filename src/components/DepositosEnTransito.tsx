@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { listarDepositosEnTransito, confirmarDeposito } from "../services/api";
 import { useToast } from "./Toast";
 import { useSesion } from "../contexts/SesionContext";
+import { comprimirImagen } from "../utils/imagen";
 
 /**
  * Panel central de "Depósitos en tránsito": lista TODOS los retiros a banco
@@ -30,12 +31,12 @@ export default function DepositosEnTransito({ compacto = false }: { compacto?: b
 
   useEffect(() => { cargar(); }, [cargar]);
 
-  const onImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onImg = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setImg(reader.result as string);
-    reader.readAsDataURL(file);
+    // Comprime fotos grandes (celular) en vez de rechazarlas
+    try { setImg(await comprimirImagen(file)); }
+    catch { toastError("No se pudo procesar la imagen"); }
   };
 
   const confirmar = async () => {

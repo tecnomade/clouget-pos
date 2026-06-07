@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, sugerirPorPlaca, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
 import { calcularDescuentoFormaPago, leerConfigDescuento, type DescuentoConfig } from "../utils/descuentoFormaPago";
+import { comprimirImagen } from "../utils/imagen";
 import type { DireccionCliente } from "../services/api";
 import type { AlertaStock } from "../services/api";
 import { useToast } from "../components/Toast";
@@ -2935,13 +2936,12 @@ export default function PuntoVenta() {
                     </label>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
                       <input type="file" accept="image/*" style={{ flex: 1 }}
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
-                          const reader = new FileReader();
-                          reader.onload = () => setComprobanteImagen(reader.result as string);
-                          reader.readAsDataURL(file);
+                          // Comprime fotos grandes (celular) en vez de rechazarlas
+                          try { setComprobanteImagen(await comprimirImagen(file)); }
+                          catch { toastError("No se pudo procesar la imagen"); }
                         }} />
                       {comprobanteImagen && (
                         <>
@@ -3424,13 +3424,12 @@ export default function PuntoVenta() {
                     </label>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <input type="file" accept="image/*" style={{ flex: 1, fontSize: 11 }}
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
-                          if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
-                          const reader = new FileReader();
-                          reader.onload = () => setAddPagoComprobante(reader.result as string);
-                          reader.readAsDataURL(file);
+                          // Comprime fotos grandes (celular) en vez de rechazarlas
+                          try { setAddPagoComprobante(await comprimirImagen(file)); }
+                          catch { toastError("No se pudo procesar la imagen"); }
                         }} />
                       {addPagoComprobante && (
                         <>

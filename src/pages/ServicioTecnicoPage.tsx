@@ -22,6 +22,7 @@ import ComboCatalogoEquipo from "../components/ComboCatalogoEquipo";
 import SeccionItemsAbonosOrden from "../components/SeccionItemsAbonosOrden";
 // v2.4.13 ST-5: cancelar orden + nuevo cobro mixto
 import { stCancelarOrden, listarCuentasBanco } from "../services/api";
+import { comprimirImagen } from "../utils/imagen";
 import type { TotalOrden, AbonoServicio, PagoOrden } from "../services/api";
 import type { CuentaBanco } from "../types";
 // v2.5.36: post-cobro con SRI + retenciones
@@ -302,22 +303,19 @@ export default function ServicioTecnicoPage() {
     } catch (err) { toastError("Error: " + err); }
   };
 
-  const handleSubirImagen = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSubirImagen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!detalleId) return;
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = (reader.result as string).split(",")[1];
-      try {
-        await agregarImagenOrden(detalleId, tipoImagen, b64);
-        toastExito("Imagen subida");
-        const imgs = await listarImagenesOrden(detalleId);
-        setImagenes(imgs);
-      } catch (err) { toastError("Error: " + err); }
-    };
-    reader.readAsDataURL(file);
+    try {
+      // Comprime fotos grandes (celular) en vez de rechazarlas
+      const dataUrl = await comprimirImagen(file);
+      const b64 = dataUrl.split(",")[1];
+      await agregarImagenOrden(detalleId, tipoImagen, b64);
+      toastExito("Imagen subida");
+      const imgs = await listarImagenesOrden(detalleId);
+      setImagenes(imgs);
+    } catch (err) { toastError("Error: " + err); }
   };
 
   const handleEliminarImagen = async (imagenId: number) => {

@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.8 — 2026-06-07 🖼️ Comprobantes: ya se pueden subir fotos grandes (se comprimen solas)
+
+- Antes los comprobantes (transferencias, depósitos, pago mixto, servicio técnico) **rechazaban imágenes mayores a 500 KB** — una limitante al subir fotos del celular.
+- Ahora **se aceptan fotos grandes**: la app las **redimensiona y comprime automáticamente** (lado máximo 1600 px, JPEG) antes de guardarlas. Quedan **legibles** pero livianas, sin trabar la app ni la base de datos.
+
+---
+
 ## v2.6.7 — 2026-06-06 🏦 Depósitos en tránsito: panel central para confirmarlos
 
 - Cuando un **cajero** retira efectivo para **depositarlo al banco**, queda **EN TRÁNSITO** hasta que alguien lo confirme. Antes solo se podía confirmar dentro de la caja abierta; si la caja se cerraba, quedaba colgado.

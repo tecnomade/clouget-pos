@@ -7,6 +7,7 @@ import { useSesion } from "../contexts/SesionContext";
 import { useTabActivated } from "../contexts/TabsContext";
 import Modal from "../components/Modal";
 import DepositosEnTransito from "../components/DepositosEnTransito";
+import { comprimirImagen } from "../utils/imagen";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type { Caja, ResumenCaja } from "../types";
 
@@ -410,13 +411,12 @@ export default function CajaPage() {
     } catch (err) { toastError("Error: " + err); }
   };
 
-  const handleImagenComprobante = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImagenComprobante = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 500000) { toastError("Imagen muy grande (max 500KB)"); return; }
-    const reader = new FileReader();
-    reader.onload = () => setConfirmImg(reader.result as string);
-    reader.readAsDataURL(file);
+    // Comprime fotos grandes (celular) en vez de rechazarlas
+    try { setConfirmImg(await comprimirImagen(file)); }
+    catch { toastError("No se pudo procesar la imagen"); }
   };
 
   if (cargando) return <div className="page-body text-center text-secondary">Cargando...</div>;
