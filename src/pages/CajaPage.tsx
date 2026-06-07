@@ -1,4 +1,4 @@
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { useNavigate } from "react-router-dom";
 import { abrirCaja, cerrarCaja, obtenerCajaAbierta, imprimirReporteCaja, imprimirReporteCajaPdf, obtenerConfig, registrarRetiro, registrarIngresoCaja, listarRetirosCaja, listarCuentasBanco, confirmarDeposito, obtenerUltimoCierre, historialDescuadresCaja, listarSesionesCaja, registrarDepositoCierre, listarEventosCaja, obtenerResumenCaja, stListarHoldingsCaja, restListarAbonosHoldingCaja, type AbonoHoldingCaja } from "../services/api";
 import type { HoldingCaja } from "../services/api";
@@ -18,6 +18,7 @@ export default function CajaPage() {
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null);
   const [montoInicial, setMontoInicial] = useState("");
   const [montoReal, setMontoReal] = useState("");
+  const montoRealRef = useRef<HTMLInputElement>(null);
   const [observacion, setObservacion] = useState("");
   const [resumen, setResumen] = useState<ResumenCaja | null>(null);
   const [cargando, setCargando] = useState(true);
@@ -263,6 +264,12 @@ export default function CajaPage() {
   };
 
   const intentarCerrarCaja = async (pinOverride?: string) => {
+    // Salvaguarda: no permitir cerrar sin digitar el valor contado
+    if (montoReal.trim() === "") {
+      toastError("Digite el valor real contado en caja para cerrarla. Si la caja está en $0, escriba 0.");
+      montoRealRef.current?.focus();
+      return false;
+    }
     const monto = parseFloat(montoReal) || 0;
     // monto_esperado del backend YA es el valor recalculado correcto
     // (= monto_inicial + ventas_efectivo + cobros_efectivo - gastos - retiros).
@@ -1069,6 +1076,7 @@ export default function CajaPage() {
               <div>
                 <label className="text-secondary" style={{ fontSize: 12 }}>Monto real contado en caja</label>
                 <input
+                  ref={montoRealRef}
                   className="input input-lg mt-2"
                   type="number"
                   step="0.01"
@@ -1198,7 +1206,15 @@ export default function CajaPage() {
                     + Ingreso a Caja
                   </button>
                 )}
-                <button className="btn btn-danger" style={{ flex: 1, minWidth: 130 }} onClick={() => setConfirmarCierre(true)}>
+                <button className="btn btn-danger" style={{ flex: 1, minWidth: 130 }} onClick={() => {
+                  // Exigir que digiten el valor real contado (no cerrar con campo vacío)
+                  if (montoReal.trim() === "") {
+                    toastError("Digite el valor real contado en caja para cerrarla. Si la caja está en $0, escriba 0.");
+                    montoRealRef.current?.focus();
+                    return;
+                  }
+                  setConfirmarCierre(true);
+                }}>
                   Cerrar Caja
                 </button>
               </div>

@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.9 — 2026-06-07 🔐 Caja: exigir el monto contado para cerrar
+
+- Al **cerrar caja** sin haber escrito el **"Monto real contado"**, ahora la app **no cierra**: pide *"Digite el valor real contado en caja para cerrarla"* y enfoca el campo. Evita cierres con $0 por descuido (que generaban descuadres). Si la caja está en $0, basta con escribir 0.
+
+---
+
 ## v2.6.8 — 2026-06-07 🖼️ Comprobantes: ya se pueden subir fotos grandes (se comprimen solas)
 
 - Antes los comprobantes (transferencias, depósitos, pago mixto, servicio técnico) **rechazaban imágenes mayores a 500 KB** — una limitante al subir fotos del celular.
