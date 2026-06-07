@@ -40,6 +40,7 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str, &str)] = &[
     ("cambiar_lista_precio",        "Cambiar la lista de precios en el POS",                    CAT_CORE),
     ("gestionar_gastos",            "Gestionar gastos",                                         CAT_CORE),
     ("ver_pagos_pendientes_admin",  "Confirmar/rechazar pagos a cuentas (transferencias)",      CAT_CORE),
+    ("autoconfirmar_transferencias","Auto-confirmar sus transferencias al vender (cajero de confianza)", CAT_CORE),
 
     // ─── RESTAURANTE (módulo restaurante) ────────────────────────────────
     // Estos permisos también determinan qué ve el usuario en la app móvil

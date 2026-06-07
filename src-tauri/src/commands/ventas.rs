@@ -16,6 +16,12 @@ pub fn registrar_venta(
     let usuario_nombre = sesion_actual.nombre.clone();
     let usuario_id = sesion_actual.usuario_id;
     let es_admin = sesion_actual.rol == "ADMIN";
+    // Permiso para que un cajero de confianza auto-confirme sus transferencias.
+    let puede_autoconfirmar_transfer = es_admin
+        || serde_json::from_str::<serde_json::Value>(&sesion_actual.permisos)
+            .ok()
+            .and_then(|v| v.get("autoconfirmar_transferencias")?.as_bool())
+            .unwrap_or(false);
     drop(sesion_guard);
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
@@ -240,7 +246,7 @@ pub fn registrar_venta(
         .unwrap_or(false);
     let requiere_verificacion = es_transfer_venta || es_transfer_mixto;
     let pago_estado_inicial: &str = if !requiere_verificacion { "NO_APLICA" }
-        else if es_admin { "VERIFICADO" }
+        else if puede_autoconfirmar_transfer { "VERIFICADO" }
         else { "REGISTRADO" };
     let verificado_por_inicial: Option<i64> = if pago_estado_inicial == "VERIFICADO" { Some(usuario_id) } else { None };
     let fecha_verificacion_inicial: Option<String> = if pago_estado_inicial == "VERIFICADO" {
@@ -633,7 +639,7 @@ pub fn registrar_venta(
                 let pf = p.forma_pago.to_uppercase();
                 let es_pago_transfer = matches!(pf.as_str(), "TRANSFER" | "TRANSFERENCIA");
                 let p_estado: &str = if !es_pago_transfer { "NO_APLICA" }
-                    else if es_admin { "VERIFICADO" }
+                    else if puede_autoconfirmar_transfer { "VERIFICADO" }
                     else { "REGISTRADO" };
                 let p_verif_por: Option<i64> = if p_estado == "VERIFICADO" { Some(usuario_id) } else { None };
                 let p_verif_fecha: Option<String> = if p_estado == "VERIFICADO" {
