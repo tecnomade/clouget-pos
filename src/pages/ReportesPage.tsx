@@ -14,6 +14,7 @@ import type { Compra, Proveedor } from "../types";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useToast } from "../components/Toast";
 import ModalCorregirStockNegativo from "../components/ModalCorregirStockNegativo";
+import DepositosEnTransito from "../components/DepositosEnTransito";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import type { ReporteUtilidad, ReporteBalance, ProductoRentabilidad } from "../types";
 
@@ -39,7 +40,7 @@ const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--colo
 
 export default function ReportesPage() {
   const { toastExito, toastError } = useToast();
-  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "compras" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "gastos" | "cancelaciones_st" | "garantias_st">("utilidad");
+  const [tab, setTab] = useState<"utilidad" | "balance" | "productos" | "iva" | "cxc" | "cxp" | "compras" | "depositos" | "inventario" | "valuacion" | "kardex" | "cajeros" | "ventas" | "gastos" | "cancelaciones_st" | "garantias_st">("utilidad");
   // v2.5.54: reporte de gastos
   const [gastosReporte, setGastosReporte] = useState<import("../services/api").ResumenGastos | null>(null);
   // v2.5.22: estado para reporte de valuación de inventario
@@ -723,6 +724,7 @@ export default function ReportesPage() {
             ["cxc", "Cuentas por Cobrar"],
             ["cxp", "Cuentas por Pagar"],
             ["compras", "Compras"],
+            ["depositos", "🏦 Depósitos en tránsito"],
             ["inventario", "Inventario"],
             ["valuacion", "💼 Valuación"],
             ["kardex", "Kardex Multi"],
@@ -1723,6 +1725,10 @@ export default function ReportesPage() {
         )}
 
         {/* TAB: Compras — reporte frontend-only (detalle / por proveedor / por fecha) */}
+        {tab === "depositos" && (
+          <DepositosEnTransito />
+        )}
+
         {!cargando && tab === "compras" && (
           <div>
             {/* Filtros: proveedor + agrupación */}

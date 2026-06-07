@@ -6,6 +6,7 @@ import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import { useTabActivated } from "../contexts/TabsContext";
 import Modal from "../components/Modal";
+import DepositosEnTransito from "../components/DepositosEnTransito";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type { Caja, ResumenCaja } from "../types";
 
@@ -460,6 +461,8 @@ export default function CajaPage() {
         </div>
       </div>
       <div className="page-body">
+        {/* Depósitos en tránsito (pendientes de confirmar) — solo con permiso */}
+        <DepositosEnTransito />
         {resumen && (
           <div className="card mb-4" style={{ maxWidth: 500, margin: "40px auto" }}>
             <div className="card-header">Resumen de Cierre de Caja</div>

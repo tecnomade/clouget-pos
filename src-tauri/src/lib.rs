@@ -427,6 +427,7 @@ pub fn run() {
             commands::caja::registrar_ingreso_caja,
             commands::caja::listar_retiros_caja,
             commands::caja::confirmar_deposito,
+            commands::caja::listar_depositos_en_transito,
             // Configuración
             commands::config::obtener_config,
             commands::config::guardar_config,

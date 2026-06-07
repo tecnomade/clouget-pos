@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.7 — 2026-06-06 🏦 Depósitos en tránsito: panel central para confirmarlos
+
+- Cuando un **cajero** retira efectivo para **depositarlo al banco**, queda **EN TRÁNSITO** hasta que alguien lo confirme. Antes solo se podía confirmar dentro de la caja abierta; si la caja se cerraba, quedaba colgado.
+- Nuevo **panel "Depósitos en tránsito"** que lista **todos** los depósitos pendientes (de cualquier caja, abierta o cerrada) y permite **confirmarlos** (referencia bancaria + comprobante) → Depositado.
+- Disponible en **Bancos**, **Reportes** (pestaña "Depósitos en tránsito") y **Caja**.
+- Protegido por el **nuevo permiso `confirmar_depositos`** (lo tiene el admin; se lo puedes dar a un supervisor/contador). Se valida también en el servidor.
+
+---
+
 ## v2.6.6 — 2026-06-06 🧮 Caja: tabla "Movimientos" ajustada (columna Usuario ya no se recorta)
 
 - La tabla de **Movimientos de caja** ahora **ajusta sus columnas al ancho** de la tarjeta (anchos fijos por columna). Ya no se recorta la columna **Usuario** ni necesita scroll horizontal en pantallas normales.

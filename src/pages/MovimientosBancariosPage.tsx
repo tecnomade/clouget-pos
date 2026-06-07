@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { listarMovimientosBancarios, listarCuentasBanco, obtenerDetalleMovimientoBancario, verificarTransferencia } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
+import DepositosEnTransito from "../components/DepositosEnTransito";
 import type { CuentaBanco } from "../types";
 
 type Periodo = "hoy" | "7dias" | "mes" | "custom";
@@ -205,6 +206,8 @@ export default function MovimientosBancariosPage() {
         <h2>Movimientos Bancarios</h2>
       </div>
       <div className="page-body">
+        {/* Depósitos en tránsito (pendientes de confirmar) — solo con permiso */}
+        <DepositosEnTransito />
         {/* Filtros */}
         <div className="flex gap-3 mb-4 items-end" style={{ flexWrap: "wrap" }}>
           <div>

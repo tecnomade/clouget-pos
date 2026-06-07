@@ -653,6 +653,11 @@ export async function listarRetirosCaja(cajaId: number): Promise<any[]> {
 export const confirmarDeposito = (retiroId: number, referencia: string, comprobanteImagen?: string) =>
   smartInvoke<void>("confirmar_deposito", { retiroId, referencia, comprobanteImagen: comprobanteImagen ?? null });
 
+// Depósitos en tránsito (retiros a banco pendientes de confirmar) — panel central
+export async function listarDepositosEnTransito(): Promise<any[]> {
+  return smartInvoke("listar_depositos_en_transito");
+}
+
 // --- Impresión ---
 
 export async function imprimirTicket(ventaId: number): Promise<string> {

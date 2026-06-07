@@ -31,6 +31,7 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str, &str)] = &[
     ("gestionar_inventario",        "Gestionar inventario",                                     CAT_CORE),
     ("ver_guias",                   "Ver guias de remision",                                    CAT_CORE),
     ("ver_movimientos_bancarios",   "Ver movimientos bancarios",                                CAT_CORE),
+    ("confirmar_depositos",         "Confirmar depósitos en tránsito (retiros a banco)",        CAT_CORE),
     ("crear_nota_credito",          "Crear notas de crédito",                                   CAT_CORE),
     ("gestionar_compras",           "Gestionar compras y proveedores",                          CAT_CORE),
     // (gestionar_servicio_tecnico y ver_servicio_tecnico movidos a CAT_SERVICIO_TECNICO abajo, v2.4.8)

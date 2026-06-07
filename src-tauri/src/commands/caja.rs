@@ -725,13 +725,68 @@ pub fn listar_retiros_caja(
     Ok(retiros)
 }
 
+/// Lista TODOS los retiros en estado EN_TRANSITO (depósitos pendientes de
+/// confirmar), de cualquier caja (abierta o cerrada). Alimenta el panel central
+/// de confirmación de depósitos (Bancos / Reportes / Caja).
+#[tauri::command]
+pub fn listar_depositos_en_transito(db: State<Database>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT r.id, r.caja_id, r.monto, r.motivo, r.banco_id, r.referencia,
+                    r.usuario, r.usuario_id, r.fecha, cb.nombre as banco_nombre,
+                    r.comprobante_imagen, COALESCE(r.tipo, 'RETIRO')
+             FROM retiros_caja r
+             LEFT JOIN cuentas_banco cb ON r.banco_id = cb.id
+             WHERE r.estado = 'EN_TRANSITO'
+             ORDER BY r.fecha DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "caja_id": row.get::<_, i64>(1)?,
+                "monto": row.get::<_, f64>(2)?,
+                "motivo": row.get::<_, String>(3)?,
+                "banco_id": row.get::<_, Option<i64>>(4)?,
+                "referencia": row.get::<_, Option<String>>(5)?,
+                "usuario": row.get::<_, String>(6)?,
+                "usuario_id": row.get::<_, Option<i64>>(7)?,
+                "fecha": row.get::<_, String>(8)?,
+                "banco_nombre": row.get::<_, Option<String>>(9)?,
+                "comprobante_imagen": row.get::<_, Option<String>>(10)?,
+                "tipo": row.get::<_, String>(11)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
 #[tauri::command]
 pub fn confirmar_deposito(
     db: State<Database>,
+    sesion: State<SesionState>,
     retiro_id: i64,
     referencia: String,
     comprobante_imagen: Option<String>,
 ) -> Result<(), String> {
+    // Permiso: ADMIN o 'confirmar_depositos'
+    {
+        let g = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        let s = g.as_ref().ok_or("Debe iniciar sesión para confirmar depósitos".to_string())?;
+        let es_admin = s.rol == "ADMIN";
+        let tiene = es_admin
+            || serde_json::from_str::<serde_json::Value>(&s.permisos)
+                .ok()
+                .and_then(|v| v.get("confirmar_depositos")?.as_bool())
+                .unwrap_or(false);
+        if !tiene {
+            return Err("No tiene permiso para confirmar depósitos.".to_string());
+        }
+    }
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
     let rows = conn.execute(
         "UPDATE retiros_caja SET estado = 'DEPOSITADO', referencia = ?1, comprobante_imagen = ?2 WHERE id = ?3 AND estado = 'EN_TRANSITO'",
