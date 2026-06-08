@@ -2491,7 +2491,7 @@ export default function PuntoVenta() {
             </div>
             <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <p className="text-secondary" style={{ fontSize: 12, margin: 0 }}>
-                Se descontara stock al crear la nota. Todos los campos son opcionales.
+                La nota nace "En tránsito" y NO descuenta stock al crearse. El stock se descuenta cuando se marca "Recibir". Los datos de transporte son opcionales.
               </p>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>

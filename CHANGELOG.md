@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.16 (BETA) — 2026-06-08 📝 Nota de Entrega: texto del modal corregido (en tránsito)
+
+> BETA.
+
+- El modal de Nota de Entrega ya no dice "Se descontará stock al crear la nota" (era incorrecto). Ahora aclara que la nota nace "En tránsito" y el stock se descuenta al **Recibir**.
+
+---
+
 ## v2.6.15 (BETA) — 2026-06-08 🚫 Nota de Entrega: no puede ser a Consumidor Final
 
 > BETA — junto al refactor de inventario de notas de entrega.
