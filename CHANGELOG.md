@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.18 (BETA) — 2026-06-08 🏷️ Kardex: muestra "Nota de Entrega" (no "GUIA_REMISION")
+
+> BETA.
+
+- En el Kardex (Inventario y Reportes), el tipo de movimiento ahora se muestra como **"Nota de Entrega"** en vez del código interno **GUIA_REMISION** (y "Ajuste N. Entrega" para AJUSTE_GUIA). El motivo también dice **"Nota de Entrega NE-…"** en vez de "Guia …". Consistente con el resto de la app.
+
+---
+
 ## v2.6.17 (BETA) — 2026-06-08 🔍 POS: fix escáner agregaba producto equivocado + aprende placa↔chofer
 
 > BETA.

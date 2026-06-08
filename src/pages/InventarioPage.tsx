@@ -277,7 +277,7 @@ export default function InventarioPage() {
                           fontSize: 10, padding: "2px 6px", borderRadius: 3, fontWeight: 600,
                           background: tc.bg, color: tc.color,
                         }}>
-                          {m.tipo}
+                          {m.tipo === "GUIA_REMISION" ? "Nota de Entrega" : m.tipo === "AJUSTE_GUIA" ? "Ajuste N. Entrega" : m.tipo}
                         </span>
                       </td>
                       <td className="text-right font-bold" style={{

@@ -34,6 +34,16 @@ const MESES = [
 const hoy = () => new Date().toISOString().slice(0, 10);
 const hace7 = () => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); };
 const inicioMes = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; };
+
+// Etiqueta legible del tipo de movimiento de inventario (el código interno
+// GUIA_REMISION se muestra como "Nota de Entrega" para coincidir con la UI).
+const labelTipoMov = (tipo: string): string => {
+  switch ((tipo || "").toUpperCase()) {
+    case "GUIA_REMISION": return "Nota de Entrega";
+    case "AJUSTE_GUIA": return "Ajuste N. Entrega";
+    default: return tipo;
+  }
+};
 const inicioAnio = () => `${new Date().getFullYear()}-01-01`;
 
 const COLORES_PIE = ["var(--color-primary)", "var(--color-success)", "var(--color-warning)", "#8b5cf6", "var(--color-danger)", "#06b6d4"];
@@ -1297,7 +1307,7 @@ export default function ReportesPage() {
                                 fontSize: 10, padding: "2px 6px", borderRadius: 3,
                                 background: esVenta ? "rgba(239,68,68,0.15)" : esCompra ? "rgba(34,197,94,0.15)" : "rgba(148,163,184,0.15)",
                                 color: esVenta ? "var(--color-danger)" : esCompra ? "var(--color-success)" : "var(--color-text-secondary)"
-                              }}>{m.tipo}</span>
+                              }}>{labelTipoMov(m.tipo)}</span>
                               {m.documento && (
                                 <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600 }}>
                                   {m.documento}
@@ -1695,7 +1705,7 @@ export default function ReportesPage() {
                             color: m.tipo === "VENTA" ? "var(--color-danger)"
                               : m.tipo.includes("COMPRA") || m.tipo.includes("INGRESO") || m.tipo === "ANULACION_VENTA" ? "var(--color-success)"
                               : "var(--color-text-secondary)"
-                          }}>{m.tipo}</span></td>
+                          }}>{labelTipoMov(m.tipo)}</span></td>
                           <td className="text-right" style={{ color: m.cantidad < 0 ? "var(--color-danger)" : "var(--color-success)", fontWeight: 600 }}>
                             {m.cantidad > 0 ? "+" : ""}{m.cantidad}
                           </td>

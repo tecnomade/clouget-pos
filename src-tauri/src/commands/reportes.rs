@@ -1265,7 +1265,7 @@ pub fn reporte_kardex_multi(
                         CASE
                             WHEN v.numero IS NOT NULL THEN
                                 CASE
-                                    WHEN m.tipo = 'GUIA_REMISION' OR m.tipo = 'AJUSTE_GUIA' THEN 'Guia ' || v.numero
+                                    WHEN m.tipo = 'GUIA_REMISION' OR m.tipo = 'AJUSTE_GUIA' THEN 'Nota de Entrega ' || v.numero
                                     WHEN m.tipo = 'NOTA_CREDITO' OR m.tipo = 'DEVOLUCION' THEN 'NC referida a ' || v.numero
                                     WHEN m.tipo = 'ANULACION_VENTA' THEN 'Anulacion ' || v.numero
                                     ELSE 'Venta ' || COALESCE(NULLIF(v.numero_factura, ''), v.numero)
