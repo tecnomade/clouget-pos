@@ -6,6 +6,18 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.14 (BETA) — 2026-06-08 📦 Notas de Entrega: el stock se descuenta al RECIBIR (con recepción parcial)
+
+> **BETA — para pruebas.** Cambio de inventario importante; validar antes de pasar a estable.
+
+- **Crear** una nota de entrega ya **NO descuenta stock** — la nota nace **"En tránsito"**.
+- **Recibir** la nota (botón "Recibir") **descuenta el stock**. Permite **recepción parcial**: editas cuánto recibió el cliente de cada ítem y solo eso se descuenta.
+- **Rechazar** ya no devuelve stock (porque al crear no se descontó).
+- **Facturar**: si ya se recibió, no vuelve a descontar; si se factura sin recibir, descuenta ahí.
+- **Anular**: devuelve stock solo si ya se había movido.
+
+---
+
 ## v2.6.13 — 2026-06-07 🏷️ Notas de Entrega: el número ahora usa prefijo "NE-" (no "GR-")
 
 - El número de las **Notas de Entrega** cambia de **"GR-"** a **"NE-"** para coincidir con la etiqueta de la pantalla (antes decía "GR" de Guía de Remisión, lo que confundía). Las notas existentes conservan su número GR-; las nuevas serán NE-. La referencia interna no afecta el secuencial oficial del SRI si se emite la Guía de Remisión electrónica.

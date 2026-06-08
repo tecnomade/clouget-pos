@@ -65,6 +65,65 @@ export default function GuiasRemisionPage() {
   // solo visible/operativo con el módulo multi_almacen activo en la licencia.
   const [moduloLogistica, setModuloLogistica] = useState(false);
 
+  // Reception modal (REFACTOR INVENTARIO): al recibir, el stock se descuenta.
+  // Soporta recepción parcial (cantidad recibida editable por item).
+  const [recepcion, setRecepcion] = useState<{
+    guiaId: number;
+    numero: string;
+    items: { producto_id: number; nombre: string; cantidad: number; recibida: string }[];
+  } | null>(null);
+  const [recibiendo, setRecibiendo] = useState(false);
+
+  const abrirRecepcion = async (id: number, numero: string) => {
+    try {
+      const vc = await obtenerVenta(id);
+      setRecepcion({
+        guiaId: id,
+        numero,
+        items: vc.detalles
+          .filter((d) => d.producto_id != null)
+          .map((d) => ({
+            producto_id: d.producto_id as number,
+            nombre: d.nombre_producto || `#${d.producto_id}`,
+            cantidad: d.cantidad,
+            recibida: String(d.cantidad),
+          })),
+      });
+    } catch (err) {
+      toastError("Error al cargar items: " + err);
+    }
+  };
+
+  // "Recibir todo": no envía items_recibidos → recepción total en backend.
+  const confirmarRecepcionTotal = async () => {
+    if (!recepcion) return;
+    setRecibiendo(true);
+    try {
+      await cambiarEstadoGuia(recepcion.guiaId, "ENTREGADA");
+      toastExito("Recepción registrada (completa)");
+      setRecepcion(null);
+      cargar();
+    } catch (e) { toastError("Error: " + e); }
+    finally { setRecibiendo(false); }
+  };
+
+  // "Confirmar recepción": envía las cantidades editadas como items_recibidos.
+  const confirmarRecepcionParcial = async () => {
+    if (!recepcion) return;
+    setRecibiendo(true);
+    try {
+      const items = recepcion.items.map((it) => ({
+        producto_id: it.producto_id,
+        cantidad: Math.max(0, Math.min(parseFloat(it.recibida) || 0, it.cantidad)),
+      }));
+      await cambiarEstadoGuia(recepcion.guiaId, "ENTREGADA", items);
+      toastExito("Recepción registrada");
+      setRecepcion(null);
+      cargar();
+    } catch (e) { toastError("Error: " + e); }
+    finally { setRecibiendo(false); }
+  };
+
   const cargar = async () => {
     try {
       const estado = filtroEstado === "TODAS" ? undefined
@@ -245,7 +304,7 @@ export default function GuiasRemisionPage() {
                           : g.estado === "RECHAZADA" ? "var(--color-danger)"
                           : "var(--color-primary)",
                       }}>
-                        {g.estado === "PENDIENTE" ? "PENDIENTE"
+                        {g.estado === "PENDIENTE" ? "EN TRÁNSITO"
                           : g.estado === "ENTREGADA" ? "ENTREGADA"
                           : g.estado === "FACTURADA" ? "FACTURADA"
                           : g.estado === "RECHAZADA" ? "RECHAZADA"
@@ -270,7 +329,7 @@ export default function GuiasRemisionPage() {
                             color: "var(--color-primary)", borderColor: "var(--color-primary)",
                             fontWeight: 600,
                           }}
-                            title="Convertir esta guia en una venta cobrada (no descuenta stock de nuevo, ya se descontó al crear la guia)"
+                            title="Convertir esta nota en una venta cobrada. Si aún no fue recibida, el stock se descuenta al facturar."
                             onClick={() => abrirConvertir(g.id)}>
                             💰 Facturar
                           </button>
@@ -281,24 +340,19 @@ export default function GuiasRemisionPage() {
                               fontSize: 10, padding: "2px 8px",
                               color: "var(--color-success)", borderColor: "rgba(74, 222, 128, 0.4)",
                             }}
-                              onClick={async () => {
-                                try {
-                                  await cambiarEstadoGuia(g.id, "ENTREGADA");
-                                  toastExito("Nota marcada como entregada");
-                                  cargar();
-                                } catch (e) { toastError("Error: " + e); }
-                              }}>
-                              Entregada
+                              title="Registrar la recepción del cliente. Descuenta stock (soporta recepción parcial)."
+                              onClick={() => abrirRecepcion(g.id, g.numero)}>
+                              Recibir
                             </button>
                             <button className="btn btn-outline" style={{
                               fontSize: 10, padding: "2px 8px",
                               color: "var(--color-danger)", borderColor: "rgba(239, 68, 68, 0.4)",
                             }}
                               onClick={async () => {
-                                if (!confirm("Rechazar nota de entrega? Se devolvera el stock de los productos.")) return;
+                                if (!confirm("Rechazar nota de entrega? No se movió stock (aún no recibida), no hay nada que devolver.")) return;
                                 try {
                                   await cambiarEstadoGuia(g.id, "RECHAZADA");
-                                  toastExito("Nota rechazada, stock devuelto");
+                                  toastExito("Nota rechazada");
                                   cargar();
                                 } catch (e) { toastError("Error: " + e); }
                               }}>
@@ -339,6 +393,75 @@ export default function GuiasRemisionPage() {
           </div>
         </div>
       </div>
+
+      {/* Reception modal (REFACTOR INVENTARIO): descuenta stock al recibir */}
+      {recepcion && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
+          onClick={(e) => { if (e.target === e.currentTarget && !recibiendo) setRecepcion(null); }}>
+          <div className="card" style={{ width: 520, maxHeight: "85vh", overflow: "auto" }}>
+            <div className="card-header flex justify-between items-center">
+              <span>Recibir nota {recepcion.numero}</span>
+              <button className="btn btn-outline" style={{ padding: "2px 8px" }} disabled={recibiendo} onClick={() => setRecepcion(null)}>x</button>
+            </div>
+            <div className="card-body">
+              <p className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>
+                Confirme las cantidades realmente recibidas por el cliente. El stock se descontará al confirmar.
+              </p>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th className="text-right">Enviado</th>
+                    <th className="text-right">Recibido</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recepcion.items.map((it, idx) => (
+                    <tr key={it.producto_id}>
+                      <td style={{ fontSize: 13 }}>{it.nombre}</td>
+                      <td className="text-right" style={{ fontSize: 13 }}>{it.cantidad}</td>
+                      <td className="text-right">
+                        <input
+                          type="number"
+                          className="input"
+                          style={{ width: 90, fontSize: 13, textAlign: "right" }}
+                          min={0}
+                          max={it.cantidad}
+                          step="any"
+                          value={it.recibida}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setRecepcion((prev) => prev ? {
+                              ...prev,
+                              items: prev.items.map((x, i) => i === idx ? { ...x, recibida: v } : x),
+                            } : prev);
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="flex gap-2 justify-end" style={{ marginTop: 16 }}>
+                <button className="btn btn-outline" disabled={recibiendo} onClick={() => setRecepcion(null)}>
+                  Cancelar
+                </button>
+                <button className="btn btn-outline" disabled={recibiendo}
+                  style={{ color: "var(--color-primary)", borderColor: "var(--color-primary)" }}
+                  onClick={confirmarRecepcionTotal}>
+                  Recibir todo
+                </button>
+                <button className="btn"
+                  disabled={recibiendo}
+                  style={{ background: "var(--color-success)", color: "white" }}
+                  onClick={confirmarRecepcionParcial}>
+                  Confirmar recepción
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Detail modal */}
       {detalle && (

@@ -422,8 +422,12 @@ export async function convertirGuiaAVenta(params: {
   return smartInvoke("convertir_guia_a_venta", params);
 }
 
-export async function cambiarEstadoGuia(guiaId: number, nuevoEstado: string): Promise<void> {
-  return smartInvoke("cambiar_estado_guia", { guiaId, nuevoEstado });
+export async function cambiarEstadoGuia(
+  guiaId: number,
+  nuevoEstado: string,
+  itemsRecibidos?: { producto_id: number; cantidad: number }[],
+): Promise<void> {
+  return smartInvoke("cambiar_estado_guia", { guiaId, nuevoEstado, itemsRecibidos: itemsRecibidos ?? null });
 }
 
 export async function listarChoferes(): Promise<[number, string, string | null][]> {

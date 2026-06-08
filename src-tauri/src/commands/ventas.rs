@@ -2109,16 +2109,8 @@ pub fn guardar_guia_remision(
         .query_row("SELECT value FROM config WHERE key = 'terminal_punto_emision'", [], |row| row.get(0))
         .unwrap_or_else(|_| "001".to_string());
 
-    // Multi-almacén: obtener ID del establecimiento para descontar stock
-    let multi_almacen: bool = conn
-        .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    let est_id: Option<i64> = if multi_almacen {
-        conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![terminal_est], |row| row.get(0)).ok()
-    } else {
-        None
-    };
+    // REFACTOR INVENTARIO: ya no se descuenta stock en la creación, por lo que
+    // no necesitamos el ID del establecimiento aquí (se calcula en la recepción).
 
     // Obtener secuencial para guía de remisión
     conn.execute(
@@ -2161,7 +2153,13 @@ pub fn guardar_guia_remision(
 
     let venta_id = conn.last_insert_rowid();
 
-    // Insertar detalles, descontar stock, crear kardex
+    // Insertar detalles (SIN descontar stock).
+    //
+    // REFACTOR INVENTARIO: la creación de la nota de entrega (estado 'PENDIENTE')
+    // ya NO mueve inventario. El stock se descuenta exactamente UNA vez, cuando el
+    // cliente RECIBE la mercadería (cambiar_estado_guia → ENTREGADA), soportando
+    // recepción parcial. Si la nota se RECHAZA, nunca se descuenta. Si se factura
+    // directamente sin pasar por recepción, convertir_guia_a_venta descuenta ahí.
     let mut detalles_guardados = Vec::new();
     for item in &venta.items {
         let subtotal = item.cantidad * item.precio_unitario - item.descuento;
@@ -2170,63 +2168,6 @@ pub fn guardar_guia_remision(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![venta_id, item.producto_id, item.cantidad, item.precio_unitario, item.descuento, item.iva_porcentaje, subtotal, item.info_adicional],
         ).map_err(|e| e.to_string())?;
-
-        // Obtener stock antes de descontar y verificar si es servicio o no controla stock
-        let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
-            .query_row(
-                "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
-                rusqlite::params![item.producto_id],
-                |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
-            )
-            .unwrap_or((0.0, false, false));
-
-        let omite_stock = es_servicio || no_controla_stock;
-
-        // Descontar stock (si no es servicio y controla stock)
-        if !omite_stock {
-            conn.execute(
-                "UPDATE productos SET stock_actual = stock_actual - ?1,
-                 updated_at = datetime('now','localtime')
-                 WHERE id = ?2",
-                rusqlite::params![item.cantidad, item.producto_id],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        // Multi-almacén: también descontar de stock_establecimiento
-        if let Some(eid) = est_id {
-            if !omite_stock {
-                conn.execute(
-                    "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
-                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
-                    rusqlite::params![item.cantidad, item.producto_id, eid],
-                ).ok();
-            }
-        }
-
-        // Registrar movimiento de inventario (kardex) para productos físicos
-        // costo_unitario = precio_costo snapshot, NO precio de venta
-        if !omite_stock {
-            let costo_snap: f64 = conn.query_row(
-                "SELECT precio_costo FROM productos WHERE id = ?1",
-                rusqlite::params![item.producto_id],
-                |row| row.get(0)
-            ).unwrap_or(0.0);
-            let _ = conn.execute(
-                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                 VALUES (?1, 'GUIA_REMISION', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![
-                    item.producto_id,
-                    -(item.cantidad),
-                    stock_antes,
-                    stock_antes - item.cantidad,
-                    costo_snap,
-                    venta_id,
-                    usuario_nombre,
-                    est_id,
-                ],
-            );
-        }
 
         let nombre_prod: String = conn.query_row("SELECT nombre FROM productos WHERE id = ?1", rusqlite::params![item.producto_id], |row| row.get(0)).unwrap_or_default();
         detalles_guardados.push(VentaDetalle {
@@ -2466,6 +2407,10 @@ pub fn convertir_guia_a_venta(
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
     ).map_err(|_| "Guía no encontrada, ya fue facturada, o fue rechazada".to_string())?;
     let guia_es_pendiente = guia_estado_actual == "PENDIENTE";
+    // REFACTOR INVENTARIO: ya_recibida indica que el stock YA se descontó en la
+    // recepción (ENTREGADA). Si la guía aún está PENDIENTE, el stock NUNCA se movió
+    // y debemos descontarlo ahora al facturar (más abajo).
+    let ya_recibida = guia_estado_actual == "ENTREGADA";
 
     // Leer establecimiento y punto de emisión del terminal
     let terminal_est: String = conn
@@ -2553,47 +2498,70 @@ pub fn convertir_guia_a_venta(
     sum_iva = r2(sum_iva);
     let total_recalculado = r2(sum_sin_iva + sum_con_iva + sum_iva - descuento_g);
 
-    // Aplicar ajustes de stock si los hubo (solo PENDIENTE).
-    // ajuste positivo = devolver stock; ajuste negativo = decrementar (mas).
-    if !ajustes_stock.is_empty() {
+    // === MOVIMIENTO DE STOCK AL FACTURAR (REFACTOR INVENTARIO) ===
+    //
+    // El stock se mueve EXACTAMENTE UNA VEZ. Dos caminos:
+    //
+    //   A) ya_recibida (guía ENTREGADA): el stock YA se descontó en la recepción.
+    //      La cantidad es fija (no editable). NO se vuelve a tocar el stock aquí.
+    //      `ajustes_stock` está vacío en este caso (sólo se llena si PENDIENTE).
+    //
+    //   B) PENDIENTE (facturada directo, sin paso de recepción): el stock NUNCA
+    //      se movió. Debemos descontar AHORA las cantidades finales (con overrides
+    //      aplicados), exactamente una vez, con kardex tipo 'GUIA_REMISION'.
+    if !ya_recibida {
         // Multi-almacen: ID del establecimiento
         let multi_almacen: bool = conn.query_row(
             "SELECT value FROM config WHERE key = 'multi_almacen_activo'", [],
             |r| r.get::<_, String>(0)
         ).map(|v| v == "1").unwrap_or(false);
-        let est_id_ajuste: Option<i64> = if multi_almacen {
+        let est_id_fact: Option<i64> = if multi_almacen {
             conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1",
                 rusqlite::params![terminal_est], |r| r.get(0)).ok()
         } else { None };
 
-        for (pid, ajuste) in &ajustes_stock {
-            // ajuste positivo = devolver, negativo = decrementar
+        // Descontar cantidades finales (una sola vez). referencia = nueva venta.
+        for (pid, cant, _pu, _desc, _iva, _sub, _info) in &items_finales {
+            if *cant <= 0.0 { continue; }
+            let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
+                .query_row(
+                    "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
+                    rusqlite::params![pid],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
+                )
+                .unwrap_or((0.0, false, false));
+            let omite_stock = es_servicio || no_controla_stock;
+            if omite_stock { continue; }
+
             conn.execute(
-                "UPDATE productos SET stock_actual = stock_actual + ?1, updated_at = datetime('now','localtime')
-                 WHERE id = ?2 AND es_servicio = 0",
-                rusqlite::params![ajuste, pid],
-            ).ok();
-            if let Some(eid) = est_id_ajuste {
+                "UPDATE productos SET stock_actual = stock_actual - ?1, updated_at = datetime('now','localtime')
+                 WHERE id = ?2",
+                rusqlite::params![cant, pid],
+            ).map_err(|e| e.to_string())?;
+            if let Some(eid) = est_id_fact {
                 conn.execute(
-                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
                      WHERE producto_id = ?2 AND establecimiento_id = ?3",
-                    rusqlite::params![ajuste, pid, eid],
+                    rusqlite::params![cant, pid, eid],
                 ).ok();
             }
-            // Kardex: registrar el ajuste
-            let stock_ant: f64 = conn.query_row(
-                "SELECT stock_actual FROM productos WHERE id = ?1",
+            let costo_snap: f64 = conn.query_row(
+                "SELECT precio_costo FROM productos WHERE id = ?1",
                 rusqlite::params![pid], |r| r.get(0),
             ).unwrap_or(0.0);
+            // referencia_id = nueva venta facturada (la NV) para trazabilidad.
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
-                 VALUES (?1, 'AJUSTE_GUIA', ?2, ?3, ?4, 0, ?5, ?6, ?7)",
-                rusqlite::params![pid, ajuste, stock_ant - ajuste, stock_ant, guia_id, usuario_nombre, est_id_ajuste],
+                 VALUES (?1, 'GUIA_REMISION', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![pid, -(*cant), stock_antes, stock_antes - cant, costo_snap, guia_id, usuario_nombre, est_id_fact],
             );
         }
+    }
 
-        // Actualizar venta_detalles de la guia con las nuevas cantidades para mantener consistencia
-        // (el listado de la guia muestra los items actualizados)
+    // Si hubo cambios de cantidad (sólo PENDIENTE), actualizar venta_detalles de la
+    // guía para mantener consistencia con lo facturado (el listado muestra los items
+    // actualizados). NOTA: el descuento de stock arriba ya usa las cantidades finales.
+    if !ajustes_stock.is_empty() {
         for (pid, cant, _pu, _desc, _iva, _sub, _info) in &items_finales {
             conn.execute(
                 "UPDATE venta_detalles SET cantidad = ?1 WHERE venta_id = ?2 AND producto_id = ?3",
@@ -2618,7 +2586,8 @@ pub fn convertir_guia_a_venta(
     } else { None };
 
     // Insertar NUEVA venta como COMPLETADA, vinculada a la guia origen.
-    // NO se vuelve a descontar stock (ya se descontó al crear la guía).
+    // El stock ya se manejó arriba (descontado en la recepción si ENTREGADA, o
+    // descontado recién al facturar si PENDIENTE). NO se toca stock al insertar.
     // Si hubo overrides de precio, los totales son los recalculados (no los originales de la guia).
     let estado_sri_nuevo = match tipo_doc_g.as_str() { "FACTURA" => "PENDIENTE", _ => "NO_APLICA" };
     let observacion_extra = if items_override.is_some() {
@@ -2652,8 +2621,8 @@ pub fn convertir_guia_a_venta(
     let nueva_venta_id = conn.last_insert_rowid();
 
     // Insertar detalles en la nueva venta usando items_finales (con overrides aplicados).
-    // SIN tocar stock — ya descontado al crear la guia (cantidad nunca cambia,
-    // si necesitan cambiar cantidad → devolucion parcial despues).
+    // SIN tocar stock aquí — ya se descontó arriba (en recepción ENTREGADA, o recién
+    // al facturar si la guía estaba PENDIENTE). Se descuenta exactamente una vez.
     for (pid, cant, pu, desc, iva_p, sub, info) in &items_finales {
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional)
@@ -3006,18 +2975,31 @@ pub fn eliminar_direccion_cliente(db: State<Database>, id: i64) -> Result<(), St
     Ok(())
 }
 
+/// Cantidad efectivamente recibida por el cliente para un producto, en una
+/// recepción parcial. Tauri lo recibe como `itemsRecibidos` (camelCase) desde JS.
+#[derive(serde::Deserialize)]
+pub struct ItemRecibido {
+    pub producto_id: i64,
+    pub cantidad: f64,
+}
+
 #[tauri::command]
 pub fn cambiar_estado_guia(
     db: State<Database>,
     sesion: State<SesionState>,
     guia_id: i64,
     nuevo_estado: String,
+    // REFACTOR INVENTARIO: cantidades realmente recibidas (recepción parcial).
+    // Si es None → recepción total (se recibe la cantidad original de cada item).
+    items_recibidos: Option<Vec<ItemRecibido>>,
 ) -> Result<(), String> {
-    // Verificar sesión activa
+    // Verificar sesión activa y capturar el nombre del usuario para el kardex
+    // ANTES de soltar el guard (lo necesitamos en el movimiento de inventario).
     let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
-    let _sesion_actual = sesion_guard
+    let sesion_actual = sesion_guard
         .as_ref()
         .ok_or("Debe iniciar sesión".to_string())?;
+    let usuario_nombre = sesion_actual.nombre.clone();
     drop(sesion_guard);
 
     // Validar nuevo estado
@@ -3046,52 +3028,121 @@ pub fn cambiar_estado_guia(
         return Err(format!("La guía ya está en estado {}", estado_actual));
     }
 
-    // Si RECHAZADA: devolver stock
-    if nuevo_estado == "RECHAZADA" {
-        // Multi-almacén: obtener ID del establecimiento
-        let terminal_est: String = conn
-            .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
-            .unwrap_or_else(|_| "001".to_string());
-        let multi_almacen: bool = conn
-            .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        let est_id: Option<i64> = if multi_almacen {
-            conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![terminal_est], |row| row.get(0)).ok()
-        } else {
-            None
-        };
+    // Multi-almacén: obtener ID del establecimiento (necesario al descontar stock
+    // en la recepción ENTREGADA).
+    let terminal_est: String = conn
+        .query_row("SELECT value FROM config WHERE key = 'terminal_establecimiento'", [], |row| row.get(0))
+        .unwrap_or_else(|_| "001".to_string());
+    let multi_almacen: bool = conn
+        .query_row("SELECT value FROM config WHERE key = 'multi_almacen_activo'", [], |row| row.get::<_, String>(0))
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let est_id: Option<i64> = if multi_almacen {
+        conn.query_row("SELECT id FROM establecimientos WHERE codigo = ?1", rusqlite::params![terminal_est], |row| row.get(0)).ok()
+    } else {
+        None
+    };
 
-        // Obtener items de la guía y devolver stock
+    // REFACTOR INVENTARIO: el stock se mueve (descuenta) AQUÍ, en la recepción.
+    if nuevo_estado == "ENTREGADA" {
+        // Mapa producto_id -> cantidad recibida (sólo si se envió recepción parcial).
+        let recibidos_map: Option<std::collections::HashMap<i64, f64>> = items_recibidos
+            .as_ref()
+            .map(|v| v.iter().map(|it| (it.producto_id, it.cantidad)).collect());
+        let es_parcial = recibidos_map.is_some();
+
+        // Cargar los detalles de la guía.
         let mut stmt = conn.prepare(
-            "SELECT producto_id, cantidad FROM venta_detalles WHERE venta_id = ?1"
+            "SELECT id, producto_id, cantidad, precio_unitario, descuento
+             FROM venta_detalles WHERE venta_id = ?1"
         ).map_err(|e| e.to_string())?;
-
-        let items: Vec<(i64, f64)> = stmt.query_map(rusqlite::params![guia_id], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+        let detalles: Vec<(i64, i64, f64, f64, f64)> = stmt.query_map(rusqlite::params![guia_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         }).map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+        drop(stmt);
 
-        for (producto_id, cantidad) in &items {
-            // Devolver stock al producto
-            conn.execute(
-                "UPDATE productos SET stock_actual = stock_actual + ?1,
-                 updated_at = datetime('now','localtime')
-                 WHERE id = ?2 AND es_servicio = 0",
-                rusqlite::params![cantidad, producto_id],
-            ).ok();
+        for (detalle_id, producto_id, cantidad_orig, precio_unitario, descuento) in &detalles {
+            // Cantidad recibida: del mapa si existe, si no la cantidad original.
+            // Se acota a [0, cantidad_original].
+            let recibida_raw = recibidos_map
+                .as_ref()
+                .and_then(|m| m.get(producto_id).copied())
+                .unwrap_or(*cantidad_orig);
+            let recibida = recibida_raw.max(0.0).min(*cantidad_orig);
 
-            // Multi-almacén: devolver stock a stock_establecimiento
-            if let Some(eid) = est_id {
+            // Leer estado del producto (stock + flags de control).
+            let (stock_antes, es_servicio, no_controla_stock): (f64, bool, bool) = conn
+                .query_row(
+                    "SELECT stock_actual, es_servicio, COALESCE(no_controla_stock, 0) FROM productos WHERE id = ?1",
+                    rusqlite::params![producto_id],
+                    |row| Ok((row.get::<_, f64>(0)?, row.get::<_, bool>(1)?, row.get::<_, i32>(2)? != 0)),
+                )
+                .unwrap_or((0.0, false, false));
+            let omite_stock = es_servicio || no_controla_stock;
+
+            // Descontar SOLO lo realmente recibido (y sólo productos físicos).
+            if recibida > 0.0 && !omite_stock {
                 conn.execute(
-                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
-                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
-                    rusqlite::params![cantidad, producto_id, eid],
-                ).ok();
+                    "UPDATE productos SET stock_actual = stock_actual - ?1,
+                     updated_at = datetime('now','localtime')
+                     WHERE id = ?2",
+                    rusqlite::params![recibida, producto_id],
+                ).map_err(|e| e.to_string())?;
+
+                if let Some(eid) = est_id {
+                    conn.execute(
+                        "UPDATE stock_establecimiento SET stock_actual = stock_actual - ?1
+                         WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                        rusqlite::params![recibida, producto_id, eid],
+                    ).ok();
+                }
+
+                // Kardex: salida por recepción de nota de entrega.
+                let costo_snap: f64 = conn.query_row(
+                    "SELECT precio_costo FROM productos WHERE id = ?1",
+                    rusqlite::params![producto_id],
+                    |row| row.get(0)
+                ).unwrap_or(0.0);
+                let _ = conn.execute(
+                    "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, establecimiento_id)
+                     VALUES (?1, 'GUIA_REMISION', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    rusqlite::params![
+                        producto_id,
+                        -recibida,
+                        stock_antes,
+                        stock_antes - recibida,
+                        costo_snap,
+                        guia_id,
+                        usuario_nombre,
+                        est_id,
+                    ],
+                );
+            }
+
+            // Recepción parcial: si la cantidad recibida difiere de la original,
+            // la nota refleja lo realmente entregado (ajustamos el detalle).
+            if es_parcial && (recibida - cantidad_orig).abs() > 0.0001 {
+                let nuevo_subtotal = (recibida * precio_unitario - descuento).max(0.0);
+                conn.execute(
+                    "UPDATE venta_detalles SET cantidad = ?1, subtotal = ?2 WHERE id = ?3",
+                    rusqlite::params![recibida, nuevo_subtotal, detalle_id],
+                ).map_err(|e| e.to_string())?;
             }
         }
+
+        // Si fue recepción parcial, recalcular el total de la cabecera desde los
+        // detalles ya actualizados. (IVA en estas notas suele ser 0.)
+        if es_parcial {
+            conn.execute(
+                "UPDATE ventas SET total = (SELECT COALESCE(SUM(subtotal),0) FROM venta_detalles WHERE venta_id = ?1) WHERE id = ?1",
+                rusqlite::params![guia_id],
+            ).map_err(|e| e.to_string())?;
+        }
     }
+
+    // REFACTOR INVENTARIO: RECHAZADA no toca stock (nunca se descontó al crear).
 
     // Actualizar estado de la guía
     conn.execute(
@@ -3340,12 +3391,21 @@ pub fn anular_venta(
 
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
-    // Leer venta
-    let (estado_sri, _tipo_documento, anulada, numero, total): (String, String, i32, String, f64) = conn.query_row(
-        "SELECT COALESCE(estado_sri, 'NO_APLICA'), tipo_documento, anulada, numero, total FROM ventas WHERE id = ?1",
+    // Leer venta (incluye estado comercial y tipo_estado para el manejo de stock
+    // de notas de entrega / guías de remisión).
+    let (estado_sri, _tipo_documento, anulada, numero, total, estado_comercial, tipo_estado): (String, String, i32, String, f64, String, Option<String>) = conn.query_row(
+        "SELECT COALESCE(estado_sri, 'NO_APLICA'), tipo_documento, anulada, numero, total, COALESCE(estado,''), tipo_estado FROM ventas WHERE id = ?1",
         rusqlite::params![venta_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
     ).map_err(|_| "Venta no encontrada".to_string())?;
+
+    // REFACTOR INVENTARIO: para una nota de entrega / guía de remisión, el stock
+    // sólo se descontó si fue ENTREGADA (recibida) o COMPLETADA/FACTURADA
+    // (facturada). Si está PENDIENTE (en tránsito, nunca recibida) o RECHAZADA,
+    // NUNCA se movió inventario → al anular NO se debe devolver stock.
+    let es_guia = tipo_estado.as_deref() == Some("GUIA_REMISION");
+    let guia_movio_stock = matches!(estado_comercial.as_str(), "ENTREGADA" | "COMPLETADA" | "FACTURADA");
+    let omitir_reintegro_stock = es_guia && !guia_movio_stock;
 
     if anulada != 0 {
         return Err("La venta ya esta anulada".to_string());
@@ -3392,11 +3452,16 @@ pub fn anular_venta(
     let mut stmt = conn.prepare(
         "SELECT producto_id, cantidad, COALESCE(factor_unidad, 1) as factor, lote_id FROM venta_detalles WHERE venta_id = ?1"
     ).map_err(|e| e.to_string())?;
-    let items: Vec<(i64, f64, f64, Option<i64>)> = stmt.query_map(rusqlite::params![venta_id], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-    }).map_err(|e| e.to_string())?
-    .filter_map(|r| r.ok())
-    .collect();
+    let items: Vec<(i64, f64, f64, Option<i64>)> = if omitir_reintegro_stock {
+        // Nota de entrega PENDIENTE/RECHAZADA: nunca descontó stock → no reintegrar.
+        Vec::new()
+    } else {
+        stmt.query_map(rusqlite::params![venta_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        }).map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect()
+    };
     drop(stmt);
 
     // v2.5.62: refactor del loop de reintegración para NO silenciar errores
