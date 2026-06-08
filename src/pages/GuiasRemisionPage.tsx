@@ -548,14 +548,24 @@ export default function GuiasRemisionPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {detalle.detalles.map((d, i) => (
-                    <tr key={i}>
-                      <td>{d.nombre_producto || `Producto #${d.producto_id}`}</td>
+                  {detalle.detalles.map((d, i) => {
+                    const noRecibido = (d.cantidad ?? 0) <= 0;
+                    return (
+                    <tr key={i} style={noRecibido ? { background: "rgba(239,68,68,0.10)", opacity: 0.85 } : undefined}>
+                      <td>
+                        {d.nombre_producto || `Producto #${d.producto_id}`}
+                        {noRecibido && (
+                          <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: "rgba(239,68,68,0.18)", color: "var(--color-danger)", whiteSpace: "nowrap" }}>
+                            NO RECIBIDO
+                          </span>
+                        )}
+                      </td>
                       <td className="text-right">{d.cantidad}</td>
                       <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
                       <td className="text-right">${d.subtotal.toFixed(2)}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
 

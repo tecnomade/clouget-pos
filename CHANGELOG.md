@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.19 (BETA) — 2026-06-08 👁️ Nota de Entrega: ítems no recibidos marcados visualmente
+
+> BETA.
+
+- En el detalle de una nota de entrega, los ítems que el cliente **NO recibió** (recepción parcial) ahora se muestran **sombreados en rojo** y con una etiqueta **"NO RECIBIDO"** en su línea. Así se ve de un vistazo qué quedó sin entregar.
+
+---
+
 ## v2.6.18 (BETA) — 2026-06-08 🏷️ Kardex: muestra "Nota de Entrega" (no "GUIA_REMISION")
 
 > BETA.
