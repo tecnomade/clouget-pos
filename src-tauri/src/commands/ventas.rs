@@ -2487,6 +2487,10 @@ pub fn convertir_guia_a_venta(
         } else {
             *cant_orig // ENTREGADA: cantidad fija
         };
+        // v2.6.21: los ítems NO recibidos (cantidad 0) no van en la venta/factura.
+        if cant <= 0.0 {
+            continue;
+        }
         if guia_es_pendiente && (cant - cant_orig).abs() > 0.0001 {
             // Diferencia: si cant nueva > cant_orig, decrementar mas stock (negativo)
             //             si cant nueva < cant_orig, devolver stock (positivo)

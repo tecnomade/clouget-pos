@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.21 (BETA) — 2026-06-08 🧾 Facturar nota de entrega: excluye ítems no recibidos (cant 0)
+
+> BETA.
+
+- Al **facturar** una nota de entrega con recepción parcial, los ítems **no recibidos (cantidad 0)** ya **no aparecen** en la venta/factura resultante (antes salían con cant 0 y subtotal $0). La nota original sí conserva el registro marcado "NO RECIBIDO".
+
+---
+
 ## v2.6.20 (BETA) — 2026-06-08 🧹 Nota de Entrega: quitados los botones de "Despacho" (confundían)
 
 > BETA.
