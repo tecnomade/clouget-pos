@@ -2099,6 +2099,14 @@ pub fn guardar_guia_remision(
     let usuario_id = sesion_actual.usuario_id;
     drop(sesion_guard);
 
+    // Una nota de entrega va dirigida a un cliente específico (se le entrega la
+    // mercadería), por lo que NO puede emitirse a Consumidor Final (id=1) ni sin cliente.
+    match venta.cliente_id {
+        None => return Err("La nota de entrega debe tener un cliente. No se permite Consumidor Final.".to_string()),
+        Some(1) => return Err("La nota de entrega no puede ser a nombre de Consumidor Final. Seleccione un cliente.".to_string()),
+        _ => {}
+    }
+
     let conn = db.conn.lock().map_err(|e| e.to_string())?;
 
     // Leer establecimiento y punto de emisión del terminal

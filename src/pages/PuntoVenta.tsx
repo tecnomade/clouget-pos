@@ -1164,6 +1164,11 @@ export default function PuntoVenta() {
 
   const confirmarGuiaRemision = useCallback(async () => {
     if (carrito.length === 0) return;
+    // Una nota de entrega va a un cliente específico — no Consumidor Final.
+    if (!clienteSeleccionado || clienteSeleccionado.id === 1) {
+      toastError("La nota de entrega no puede ser a Consumidor Final. Seleccione un cliente.");
+      return;
+    }
     setGuardandoGuia(true);
     const r2g = (n: number) => Math.round(n * 100) / 100;
     const desglosar2 = (i: typeof carrito[0]) => {
@@ -1200,7 +1205,7 @@ export default function PuntoVenta() {
     };
     try {
       const res = await guardarGuiaRemision(nueva);
-      toastExito(`Nota de Entrega ${res.venta.numero} creada - stock descontado`);
+      toastExito(`Nota de Entrega ${res.venta.numero} creada (en tránsito). El stock se descuenta al recibir.`);
       // Guardar chofer para autocompletar futuro
       if (guiaChofer.trim()) {
         guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});

@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.15 (BETA) — 2026-06-08 🚫 Nota de Entrega: no puede ser a Consumidor Final
+
+> BETA — junto al refactor de inventario de notas de entrega.
+
+- Una **Nota de Entrega** ahora **exige un cliente** y **no permite Consumidor Final** (se entrega mercadería a alguien específico). Validado en frontend (POS y Contabilidad) y en backend.
+- Corregido el aviso al crear: ya no dice "stock descontado" (ahora el stock se descuenta al recibir).
+
+---
+
 ## v2.6.14 (BETA) — 2026-06-08 📦 Notas de Entrega: el stock se descuenta al RECIBIR (con recepción parcial)
 
 > **BETA — para pruebas.** Cambio de inventario importante; validar antes de pasar a estable.

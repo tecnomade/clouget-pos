@@ -117,6 +117,8 @@ export default function GuiasRemisionContab() {
   const crearYContinuar = async () => {
     if (items.length === 0) { toastError("Agregue al menos un producto"); return; }
     if (items.some(i => !i.cantidad || i.cantidad <= 0)) { toastError("Las cantidades deben ser mayores a 0"); return; }
+    // Una nota de entrega va a un cliente específico — no Consumidor Final.
+    if (!cliente || cliente.id === 1) { toastError("La nota de entrega no puede ser a Consumidor Final. Seleccione un cliente."); return; }
     setGuardando(true);
     const nueva: NuevaVenta = {
       cliente_id: cliente?.id ?? 1,
