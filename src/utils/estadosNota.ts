@@ -50,6 +50,8 @@ export function derivarEstadosNota(v: FuenteEstado): EstadosDerivados {
   else if (desp === "PREPARANDO") operativo = { texto: "Preparando", color: C.warning };
   else if (estado === "ENTREGADA") operativo = { texto: "Entregada", color: C.success };
   else if (estado === "FACTURADA" || estado === "COMPLETADA") operativo = { texto: "Entregada", color: C.success };
+  // v2.6.20: una nota PENDIENTE aún no fue recibida → "En tránsito" (antes "Despachada").
+  else if (estado === "PENDIENTE") operativo = { texto: "En tránsito", color: C.primary };
   else operativo = { texto: "Despachada", color: C.warning };
 
   // ── Estado COMERCIAL (operación de venta) ──

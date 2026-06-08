@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia, guiaCambiarDespacho, obtenerConfig } from "../services/api";
+import { listarGuiasRemision, resumenGuiasRemision, convertirGuiaAVenta, obtenerVenta, listarCuentasBanco, imprimirGuiaRemisionPdf, cambiarEstadoGuia, obtenerConfig } from "../services/api";
 import { useToast } from "../components/Toast";
 import { derivarEstadosNota } from "../utils/estadosNota";
 import type { VentaCompleta, CuentaBanco, ResumenGuias } from "../types";
@@ -491,7 +491,9 @@ export default function GuiasRemisionPage() {
                   estado: detalle.venta.estado,
                   estado_sri: detalle.venta.estado_sri,
                   anulada: detalle.venta.anulada,
-                  despacho_estado: (detalle.venta as any).despacho_estado,
+                  // v2.6.20: ignorar el despacho (capa abandonada); el estado operativo
+                  // se deriva del estado comercial (en tránsito / entregada / devuelta).
+                  despacho_estado: null,
                 });
                 const chip = (label: string, s: { texto: string; color: string }) => (
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -510,32 +512,10 @@ export default function GuiasRemisionPage() {
                 );
               })()}
 
-              {/* v2.5.68 (Fase C): control de despacho logístico. Solo acciones humanas
-                  (confirmar salida/entrega/devolución); el estado operativo se deriva solo.
-                  Inventario avanzado → requiere módulo multi_almacen. */}
-              {moduloLogistica && detalle.venta.estado !== "ANULADA" && !detalle.venta.anulada && (() => {
-                const dEstado = ((detalle.venta as any).despacho_estado || "").toUpperCase();
-                const transicion = async (nuevo: "EN_TRANSITO" | "ENTREGADO" | "DEVUELTO", id: number) => {
-                  try {
-                    await guiaCambiarDespacho(id, nuevo);
-                    toastExito("Despacho actualizado");
-                    abrirDetalle(id);
-                    cargar();
-                  } catch (e) { toastError("Error: " + e); }
-                };
-                const btn = (label: string, nuevo: "EN_TRANSITO" | "ENTREGADO" | "DEVUELTO", col: string) => (
-                  <button className="btn btn-outline" style={{ fontSize: 10, padding: "3px 10px", fontWeight: 600, color: col, borderColor: col }}
-                    onClick={() => transicion(nuevo, detalle.venta.id!)}>{label}</button>
-                );
-                return (
-                  <div style={{ display: "flex", gap: 6, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Despacho:</span>
-                    {dEstado !== "EN_TRANSITO" && dEstado !== "ENTREGADO" && btn("🚚 Marcar en tránsito", "EN_TRANSITO", "var(--color-primary)")}
-                    {dEstado !== "ENTREGADO" && btn("✓ Confirmar entrega", "ENTREGADO", "var(--color-success)")}
-                    {dEstado !== "DEVUELTO" && btn("↩ Devuelta", "DEVUELTO", "var(--color-danger)")}
-                  </div>
-                );
-              })()}
+              {/* v2.6.20: se eliminó la fila de "Despacho" (Marcar en tránsito /
+                  Confirmar entrega / Devuelta). Confundía con el flujo de "Recibir"
+                  (que es el que mueve stock). El ciclo real es: En tránsito → Recibir
+                  (total/parcial) → Facturar. */}
 
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--color-text-secondary)" }}>Productos</div>
               <table className="table" style={{ fontSize: 12 }}>

@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.20 (BETA) — 2026-06-08 🧹 Nota de Entrega: quitados los botones de "Despacho" (confundían)
+
+> BETA.
+
+- Se eliminó la fila de **Despacho** del detalle (Marcar en tránsito / Confirmar entrega / Devuelta). Confundía con el flujo de **Recibir** (que es el que mueve stock). El ciclo claro queda: **En tránsito → Recibir (total/parcial) → Facturar**.
+- El estado "Operativo" ahora refleja el estado real (En tránsito / Entregada / Devuelta), sin la capa de despacho abandonada.
+
+---
+
 ## v2.6.19 (BETA) — 2026-06-08 👁️ Nota de Entrega: ítems no recibidos marcados visualmente
 
 > BETA.
