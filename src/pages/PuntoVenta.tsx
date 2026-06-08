@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, sugerirPorPlaca, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
+import { buscarProductos, productosMasVendidos, registrarVenta, buscarClientes, crearCliente, imprimirTicket, imprimirTicketPdf, obtenerCajaAbierta, alertasStockBajo, obtenerConfig, guardarConfig, emitirFacturaSri, consultarEstadoSri, cambiarAmbienteSri, enviarNotificacionSri, actualizarCliente, imprimirRide, procesarEmailsPendientes, resolverPrecioProducto, obtenerPreciosProducto, listarProductosTactil, listarCategorias, consultarIdentificacion, listarCuentasBanco, guardarBorrador, guardarCotizacion, guardarGuiaRemision, listarChoferes, guardarChofer, listarVehiculos, guardarVehiculo, sugerirPorPlaca, aprenderPlacaChofer, listarDireccionesCliente, guardarDireccionCliente, verificarPinAdmin, obtenerProducto, listarLotesProducto, listarComboGrupos, listarComboComponentes, listarListasPrecios } from "../services/api";
 import { calcularDescuentoFormaPago, leerConfigDescuento, type DescuentoConfig } from "../utils/descuentoFormaPago";
 import { comprimirImagen } from "../utils/imagen";
 import type { DireccionCliente } from "../services/api";
@@ -117,6 +117,10 @@ export default function PuntoVenta() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
+  // Debounce de búsqueda/escaneo: evita que valores INTERMEDIOS de un escáner
+  // (ej. "593" mientras se escanea un código más largo) auto-agreguen el producto
+  // equivocado. Solo se evalúa el término ya "asentado".
+  const buscarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-focus al campo de busqueda al cargar/montar el POS
   // (al entrar desde cualquier parte: sidebar, F1, redirect, etc.)
@@ -314,21 +318,27 @@ export default function PuntoVenta() {
     return () => window.removeEventListener("clouget:caja-cambio", handler);
   }, []);
 
-  const handleBuscar = async (termino: string) => {
+  const handleBuscar = (termino: string) => {
     setBusqueda(termino);
-    if (termino.length >= 1) {
+    if (buscarTimerRef.current) clearTimeout(buscarTimerRef.current);
+    if (termino.length < 1) { setResultados([]); return; }
+    // Debounce: solo buscar/auto-agregar cuando el término dejó de cambiar ~140ms.
+    // Así un escáner (que teclea el código completo en pocos ms) nunca dispara
+    // sobre un valor intermedio que coincida parcialmente con otro producto.
+    buscarTimerRef.current = setTimeout(async () => {
       const res = await buscarProductos(termino, clienteSeleccionado?.lista_precio_id);
-      // Si hay exactamente 1 resultado y el término coincide EXACTAMENTE con el código o código de barras, agregar directamente
-      if (res.length === 1 && (res[0].codigo === termino || res[0].codigo_barras === termino)) {
+      // Auto-agregar SOLO si el término coincide EXACTAMENTE con el código/código de
+      // barras de un único producto (escaneo). Nunca por coincidencia parcial.
+      const exactos = res.filter(r => r.codigo === termino || r.codigo_barras === termino);
+      if (exactos.length === 1) {
         const now = Date.now();
-        if (lastAddRef.current.id === res[0].id && now - lastAddRef.current.time < 1000) return;
-        agregarAlCarrito(res[0]);
+        if (lastAddRef.current.id === exactos[0].id && now - lastAddRef.current.time < 1000) return;
+        agregarAlCarrito(exactos[0]);
+        setBusqueda(""); setResultados([]);
         return;
       }
       setResultados(res);
-    } else {
-      setResultados([]);
-    }
+    }, 140);
   };
 
   const handleBuscarCliente = async (termino: string) => {
@@ -1209,6 +1219,10 @@ export default function PuntoVenta() {
       // Guardar chofer para autocompletar futuro
       if (guiaChofer.trim()) {
         guardarChofer(guiaChofer.trim(), guiaPlaca.trim() || undefined).catch(() => {});
+      }
+      // Aprender la asociación placa↔chofer (autocompletado inteligente futuro)
+      if (guiaPlaca.trim() && guiaChofer.trim()) {
+        aprenderPlacaChofer(guiaPlaca.trim(), guiaChofer.trim()).catch(() => {});
       }
       // Guardar placa como vehiculo (independiente del chofer) si es nueva
       if (guiaPlaca.trim()) {

@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.17 (BETA) — 2026-06-08 🔍 POS: fix escáner agregaba producto equivocado + aprende placa↔chofer
+
+> BETA.
+
+- **Escáner / búsqueda:** se agregó **debounce** y auto-agregado por **match exacto**. Antes, al escanear un código, un valor intermedio (ej. "593") podía auto-agregar otro producto cuyo nombre/código *contenía* "593" → se agregaba un producto que no era el elegido y descontaba de más. Ahora solo se agrega el producto cuyo código/código de barras coincide **exactamente**.
+- **Nota de Entrega:** al crearla, ahora **aprende la asociación placa↔chofer** para autocompletar inteligente en futuras notas (antes no se guardaba).
+
+---
+
 ## v2.6.16 (BETA) — 2026-06-08 📝 Nota de Entrega: texto del modal corregido (en tránsito)
 
 > BETA.
