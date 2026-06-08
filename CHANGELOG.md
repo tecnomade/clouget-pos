@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.12 — 2026-06-07 🔧 Caja: botón "Confirmar" depósito gateado por permiso + sin superponerse
+
+- En "Movimientos de caja", el botón **"Confirmar"** de un depósito en tránsito ahora **solo aparece para quien tiene el permiso** `confirmar_depositos` (admin incluido). Un cajero sin el permiso solo ve la etiqueta "En tránsito".
+- Corregido: el botón **se montaba sobre el nombre del cajero** (columna Usuario). Ahora ajusta dentro de su columna sin superponerse.
+
+---
+
 ## v2.6.11 — 2026-06-07 🧾 Ticket: la forma de pago por banco dice "Depósito/Transferencia"
 
 - En el ticket (PDF y térmico), el pago por banco mostraba el código crudo **"TRANSFER"**. Ahora muestra **"Depósito/Transferencia"** (más claro para el cliente). El PDF además no traducía la etiqueta — corregido.

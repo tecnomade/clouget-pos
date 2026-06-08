@@ -14,7 +14,8 @@ import type { Caja, ResumenCaja } from "../types";
 export default function CajaPage() {
   const navigate = useNavigate();
   const { toastExito, toastError } = useToast();
-  const { sesion, cerrarSesion, esAdmin } = useSesion();
+  const { sesion, cerrarSesion, esAdmin, tienePermiso } = useSesion();
+  const puedeConfirmarDepositos = esAdmin || tienePermiso("confirmar_depositos");
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null);
   const [montoInicial, setMontoInicial] = useState("");
   const [montoReal, setMontoReal] = useState("");
@@ -1316,9 +1317,9 @@ export default function CajaPage() {
                       <th style={{ width: "9%" }}>Hora</th>
                       <th style={{ width: "13%" }}>Tipo</th>
                       <th style={{ width: "12%" }}>Monto</th>
-                      <th style={{ width: "22%" }}>Motivo</th>
+                      <th style={{ width: "18%" }}>Motivo</th>
                       <th style={{ width: "12%" }}>Cuenta</th>
-                      <th style={{ width: "15%" }}>Estado</th>
+                      <th style={{ width: "19%" }}>Estado</th>
                       <th style={{ width: "17%", wordBreak: "break-word" }}>Usuario</th>
                     </tr></thead>
                     <tbody>
@@ -1344,12 +1345,14 @@ export default function CajaPage() {
                             <td style={{ fontSize: 12 }}>{r.banco_nombre || "-"}</td>
                             <td style={{ fontSize: 12 }}>
                               {r.estado === "EN_TRANSITO" && (
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)", fontSize: 11, fontWeight: 600 }}>En tránsito</span>
-                                  <button className="btn" style={{ padding: "2px 8px", fontSize: 11, minHeight: 0 }}
-                                    onClick={() => { setConfirmandoRetiroId(r.id); setConfirmRef(r.referencia || ""); setConfirmImg(null); }}>
-                                    Confirmar
-                                  </button>
+                                <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                                  <span style={{ padding: "2px 8px", borderRadius: 4, background: "rgba(245, 158, 11, 0.15)", color: "var(--color-warning)", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>En tránsito</span>
+                                  {puedeConfirmarDepositos && (
+                                    <button className="btn" style={{ padding: "2px 8px", fontSize: 11, minHeight: 0, whiteSpace: "nowrap" }}
+                                      onClick={() => { setConfirmandoRetiroId(r.id); setConfirmRef(r.referencia || ""); setConfirmImg(null); }}>
+                                      Confirmar
+                                    </button>
+                                  )}
                                 </span>
                               )}
                               {r.estado === "DEPOSITADO" && (
