@@ -259,7 +259,7 @@ pub fn generar_ticket(
                 let forma_upper = pago.forma_pago.to_uppercase();
                 let label_corto = match forma_upper.as_str() {
                     "EFECTIVO" => "Efectivo",
-                    "TRANSFERENCIA" | "TRANSFER" => "Transfer.",
+                    "TRANSFERENCIA" | "TRANSFER" => "Dep/Transf.",
                     "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
                     "TARJETA_DEBITO" | "DEBITO" => "T.Debito",
                     "CHEQUE" => "Cheque",
@@ -291,7 +291,7 @@ pub fn generar_ticket(
         } else {
             let forma_label = match forma {
                 "EFECTIVO" => "Efectivo",
-                "TRANSFERENCIA" | "TRANSFER" => "Transferencia",
+                "TRANSFERENCIA" | "TRANSFER" => "Depósito/Transferencia",
                 "TARJETA" | "TARJETA_CREDITO" => "Tarjeta",
                 "TARJETA_DEBITO" | "DEBITO" => "Tarjeta debito",
                 "CHEQUE" => "Cheque",

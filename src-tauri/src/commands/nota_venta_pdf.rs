@@ -43,11 +43,13 @@ fn format_dinero(val: f64) -> String {
 }
 
 fn forma_pago_label(forma: &str) -> &str {
-    match forma {
+    match forma.to_uppercase().as_str() {
         "EFECTIVO" => "Efectivo",
-        "TRANSFERENCIA" => "Transferencia",
+        "TRANSFERENCIA" | "TRANSFER" => "Depósito/Transferencia",
         "TARJETA" | "TARJETA_CREDITO" | "TARJETA_DEBITO" => "Tarjeta",
-        "CREDITO" => "Crédito",
+        "CREDITO" | "CRÉDITO" | "FIADO" => "Crédito",
+        "CHEQUE" => "Cheque",
+        "MIXTO" => "Mixto",
         _ => forma,
     }
 }

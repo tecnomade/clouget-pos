@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.11 — 2026-06-07 🧾 Ticket: la forma de pago por banco dice "Depósito/Transferencia"
+
+- En el ticket (PDF y térmico), el pago por banco mostraba el código crudo **"TRANSFER"**. Ahora muestra **"Depósito/Transferencia"** (más claro para el cliente). El PDF además no traducía la etiqueta — corregido.
+
+---
+
 ## v2.6.10 — 2026-06-07 ✅ Transferencias: permiso para que cajeros de confianza las auto-confirmen
 
 - Nuevo permiso **"Auto-confirmar sus transferencias al vender (cajero de confianza)"** (`autoconfirmar_transferencias`).
