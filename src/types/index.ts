@@ -151,6 +151,7 @@ export interface Venta {
   anulada?: number;
   guia_placa?: string;
   guia_chofer?: string;
+  guia_transportista?: string | null;
   guia_direccion_destino?: string;
 }
 
@@ -229,6 +230,7 @@ export interface NuevaVenta {
   comprobante_imagen?: string | null;
   guia_placa?: string | null;
   guia_chofer?: string | null;
+  guia_transportista?: string | null;
   guia_direccion_destino?: string | null;
   /** Si presente y no vacio: pagos multiples (la suma debe igualar el total) */
   pagos?: PagoMixto[];

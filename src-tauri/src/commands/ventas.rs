@@ -2149,13 +2149,13 @@ pub fn guardar_guia_remision(
 
     // Insertar cabecera
     conn.execute(
-        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, descuento, iva, total, forma_pago, monto_recibido, cambio, estado, tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision, tipo_estado, guia_placa, guia_chofer, guia_direccion_destino)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 0, 'PENDIENTE', ?9, 'NO_APLICA', ?10, ?11, ?12, ?13, ?14, 'GUIA_REMISION', ?15, ?16, ?17)",
+        "INSERT INTO ventas (numero, cliente_id, subtotal_sin_iva, subtotal_con_iva, descuento, iva, total, forma_pago, monto_recibido, cambio, estado, tipo_documento, estado_sri, observacion, usuario, usuario_id, establecimiento, punto_emision, tipo_estado, guia_placa, guia_chofer, guia_direccion_destino, guia_transportista)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, 0, 'PENDIENTE', ?9, 'NO_APLICA', ?10, ?11, ?12, ?13, ?14, 'GUIA_REMISION', ?15, ?16, ?17, ?18)",
         rusqlite::params![
             numero, venta.cliente_id.unwrap_or(1), subtotal_sin_iva, subtotal_con_iva,
             venta.descuento, iva_total, total, venta.forma_pago, venta.tipo_documento,
             venta.observacion, usuario_nombre, usuario_id, terminal_est, terminal_pe,
-            venta.guia_placa, venta.guia_chofer, venta.guia_direccion_destino,
+            venta.guia_placa, venta.guia_chofer, venta.guia_direccion_destino, venta.guia_transportista,
         ],
     ).map_err(|e| e.to_string())?;
 

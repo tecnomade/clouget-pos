@@ -106,6 +106,7 @@ export default function PuntoVenta() {
   const [mostrarModalGuia, setMostrarModalGuia] = useState(false);
   const [guiaPlaca, setGuiaPlaca] = useState("");
   const [guiaChofer, setGuiaChofer] = useState("");
+  const [guiaTransportista, setGuiaTransportista] = useState("");
   const [guiaDireccion, setGuiaDireccion] = useState("");
   const [guardandoGuia, setGuardandoGuia] = useState(false);
   const [choferesGuardados, setChoferesGuardados] = useState<[number, string, string | null][]>([]);
@@ -1158,14 +1159,21 @@ export default function PuntoVenta() {
 
   const handleGuiaRemision = useCallback(() => {
     if (carrito.length === 0) return;
-    // Prellenar dirección del cliente
+    setGuiaTransportista("");
+    // Prellenar dirección del cliente (dirección principal por defecto)
     setGuiaDireccion(clienteSeleccionado?.direccion || "");
     // Cargar choferes y vehiculos guardados (autocomplete)
     listarChoferes().then(setChoferesGuardados).catch(() => {});
     listarVehiculos().then(setVehiculosGuardados).catch(() => {});
-    // Cargar direcciones de entrega guardadas para este cliente
+    // Cargar direcciones de entrega guardadas para este cliente y auto-llenar la
+    // última usada (autocompletado inteligente) si la dirección principal está vacía.
     if (clienteSeleccionado?.id && clienteSeleccionado.id !== 1) {
-      listarDireccionesCliente(clienteSeleccionado.id).then(setDireccionesCliente).catch(() => {});
+      listarDireccionesCliente(clienteSeleccionado.id).then((dirs) => {
+        setDireccionesCliente(dirs);
+        if (dirs.length > 0 && !(clienteSeleccionado?.direccion || "").trim()) {
+          setGuiaDireccion(dirs[0].direccion);
+        }
+      }).catch(() => {});
     } else {
       setDireccionesCliente([]);
     }
@@ -1211,6 +1219,7 @@ export default function PuntoVenta() {
       es_fiado: false,
       guia_placa: guiaPlaca.trim() || null,
       guia_chofer: guiaChofer.trim() || null,
+      guia_transportista: guiaTransportista.trim() || null,
       guia_direccion_destino: guiaDireccion.trim() || null,
     };
     try {
@@ -1222,7 +1231,7 @@ export default function PuntoVenta() {
       }
       // Aprender la asociación placa↔chofer (autocompletado inteligente futuro)
       if (guiaPlaca.trim() && guiaChofer.trim()) {
-        aprenderPlacaChofer(guiaPlaca.trim(), guiaChofer.trim()).catch(() => {});
+        aprenderPlacaChofer(guiaPlaca.trim(), guiaChofer.trim(), undefined, guiaTransportista.trim() || undefined).catch(() => {});
       }
       // Guardar placa como vehiculo (independiente del chofer) si es nueva
       if (guiaPlaca.trim()) {
@@ -1242,13 +1251,13 @@ export default function PuntoVenta() {
       setEsFiado(false);
       setClienteSeleccionado(null);
       setMostrarModalGuia(false);
-      setGuiaPlaca(""); setGuiaChofer(""); setGuiaDireccion(""); setSugChoferesPlaca([]);
+      setGuiaPlaca(""); setGuiaChofer(""); setGuiaTransportista(""); setGuiaDireccion(""); setSugChoferesPlaca([]);
     } catch (err) {
       toastError("Error: " + err);
     } finally {
       setGuardandoGuia(false);
     }
-  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, guiaPlaca, guiaChofer, guiaDireccion, toastExito, toastError]);
+  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, guiaPlaca, guiaChofer, guiaTransportista, guiaDireccion, toastExito, toastError]);
 
   useEffect(() => {
     const handleCobrar = () => procesarVenta();
@@ -2525,9 +2534,12 @@ export default function PuntoVenta() {
                       try {
                         const sugs = await sugerirPorPlaca(val.trim());
                         setSugChoferesPlaca(sugs.map(s => ({ chofer: s.chofer, veces: s.veces })));
-                        // Si la placa coincide exacto con una conocida y no hay chofer, autocompletar el mas usado
+                        // Si la placa coincide exacto con una conocida, autocompletar chofer y transportista (si están vacíos)
                         const exact = sugs.find(s => s.placa === val.trim());
-                        if (exact) setGuiaChofer(prev => prev.trim() ? prev : exact.chofer);
+                        if (exact) {
+                          setGuiaChofer(prev => prev.trim() ? prev : exact.chofer);
+                          if (exact.transportista_nombre) setGuiaTransportista(prev => prev.trim() ? prev : exact.transportista_nombre!);
+                        }
                       } catch { /* ignore */ }
                     } else {
                       setSugChoferesPlaca([]);
@@ -2573,6 +2585,14 @@ export default function PuntoVenta() {
                     <option key={c[0]} value={c[1]}>{c[2] ? `Placa habitual: ${c[2]}` : ""}</option>
                   ))}
                 </datalist>
+              </div>
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                  Transportista (empresa / servicio)
+                </label>
+                <input className="input" placeholder="Tu negocio o servicio externo de transporte"
+                  value={guiaTransportista}
+                  onChange={(e) => setGuiaTransportista(e.target.value)} />
               </div>
               <div>
                 <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>

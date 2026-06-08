@@ -142,6 +142,8 @@ pub struct NuevaVenta {
     #[serde(default)]
     pub guia_chofer: Option<String>,
     #[serde(default)]
+    pub guia_transportista: Option<String>,
+    #[serde(default)]
     pub guia_direccion_destino: Option<String>,
     /// Pagos multiples (opcional). Si presente y no vacio, se usa en lugar de forma_pago/banco_id.
     /// La suma de pagos debe igualar el total de la venta.

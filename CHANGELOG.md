@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.22 (BETA) — 2026-06-08 🚚 Nota de Entrega: campo Transportista + dirección inteligente
+
+> BETA.
+
+- Nuevo campo **"Transportista (empresa / servicio)"** en la nota de entrega, separado del chofer. Se **guarda en la nota** y se **aprende** junto a la placa↔chofer: al volver a poner esa placa, autocompleta chofer **y transportista**.
+- **Dirección de destino inteligente:** al abrir el modal, si el cliente no tiene dirección principal, se **auto-llena con la última dirección de entrega guardada** (antes solo quedaba en el desplegable).
+
+---
+
 ## v2.6.21 (BETA) — 2026-06-08 🧾 Facturar nota de entrega: excluye ítems no recibidos (cant 0)
 
 > BETA.
