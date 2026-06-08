@@ -2131,7 +2131,10 @@ pub fn guardar_guia_remision(
         [], |row| row.get(0),
     ).map_err(|e| e.to_string())?;
 
-    let numero = format!("GR-{:06}", secuencial);
+    // NE = Nota de Entrega (coincide con la etiqueta de la UI). Es solo la
+    // referencia interna; el secuencial oficial del SRI (si se emite la Guía de
+    // Remisión electrónica) es independiente.
+    let numero = format!("NE-{:06}", secuencial);
 
     // Calcular totales
     let mut subtotal_sin_iva = 0.0_f64;
