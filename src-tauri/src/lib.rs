@@ -1,7 +1,8 @@
 mod backup;
 mod branding;
-mod commands;
-mod db;
+// v2.6.27: expuestos como pub para que tests/smoke_test.rs los pueda importar.
+pub mod commands;
+pub mod db;
 mod models;
 mod offline;
 mod printing;
