@@ -274,7 +274,8 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND anulada = 0 AND estado = 'COMPLETADA'",
+             AND anulada = 0 AND estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -284,7 +285,8 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COUNT(*) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND anulada = 0 AND estado = 'COMPLETADA'",
+             AND anulada = 0 AND estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -297,7 +299,9 @@ pub fn cerrar_caja(
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND forma_pago = 'EFECTIVO' AND anulada = 0 AND estado = 'COMPLETADA'",
+             AND forma_pago = 'EFECTIVO' AND anulada = 0
+             AND estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -307,7 +311,9 @@ pub fn cerrar_caja(
             "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
              JOIN ventas v ON v.id = pv.venta_id
              WHERE v.created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND v.forma_pago = 'MIXTO' AND v.anulada = 0 AND v.estado = 'COMPLETADA'
+             AND v.forma_pago = 'MIXTO' AND v.anulada = 0
+             AND v.estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION'
              AND UPPER(pv.forma_pago) = 'EFECTIVO'",
             rusqlite::params![caja_id],
             |row| row.get(0),
@@ -1044,7 +1050,9 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
              WHERE created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND forma_pago = 'EFECTIVO' AND anulada = 0 AND estado = 'COMPLETADA'",
+             AND forma_pago = 'EFECTIVO' AND anulada = 0
+             AND estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![caja_id],
             |row| row.get(0),
         )
@@ -1054,7 +1062,9 @@ pub fn calcular_monto_esperado_actual(conn: &rusqlite::Connection, caja_id: i64)
             "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
              JOIN ventas v ON v.id = pv.venta_id
              WHERE v.created_at >= (SELECT fecha_apertura FROM caja WHERE id = ?1)
-             AND v.forma_pago = 'MIXTO' AND v.anulada = 0 AND v.estado = 'COMPLETADA'
+             AND v.forma_pago = 'MIXTO' AND v.anulada = 0
+             AND v.estado IN ('COMPLETADA', 'PENDIENTE')
+             AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION'
              AND UPPER(pv.forma_pago) = 'EFECTIVO'",
             rusqlite::params![caja_id],
             |row| row.get(0),

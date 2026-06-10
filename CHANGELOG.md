@@ -6,6 +6,16 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.23 (BETA) — 2026-06-08 💰 Fix cierre de caja: cuenta facturas con SRI pendiente
+
+> BETA. (Portado desde DigitalServer POS, Feature B.)
+
+- **Bug corregido:** el cierre de caja solo contaba ventas `COMPLETADA`. Las **facturas con autorización SRI pendiente** quedan en `PENDIENTE` pero su **efectivo YA está en caja** → antes generaban un descuadre (faltante falso). Ahora cuentan correctamente.
+- Las **Notas de Entrega** (`GUIA_REMISION`) se **excluyen** del cierre y del resumen (no son ventas reales hasta facturarse).
+- Aplicado en `cerrar_caja`, `calcular_monto_esperado_actual` y `obtener_resumen_caja`.
+
+---
+
 ## v2.6.22 (BETA) — 2026-06-08 🚚 Nota de Entrega: campo Transportista + dirección inteligente
 
 > BETA.

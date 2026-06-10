@@ -408,7 +408,7 @@ fn obtener_datos_reporte_caja(
     let total_ventas: f64 = conn
         .query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND anulada = 0",
+             WHERE created_at >= ?1 AND anulada = 0 AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![fecha_apertura],
             |row| row.get(0),
         )
@@ -417,7 +417,7 @@ fn obtener_datos_reporte_caja(
     let num_ventas: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM ventas
-             WHERE created_at >= ?1 AND anulada = 0",
+             WHERE created_at >= ?1 AND anulada = 0 AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'",
             rusqlite::params![fecha_apertura],
             |row| row.get(0),
         )
@@ -430,7 +430,7 @@ fn obtener_datos_reporte_caja(
         let placeholders: Vec<String> = formas.iter().map(|f| format!("'{}'", f)).collect();
         let sql = format!(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND anulada = 0
+             WHERE created_at >= ?1 AND anulada = 0 AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'
              AND UPPER(forma_pago) IN ({})",
             placeholders.join(",")
         );
@@ -441,7 +441,7 @@ fn obtener_datos_reporte_caja(
         let sql = format!(
             "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
              JOIN ventas v ON v.id = pv.venta_id
-             WHERE v.created_at >= ?1 AND v.anulada = 0 AND v.forma_pago = 'MIXTO'
+             WHERE v.created_at >= ?1 AND v.anulada = 0 AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION' AND v.forma_pago = 'MIXTO'
              AND UPPER(pv.forma_pago) IN ({})",
             placeholders.join(",")
         );
@@ -457,13 +457,13 @@ fn obtener_datos_reporte_caja(
     let total_otros: f64 = {
         let directo: f64 = conn.query_row(
             "SELECT COALESCE(SUM(total), 0) FROM ventas
-             WHERE created_at >= ?1 AND anulada = 0
+             WHERE created_at >= ?1 AND anulada = 0 AND COALESCE(tipo_estado, '') != 'GUIA_REMISION'
              AND UPPER(forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','CHEQUE','MIXTO')",
             rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
         let mixto: f64 = conn.query_row(
             "SELECT COALESCE(SUM(pv.monto), 0) FROM pagos_venta pv
              JOIN ventas v ON v.id = pv.venta_id
-             WHERE v.created_at >= ?1 AND v.anulada = 0 AND v.forma_pago = 'MIXTO'
+             WHERE v.created_at >= ?1 AND v.anulada = 0 AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION' AND v.forma_pago = 'MIXTO'
              AND UPPER(pv.forma_pago) NOT IN ('EFECTIVO','TRANSFER','TRANSFERENCIA','CREDITO','FIADO','TARJETA','CHEQUE')",
             rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0.0);
         directo + mixto
@@ -474,7 +474,7 @@ fn obtener_datos_reporte_caja(
     let num_ventas_credito: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT v.id) FROM ventas v
          LEFT JOIN pagos_venta pv ON pv.venta_id = v.id
-         WHERE v.created_at >= ?1 AND v.anulada = 0
+         WHERE v.created_at >= ?1 AND v.anulada = 0 AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION'
          AND (UPPER(v.forma_pago) IN ('CREDITO','FIADO')
               OR (v.forma_pago = 'MIXTO' AND UPPER(pv.forma_pago) IN ('CREDITO','FIADO')))",
         rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0);
@@ -482,7 +482,7 @@ fn obtener_datos_reporte_caja(
     let num_ventas_transfer: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT v.id) FROM ventas v
          LEFT JOIN pagos_venta pv ON pv.venta_id = v.id
-         WHERE v.created_at >= ?1 AND v.anulada = 0
+         WHERE v.created_at >= ?1 AND v.anulada = 0 AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION'
          AND (UPPER(v.forma_pago) IN ('TRANSFER','TRANSFERENCIA')
               OR (v.forma_pago = 'MIXTO' AND UPPER(pv.forma_pago) IN ('TRANSFER','TRANSFERENCIA')))",
         rusqlite::params![fecha_apertura], |r| r.get(0)).unwrap_or(0);
@@ -585,7 +585,7 @@ fn obtener_datos_reporte_caja(
              JOIN venta_detalles vd ON v.id = vd.venta_id
              LEFT JOIN productos p ON vd.producto_id = p.id
              LEFT JOIN categorias c ON p.categoria_id = c.id
-             WHERE v.created_at >= ?1 AND v.anulada = 0
+             WHERE v.created_at >= ?1 AND v.anulada = 0 AND COALESCE(v.tipo_estado, '') != 'GUIA_REMISION'
                AND v.tipo_documento IN ('NOTA_VENTA', 'FACTURA')
                AND v.tipo_estado = 'COMPLETADA'
              GROUP BY cat ORDER BY total DESC"
