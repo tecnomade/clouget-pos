@@ -945,6 +945,8 @@ mod tests {
                     iva_porcentaje: 15.0,
                     subtotal: 2.50,
                     info_adicional: Some("S/N: ABC123456".to_string()),
+                    unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+                    presentacion_id: None, cantidad_presentacion: None,
                 },
                 VentaDetalle {
                     id: Some(2),
@@ -957,6 +959,8 @@ mod tests {
                     iva_porcentaje: 0.0,
                     subtotal: 0.75,
                     info_adicional: None,
+                    unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+                    presentacion_id: None, cantidad_presentacion: None,
                 },
                 VentaDetalle {
                     id: Some(3),
@@ -969,6 +973,8 @@ mod tests {
                     iva_porcentaje: 0.0,
                     subtotal: 1.15,
                     info_adicional: Some("Lote: L2026-03".to_string()),
+                    unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+                    presentacion_id: None, cantidad_presentacion: None,
                 },
             ],
             cliente_nombre: Some("Juan Perez".to_string()),

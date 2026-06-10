@@ -26,7 +26,7 @@ import { useToast } from "../components/Toast";
 import { useSesion } from "../contexts/SesionContext";
 import Modal from "../components/Modal";
 import { FORMAS_PAGO_SRI } from "../config/formasPagoSri";
-import type { Proveedor, Compra, CompraCompleta, ItemCompra, Categoria } from "../types";
+import type { Proveedor, Compra, CompraCompleta, ItemCompra, Categoria, ProductoPresentacion } from "../types";
 import type { ProductoBusqueda } from "../types";
 
 type AccionItem = "producto_nuevo" | "producto_existente" | "gasto" | "ignorar";
@@ -191,6 +191,8 @@ export default function ComprasPage() {
   const [referenciaCompra, setReferenciaCompra] = useState("");
   const [cuentasBancoCompra, setCuentasBancoCompra] = useState<CuentaBanco[]>([]);
   const [items, setItems] = useState<(ItemCompra & { _key: number; nombre_display: string; requiere_caducidad?: boolean })[]>([]);
+  // v2.6.25: cache de presentaciones por producto (cargadas on-demand al elegir producto)
+  const [presentacionesPorProducto, setPresentacionesPorProducto] = useState<Record<number, ProductoPresentacion[]>>({});
   const [buscandoProducto, setBuscandoProducto] = useState("");
   const [resultadosBusqueda, setResultadosBusqueda] = useState<ProductoBusqueda[]>([]);
   const [itemBuscaIndex, setItemBuscaIndex] = useState<number | null>(null);
@@ -489,11 +491,54 @@ export default function ComprasPage() {
     setItemBuscaIndex(null);
   };
 
+  // v2.6.25/29: cargar presentaciones Y unidades de venta del producto on-demand.
+  // Combinamos ambas listas para que el dropdown muestre lo que el usuario ya
+  // tiene definido (sin sistemas paralelos).
+  const cargarPresentacionesSiHaceFalta = async (productoId: number) => {
+    if (presentacionesPorProducto[productoId] !== undefined) return;
+    try {
+      const api = await import("../services/api");
+      const [pres, unis] = await Promise.all([
+        api.listarPresentacionesProducto(productoId).catch(() => []),
+        api.listarUnidadesProducto(productoId).catch(() => []),
+      ]);
+      const unisNorm = (unis as any[])
+        .filter(u => !u.es_base && (u.activa === 1 || u.activa === true))
+        .map((u: any) => ({
+          id: u.id, producto_id: productoId, nombre: u.nombre, factor: u.factor,
+          precio_costo: undefined, codigo_barras: undefined, activo: true, orden: u.orden ?? 0,
+        }));
+      const presNorm = (pres as ProductoPresentacion[]).filter((p) => p.activo);
+      const seen = new Set(unisNorm.map(u => u.nombre.toLowerCase().trim()));
+      const merged: ProductoPresentacion[] = [
+        ...unisNorm,
+        ...presNorm.filter((p) => !seen.has(p.nombre.toLowerCase().trim())),
+      ];
+      setPresentacionesPorProducto((prev) => ({ ...prev, [productoId]: merged }));
+    } catch {
+      setPresentacionesPorProducto((prev) => ({ ...prev, [productoId]: [] }));
+    }
+  };
+
+  // Cargar presentaciones cada vez que items contiene producto_id nuevos
+  useEffect(() => {
+    items.forEach((item) => {
+      if (item.producto_id != null) {
+        cargarPresentacionesSiHaceFalta(item.producto_id);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map((i) => i.producto_id).join(",")]);
+
   const calcularTotales = () => {
     let subtotal = 0;
     let iva = 0;
     for (const it of items) {
-      const sub = it.cantidad * it.precio_unitario;
+      // v2.6.25: si tiene presentacion, subtotal = cantidad_presentacion * precio_unitario
+      // (donde precio_unitario es POR presentacion). Sino, cantidad * precio_unitario.
+      const sub = it.presentacion_id != null
+        ? (it.cantidad_presentacion ?? 0) * it.precio_unitario
+        : it.cantidad * it.precio_unitario;
       subtotal += sub;
       iva += sub * (it.iva_porcentaje / 100);
     }
@@ -955,10 +1000,11 @@ export default function ComprasPage() {
                     <table className="table" style={{ fontSize: 13 }}>
                       <thead>
                         <tr>
-                          <th style={{ width: "35%" }}>Producto / Descripcion</th>
-                          <th style={{ width: "12%" }}>Cantidad</th>
-                          <th style={{ width: "15%" }}>Precio Unit.</th>
-                          <th style={{ width: "10%" }}>IVA %</th>
+                          <th style={{ width: "28%" }}>Producto / Descripcion</th>
+                          <th style={{ width: "14%" }} title="Presentacion de compra (jaba, six-pack, etc.). Configurable en cada producto.">Presentacion</th>
+                          <th style={{ width: "10%" }}>Cantidad</th>
+                          <th style={{ width: "13%" }}>Precio Unit.</th>
+                          <th style={{ width: "8%" }}>IVA %</th>
                           <th style={{ width: "15%" }} className="text-right">Subtotal</th>
                           <th style={{ width: "50px" }}></th>
                         </tr>
@@ -1017,16 +1063,90 @@ export default function ComprasPage() {
                                 </div>
                               )}
                             </td>
+                            {/* v2.6.25: dropdown de presentacion de compra */}
+                            <td>
+                              {(() => {
+                                const pres = item.producto_id != null ? (presentacionesPorProducto[item.producto_id] ?? []) : [];
+                                if (item.producto_id == null) {
+                                  return <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>;
+                                }
+                                if (pres.length === 0) {
+                                  return <span style={{ color: "#94a3b8", fontSize: 11 }} title="Sin presentaciones definidas para este producto">Unidad</span>;
+                                }
+                                return (
+                                  <select
+                                    className="input"
+                                    style={{ fontSize: 12 }}
+                                    value={item.presentacion_id ?? ""}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      const newItems = [...items];
+                                      const it = newItems[idx];
+                                      if (v === "") {
+                                        (it as any).presentacion_id = undefined;
+                                        (it as any).cantidad_presentacion = undefined;
+                                      } else {
+                                        const pId = parseInt(v, 10);
+                                        const p = pres.find((x) => x.id === pId);
+                                        if (p) {
+                                          (it as any).presentacion_id = pId;
+                                          (it as any).cantidad_presentacion = it.cantidad || 1;
+                                          if (p.precio_costo != null && (it.precio_unitario === 0 || it.precio_unitario == null)) {
+                                            it.precio_unitario = p.precio_costo;
+                                          }
+                                        }
+                                      }
+                                      setItems(newItems);
+                                    }}
+                                  >
+                                    <option value="">Unidad base (1)</option>
+                                    {pres.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.nombre} (x{p.factor})
+                                      </option>
+                                    ))}
+                                  </select>
+                                );
+                              })()}
+                            </td>
                             <td>
                               <input
                                 className="input"
                                 type="number"
                                 min="0.01"
                                 step="0.01"
-                                value={item.cantidad}
-                                onChange={(e) => actualizarItem(idx, "cantidad", parseFloat(e.target.value) || 0)}
+                                value={item.presentacion_id != null ? (item.cantidad_presentacion ?? item.cantidad) : item.cantidad}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  const newItems = [...items];
+                                  const it = newItems[idx];
+                                  if (it.presentacion_id != null) {
+                                    (it as any).cantidad_presentacion = v;
+                                    const presList = it.producto_id != null ? (presentacionesPorProducto[it.producto_id] ?? []) : [];
+                                    const p = presList.find((x) => x.id === it.presentacion_id);
+                                    if (p) it.cantidad = v * p.factor;
+                                  } else {
+                                    it.cantidad = v;
+                                  }
+                                  setItems(newItems);
+                                }}
                                 style={{ fontSize: 12, textAlign: "center" }}
+                                title={item.presentacion_id != null && item.producto_id != null
+                                  ? (() => {
+                                      const p = (presentacionesPorProducto[item.producto_id] ?? []).find((x) => x.id === item.presentacion_id);
+                                      return p ? `= ${(item.cantidad_presentacion ?? 0) * p.factor} unidades` : "";
+                                    })()
+                                  : ""}
                               />
+                              {item.presentacion_id != null && item.producto_id != null && (() => {
+                                const p = (presentacionesPorProducto[item.producto_id] ?? []).find((x) => x.id === item.presentacion_id);
+                                if (!p) return null;
+                                return (
+                                  <div style={{ fontSize: 10, color: "#16a34a", marginTop: 2, textAlign: "center" }}>
+                                    = {((item.cantidad_presentacion ?? 0) * p.factor).toFixed(0)} und
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td>
                               <input
@@ -1037,6 +1157,7 @@ export default function ComprasPage() {
                                 value={item.precio_unitario}
                                 onChange={(e) => actualizarItem(idx, "precio_unitario", parseFloat(e.target.value) || 0)}
                                 style={{ fontSize: 12, textAlign: "right" }}
+                                title={item.presentacion_id != null ? "Precio POR presentacion (jaba). El backend lo divide entre el factor." : "Precio por unidad"}
                               />
                             </td>
                             <td>
@@ -1051,7 +1172,10 @@ export default function ComprasPage() {
                               </select>
                             </td>
                             <td className="text-right font-bold" style={{ fontSize: 13 }}>
-                              ${(item.cantidad * item.precio_unitario).toFixed(2)}
+                              {/* v2.6.25: si tiene presentacion, subtotal = cant_pres * precio_por_pres */}
+                              ${(item.presentacion_id != null
+                                  ? (item.cantidad_presentacion ?? 0) * item.precio_unitario
+                                  : item.cantidad * item.precio_unitario).toFixed(2)}
                             </td>
                             <td>
                               <button
@@ -1066,7 +1190,7 @@ export default function ComprasPage() {
                           {/* Sub-fila de LOTE si el producto requiere caducidad */}
                           {item.requiere_caducidad && (
                             <tr>
-                              <td colSpan={6} style={{ padding: "4px 8px 8px 30px", background: "rgba(245, 158, 11, 0.04)" }}>
+                              <td colSpan={7} style={{ padding: "4px 8px 8px 30px", background: "rgba(245, 158, 11, 0.04)" }}>
                                 <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
                                   <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-warning)" }}>
                                     🕐 Caducidad:
@@ -1097,7 +1221,7 @@ export default function ComprasPage() {
                         ))}
                         {items.length === 0 && (
                           <tr>
-                            <td colSpan={6} className="text-center text-secondary" style={{ padding: 20 }}>
+                            <td colSpan={7} className="text-center text-secondary" style={{ padding: 20 }}>
                               Agregue items a la compra
                             </td>
                           </tr>
@@ -1453,7 +1577,16 @@ export default function ComprasPage() {
                 <tbody>
                   {verCompra.detalles.map((d, i) => (
                     <tr key={i}>
-                      <td>{d.nombre_producto || d.descripcion || "-"}</td>
+                      <td>
+                        {d.nombre_producto || d.descripcion || "-"}
+                        {/* v2.6.25/26: si vino con presentación, mostrar el snapshot */}
+                        {d.presentacion_nombre && d.cantidad_presentacion != null && d.presentacion_factor != null && (
+                          <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                            📦 {d.cantidad_presentacion} × {d.presentacion_nombre}
+                            {" "}(= {(d.cantidad_presentacion * d.presentacion_factor).toFixed(0)} und)
+                          </div>
+                        )}
+                      </td>
                       <td className="text-center">{d.cantidad}</td>
                       <td className="text-right">${d.precio_unitario.toFixed(2)}</td>
                       <td className="text-right font-bold">${d.subtotal.toFixed(2)}</td>

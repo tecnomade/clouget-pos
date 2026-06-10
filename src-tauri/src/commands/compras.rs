@@ -208,7 +208,36 @@ pub fn registrar_compra(
     // Insertar detalles y actualizar stock/costo
     let mut detalles = Vec::new();
     for item in &compra.items {
-        let item_subtotal = item.cantidad * item.precio_unitario;
+        // v2.6.25: resolver presentación de compra (jaba x12, six-pack, etc.).
+        // Si el item viene con presentacion_id + cantidad_presentacion, calculamos
+        // cantidad real = cantidad_presentacion * factor, y precio_unitario por unidad
+        // base = precio_unitario / factor (porque el user lo tipea POR presentación).
+        // Si no viene, todo queda como antes (carga en unidad base).
+        let mut pres_snapshot: Option<(i64, String, f64, f64)> = None; // (id, nombre, factor, cantidad_presentacion)
+        let (cantidad_efectiva, precio_unitario_efectivo) = if let (Some(pres_id), Some(cant_pres)) =
+            (item.presentacion_id, item.cantidad_presentacion)
+        {
+            let row: Option<(String, f64)> = conn
+                .query_row(
+                    "SELECT nombre, factor FROM producto_presentaciones WHERE id = ?1 AND activo = 1",
+                    rusqlite::params![pres_id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+                )
+                .ok();
+            match row {
+                Some((nombre, factor)) if factor > 0.0 => {
+                    let cantidad_real = cant_pres * factor;
+                    let precio_por_unidad = if factor > 0.0 { item.precio_unitario / factor } else { item.precio_unitario };
+                    pres_snapshot = Some((pres_id, nombre, factor, cant_pres));
+                    (cantidad_real, precio_por_unidad)
+                }
+                _ => (item.cantidad, item.precio_unitario),
+            }
+        } else {
+            (item.cantidad, item.precio_unitario)
+        };
+
+        let item_subtotal = cantidad_efectiva * precio_unitario_efectivo;
 
         let descripcion = if let Some(pid) = item.producto_id {
             // Obtener nombre del producto
@@ -230,17 +259,17 @@ pub fn registrar_compra(
                     rusqlite::params![pid],
                     |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
                 )
-                .unwrap_or((0.0, item.precio_unitario));
+                .unwrap_or((0.0, precio_unitario_efectivo));
 
             let nuevo_costo_promedio: f64 = if stock_actual <= 0.0 {
                 // Sin stock previo (o negativo) → nuevo costo = precio de esta compra
-                item.precio_unitario
+                precio_unitario_efectivo
             } else {
-                let stock_total = stock_actual + item.cantidad;
+                let stock_total = stock_actual + cantidad_efectiva;
                 if stock_total <= 0.0 {
-                    item.precio_unitario
+                    precio_unitario_efectivo
                 } else {
-                    (stock_actual * costo_promedio_actual + item.cantidad * item.precio_unitario) / stock_total
+                    (stock_actual * costo_promedio_actual + cantidad_efectiva * precio_unitario_efectivo) / stock_total
                 }
             };
 
@@ -251,7 +280,7 @@ pub fn registrar_compra(
             conn.execute(
                 "UPDATE productos SET stock_actual = stock_actual + ?1, precio_costo = ?2,
                  costo_promedio = ?3, updated_at = datetime('now','localtime') WHERE id = ?4",
-                rusqlite::params![item.cantidad, item.precio_unitario, nuevo_costo_promedio, pid],
+                rusqlite::params![cantidad_efectiva, precio_unitario_efectivo, nuevo_costo_promedio, pid],
             )
             .map_err(|e| e.to_string())?;
 
@@ -260,7 +289,7 @@ pub fn registrar_compra(
             let _ = conn.execute(
                 "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, costo_unitario, referencia_id, usuario, motivo)
                  VALUES (?1, 'INGRESO_COMPRA', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![pid, item.cantidad, stock_antes_kardex, stock_antes_kardex + item.cantidad, item.precio_unitario, compra_id, usuario, motivo_kardex],
+                rusqlite::params![pid, cantidad_efectiva, stock_antes_kardex, stock_antes_kardex + cantidad_efectiva, precio_unitario_efectivo, compra_id, usuario, motivo_kardex],
             );
 
             Some(nombre)
@@ -268,16 +297,28 @@ pub fn registrar_compra(
             item.descripcion.clone()
         };
 
+        // v2.6.25: persistir snapshot de presentación si vino
+        let (pres_id_save, pres_nombre_save, pres_factor_save, pres_cant_save):
+            (Option<i64>, Option<String>, Option<f64>, Option<f64>) = match &pres_snapshot {
+            Some((id, nombre, factor, cant)) => (Some(*id), Some(nombre.clone()), Some(*factor), Some(*cant)),
+            None => (None, None, None, None),
+        };
         conn.execute(
-            "INSERT INTO compra_detalles (compra_id, producto_id, descripcion, cantidad, precio_unitario, subtotal)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO compra_detalles
+             (compra_id, producto_id, descripcion, cantidad, precio_unitario, subtotal,
+              presentacion_id, presentacion_nombre, presentacion_factor, cantidad_presentacion)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 compra_id,
                 item.producto_id,
                 descripcion,
-                item.cantidad,
-                item.precio_unitario,
+                cantidad_efectiva,
+                precio_unitario_efectivo,
                 item_subtotal,
+                pres_id_save,
+                pres_nombre_save,
+                pres_factor_save,
+                pres_cant_save,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -295,7 +336,7 @@ pub fn registrar_compra(
                     conn.execute(
                         "INSERT INTO lotes_caducidad (producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial, compra_id, fecha_elaboracion)
                          VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6)",
-                        rusqlite::params![prod_id, lote_num, fecha_cad, item.cantidad, compra_id, item.lote_fecha_elaboracion],
+                        rusqlite::params![prod_id, lote_num, fecha_cad, cantidad_efectiva, compra_id, item.lote_fecha_elaboracion],
                     ).ok();
                 }
             }
@@ -307,11 +348,15 @@ pub fn registrar_compra(
             compra_id: Some(compra_id),
             producto_id: item.producto_id,
             descripcion: descripcion.clone(),
-            cantidad: item.cantidad,
-            precio_unitario: item.precio_unitario,
+            cantidad: cantidad_efectiva,
+            precio_unitario: precio_unitario_efectivo,
             subtotal: item_subtotal,
             nombre_producto: descripcion,
             cantidad_devuelta: 0.0,
+            presentacion_id: pres_snapshot.as_ref().map(|(id, _, _, _)| *id),
+            presentacion_nombre: pres_snapshot.as_ref().map(|(_, n, _, _)| n.clone()),
+            presentacion_factor: pres_snapshot.as_ref().map(|(_, _, f, _)| *f),
+            cantidad_presentacion: pres_snapshot.as_ref().map(|(_, _, _, c)| *c),
         });
     }
 
@@ -526,7 +571,8 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
         .prepare(
             "SELECT cd.id, cd.compra_id, cd.producto_id, cd.descripcion,
                     cd.cantidad, cd.precio_unitario, cd.subtotal, p.nombre,
-                    COALESCE(cd.cantidad_devuelta, 0)
+                    COALESCE(cd.cantidad_devuelta, 0),
+                    cd.presentacion_id, cd.presentacion_nombre, cd.presentacion_factor, cd.cantidad_presentacion
              FROM compra_detalles cd
              LEFT JOIN productos p ON cd.producto_id = p.id
              WHERE cd.compra_id = ?1",
@@ -545,6 +591,10 @@ pub fn obtener_compra(db: State<Database>, id: i64) -> Result<CompraCompleta, St
                 subtotal: row.get(6)?,
                 nombre_producto: row.get(7)?,
                 cantidad_devuelta: row.get(8).unwrap_or(0.0),
+                presentacion_id: row.get(9).ok(),
+                presentacion_nombre: row.get(10).ok(),
+                presentacion_factor: row.get(11).ok(),
+                cantidad_presentacion: row.get(12).ok(),
             })
         })
         .map_err(|e| e.to_string())?

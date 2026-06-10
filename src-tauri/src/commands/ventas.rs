@@ -572,6 +572,7 @@ pub fn registrar_venta(
             subtotal,
             info_adicional: item.info_adicional.clone(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            presentacion_id: None, cantidad_presentacion: None,
         });
     }
 
@@ -917,6 +918,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            presentacion_id: None, cantidad_presentacion: None,
             })
         })
         .map_err(|e| e.to_string())?
@@ -2035,6 +2037,7 @@ fn guardar_documento_pendiente(
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            presentacion_id: None, cantidad_presentacion: None,
         });
     }
 
@@ -2170,19 +2173,55 @@ pub fn guardar_guia_remision(
     // directamente sin pasar por recepción, convertir_guia_a_venta descuenta ahí.
     let mut detalles_guardados = Vec::new();
     for item in &venta.items {
-        let subtotal = item.cantidad * item.precio_unitario - item.descuento;
+        // v2.6.26 Sprint 2: resolver presentacion (jaba x12, etc.). Si viene,
+        // cantidad_real = cantidad_presentacion * factor; precio_unit por unidad
+        // base = precio_unitario / factor. Snapshot se persiste en venta_detalles.
+        let mut pres_snapshot: Option<(i64, String, f64, f64)> = None;
+        let (cantidad_efectiva, precio_unitario_efectivo) = if let (Some(pres_id), Some(cant_pres)) =
+            (item.presentacion_id, item.cantidad_presentacion)
+        {
+            let row: Option<(String, f64)> = conn
+                .query_row(
+                    "SELECT nombre, factor FROM producto_presentaciones WHERE id = ?1 AND activo = 1",
+                    rusqlite::params![pres_id],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?)),
+                )
+                .ok();
+            match row {
+                Some((nombre, factor)) if factor > 0.0 => {
+                    let cant_real = cant_pres * factor;
+                    let precio_por_unidad = item.precio_unitario / factor;
+                    pres_snapshot = Some((pres_id, nombre, factor, cant_pres));
+                    (cant_real, precio_por_unidad)
+                }
+                _ => (item.cantidad, item.precio_unitario),
+            }
+        } else {
+            (item.cantidad, item.precio_unitario)
+        };
+
+        let subtotal = cantidad_efectiva * precio_unitario_efectivo - item.descuento;
+        let (pres_id_s, pres_nombre_s, pres_factor_s, pres_cant_s):
+            (Option<i64>, Option<String>, Option<f64>, Option<f64>) = match &pres_snapshot {
+            Some((id, nombre, factor, cant)) => (Some(*id), Some(nombre.clone()), Some(*factor), Some(*cant)),
+            None => (None, None, None, None),
+        };
         conn.execute(
-            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![venta_id, item.producto_id, item.cantidad, item.precio_unitario, item.descuento, item.iva_porcentaje, subtotal, item.info_adicional],
+            "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, descuento, iva_porcentaje, subtotal, info_adicional,
+              presentacion_id, presentacion_nombre, presentacion_factor, cantidad_presentacion)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![venta_id, item.producto_id, cantidad_efectiva, precio_unitario_efectivo, item.descuento, item.iva_porcentaje, subtotal, item.info_adicional,
+                pres_id_s, pres_nombre_s, pres_factor_s, pres_cant_s],
         ).map_err(|e| e.to_string())?;
 
         let nombre_prod: String = conn.query_row("SELECT nombre FROM productos WHERE id = ?1", rusqlite::params![item.producto_id], |row| row.get(0)).unwrap_or_default();
         detalles_guardados.push(VentaDetalle {
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
-            nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
+            nombre_producto: Some(nombre_prod), cantidad: cantidad_efectiva, precio_unitario: precio_unitario_efectivo,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            presentacion_id: pres_snapshot.as_ref().map(|(id, _, _, _)| *id),
+            cantidad_presentacion: pres_snapshot.as_ref().map(|(_, _, _, c)| *c),
         });
     }
 
@@ -2746,6 +2785,7 @@ pub fn convertir_guia_a_venta(
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            presentacion_id: None, cantidad_presentacion: None,
         })
     }).map_err(|e| e.to_string())?
     .collect::<Result<Vec<_>, _>>()

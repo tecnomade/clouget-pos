@@ -565,6 +565,12 @@ export interface CompraDetalle {
   nombre_producto?: string;
   /** v2.5.30: cantidad ya devuelta en notas de débito */
   cantidad_devuelta?: number;
+  /** v2.6.25/26: snapshot de la presentación con la que se cargó la compra
+   *  ("Jaba x12" con factor=12 y cantidad_presentacion=2 → 24 unidades en stock). */
+  presentacion_id?: number;
+  presentacion_nombre?: string;
+  presentacion_factor?: number;
+  cantidad_presentacion?: number;
 }
 
 export interface CompraCompleta {
@@ -582,6 +588,23 @@ export interface ItemCompra {
   lote_numero?: string;
   lote_fecha_caducidad?: string;
   lote_fecha_elaboracion?: string;
+  // v2.6.25: presentación con la que se carga (jaba x12, six-pack, etc.). Si viene,
+  // el backend calcula cantidad = cantidad_presentacion * factor y guarda snapshot.
+  // El UI tipea precio_unitario POR PRESENTACIÓN; backend lo divide entre factor.
+  presentacion_id?: number;
+  cantidad_presentacion?: number;
+}
+
+// v2.6.25: presentación de compra de un producto (jaba x12, six-pack, etc.)
+export interface ProductoPresentacion {
+  id?: number;
+  producto_id: number;
+  nombre: string;        // "Jaba x12"
+  factor: number;        // 12
+  precio_costo?: number; // referencia opcional por presentación
+  codigo_barras?: string;
+  activo: boolean;
+  orden: number;
 }
 
 export interface NuevaCompra {
@@ -663,4 +686,11 @@ export interface ItemCarrito {
   lote_numero?: string;
   lote_fecha_caducidad?: string;
   lote_dias_restantes?: number;
+  // v2.6.26 Sprint 3: presentacion de compra/entrega (jaba x12, six-pack, etc.).
+  // Solo se usa al CREAR una Nota de Entrega (tipo_documento === 'GUIA_REMISION').
+  // El POS de mostrador (venta normal) NO debe setear estos campos.
+  presentacion_id?: number;
+  presentacion_nombre?: string;
+  presentacion_factor?: number;
+  cantidad_presentacion?: number;
 }

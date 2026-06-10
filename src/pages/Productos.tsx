@@ -9,6 +9,7 @@ import { FEATURES } from "../config/branding";
 import type { ProductoBusqueda, Producto, Categoria, ListaPrecio, PrecioProducto } from "../types";
 // v2.4.14: miniatura de imagen con lazy-load por viewport
 import ProductoMiniatura from "../components/ProductoMiniatura";
+import ModalPresentacionesProducto from "../components/ModalPresentacionesProducto";
 
 /** Convierte el error del backend al eliminar producto en un mensaje claro. */
 function mensajeErrorEliminar(err: any): string {
@@ -66,21 +67,78 @@ function FormProducto({
     }
   );
   const [mostrarInfoIva, setMostrarInfoIva] = useState(false);
+  // v2.6.28 Sprint 4: opción de cargar stock inicial por bulto al CREAR producto.
+  // No define cómo se vende el producto (sigue por unidad) — solo facilita el
+  // ingreso inicial y calcula precio_costo dividiendo entre el factor.
+  const [bultoActivo, setBultoActivo] = useState(false);
+  const [bultoNombre, setBultoNombre] = useState("");
+  const [bultoFactor, setBultoFactor] = useState<number>(0);
+  const [bultoCantidad, setBultoCantidad] = useState<number>(0);
+  const [bultoPrecioCosto, setBultoPrecioCosto] = useState<number>(0);
+  // v2.6.30: catalogo de presentaciones unicas para autocompletar el bulto
+  const [bultoSugerencias, setBultoSugerencias] = useState<Array<{ nombre: string; factor: number; usos: number }>>([]);
   // Ajuste de stock por kardex (en edición; el stock no se edita a mano)
   const [ajusteAbierto, setAjusteAbierto] = useState(false);
   const [ajusteNuevoStock, setAjusteNuevoStock] = useState(0);
   const [ajusteMotivo, setAjusteMotivo] = useState("");
   const [ajusteGuardando, setAjusteGuardando] = useState(false);
+  // v2.6.28 Sprint 4: ajustar usando presentación (jaba x12, six-pack, etc.).
+  // ajusteNuevoStock siempre guarda el TOTAL en unidad base que se manda al
+  // backend; estos campos solo controlan la entrada visual del usuario.
+  const [ajustePresentaciones, setAjustePresentaciones] = useState<{ id?: number; nombre: string; factor: number; activo: boolean }[]>([]);
+  const [ajustePresentacionId, setAjustePresentacionId] = useState<number | null>(null);
+  const [ajusteCantidadPres, setAjusteCantidadPres] = useState<number>(0);
+
+  // Cargar presentaciones al abrir el modal (v2.6.29: combinar unidades_producto
+  // existentes con presentaciones de compra para no tener sistemas paralelos).
+  useEffect(() => {
+    if (!ajusteAbierto || !form.id) return;
+    (async () => {
+      try {
+        const api = await import("../services/api");
+        const [pres, unis] = await Promise.all([
+          api.listarPresentacionesProducto(form.id!).catch(() => []),
+          api.listarUnidadesProducto(form.id!).catch(() => []),
+        ]);
+        const unisNorm = (unis as any[])
+          .filter(u => !u.es_base && (u.activa === 1 || u.activa === true))
+          .map((u: any) => ({
+            id: u.id, nombre: u.nombre, factor: u.factor, activo: true,
+            _source: "venta" as const,
+          }));
+        const presNorm = pres
+          .filter(p => p.activo)
+          .map(p => ({ id: p.id, nombre: p.nombre, factor: p.factor, activo: true, _source: "compra" as const }));
+        const seen = new Set(unisNorm.map(u => u.nombre.toLowerCase().trim()));
+        const merged = [
+          ...unisNorm,
+          ...presNorm.filter(p => !seen.has(p.nombre.toLowerCase().trim())),
+        ];
+        setAjustePresentaciones(merged);
+      } catch {
+        setAjustePresentaciones([]);
+      }
+    })();
+  }, [ajusteAbierto, form.id]);
 
   const handleAjustarStock = async () => {
     if (!form.id) return;
     if (!ajusteMotivo.trim()) { alert("Indica el motivo del ajuste."); return; }
     setAjusteGuardando(true);
     try {
-      await registrarMovimiento(form.id, "AJUSTE", ajusteNuevoStock, ajusteMotivo.trim(), form.precio_costo, sesion?.nombre);
-      setForm((f) => ({ ...f, stock_actual: ajusteNuevoStock }));
+      // Si hay presentación seleccionada, convertir a unidad base
+      const stockFinal = ajustePresentacionId != null
+        ? ajusteCantidadPres * (ajustePresentaciones.find(p => p.id === ajustePresentacionId)?.factor ?? 1)
+        : ajusteNuevoStock;
+      const motivoExtra = ajustePresentacionId != null
+        ? `${ajusteMotivo.trim()} [${ajusteCantidadPres} × ${ajustePresentaciones.find(p => p.id === ajustePresentacionId)?.nombre}]`
+        : ajusteMotivo.trim();
+      await registrarMovimiento(form.id, "AJUSTE", stockFinal, motivoExtra, form.precio_costo, sesion?.nombre);
+      setForm((f) => ({ ...f, stock_actual: stockFinal }));
       setAjusteAbierto(false);
       setAjusteMotivo("");
+      setAjustePresentacionId(null);
+      setAjusteCantidadPres(0);
     } catch (err: any) {
       alert("No se pudo ajustar el stock: " + (err?.message || String(err)));
     } finally {
@@ -205,6 +263,26 @@ function FormProducto({
         productoId = form.id;
       } else {
         productoId = await crearProducto(form);
+        // v2.6.28 Sprint 4: si se activó "Ingreso por bulto", crear también la
+        // presentación de compra para que el usuario pueda usarla en futuras
+        // compras/NE/ajustes sin redefinirla.
+        if (bultoActivo && bultoNombre.trim() && bultoFactor > 0) {
+          try {
+            const { guardarPresentacionesProducto } = await import("../services/api");
+            await guardarPresentacionesProducto(productoId, [{
+              producto_id: productoId,
+              nombre: bultoNombre.trim(),
+              factor: bultoFactor,
+              precio_costo: bultoPrecioCosto > 0 ? bultoPrecioCosto : undefined,
+              codigo_barras: undefined,
+              activo: true,
+              orden: 0,
+            }]);
+          } catch (e) {
+            console.warn("No se pudo guardar la presentación inicial:", e);
+            // No bloqueamos el guardado del producto por esto.
+          }
+        }
       }
       // Guardar precios por lista
       const preciosArr: PrecioProducto[] = [];
@@ -449,8 +527,150 @@ function FormProducto({
                         </button>
                       </div>
                     ) : (
-                      <NumericInput value={form.stock_actual} step={1} min={0}
-                        onChange={(v) => setForm({ ...form, stock_actual: v })} />
+                      <>
+                        <NumericInput value={form.stock_actual} step={1} min={0}
+                          onChange={(v) => setForm({ ...form, stock_actual: v })}
+                          {...(bultoActivo ? { disabled: true } : {})} />
+                        {/* v2.6.28 Sprint 4: opción de cargar el stock inicial por bulto */}
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 6, cursor: "pointer", color: "var(--color-text-secondary)" }}>
+                          <input type="checkbox" checked={bultoActivo}
+                            onChange={(e) => {
+                              const v = e.target.checked;
+                              setBultoActivo(v);
+                              if (!v) {
+                                setBultoNombre(""); setBultoFactor(0); setBultoCantidad(0); setBultoPrecioCosto(0);
+                              } else if (bultoSugerencias.length === 0) {
+                                // v2.6.30: traer catalogo de presentaciones ya usadas
+                                (async () => {
+                                  try {
+                                    const { listarPresentacionesUnicas } = await import("../services/api");
+                                    const rows = await listarPresentacionesUnicas();
+                                    setBultoSugerencias(rows);
+                                  } catch { /* silenciar */ }
+                                })();
+                              }
+                            }} />
+                          📦 Ingreso por bulto/presentación (jaba, six-pack, caja…)
+                        </label>
+                        {bultoActivo && (
+                          <div style={{
+                            marginTop: 8, padding: 10,
+                            background: "var(--color-surface-alt)",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: 6, fontSize: 12,
+                          }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 0.6fr", gap: 8, marginBottom: 8 }}>
+                              <div>
+                                <label className="text-secondary" style={{ fontSize: 11 }}>
+                                  Nombre del bulto
+                                  {bultoSugerencias.length > 0 && (
+                                    <span style={{ color: "var(--color-text-secondary)", fontWeight: "normal" }}>
+                                      {" "}· {bultoSugerencias.length} disponibles
+                                    </span>
+                                  )}
+                                </label>
+                                <input
+                                  className="input"
+                                  style={{ fontSize: 12 }}
+                                  placeholder="Jaba x12, Six-pack…"
+                                  value={bultoNombre}
+                                  list="bulto-sugerencias-list"
+                                  autoComplete="off"
+                                  onChange={(e) => {
+                                    const nombre = e.target.value;
+                                    setBultoNombre(nombre);
+                                    // Match contra el catalogo (case-insensitive, trimmed) → autollena factor
+                                    const norm = nombre.trim().toLowerCase();
+                                    const match = bultoSugerencias.find(
+                                      (s) => s.nombre.trim().toLowerCase() === norm
+                                    );
+                                    if (match && match.factor > 0) {
+                                      setBultoFactor(match.factor);
+                                      const total = bultoCantidad * match.factor;
+                                      setForm((f) => ({
+                                        ...f,
+                                        stock_actual: total,
+                                        precio_costo:
+                                          bultoPrecioCosto > 0
+                                            ? bultoPrecioCosto / match.factor
+                                            : f.precio_costo,
+                                      }));
+                                    }
+                                  }}
+                                />
+                                <datalist id="bulto-sugerencias-list">
+                                  {bultoSugerencias.map((s, i) => (
+                                    <option key={`${s.nombre}-${s.factor}-${i}`} value={s.nombre}>
+                                      {s.usos > 0
+                                        ? `× ${s.factor} · usada en ${s.usos} producto${s.usos !== 1 ? "s" : ""}`
+                                        : `× ${s.factor} · del catálogo`}
+                                    </option>
+                                  ))}
+                                </datalist>
+                              </div>
+                              <div>
+                                <label className="text-secondary" style={{ fontSize: 11 }}>Unidades/bulto</label>
+                                <NumericInput value={bultoFactor} step={1} min={0}
+                                  onChange={(v) => {
+                                    setBultoFactor(v);
+                                    const total = bultoCantidad * v;
+                                    setForm((f) => ({
+                                      ...f,
+                                      stock_actual: total,
+                                      precio_costo: v > 0 && bultoPrecioCosto > 0 ? bultoPrecioCosto / v : f.precio_costo,
+                                    }));
+                                  }} />
+                              </div>
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                              <div>
+                                <label className="text-secondary" style={{ fontSize: 11 }}>Cantidad de bultos</label>
+                                <NumericInput value={bultoCantidad} step={1} min={0}
+                                  onChange={(v) => {
+                                    setBultoCantidad(v);
+                                    setForm((f) => ({ ...f, stock_actual: v * bultoFactor }));
+                                  }} />
+                              </div>
+                              <div>
+                                <label className="text-secondary" style={{ fontSize: 11 }}>Precio costo por bulto</label>
+                                <NumericInput value={bultoPrecioCosto} step={0.01} min={0}
+                                  onChange={(v) => {
+                                    setBultoPrecioCosto(v);
+                                    setForm((f) => ({
+                                      ...f,
+                                      precio_costo: bultoFactor > 0 ? v / bultoFactor : f.precio_costo,
+                                    }));
+                                  }} />
+                              </div>
+                            </div>
+                            <div style={{
+                              marginTop: 8, padding: "6px 10px",
+                              background: "var(--color-surface)", borderRadius: 4, fontSize: 11,
+                            }}>
+                              {bultoCantidad > 0 && bultoFactor > 0 ? (
+                                <>
+                                  → <strong>{(bultoCantidad * bultoFactor).toFixed(0)}</strong> unidades al stock
+                                  {bultoPrecioCosto > 0 && bultoFactor > 0 && (
+                                    <> · <strong>${(bultoPrecioCosto / bultoFactor).toFixed(4)}</strong>/unidad de costo</>
+                                  )}
+                                </>
+                              ) : (
+                                <span style={{ color: "var(--color-text-secondary)" }}>
+                                  Completá los 4 campos para ver el cálculo
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ marginTop: 6, fontSize: 10, color: "var(--color-text-secondary)" }}>
+                              ℹ Este producto se va a seguir vendiendo por <strong>unidad</strong>. La presentación se guarda para que el ingreso de futuras compras también se pueda hacer en bulto.
+                              {bultoSugerencias.length > 0 && (
+                                <>
+                                  {" "}Podés <strong>elegir una existente</strong> del menú desplegable o <strong>crear una nueva</strong> escribiéndola.
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                     {form.id && (
                       <span className="text-secondary" style={{ fontSize: 10, marginTop: 2, display: "block" }}>
@@ -469,12 +689,67 @@ function FormProducto({
                         <div className="text-secondary" style={{ fontSize: 12, marginBottom: 12 }}>
                           {form.nombre} · Stock actual: <strong>{form.stock_actual}</strong>
                         </div>
-                        <label className="text-secondary" style={{ fontSize: 12 }}>Nuevo stock (conteo real)</label>
-                        <NumericInput value={ajusteNuevoStock} step={1} min={0}
-                          onChange={(v) => setAjusteNuevoStock(v)} />
-                        <div style={{ fontSize: 12, margin: "8px 0", color: ajusteNuevoStock - form.stock_actual >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
-                          Diferencia: {ajusteNuevoStock - form.stock_actual >= 0 ? "+" : ""}{(ajusteNuevoStock - form.stock_actual).toFixed(2)}
-                        </div>
+                        {/* v2.6.28 Sprint 4: dropdown de presentación (solo si hay) */}
+                        {ajustePresentaciones.length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <label className="text-secondary" style={{ fontSize: 12 }}>Expresar en:</label>
+                            <select
+                              className="input"
+                              style={{ fontSize: 13 }}
+                              value={ajustePresentacionId ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") {
+                                  setAjustePresentacionId(null);
+                                  setAjusteCantidadPres(0);
+                                } else {
+                                  setAjustePresentacionId(parseInt(v, 10));
+                                  setAjusteCantidadPres(0);
+                                }
+                              }}
+                            >
+                              <option value="">Unidad base ({form.unidad_medida || "UND"})</option>
+                              {ajustePresentaciones.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.nombre} (×{p.factor})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {ajustePresentacionId != null ? (
+                          <>
+                            <label className="text-secondary" style={{ fontSize: 12 }}>
+                              Nuevo stock en {ajustePresentaciones.find(p => p.id === ajustePresentacionId)?.nombre}
+                            </label>
+                            <NumericInput value={ajusteCantidadPres} step={0.5} min={0}
+                              onChange={(v) => setAjusteCantidadPres(v)} />
+                            {(() => {
+                              const factor = ajustePresentaciones.find(p => p.id === ajustePresentacionId)?.factor ?? 1;
+                              const totalPres = ajusteCantidadPres * factor;
+                              const diff = totalPres - form.stock_actual;
+                              return (
+                                <>
+                                  <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 4 }}>
+                                    = {totalPres.toFixed(2)} {form.unidad_medida || "UND"} en total
+                                  </div>
+                                  <div style={{ fontSize: 12, margin: "6px 0", color: diff >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                                    Diferencia: {diff >= 0 ? "+" : ""}{diff.toFixed(2)} {form.unidad_medida || "UND"}
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </>
+                        ) : (
+                          <>
+                            <label className="text-secondary" style={{ fontSize: 12 }}>Nuevo stock (conteo real)</label>
+                            <NumericInput value={ajusteNuevoStock} step={1} min={0}
+                              onChange={(v) => setAjusteNuevoStock(v)} />
+                            <div style={{ fontSize: 12, margin: "8px 0", color: ajusteNuevoStock - form.stock_actual >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                              Diferencia: {ajusteNuevoStock - form.stock_actual >= 0 ? "+" : ""}{(ajusteNuevoStock - form.stock_actual).toFixed(2)}
+                            </div>
+                          </>
+                        )}
                         <label className="text-secondary" style={{ fontSize: 12 }}>Motivo (obligatorio)</label>
                         <input className="input" value={ajusteMotivo} placeholder="Ej: conteo físico, merma, corrección"
                           onChange={(e) => setAjusteMotivo(e.target.value)} />
@@ -1652,6 +1927,8 @@ export default function Productos() {
   const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [productoEditar, setProductoEditar] = useState<Producto | undefined>();
+  // v2.6.25: modal de presentaciones de compra del producto seleccionado
+  const [presentacionesProductoId, setPresentacionesProductoId] = useState<number | null>(null);
   const [filtro, setFiltro] = useState("");
   const [filtroCategoriaId, setFiltroCategoriaId] = useState<number | null>(null);
   // v2.5.24: filtro por tipo de producto (todos / simple / servicio / combo)
@@ -2417,6 +2694,9 @@ export default function Productos() {
                                 <div style={{ display: "flex", gap: 4 }}>
                                   <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
                                     onClick={() => handleEditar(p.id)}>Editar</button>
+                                  <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                                    title="Presentaciones de compra (jaba, six-pack, etc.)"
+                                    onClick={() => setPresentacionesProductoId(p.id)}>🎁</button>
                                   {puedeEliminarProd && (
                                   <button className="btn btn-danger" style={{ padding: "2px 6px", fontSize: 11 }}
                                     onClick={async () => {
@@ -2511,6 +2791,9 @@ export default function Productos() {
                             <button className="btn btn-outline" onClick={() => handleEditar(p.id)}>
                               Editar
                             </button>
+                            <button className="btn btn-outline" style={{ padding: "2px 8px", fontSize: 11 }}
+                              title="Presentaciones de compra (jaba, six-pack, etc.)"
+                              onClick={() => setPresentacionesProductoId(p.id)}>🎁</button>
                             {puedeEliminarProd && (
                             <button className="btn btn-danger" style={{ padding: "2px 8px", fontSize: 11 }}
                               onClick={async () => {
@@ -2709,6 +2992,18 @@ export default function Productos() {
             </div>
           </div>
         </div>
+        );
+      })()}
+      {/* v2.6.25: modal de presentaciones de compra */}
+      {presentacionesProductoId != null && (() => {
+        const prod = productos.find(p => p.id === presentacionesProductoId);
+        return (
+          <ModalPresentacionesProducto
+            productoId={presentacionesProductoId}
+            productoNombre={prod?.nombre ?? "Producto"}
+            unidadBase={(prod as any)?.unidad_medida ?? "UND"}
+            onClose={() => setPresentacionesProductoId(null)}
+          />
         );
       })()}
     </>

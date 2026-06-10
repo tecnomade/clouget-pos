@@ -361,6 +361,11 @@ pub fn run() {
             commands::productos::reparar_fechas_caducidad,
             commands::productos::listar_unidades_producto,
             commands::productos::guardar_unidades_producto,
+            // v2.6.25: Presentaciones de compra por producto
+            commands::productos::listar_presentaciones_producto,
+            commands::productos::guardar_presentaciones_producto,
+            // v2.6.30: catalogo de presentaciones unicas (autocompletar en alta de producto)
+            commands::productos::listar_presentaciones_unicas,
             // Clientes
             commands::clientes::crear_cliente,
             commands::clientes::actualizar_cliente,

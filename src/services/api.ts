@@ -61,6 +61,7 @@ async function smartInvoke<T>(command: string, args?: Record<string, unknown>): 
 import type {
   Producto,
   ProductoBusqueda,
+  ProductoPresentacion,
   ProductoTactil,
   Categoria,
   Cliente,
@@ -129,6 +130,21 @@ export async function listarProductos(soloActivos: boolean = true, listaPrecioId
 export async function productosMasVendidos(limite: number = 12): Promise<ProductoBusqueda[]> {
   return smartInvoke("productos_mas_vendidos", { limite });
 }
+
+// v2.6.25 — Presentaciones de compra del producto
+export async function listarPresentacionesProducto(productoId: number): Promise<ProductoPresentacion[]> {
+  return smartInvoke("listar_presentaciones_producto", { productoId });
+}
+export async function guardarPresentacionesProducto(
+  productoId: number,
+  presentaciones: ProductoPresentacion[],
+): Promise<ProductoPresentacion[]> {
+  return smartInvoke("guardar_presentaciones_producto", { productoId, presentaciones });
+}
+// v2.6.30 — Catalogo de presentaciones unicas (autocompletar en alta de producto)
+export const listarPresentacionesUnicas = () =>
+  smartInvoke<Array<{ nombre: string; factor: number; usos: number }>>(
+    "listar_presentaciones_unicas");
 
 export async function cargarImagenProducto(id: number, imagenPath: string): Promise<string> {
   return smartInvoke("cargar_imagen_producto", { id, imagenPath });

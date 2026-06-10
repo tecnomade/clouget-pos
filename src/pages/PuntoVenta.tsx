@@ -12,7 +12,7 @@ import { useSesion } from "../contexts/SesionContext";
 import { useTabActivated } from "../contexts/TabsContext";
 import { usePausableInterval } from "../hooks/usePausableInterval";
 import DocumentosRecientes from "../components/DocumentosRecientes";
-import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision } from "../types";
+import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision, ProductoPresentacion } from "../types";
 
 export default function PuntoVenta() {
   const { toastExito, toastError, toastWarning } = useToast();
@@ -115,6 +115,9 @@ export default function PuntoVenta() {
   // v2.3.43: vehiculos guardados (placas) + direcciones del cliente
   const [vehiculosGuardados, setVehiculosGuardados] = useState<[number, string, string | null][]>([]);
   const [direccionesCliente, setDireccionesCliente] = useState<DireccionCliente[]>([]);
+  // v2.6.26 Sprint 3: presentaciones de compra/entrega por producto del carrito
+  // (jaba x12, six-pack, etc.). Solo aplican al crear una Nota de Entrega.
+  const [presentacionesGuia, setPresentacionesGuia] = useState<Record<number, ProductoPresentacion[]>>({});
 
   const inputRef = useRef<HTMLInputElement>(null);
   const lastAddRef = useRef<{id: number, time: number}>({id: 0, time: 0});
@@ -1177,6 +1180,38 @@ export default function PuntoVenta() {
     } else {
       setDireccionesCliente([]);
     }
+    // v2.6.26 Sprint 3: cargar presentaciones de compra/entrega para cada
+    // producto del carrito (combinar unidades_producto + producto_presentaciones).
+    (async () => {
+      try {
+        const api = await import("../services/api");
+        const ids = Array.from(new Set(carrito.map((i) => i.producto_id)));
+        const entries = await Promise.all(
+          ids.map(async (pid) => {
+            const [pres, unis] = await Promise.all([
+              api.listarPresentacionesProducto(pid).catch(() => []),
+              api.listarUnidadesProducto(pid).catch(() => []),
+            ]);
+            const unisNorm = (unis as any[])
+              .filter((u) => !u.es_base && (u.activa === 1 || u.activa === true))
+              .map((u: any) => ({
+                id: u.id, producto_id: pid, nombre: u.nombre, factor: u.factor,
+                precio_costo: undefined, codigo_barras: undefined, activo: true, orden: u.orden ?? 0,
+              }));
+            const presNorm = (pres as ProductoPresentacion[]).filter((p) => p.activo);
+            const seen = new Set(unisNorm.map((u) => u.nombre.toLowerCase().trim()));
+            const merged: ProductoPresentacion[] = [
+              ...unisNorm,
+              ...presNorm.filter((p) => !seen.has(p.nombre.toLowerCase().trim())),
+            ];
+            return [pid, merged] as [number, ProductoPresentacion[]];
+          }),
+        );
+        setPresentacionesGuia(Object.fromEntries(entries));
+      } catch {
+        setPresentacionesGuia({});
+      }
+    })();
     setMostrarModalGuia(true);
   }, [carrito, clienteSeleccionado]);
 
@@ -1210,6 +1245,9 @@ export default function PuntoVenta() {
           iva_porcentaje: i.iva_porcentaje,
           subtotal: d.subtotal,
           info_adicional: i.info_adicional || null,
+          // v2.6.26 Sprint 3: snapshot de presentación si el item se cargó en bulto.
+          presentacion_id: i.presentacion_id ?? null,
+          cantidad_presentacion: i.cantidad_presentacion ?? null,
         } as any;
       }),
       forma_pago: formaPago,
@@ -1252,12 +1290,25 @@ export default function PuntoVenta() {
       setClienteSeleccionado(null);
       setMostrarModalGuia(false);
       setGuiaPlaca(""); setGuiaChofer(""); setGuiaTransportista(""); setGuiaDireccion(""); setSugChoferesPlaca([]);
+      setPresentacionesGuia({});
     } catch (err) {
       toastError("Error: " + err);
     } finally {
       setGuardandoGuia(false);
     }
-  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, guiaPlaca, guiaChofer, guiaTransportista, guiaDireccion, toastExito, toastError]);
+  }, [carrito, clienteSeleccionado, formaPago, tipoDocumento, guiaPlaca, guiaChofer, guiaTransportista, guiaDireccion, presentacionesGuia, toastExito, toastError]);
+
+  // v2.6.26 Sprint 3: al cerrar/cancelar la Nota de Entrega, limpiar los campos de
+  // presentación del carrito para que una venta normal posterior no los arrastre.
+  const cerrarModalGuia = useCallback(() => {
+    setMostrarModalGuia(false);
+    setPresentacionesGuia({});
+    setCarrito((prev) => prev.map((c) => {
+      if (c.presentacion_id == null) return c;
+      const { presentacion_id, presentacion_nombre, presentacion_factor, cantidad_presentacion, ...rest } = c;
+      return { ...rest, cantidad: cantidad_presentacion ?? c.cantidad };
+    }));
+  }, []);
 
   useEffect(() => {
     const handleCobrar = () => procesarVenta();
@@ -2507,7 +2558,7 @@ export default function PuntoVenta() {
 
       {/* Modal datos de Guía de Remisión */}
       {mostrarModalGuia && (
-        <div className="modal-overlay" onClick={() => setMostrarModalGuia(false)}>
+        <div className="modal-overlay" onClick={cerrarModalGuia}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
             <div className="modal-header">
               <h3>Nota de Entrega</h3>
@@ -2622,13 +2673,90 @@ export default function PuntoVenta() {
                   </div>
                 )}
               </div>
+              {/* v2.6.26 Sprint 3: presentaciones de compra/entrega por item (jaba x12, six-pack...) */}
+              {carrito.some((it) => (presentacionesGuia[it.producto_id] ?? []).length > 0) && (
+                <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: 10 }}>
+                  <div className="text-secondary" style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                    Presentación de entrega (opcional)
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {carrito.map((it, idx) => {
+                      const pres = presentacionesGuia[it.producto_id] ?? [];
+                      if (pres.length === 0) return null;
+                      const presActual = it.presentacion_id != null
+                        ? pres.find((p) => p.id === it.presentacion_id)
+                        : null;
+                      return (
+                        <div key={idx} style={{ fontSize: 12 }}>
+                          <div style={{ fontWeight: 600, marginBottom: 3 }}>{it.nombre}</div>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <select
+                              className="input"
+                              style={{ fontSize: 12, flex: 1 }}
+                              value={it.presentacion_id ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setCarrito((prev) => prev.map((c, k) => {
+                                  if (k !== idx) return c;
+                                  if (v === "") {
+                                    const { presentacion_id, presentacion_nombre, presentacion_factor, cantidad_presentacion, ...rest } = c;
+                                    return { ...rest, cantidad: cantidad_presentacion ?? c.cantidad };
+                                  }
+                                  const pId = parseInt(v, 10);
+                                  const p = pres.find((x) => x.id === pId);
+                                  if (!p) return c;
+                                  const cantPres = c.cantidad_presentacion && c.presentacion_id != null ? c.cantidad_presentacion : 1;
+                                  return {
+                                    ...c,
+                                    presentacion_id: pId,
+                                    presentacion_nombre: p.nombre,
+                                    presentacion_factor: p.factor,
+                                    cantidad_presentacion: cantPres,
+                                    cantidad: cantPres * p.factor,
+                                  };
+                                }));
+                              }}
+                            >
+                              <option value="">Unidad base (1)</option>
+                              {pres.map((p) => (
+                                <option key={p.id} value={p.id}>{p.nombre} (x{p.factor})</option>
+                              ))}
+                            </select>
+                            {presActual && (
+                              <input
+                                className="input"
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                style={{ fontSize: 12, width: 70, textAlign: "center" }}
+                                value={it.cantidad_presentacion ?? 0}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setCarrito((prev) => prev.map((c, k) => k === idx ? {
+                                    ...c, cantidad_presentacion: v, cantidad: v * presActual.factor,
+                                  } : c));
+                                }}
+                              />
+                            )}
+                          </div>
+                          {presActual && (
+                            <div style={{ fontSize: 10, color: "var(--color-success)", marginTop: 2 }}>
+                              = {((it.cantidad_presentacion ?? 0) * presActual.factor).toFixed(0)} unidades
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div style={{ fontSize: 12, padding: 8, borderRadius: "var(--radius)", background: "rgba(251, 146, 60, 0.1)", color: "var(--color-warning)" }}>
                 {carrito.length} producto(s) — Total: ${total.toFixed(2)}
                 {clienteSeleccionado && ` — ${clienteSeleccionado.nombre}`}
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setMostrarModalGuia(false)}>
+              <button className="btn btn-outline" onClick={cerrarModalGuia}>
                 Cancelar
               </button>
               <button className="btn" disabled={guardandoGuia}

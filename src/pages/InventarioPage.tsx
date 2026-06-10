@@ -52,6 +52,9 @@ export default function InventarioPage() {
   const [modalCantidad, setModalCantidad] = useState("");
   const [modalMotivo, setModalMotivo] = useState("");
   const [modalCosto, setModalCosto] = useState("");
+  // v2.6.28 Sprint 4: presentación al ingresar/ajustar inventario
+  const [modalPresentaciones, setModalPresentaciones] = useState<{ id?: number; nombre: string; factor: number; activo: boolean }[]>([]);
+  const [modalPresentacionId, setModalPresentacionId] = useState<number | null>(null);
 
   const cargar = useCallback(async () => {
     const [movs, res] = await Promise.all([
@@ -107,15 +110,23 @@ export default function InventarioPage() {
 
   const handleRegistrar = async () => {
     if (!modalProducto) return toastError("Seleccione un producto");
-    const cant = parseFloat(modalCantidad);
-    if (isNaN(cant) || cant <= 0) return toastError("Cantidad invalida");
+    const cantTipeada = parseFloat(modalCantidad);
+    if (isNaN(cantTipeada) || cantTipeada <= 0) return toastError("Cantidad invalida");
+    // v2.6.28 Sprint 4: si hay presentación, convertir a unidad base.
+    const pres = modalPresentacionId != null
+      ? modalPresentaciones.find(p => p.id === modalPresentacionId)
+      : null;
+    const cant = pres ? cantTipeada * pres.factor : cantTipeada;
+    const motivoFinal = pres
+      ? `${(modalMotivo || "").trim()} [${cantTipeada} × ${pres.nombre}]`.trim()
+      : modalMotivo || undefined;
 
     try {
       await registrarMovimiento(
         modalProducto.id,
         modalTipo,
-        modalTipo === "AJUSTE" ? cant : cant,
-        modalMotivo || undefined,
+        cant,
+        motivoFinal,
         modalCosto ? parseFloat(modalCosto) : undefined,
         sesion?.nombre,
       );
@@ -126,6 +137,8 @@ export default function InventarioPage() {
       setModalCantidad("");
       setModalMotivo("");
       setModalCosto("");
+      setModalPresentaciones([]);
+      setModalPresentacionId(null);
       await cargar();
     } catch (err) {
       toastError("Error: " + err);
@@ -352,12 +365,37 @@ export default function InventarioPage() {
                       {modalResultados.slice(0, 10).map((p) => (
                         <div key={p.id}
                           style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid var(--color-border)" }}
-                          onClick={() => {
+                          onClick={async () => {
                             setModalProducto(p);
                             setModalResultados([]);
                             setModalBusqueda(p.nombre);
+                            setModalPresentacionId(null);
                             if (modalTipo === "AJUSTE") {
                               setModalCantidad(String(p.stock_actual));
+                            }
+                            // v2.6.28/29: cargar unidades_producto Y presentaciones,
+                            // combinar para no tener sistemas paralelos. Excluye la
+                            // unidad base (factor=1, es_base=1).
+                            try {
+                              const api = await import("../services/api");
+                              const [pres, unis] = await Promise.all([
+                                api.listarPresentacionesProducto(p.id).catch(() => []),
+                                api.listarUnidadesProducto(p.id).catch(() => []),
+                              ]);
+                              const unisNorm = (unis as any[])
+                                .filter(u => !u.es_base && (u.activa === 1 || u.activa === true))
+                                .map((u: any) => ({ id: u.id, nombre: u.nombre, factor: u.factor, activo: true }));
+                              const presNorm = (pres as any[])
+                                .filter((r: any) => r.activo)
+                                .map((r: any) => ({ id: r.id, nombre: r.nombre, factor: r.factor, activo: true }));
+                              const seen = new Set(unisNorm.map(u => u.nombre.toLowerCase().trim()));
+                              const merged = [
+                                ...unisNorm,
+                                ...presNorm.filter((q: any) => !seen.has(q.nombre.toLowerCase().trim())),
+                              ];
+                              setModalPresentaciones(merged);
+                            } catch {
+                              setModalPresentaciones([]);
                             }
                           }}
                           onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surface-hover)")}
@@ -374,19 +412,81 @@ export default function InventarioPage() {
               )}
             </div>
 
+            {/* v2.6.28 Sprint 4: Dropdown de presentacion si el producto tiene */}
+            {modalPresentaciones.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
+                  Expresar en
+                </label>
+                <select
+                  className="input"
+                  style={{ width: "100%", fontSize: 13 }}
+                  value={modalPresentacionId ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") {
+                      setModalPresentacionId(null);
+                      if (modalTipo === "AJUSTE" && modalProducto) {
+                        setModalCantidad(String(modalProducto.stock_actual));
+                      } else {
+                        setModalCantidad("");
+                      }
+                    } else {
+                      setModalPresentacionId(parseInt(v, 10));
+                      setModalCantidad("");
+                    }
+                  }}
+                >
+                  <option value="">Unidad base</option>
+                  {modalPresentaciones.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre} (×{p.factor})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Cantidad */}
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: "var(--color-text-secondary)", display: "block", marginBottom: 4 }}>
-                {modalTipo === "ENTRADA" ? "Cantidad a ingresar" : "Stock real (conteo fisico)"}
+                {(() => {
+                  const pres = modalPresentacionId != null ? modalPresentaciones.find(p => p.id === modalPresentacionId) : null;
+                  if (modalTipo === "ENTRADA") {
+                    return pres ? `Cantidad a ingresar (en ${pres.nombre})` : "Cantidad a ingresar";
+                  }
+                  return pres ? `Stock real (en ${pres.nombre})` : "Stock real (conteo fisico)";
+                })()}
               </label>
               <input className="input" type="number" style={{ width: "100%", fontSize: 13 }}
                 placeholder={modalTipo === "ENTRADA" ? "Ej: 50" : "Ej: 23"}
                 value={modalCantidad}
                 onChange={(e) => setModalCantidad(e.target.value)} />
-              {modalTipo === "AJUSTE" && modalProducto && modalCantidad && (
+              {/* Hint visual: si hay presentacion, mostrar conversion */}
+              {modalPresentacionId != null && modalCantidad && (() => {
+                const pres = modalPresentaciones.find(p => p.id === modalPresentacionId);
+                if (!pres) return null;
+                const total = parseFloat(modalCantidad) * pres.factor;
+                return (
+                  <div style={{ fontSize: 11, marginTop: 4, color: "var(--color-success)" }}>
+                    = {total.toFixed(2)} unidades base ({pres.factor} por cada {pres.nombre})
+                  </div>
+                );
+              })()}
+              {modalTipo === "AJUSTE" && modalProducto && modalCantidad && (() => {
+                const pres = modalPresentacionId != null ? modalPresentaciones.find(p => p.id === modalPresentacionId) : null;
+                const tipeada = parseFloat(modalCantidad);
+                const stockNuevo = pres ? tipeada * pres.factor : tipeada;
+                const diff = stockNuevo - modalProducto.stock_actual;
+                return (
+                  <div style={{ fontSize: 11, marginTop: 4, color: diff >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                    Diferencia: {diff >= 0 ? "+" : ""}{diff.toFixed(1)} unidades base
+                  </div>
+                );
+              })()}
+              {modalTipo === "AJUSTE" && modalProducto && !modalCantidad && (
                 <div style={{ fontSize: 11, marginTop: 4, color: "var(--color-text-secondary)" }}>
-                  Diferencia: {(parseFloat(modalCantidad) - modalProducto.stock_actual) >= 0 ? "+" : ""}
-                  {(parseFloat(modalCantidad) - modalProducto.stock_actual).toFixed(1)} unidades
+                  Stock actual: {modalProducto.stock_actual} unidades base
                 </div>
               )}
             </div>

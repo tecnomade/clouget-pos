@@ -106,6 +106,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             descuento REAL NOT NULL DEFAULT 0,
             iva_porcentaje REAL NOT NULL DEFAULT 0,
             subtotal REAL NOT NULL,
+            -- v2.6.26 Sprint 2: presentacion con la que se cargo el item (en Notas de
+            -- Entrega o ventas que se hicieron con bultos). Snapshot para conservar el
+            -- detalle aunque la presentacion se borre.
+            presentacion_id INTEGER,
+            presentacion_nombre TEXT,
+            presentacion_factor REAL,
+            cantidad_presentacion REAL,
             FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
             FOREIGN KEY (producto_id) REFERENCES productos(id)
         );
@@ -802,9 +809,32 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             cantidad REAL NOT NULL DEFAULT 1,
             precio_unitario REAL NOT NULL DEFAULT 0,
             subtotal REAL NOT NULL DEFAULT 0,
+            -- v2.6.25: presentación con la que se cargó la compra (jaba, six-pack, etc.)
+            -- snapshot para que si la presentación se borra, el detalle histórico se conserve.
+            presentacion_id INTEGER,
+            presentacion_nombre TEXT,
+            presentacion_factor REAL,
+            cantidad_presentacion REAL,
             FOREIGN KEY (compra_id) REFERENCES compras(id) ON DELETE CASCADE,
             FOREIGN KEY (producto_id) REFERENCES productos(id)
         );
+
+        -- v2.6.25: presentaciones de compra por producto (jaba x12, six-pack, etc.)
+        -- Cada producto define qué presentaciones acepta al cargar compras/notas-entrega.
+        CREATE TABLE IF NOT EXISTS producto_presentaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producto_id INTEGER NOT NULL,
+            nombre TEXT NOT NULL,
+            factor REAL NOT NULL,
+            precio_costo REAL,
+            codigo_barras TEXT,
+            activo INTEGER NOT NULL DEFAULT 1,
+            orden INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pres_producto ON producto_presentaciones(producto_id, activo);
+        CREATE INDEX IF NOT EXISTS idx_pres_barcode ON producto_presentaciones(codigo_barras) WHERE codigo_barras IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS cuentas_por_pagar (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -93,6 +93,13 @@ pub struct VentaDetalle {
     /// Lista de (producto_hijo_id, cantidad). Solo aplica si producto_id es un combo.
     #[serde(default)]
     pub combo_seleccion: Option<Vec<ComboSeleccion>>,
+    /// v2.6.26 Sprint 2: presentación de compra usada al cargar Nota de Entrega
+    /// (jaba x12, six-pack, etc.). Si viene, backend convierte cantidad y guarda
+    /// snapshot (nombre + factor) en venta_detalles.
+    #[serde(default)]
+    pub presentacion_id: Option<i64>,
+    #[serde(default)]
+    pub cantidad_presentacion: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]

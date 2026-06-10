@@ -141,6 +141,20 @@ impl Database {
         )
         .ok();
 
+        // Migracion v2.6.25: presentaciones de compra por producto.
+        // Columnas snapshot en compra_detalles. Idempotentes — .ok() ignora si la
+        // columna ya existe.
+        conn.execute("ALTER TABLE compra_detalles ADD COLUMN presentacion_id INTEGER", []).ok();
+        conn.execute("ALTER TABLE compra_detalles ADD COLUMN presentacion_nombre TEXT", []).ok();
+        conn.execute("ALTER TABLE compra_detalles ADD COLUMN presentacion_factor REAL", []).ok();
+        conn.execute("ALTER TABLE compra_detalles ADD COLUMN cantidad_presentacion REAL", []).ok();
+
+        // Migracion v2.6.26: extender snapshot a venta_detalles para Notas de Entrega.
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_id INTEGER", []).ok();
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_nombre TEXT", []).ok();
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_factor REAL", []).ok();
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN cantidad_presentacion REAL", []).ok();
+
         // Seed admin por defecto si no hay usuarios
         seed_default_admin(&conn);
 

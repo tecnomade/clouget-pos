@@ -2122,3 +2122,205 @@ pub fn guardar_unidades_producto(
     Ok(())
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.6.25 — Presentaciones de compra por producto (jaba x12, six-pack, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct ProductoPresentacion {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub producto_id: i64,
+    pub nombre: String,
+    pub factor: f64,
+    #[serde(default)]
+    pub precio_costo: Option<f64>,
+    #[serde(default)]
+    pub codigo_barras: Option<String>,
+    #[serde(default = "default_true")]
+    pub activo: bool,
+    #[serde(default)]
+    pub orden: i64,
+}
+
+fn default_true() -> bool { true }
+
+#[tauri::command]
+pub fn listar_presentaciones_producto(
+    db: tauri::State<Database>,
+    producto_id: i64,
+) -> Result<Vec<ProductoPresentacion>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, producto_id, nombre, factor, precio_costo, codigo_barras, activo, orden
+         FROM producto_presentaciones
+         WHERE producto_id = ?1
+         ORDER BY orden ASC, id ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt.query_map(rusqlite::params![producto_id], |r| {
+        Ok(ProductoPresentacion {
+            id: Some(r.get(0)?),
+            producto_id: r.get(1)?,
+            nombre: r.get(2)?,
+            factor: r.get(3)?,
+            precio_costo: r.get(4).ok(),
+            codigo_barras: r.get(5).ok(),
+            activo: r.get::<_, i64>(6)? != 0,
+            orden: r.get(7)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn guardar_presentaciones_producto(
+    db: tauri::State<Database>,
+    producto_id: i64,
+    presentaciones: Vec<ProductoPresentacion>,
+) -> Result<Vec<ProductoPresentacion>, String> {
+    let mut conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // IDs que vienen en el payload — los que tenian id quedan; los que faltan se borran
+    let ids_payload: Vec<i64> = presentaciones.iter().filter_map(|p| p.id).collect();
+
+    // Borrar las presentaciones que ya no estan en el payload (UI de "eliminar")
+    {
+        let placeholders = if ids_payload.is_empty() {
+            "(NULL)".to_string()
+        } else {
+            format!("({})", ids_payload.iter().map(|_| "?").collect::<Vec<_>>().join(","))
+        };
+        let sql = format!(
+            "DELETE FROM producto_presentaciones WHERE producto_id = ? AND id NOT IN {}",
+            placeholders
+        );
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
+        params.push(producto_id.into());
+        for id in &ids_payload { params.push((*id).into()); }
+        tx.execute(&sql, rusqlite::params_from_iter(params.iter()))
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Validar: nombre no vacio, factor > 0
+    for (i, p) in presentaciones.iter().enumerate() {
+        if p.nombre.trim().is_empty() {
+            return Err(format!("Presentacion #{}: el nombre es obligatorio", i + 1));
+        }
+        if p.factor <= 0.0 {
+            return Err(format!("Presentacion '{}': el factor debe ser mayor a 0", p.nombre));
+        }
+    }
+
+    // UPSERT por id (o INSERT si id is None)
+    for (idx, p) in presentaciones.iter().enumerate() {
+        let orden = if p.orden != 0 { p.orden } else { idx as i64 };
+        let activo = if p.activo { 1 } else { 0 };
+        match p.id {
+            Some(id) => {
+                tx.execute(
+                    "UPDATE producto_presentaciones
+                     SET nombre = ?1, factor = ?2, precio_costo = ?3,
+                         codigo_barras = ?4, activo = ?5, orden = ?6
+                     WHERE id = ?7 AND producto_id = ?8",
+                    rusqlite::params![
+                        p.nombre.trim(),
+                        p.factor,
+                        p.precio_costo,
+                        p.codigo_barras.as_deref().map(|s| s.trim()),
+                        activo,
+                        orden,
+                        id,
+                        producto_id,
+                    ],
+                ).map_err(|e| e.to_string())?;
+            }
+            None => {
+                tx.execute(
+                    "INSERT INTO producto_presentaciones
+                     (producto_id, nombre, factor, precio_costo, codigo_barras, activo, orden)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![
+                        producto_id,
+                        p.nombre.trim(),
+                        p.factor,
+                        p.precio_costo,
+                        p.codigo_barras.as_deref().map(|s| s.trim()),
+                        activo,
+                        orden,
+                    ],
+                ).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    drop(conn);
+
+    // Devolver la lista actualizada (incluyendo los nuevos ids)
+    listar_presentaciones_producto(db, producto_id)
+}
+
+/// v2.6.30–31 — Catalogo de presentaciones unicas en uso (jaba x12, six-pack x6, ...).
+/// Une TRES fuentes:
+///   1. producto_presentaciones (compra-side, asignadas a productos)
+///   2. unidades_producto       (venta-side, asignadas a productos, es_base=0)
+///   3. tipos_unidad            (catalogo global, es_agrupada=1, factor_default>1)
+/// Devuelve dedup por (LOWER(nombre), factor) ordenado por uso.
+/// `usos` solo cuenta fuentes 1 y 2 — las del catalogo global tienen usos=0
+/// y se muestran igual para que el usuario pueda elegirlas la primera vez.
+#[derive(serde::Serialize, Debug, Clone)]
+pub struct PresentacionSugerida {
+    pub nombre: String,
+    pub factor: f64,
+    pub usos: i64,
+}
+
+#[tauri::command]
+pub fn listar_presentaciones_unicas(
+    db: tauri::State<Database>,
+) -> Result<Vec<PresentacionSugerida>, String> {
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT nombre, factor, SUM(usos_total) AS usos FROM (
+             -- Fuente 1: presentaciones de compra ya asignadas a productos
+             SELECT TRIM(nombre) AS nombre, factor, 1 AS usos_total
+             FROM producto_presentaciones
+             WHERE activo = 1 AND TRIM(nombre) != '' AND factor > 0
+             UNION ALL
+             -- Fuente 2: unidades de venta multi-unidad ya asignadas a productos
+             SELECT TRIM(nombre) AS nombre, factor, 1 AS usos_total
+             FROM unidades_producto
+             WHERE COALESCE(es_base, 0) = 0
+               AND COALESCE(activa, 1) = 1
+               AND TRIM(nombre) != '' AND factor > 0
+             UNION ALL
+             -- Fuente 3: catalogo global de unidades agrupadas
+             SELECT TRIM(nombre) AS nombre, factor_default AS factor, 0 AS usos_total
+             FROM tipos_unidad
+             WHERE COALESCE(es_agrupada, 0) = 1
+               AND TRIM(nombre) != ''
+               AND factor_default > 1
+         )
+         GROUP BY LOWER(nombre), factor
+         ORDER BY usos DESC, nombre ASC
+         LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+
+    let rows = stmt.query_map([], |r| {
+        Ok(PresentacionSugerida {
+            nombre: r.get(0)?,
+            factor: r.get(1)?,
+            usos: r.get(2)?,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut out = Vec::new();
+    for r in rows { out.push(r.map_err(|e| e.to_string())?); }
+    Ok(out)
+}

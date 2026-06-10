@@ -51,6 +51,16 @@ pub struct CompraDetalle {
     /// v2.5.30: cantidad ya devuelta al proveedor en notas de débito acumuladas
     #[serde(default)]
     pub cantidad_devuelta: f64,
+    /// v2.6.25/26: snapshot de la presentación con la que se cargó el item
+    /// (ej: "Jaba x12" con factor=12 y cantidad_presentacion=2 → 24 unidades).
+    #[serde(default)]
+    pub presentacion_id: Option<i64>,
+    #[serde(default)]
+    pub presentacion_nombre: Option<String>,
+    #[serde(default)]
+    pub presentacion_factor: Option<f64>,
+    #[serde(default)]
+    pub cantidad_presentacion: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -97,4 +107,12 @@ pub struct ItemCompra {
     pub lote_fecha_caducidad: Option<String>,
     #[serde(default)]
     pub lote_fecha_elaboracion: Option<String>,
+    /// v2.6.25: Presentacion con la que se carga (jaba, six-pack). Si viene, el
+    /// backend calcula `cantidad` real = cantidad_presentacion * factor y persiste
+    /// snapshot (nombre + factor) en compra_detalles para auditoria historica.
+    /// Si NO viene, se ignora y se carga en unidad base como siempre.
+    #[serde(default)]
+    pub presentacion_id: Option<i64>,
+    #[serde(default)]
+    pub cantidad_presentacion: Option<f64>,
 }

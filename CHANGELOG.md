@@ -6,6 +6,16 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.24 (BETA) — 2026-06-10 📦 Presentaciones de compra (jaba x12, six-pack) [port DigitalServer Feature A+C]
+
+> BETA. Cambio grande de compras/inventario — validar bien.
+
+- Nuevo: cada producto puede definir **presentaciones de compra** (Jaba x12, Six-pack, Caja x24…) con su factor. Modal CRUD desde **Productos** (botón 🎁).
+- **Compras / Inventario / Ajustar stock / Nota de Entrega**: puedes cargar **por presentación** (ej. 2 jabas x12) y el sistema convierte a unidades base (24) y precio por unidad (precio/factor). Se guarda el **snapshot** (nombre + factor) para el histórico.
+- **Alta de producto:** el "Ingreso por bulto" ahora autocompleta: al escribir/elegir un nombre de bulto ya usado, rellena el factor (catálogo global de presentaciones únicas).
+
+---
+
 ## v2.6.23 (BETA) — 2026-06-08 💰 Fix cierre de caja: cuenta facturas con SRI pendiente
 
 > BETA. (Portado desde DigitalServer POS, Feature B.)
