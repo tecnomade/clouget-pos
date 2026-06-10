@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.25 (BETA) — 2026-06-10 🔽 Presentaciones: sugerir unidades agrupadas existentes
+
+- En el modal **Presentaciones de compra** (botón 🎁), el campo **Nombre** ahora es un combobox: sugiere las unidades agrupadas que ya existen (de otros productos y tipos de unidad agrupados). Al elegir una existente, **autollena el factor**; si no existe, escribes una nueva normalmente.
+
+---
+
 ## v2.6.24 (BETA) — 2026-06-10 📦 Presentaciones de compra (jaba x12, six-pack) [port DigitalServer Feature A+C]
 
 > BETA. Cambio grande de compras/inventario — validar bien.

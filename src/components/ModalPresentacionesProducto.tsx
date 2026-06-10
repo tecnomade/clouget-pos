@@ -10,6 +10,7 @@ import {
   listarPresentacionesProducto,
   guardarPresentacionesProducto,
   buscarProductos,
+  listarPresentacionesUnicas,
 } from "../services/api";
 import type { ProductoPresentacion, ProductoBusqueda } from "../types";
 
@@ -37,6 +38,9 @@ export default function ModalPresentacionesProducto({
   const [busquedaProd, setBusquedaProd] = useState("");
   const [resultadosBusqueda, setResultadosBusqueda] = useState<ProductoBusqueda[]>([]);
   const [buscando, setBuscando] = useState(false);
+  // v2.6.25: catálogo de unidades agrupadas YA existentes (de otros productos +
+  // tipos de unidad agrupados) para sugerir en el campo Nombre y autollenar factor.
+  const [sugerencias, setSugerencias] = useState<{ nombre: string; factor: number }[]>([]);
 
   useEffect(() => {
     listarPresentacionesProducto(productoId)
@@ -47,6 +51,12 @@ export default function ModalPresentacionesProducto({
       })
       .catch((e) => toastError("Error cargando presentaciones: " + String(e)))
       .finally(() => setCargando(false));
+    // Cargar el catálogo de presentaciones/unidades agrupadas únicas.
+    listarPresentacionesUnicas()
+      .then((sugs: any[]) =>
+        setSugerencias((sugs || []).map((s) => ({ nombre: s.nombre, factor: s.factor }))),
+      )
+      .catch(() => setSugerencias([]));
   }, [productoId]);
 
   const agregar = () => {
@@ -235,10 +245,23 @@ export default function ModalPresentacionesProducto({
                         className="input"
                         style={{ width: "100%", fontSize: 13 }}
                         placeholder="Jaba x12"
+                        list="presentaciones-sugeridas"
                         value={p.nombre}
-                        onChange={(e) =>
-                          update(p._key, { nombre: e.target.value })
-                        }
+                        onChange={(e) => {
+                          const nombre = e.target.value;
+                          // Si coincide con una agrupada ya existente, autollenar el factor
+                          const match = sugerencias.find(
+                            (s) =>
+                              s.nombre.toLowerCase().trim() ===
+                              nombre.toLowerCase().trim(),
+                          );
+                          update(
+                            p._key,
+                            match && match.factor > 0
+                              ? { nombre, factor: match.factor }
+                              : { nombre },
+                          );
+                        }}
                       />
                     </td>
                     <td>
@@ -311,6 +334,17 @@ export default function ModalPresentacionesProducto({
                 ))}
               </tbody>
             </table>
+
+            {/* Sugerencias de unidades agrupadas ya existentes (otros productos
+                + tipos de unidad agrupados). Elegir una autollena el factor;
+                si no existe, el usuario simplemente escribe una nueva. */}
+            <datalist id="presentaciones-sugeridas">
+              {sugerencias.map((s, i) => (
+                <option key={i} value={s.nombre}>
+                  {`factor ${s.factor}`}
+                </option>
+              ))}
+            </datalist>
 
             <div style={{ marginTop: 10, marginBottom: 10 }}>
               <button className="btn btn-outline btn-sm" onClick={agregar}>
