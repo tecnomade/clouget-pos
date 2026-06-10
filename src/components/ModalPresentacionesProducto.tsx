@@ -75,6 +75,31 @@ export default function ModalPresentacionesProducto({
     ]);
   };
 
+  // Agregar directamente una unidad agrupada ya existente como presentación
+  // de ESTE producto (con su factor). Evita duplicar por nombre.
+  const agregarExistente = (nombre: string, factor: number) => {
+    const yaExiste = presentaciones.some(
+      (p) => p.nombre.toLowerCase().trim() === nombre.toLowerCase().trim(),
+    );
+    if (yaExiste) {
+      toastError(`"${nombre}" ya está en la lista`);
+      return;
+    }
+    setPresentaciones((prev) => [
+      ...prev,
+      {
+        _key: Date.now() + Math.random(),
+        producto_id: productoId,
+        nombre,
+        factor,
+        precio_costo: undefined,
+        codigo_barras: undefined,
+        activo: true,
+        orden: prev.length,
+      },
+    ]);
+  };
+
   const eliminar = (key: number) => {
     setPresentaciones((prev) => prev.filter((p) => p._key !== key));
   };
@@ -346,10 +371,52 @@ export default function ModalPresentacionesProducto({
               ))}
             </datalist>
 
-            <div style={{ marginTop: 10, marginBottom: 10 }}>
+            <div
+              style={{
+                marginTop: 10,
+                marginBottom: 10,
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
               <button className="btn btn-outline btn-sm" onClick={agregar}>
                 + Agregar presentacion
               </button>
+              {sugerencias.filter(
+                (s) =>
+                  !presentaciones.some(
+                    (p) =>
+                      p.nombre.toLowerCase().trim() ===
+                      s.nombre.toLowerCase().trim(),
+                  ),
+              ).length > 0 && (
+                <select
+                  className="input"
+                  style={{ fontSize: 13, maxWidth: 240 }}
+                  value=""
+                  onChange={(e) => {
+                    const idx = Number(e.target.value);
+                    const s = sugerencias[idx];
+                    if (s) agregarExistente(s.nombre, s.factor);
+                    e.target.value = "";
+                  }}
+                >
+                  <option value="">+ Agregar existente…</option>
+                  {sugerencias.map((s, i) =>
+                    presentaciones.some(
+                      (p) =>
+                        p.nombre.toLowerCase().trim() ===
+                        s.nombre.toLowerCase().trim(),
+                    ) ? null : (
+                      <option key={i} value={i}>
+                        {s.nombre} (×{s.factor})
+                      </option>
+                    ),
+                  )}
+                </select>
+              )}
             </div>
 
             {presentaciones.length > 0 && (
