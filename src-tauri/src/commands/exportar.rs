@@ -477,10 +477,13 @@ pub fn exportar_inventario_pdf(
         .push().map_err(|e| format!("Error tabla: {}", e))?;
 
     for f in &filas {
+        // Columnas de texto: partir palabras largas (códigos de barras de 13
+        // dígitos en la columna angosta desaparecían — mismo bug que en
+        // exportar_tabla_pdf). Anchos: 277mm * peso/16.
         table.row()
-            .element(Paragraph::new(&f.codigo).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
-            .element(Paragraph::new(&f.nombre).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
-            .element(Paragraph::new(&f.categoria).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
+            .element(Paragraph::new(partir_palabras_para_columna(&f.codigo, 17.3)).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
+            .element(Paragraph::new(partir_palabras_para_columna(&f.nombre, 69.2)).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
+            .element(Paragraph::new(partir_palabras_para_columna(&f.categoria, 34.6)).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
             .element(Paragraph::new(&format!("{:.2}", f.stock_actual)).aligned(Alignment::Right).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
             .element(Paragraph::new(&format!("{:.2}", f.stock_minimo)).aligned(Alignment::Right).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
             .element(Paragraph::new(&format!("${:.2}", f.precio_costo)).aligned(Alignment::Right).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)))
@@ -501,6 +504,26 @@ pub fn exportar_inventario_pdf(
 
     doc.render_to_file(&ruta).map_err(|e| format!("Error PDF: {}", e))?;
     Ok(())
+}
+
+/// genpdf DESCARTA silenciosamente las palabras más anchas que su columna (no
+/// sabe partirlas sin espacio/guion): "9999999999999" o "CONSUMIDOR" salían
+/// como celda vacía en reportes de muchas columnas. Inserta espacios en las
+/// palabras que exceden el ancho estimado de la columna para que el word-wrap
+/// pueda envolverlas. Estimación de glifo a 8pt: dígitos ~1.6mm, letras ~1.9mm.
+fn partir_palabras_para_columna(texto: &str, col_mm: f64) -> String {
+    let usable = (col_mm - 4.5).max(4.0);
+    texto.split(' ').map(|p| {
+        let es_numerico = p.chars().all(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '/' | ':' | '%' | '$'));
+        let mm_char = if es_numerico { 1.6 } else { 1.9 };
+        let max = ((usable / mm_char).floor() as usize).max(3);
+        if p.chars().count() <= max { p.to_string() }
+        else {
+            p.chars().collect::<Vec<_>>().chunks(max)
+                .map(|c| c.iter().collect::<String>())
+                .collect::<Vec<_>>().join(" ")
+        }
+    }).collect::<Vec<_>>().join(" ")
 }
 
 // ============================================================================
@@ -623,24 +646,56 @@ pub fn exportar_tabla_pdf(
     doc.push(Paragraph::new(&format!("Generado: {}", fecha)).aligned(Alignment::Center).styled(s_subtitle));
     doc.push(Break::new(1.0));
 
-    // Tabla con columnas iguales
     let n_cols = encabezados.len();
-    let widths: Vec<usize> = (0..n_cols).map(|i| if i == 0 || i == 1 { 2 } else { 1 }).collect();
+
+    // Anchos proporcionales al contenido real de cada columna (antes: fijo
+    // "primeras dos al doble", que dejaba a Cliente/Identif. demasiado angostas
+    // en reportes de muchas columnas). max_len capado para que una celda
+    // gigante no acapare la página; +4 de base para que las columnas numéricas
+    // chicas conserven aire (padding).
+    let mut max_len: Vec<usize> = encabezados
+        .iter()
+        .map(|h| h.split(' ').map(|w| w.chars().count()).max().unwrap_or(4))
+        .collect();
+    for fila in &filas {
+        for (i, val) in fila.iter().enumerate() {
+            if i < n_cols {
+                let l = val.chars().count().min(22);
+                if l > max_len[i] { max_len[i] = l; }
+            }
+        }
+    }
+    let widths: Vec<usize> = max_len.iter().map(|l| l.clamp(&4, &22) + 4).collect();
+
+    // genpdf DESCARTA silenciosamente las palabras más anchas que la columna
+    // (no sabe partirlas sin espacio/guion): "9999999999999" o "CONSUMIDOR"
+    // salían como celda vacía. Pre-partimos las palabras que no caben para que
+    // el word-wrap pueda envolverlas. Estimación de ancho de glifo a 8pt:
+    // dígitos/puntuación ~1.6mm, letras (mayúsculas) ~1.9mm.
+    let ancho_util_mm = if horizontal { 297.0 - 20.0 } else { 210.0 - 20.0 };
+    let suma_pesos: usize = widths.iter().sum();
+    let col_mm: Vec<f64> = widths.iter()
+        .map(|w| ancho_util_mm * (*w as f64) / (suma_pesos as f64))
+        .collect();
+    let partir_palabras = partir_palabras_para_columna;
+
     let mut table = TableLayout::new(widths);
     table.set_cell_decorator(FrameCellDecorator::new(true, true, false));
 
     // Header
     let mut row = table.row();
-    for h in &encabezados {
-        row = row.element(Paragraph::new(h.as_str()).styled(s_header).padded(Margins::trbl(1, 2, 1, 2)));
+    for (i, h) in encabezados.iter().enumerate() {
+        let texto = partir_palabras(h, col_mm[i]);
+        row = row.element(Paragraph::new(texto).styled(s_header).padded(Margins::trbl(1, 2, 1, 2)));
     }
     row.push().map_err(|e| format!("Error header: {}", e))?;
 
     // Datos
     for fila in &filas {
         let mut r = table.row();
-        for val in fila {
-            r = r.element(Paragraph::new(val.as_str()).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)));
+        for (i, val) in fila.iter().enumerate() {
+            let texto = partir_palabras(val, col_mm.get(i).copied().unwrap_or(20.0));
+            r = r.element(Paragraph::new(texto).styled(s_cell).padded(Margins::trbl(1, 2, 1, 2)));
         }
         r.push().map_err(|e| format!("Error fila: {}", e))?;
     }

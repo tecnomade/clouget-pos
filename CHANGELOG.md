@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.28 (BETA) — 2026-06-11 👁 Detalles de producto para cajeros + fix PDF reportes
+
+- **POS**: el botón "Ver detalles" del producto ahora está disponible para **todos los usuarios** (antes solo admin). El cajero ve nombre, precio de venta, stock, IVA y componentes de combo; el **precio de costo** solo se muestra con permiso `ver_costos` y el botón **Editar** solo con permiso `gestionar_productos`.
+- **Fix reportes PDF**: en el reporte de ventas, las celdas "CONSUMIDOR FINAL" y la identificación `9999999999999` salían **vacías** (la librería PDF descarta palabras más anchas que la columna). Ahora las palabras largas se parten para envolver, y los anchos de columna se reparten según el contenido real. Mismo fix aplicado al PDF de inventario (códigos de barras largos).
+
+---
+
 ## v2.6.27 (BETA) — 2026-06-11 🔒 Precio mínimo por producto (piso de precio)
 
 - Nuevo campo **opcional** "Precio mínimo" en cada producto (Productos → Editar). Si lo defines, **nadie puede vender ese producto por debajo de ese precio**, ni siquiera quien tenga permiso para editar el precio en la venta.

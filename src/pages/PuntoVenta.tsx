@@ -1828,7 +1828,7 @@ export default function PuntoVenta() {
               productosTactil={productosTactil}
               ocultarSinStock={stockModo === "BLOQUEAR_OCULTAR"}
               onAgregarProducto={agregarAlCarrito}
-              puedeVerDetalle={esAdmin}
+              puedeVerDetalle={true}
               onVerDetalle={async (pid) => {
                 try {
                   const p = await obtenerProducto(pid);
@@ -2836,7 +2836,9 @@ export default function PuntoVenta() {
                 <div><strong>Código:</strong> {productoDetalle.codigo || "-"}</div>
                 <div><strong>Código barras:</strong> {productoDetalle.codigo_barras || "-"}</div>
                 <div><strong>Precio venta:</strong> <span style={{ color: "var(--color-primary)", fontWeight: 600 }}>${productoDetalle.precio_venta?.toFixed(2)}</span></div>
-                <div><strong>Precio costo:</strong> ${productoDetalle.precio_costo?.toFixed(2)}</div>
+                {(esAdmin || tienePermiso("ver_costos")) && (
+                  <div><strong>Precio costo:</strong> ${productoDetalle.precio_costo?.toFixed(2)}</div>
+                )}
                 {!esCombo && (
                   <>
                     <div><strong>Stock actual:</strong> <span style={{ fontWeight: 600, color: productoDetalle.stock_actual <= 0 ? "var(--color-danger)" : undefined }}>{productoDetalle.stock_actual}</span></div>
@@ -2876,12 +2878,14 @@ export default function PuntoVenta() {
             </div>
             <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn btn-outline" onClick={() => setProductoDetalle(null)}>Cerrar</button>
-              <button className="btn btn-primary" onClick={() => {
-                const pid = productoDetalle.id;
-                setProductoDetalle(null);
-                setDetalleComboComponentes([]);
-                navigate(`/productos?edit=${pid}`);
-              }}>Editar Producto</button>
+              {(esAdmin || tienePermiso("gestionar_productos")) && (
+                <button className="btn btn-primary" onClick={() => {
+                  const pid = productoDetalle.id;
+                  setProductoDetalle(null);
+                  setDetalleComboComponentes([]);
+                  navigate(`/productos?edit=${pid}`);
+                }}>Editar Producto</button>
+              )}
             </div>
           </div>
         </div>

@@ -264,7 +264,35 @@ fn ajuste_stock_con_presentacion_calcula_unidades_base() {
     assert_eq!(stock_persistido, 24.0, "Ajuste de '2 jabas x12' debe persistir como 24 unidades base");
 }
 
-// ── 7) ESCENARIO MIXTO COMPLEJO — test de aceptación ────────────────────────
+// ── 7) EXPORT PDF — celdas con palabras largas no deben perderse ────────────
+
+#[test]
+fn exportar_tabla_pdf_no_pierde_celdas_largas() {
+    // Bug real: genpdf descartaba palabras más anchas que la columna, dejando
+    // vacías las celdas "CONSUMIDOR FINAL" y "9999999999999" del reporte de ventas.
+    let ruta = std::env::temp_dir().join("test_reporte_consumidor_final.pdf");
+    let encabezados: Vec<String> = vec![
+        "Fecha", "Número", "Cliente", "Identif.", "Cajero",
+        "Forma pago", "Tipo doc.", "Subtotal", "IVA", "Descuento", "Total", "Estado",
+    ].into_iter().map(String::from).collect();
+    let filas: Vec<Vec<String>> = vec![
+        vec!["2026-06-10 19:30", "NV-000000158", "CONSUMIDOR FINAL", "9999999999999",
+             "ISRAEL", "TRANSFERENCIA", "NOTA_VENTA", "3.00", "0.00", "0.00", "3.00", "COMPLETADA"]
+            .into_iter().map(String::from).collect(),
+    ];
+    clouget_pos_lib::commands::exportar::exportar_tabla_pdf(
+        ruta.to_string_lossy().to_string(),
+        "Reporte de Ventas".to_string(),
+        Some("Test consumidor final".to_string()),
+        encabezados,
+        filas,
+        Some(true),
+    ).expect("el PDF debe generarse sin error");
+    let bytes = std::fs::metadata(&ruta).expect("PDF debe existir").len();
+    assert!(bytes > 1000, "PDF sospechosamente pequeño: {} bytes", bytes);
+}
+
+// ── 8) ESCENARIO MIXTO COMPLEJO — test de aceptación ────────────────────────
 
 #[test]
 fn escenario_mixto_caja_cierra_correctamente() {
