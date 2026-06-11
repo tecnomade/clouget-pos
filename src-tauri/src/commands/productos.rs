@@ -65,10 +65,10 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
 
     conn.execute(
         "INSERT INTO productos (codigo, codigo_barras, nombre, descripcion, categoria_id,
-         precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
+         precio_costo, precio_venta, precio_minimo, iva_porcentaje, incluye_iva, stock_actual, stock_minimo,
          unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad, no_controla_stock,
          tipo_producto, destino_preparacion)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         rusqlite::params![
             codigo,
             codigo_barras,
@@ -77,6 +77,7 @@ pub fn crear_producto(db: State<Database>, producto: Producto) -> Result<i64, St
             producto.categoria_id,
             producto.precio_costo,
             producto.precio_venta,
+            producto.precio_minimo,
             producto.iva_porcentaje,
             producto.incluye_iva as i32,
             producto.stock_actual,
@@ -166,12 +167,12 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
     // que envíe el frontend se ignora aquí a propósito.
     conn.execute(
         "UPDATE productos SET codigo=?1, codigo_barras=?2, nombre=?3, descripcion=?4,
-         categoria_id=?5, precio_costo=?6, precio_venta=?7, iva_porcentaje=?8,
-         incluye_iva=?9, stock_minimo=?10, unidad_medida=?11,
-         es_servicio=?12, activo=?13, imagen=?14, requiere_serie=?15, requiere_caducidad=?16,
-         no_controla_stock=?17, tipo_producto=?18, destino_preparacion=?19,
+         categoria_id=?5, precio_costo=?6, precio_venta=?7, precio_minimo=?8, iva_porcentaje=?9,
+         incluye_iva=?10, stock_minimo=?11, unidad_medida=?12,
+         es_servicio=?13, activo=?14, imagen=?15, requiere_serie=?16, requiere_caducidad=?17,
+         no_controla_stock=?18, tipo_producto=?19, destino_preparacion=?20,
          updated_at=datetime('now','localtime')
-         WHERE id=?20",
+         WHERE id=?21",
         rusqlite::params![
             producto.codigo,
             codigo_barras,
@@ -180,6 +181,7 @@ pub fn actualizar_producto(db: State<Database>, producto: Producto) -> Result<()
             producto.categoria_id,
             producto.precio_costo,
             producto.precio_venta,
+            producto.precio_minimo,
             producto.iva_porcentaje,
             producto.incluye_iva as i32,
             producto.stock_minimo,
@@ -230,6 +232,7 @@ pub fn buscar_productos(
                     p.incluye_iva, p.stock_actual, p.stock_minimo, c.nombre as cat_nombre,
                     pp.precio as precio_lista,
                     COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
+                    p.precio_minimo,
                     CASE
                         WHEN p.nombre LIKE ?1 THEN 1
                         WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
@@ -254,6 +257,7 @@ pub fn buscar_productos(
                 codigo_barras: row.get(2)?,
                 nombre: row.get(3)?,
                 precio_venta: row.get(4)?,
+                precio_minimo: row.get(14)?,
                 precio_costo: row.get(5)?,
                 iva_porcentaje: row.get(6)?,
                 incluye_iva: row.get::<_, i32>(7)? != 0,
@@ -295,6 +299,7 @@ fn buscar_productos_multi_almacen(
                     c.nombre as cat_nombre,
                     pp.precio as precio_lista,
                     COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
+                    p.precio_minimo,
                     CASE
                         WHEN p.nombre LIKE ?1 THEN 1
                         WHEN p.codigo LIKE ?1 OR p.codigo_barras LIKE ?1 THEN 2
@@ -320,6 +325,7 @@ fn buscar_productos_multi_almacen(
                 codigo_barras: None,
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?, precio_costo: 0.0,
+                precio_minimo: row.get(12)?,
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,
@@ -347,7 +353,7 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
          precio_costo, precio_venta, iva_porcentaje, incluye_iva, stock_actual,
          stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
          no_controla_stock, COALESCE(tipo_producto, 'SIMPLE') as tipo_producto,
-         COALESCE(destino_preparacion, 'COCINA') as destino_preparacion
+         COALESCE(destino_preparacion, 'COCINA') as destino_preparacion, precio_minimo
          FROM productos WHERE id = ?1",
         rusqlite::params![id],
         |row| {
@@ -360,6 +366,7 @@ pub fn obtener_producto(db: State<Database>, id: i64) -> Result<Producto, String
                 categoria_id: row.get(5)?,
                 precio_costo: row.get(6)?,
                 precio_venta: row.get(7)?,
+                precio_minimo: row.get(21)?,
                 iva_porcentaje: row.get(8)?,
                 incluye_iva: row.get::<_, i32>(9)? != 0,
                 stock_actual: row.get(10)?,
@@ -417,6 +424,7 @@ pub fn listar_productos(
                 codigo_barras: row.get(11)?,
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?,
+                precio_minimo: None,
                 precio_costo: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
@@ -462,6 +470,7 @@ pub fn productos_mas_vendidos(db: State<Database>, limite: i64) -> Result<Vec<Pr
                 codigo_barras: None,
                 nombre: row.get(2)?,
                 precio_venta: row.get(3)?, precio_costo: 0.0,
+                precio_minimo: None,
                 iva_porcentaje: row.get(4)?,
                 incluye_iva: row.get::<_, i32>(5)? != 0,
                 stock_actual: row.get(6)?,
@@ -671,7 +680,7 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                     p.categoria_id, c.nombre, p.imagen,
                     COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
                     COALESCE(p.tipo_producto, 'SIMPLE') as tipo_producto,
-                    p.descripcion, p.codigo, p.codigo_barras
+                    p.descripcion, p.codigo, p.codigo_barras, p.precio_minimo
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              WHERE p.activo = 1
@@ -685,6 +694,7 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 id: row.get(0)?,
                 nombre: row.get(1)?,
                 precio_venta: row.get(2)?,
+                precio_minimo: row.get(15)?,
                 iva_porcentaje: row.get(3)?,
                 incluye_iva: row.get::<_, i32>(4)? != 0,
                 stock_actual: row.get(5)?,

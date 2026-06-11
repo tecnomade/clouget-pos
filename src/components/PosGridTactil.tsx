@@ -88,6 +88,8 @@ export default function PosGridTactil({
       id: p.id,
       nombre: p.nombre,
       precio_venta: p.precio_venta,
+      // Arrastrar el piso de precio para que el carrito lo respete.
+      precio_minimo: p.precio_minimo ?? null,
       iva_porcentaje: p.iva_porcentaje,
       incluye_iva: p.incluye_iva ?? false,
       stock_actual: stockEfectivo,

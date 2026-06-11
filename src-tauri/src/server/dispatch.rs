@@ -19,7 +19,7 @@ pub async fn dispatch_command(
                 .prepare(
                     "SELECT p.id, p.codigo, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva,
                      p.stock_actual, p.stock_minimo,
-                     COALESCE(c.nombre, '') as categoria_nombre
+                     COALESCE(c.nombre, '') as categoria_nombre, p.precio_minimo
                      FROM productos p
                      LEFT JOIN categorias c ON p.categoria_id = c.id
                      WHERE p.activo = 1 AND (
@@ -38,6 +38,7 @@ pub async fn dispatch_command(
                         codigo_barras: None,
                         nombre: row.get(2)?,
                         precio_venta: row.get(3)?,
+                        precio_minimo: row.get(9)?,
                         precio_costo: 0.0,
                         iva_porcentaje: row.get(4)?,
                         incluye_iva: row.get::<_, i32>(5)? != 0,
@@ -92,7 +93,7 @@ pub async fn dispatch_command(
                      precio_costo, precio_venta, iva_porcentaje, incluye_iva,
                      stock_actual, stock_minimo, unidad_medida, es_servicio, activo, imagen, requiere_serie, requiere_caducidad,
                      COALESCE(no_controla_stock, 0), COALESCE(tipo_producto, 'SIMPLE'),
-                     COALESCE(destino_preparacion, 'COCINA')
+                     COALESCE(destino_preparacion, 'COCINA'), precio_minimo
                      FROM productos ORDER BY nombre",
                 )
                 .map_err(|e| e.to_string())?;
@@ -108,6 +109,7 @@ pub async fn dispatch_command(
                         categoria_id: row.get(5)?,
                         precio_costo: row.get(6)?,
                         precio_venta: row.get(7)?,
+                        precio_minimo: row.get(21)?,
                         iva_porcentaje: row.get(8)?,
                         incluye_iva: row.get(9)?,
                         stock_actual: row.get(10)?,

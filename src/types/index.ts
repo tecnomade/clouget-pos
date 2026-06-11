@@ -8,6 +8,8 @@ export interface Producto {
   categoria_id?: number;
   precio_costo: number;
   precio_venta: number;
+  /** Piso de precio opcional. null/undefined = sin minimo. Nadie puede vender por debajo. */
+  precio_minimo?: number | null;
   iva_porcentaje: number;
   incluye_iva: boolean;
   stock_actual: number;
@@ -30,6 +32,8 @@ export interface ProductoTactil {
   id: number;
   nombre: string;
   precio_venta: number;
+  /** Piso de precio opcional. null/undefined = sin minimo. */
+  precio_minimo?: number | null;
   iva_porcentaje: number;
   incluye_iva?: boolean;
   stock_actual: number;
@@ -56,6 +60,8 @@ export interface ProductoBusqueda {
   codigo_barras?: string;
   nombre: string;
   precio_venta: number;
+  /** Piso de precio opcional. null/undefined = sin minimo. */
+  precio_minimo?: number | null;
   precio_costo?: number;
   iva_porcentaje: number;
   incluye_iva?: boolean;
@@ -674,6 +680,8 @@ export interface ItemCarrito {
   stock_disponible: number;
   stock_minimo: number;
   precio_base: number;
+  /** Piso de precio opcional heredado del producto. null = sin minimo. */
+  precio_minimo?: number | null;
   precios_disponibles?: PrecioProductoDetalle[];
   lista_seleccionada?: string;
   info_adicional?: string;

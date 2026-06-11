@@ -216,11 +216,18 @@ export default function PuntoVenta() {
   // con distintas unidades (ej. Cerveza UND y Cerveza SIXPACK como items separados)
   const editarPrecioItem = (idx: number, nuevoPrecio: number) => {
     if (nuevoPrecio < 0) return;
-    setCarrito(prev => prev.map((i, k) =>
-      k === idx
-        ? { ...i, precio_unitario: nuevoPrecio, subtotal: i.cantidad * nuevoPrecio - i.descuento, lista_seleccionada: undefined }
-        : i
-    ));
+    setCarrito(prev => prev.map((i, k) => {
+      if (k !== idx) return i;
+      let precio = nuevoPrecio;
+      // Piso de precio: nadie puede vender por debajo del precio_minimo del producto,
+      // ni con permiso para editar el precio. Si se intenta, se clampa al minimo y se avisa.
+      const min = i.precio_minimo;
+      if (typeof min === "number" && min > 0 && precio < min) {
+        toastError(`No puedes vender "${i.nombre}" por debajo del precio minimo ($${min.toFixed(2)})`);
+        precio = min;
+      }
+      return { ...i, precio_unitario: precio, subtotal: i.cantidad * precio - i.descuento, lista_seleccionada: undefined };
+    }));
   };
 
   const editarIvaItem = (idx: number, nuevoIva: number) => {
@@ -234,11 +241,21 @@ export default function PuntoVenta() {
   // Descuento por item: monto fijo o porcentaje sobre cantidad * precio_unitario
   const aplicarDescuentoItem = (idx: number, descuento: number) => {
     if (descuento < 0) return;
-    setCarrito(prev => prev.map((i, k) =>
-      k === idx
-        ? { ...i, descuento, subtotal: i.cantidad * i.precio_unitario - descuento }
-        : i
-    ));
+    setCarrito(prev => prev.map((i, k) => {
+      if (k !== idx) return i;
+      let desc = descuento;
+      // Un descuento no puede dejar el precio unitario efectivo por debajo del piso.
+      // precio_efectivo = precio_unitario - (descuento / cantidad) >= precio_minimo.
+      const min = i.precio_minimo;
+      if (typeof min === "number" && min > 0 && i.cantidad > 0) {
+        const descMax = Math.max(0, (i.precio_unitario - min) * i.cantidad);
+        if (desc > descMax + 1e-6) {
+          toastError(`Descuento limitado: "${i.nombre}" no puede venderse por debajo del precio minimo ($${min.toFixed(2)})`);
+          desc = descMax;
+        }
+      }
+      return { ...i, descuento: desc, subtotal: i.cantidad * i.precio_unitario - desc };
+    }));
   };
 
   const cargarAlertas = useCallback(() => {
@@ -636,6 +653,17 @@ export default function PuntoVenta() {
       precioEfectivo += extraPrecioCombo;
     }
 
+    // Piso de precio: si una lista de precios resuelve por debajo del minimo del
+    // producto, se clampa al minimo al agregar al carrito. Solo aplica a la unidad
+    // base (el minimo esta definido para la unidad base, no para presentaciones).
+    if (!unidadElegida) {
+      const minProd = (producto as ProductoBusqueda).precio_minimo;
+      if (typeof minProd === "number" && minProd > 0 && precioEfectivo < minProd) {
+        toastError(`"${producto.nombre}" tiene precio minimo ($${minProd.toFixed(2)}). Se aplico el minimo en vez de la lista.`);
+        precioEfectivo = minProd;
+      }
+    }
+
     // Check if already in cart MISMA unidad + MISMO lote
     const unidadId = unidadElegida?.id ?? null;
     const loteId = loteElegido?.id ?? null;
@@ -701,6 +729,10 @@ export default function PuntoVenta() {
           stock_disponible: producto.stock_actual,
           stock_minimo: producto.stock_minimo,
           precio_base: producto.precio_venta,
+          // Piso de precio: solo aplica a la unidad base. Si se vende por una
+          // presentacion/unidad multiple distinta, el minimo (definido para la
+          // unidad base) no es comparable, asi que no se arrastra.
+          precio_minimo: unidadElegida ? null : (producto.precio_minimo ?? null),
           precios_disponibles: preciosDisponibles,
           lista_seleccionada: listaSel,
           unidad_id: unidadElegida?.id,
@@ -3183,6 +3215,9 @@ export default function PuntoVenta() {
       {/* Modal: cambiar precio / lista del item del carrito */}
       {editarPrecioItemModal && (() => {
         const m = editarPrecioItemModal;
+        const itemActual = carrito[m.idx];
+        const minItem = (typeof itemActual?.precio_minimo === "number" && itemActual.precio_minimo > 0)
+          ? itemActual.precio_minimo : null;
         const cerrar = () => { setEditarPrecioItemModal(null); setPrecioManualInput(""); };
         const aplicarPrecio = (precio: number) => {
           if (isNaN(precio) || precio < 0) { toastError("Precio inválido"); return; }
@@ -3198,6 +3233,11 @@ export default function PuntoVenta() {
               <div className="modal-body">
                 <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginBottom: 8 }}>
                   Precio actual: <strong style={{ color: "var(--color-primary)" }}>${m.precioActual.toFixed(2)}</strong>
+                  {minItem != null && (
+                    <span style={{ marginLeft: 10, color: "var(--color-warning)" }}>
+                      Minimo: <strong>${minItem.toFixed(2)}</strong>
+                    </span>
+                  )}
                 </div>
 
                 {/* Listas disponibles — solo si admin/permiso cambiar_lista_precio */}
@@ -3247,7 +3287,7 @@ export default function PuntoVenta() {
                     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                       <input
                         className="input"
-                        type="number" step="0.01" min="0"
+                        type="number" step="0.01" min={minItem != null ? minItem : 0}
                         value={precioManualInput}
                         autoFocus
                         onChange={(e) => setPrecioManualInput(e.target.value)}
@@ -3793,9 +3833,15 @@ export default function PuntoVenta() {
                     {(tienePermiso("editar_precio") || esAdmin) && (
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <label style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>Manual:</label>
+                        {typeof itemActual?.precio_minimo === "number" && itemActual.precio_minimo > 0 && (
+                          <span style={{ fontSize: 10, color: "var(--color-warning)", whiteSpace: "nowrap" }}>
+                            Min ${itemActual.precio_minimo.toFixed(2)}
+                          </span>
+                        )}
                         <input
                           className="input"
-                          type="number" step="0.01" min="0"
+                          type="number" step="0.01"
+                          min={typeof itemActual?.precio_minimo === "number" && itemActual.precio_minimo > 0 ? itemActual.precio_minimo : 0}
                           defaultValue={itemActual?.precio_unitario.toFixed(2)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {

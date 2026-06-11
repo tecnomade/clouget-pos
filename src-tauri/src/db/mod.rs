@@ -94,6 +94,11 @@ impl Database {
         )
         .ok();
 
+        // Migración: precio_minimo en productos (piso de precio opcional).
+        // NULL = sin piso (comportamiento actual). Si se define, nadie puede
+        // vender por debajo, ni con permiso para editar el precio en la venta.
+        let _ = conn.execute("ALTER TABLE productos ADD COLUMN precio_minimo REAL", []);
+
         // Migración: trazabilidad de reembolso en notas_credito (v2.3.62)
         // Antes solo se calculaba el desglose efectivo/transfer/credito y se mostraba
         // al usuario, pero no se persistía. Si volvías a buscar la NC mañana no sabías

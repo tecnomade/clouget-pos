@@ -510,6 +510,35 @@ function FormProducto({
                 <NumericInput value={form.precio_venta} step={0.01} min={0}
                   onChange={(v) => setForm({ ...form, precio_venta: v })} />
               </div>
+              <div>
+                <label className="text-secondary" style={{ fontSize: 12 }}>Precio minimo</label>
+                <input
+                  className="input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Sin minimo"
+                  value={form.precio_minimo == null ? "" : String(form.precio_minimo)}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(",", ".");
+                    if (raw.trim() === "") {
+                      setForm({ ...form, precio_minimo: null });
+                    } else if (/^\d*\.?\d*$/.test(raw)) {
+                      const n = parseFloat(raw);
+                      setForm({ ...form, precio_minimo: isNaN(n) ? null : n });
+                    }
+                  }}
+                />
+                <div style={{ fontSize: 10, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                  Opcional. Piso de precio: nadie podra vender por debajo, ni con permiso para
+                  editar el precio en la venta. Vacio = sin minimo.
+                </div>
+                {form.precio_minimo != null && form.precio_venta > 0 && form.precio_minimo > form.precio_venta && (
+                  <div style={{ fontSize: 10, color: "var(--color-warning)", marginTop: 2 }}>
+                    Atencion: el precio minimo (${form.precio_minimo.toFixed(2)}) es mayor que el
+                    precio de venta (${form.precio_venta.toFixed(2)}).
+                  </div>
+                )}
+              </div>
               {!form.es_servicio && !esCombo && (
                 <>
                   <div>

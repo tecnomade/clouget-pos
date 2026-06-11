@@ -10,6 +10,10 @@ pub struct Producto {
     pub categoria_id: Option<i64>,
     pub precio_costo: f64,
     pub precio_venta: f64,
+    /// Piso de precio opcional. NULL = sin mínimo. Si se define, nadie puede
+    /// vender por debajo de este valor (ni con permiso para editar el precio).
+    #[serde(default)]
+    pub precio_minimo: Option<f64>,
     pub iva_porcentaje: f64,
     pub incluye_iva: bool,
     pub stock_actual: f64,
@@ -91,6 +95,8 @@ pub struct ProductoTactil {
     pub id: i64,
     pub nombre: String,
     pub precio_venta: f64,
+    #[serde(default)]
+    pub precio_minimo: Option<f64>,
     pub iva_porcentaje: f64,
     pub incluye_iva: bool,
     pub stock_actual: f64,
@@ -123,6 +129,8 @@ pub struct ProductoBusqueda {
     pub codigo_barras: Option<String>,
     pub nombre: String,
     pub precio_venta: f64,
+    #[serde(default)]
+    pub precio_minimo: Option<f64>,
     #[serde(default)]
     pub precio_costo: f64,
     pub iva_porcentaje: f64,

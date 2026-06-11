@@ -29,6 +29,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             categoria_id INTEGER,
             precio_costo REAL NOT NULL DEFAULT 0,
             precio_venta REAL NOT NULL DEFAULT 0,
+            precio_minimo REAL,
             iva_porcentaje REAL NOT NULL DEFAULT 0,
             incluye_iva INTEGER NOT NULL DEFAULT 0,
             stock_actual REAL NOT NULL DEFAULT 0,

@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.27 (BETA) — 2026-06-11 🔒 Precio mínimo por producto (piso de precio)
+
+- Nuevo campo **opcional** "Precio mínimo" en cada producto (Productos → Editar). Si lo defines, **nadie puede vender ese producto por debajo de ese precio**, ni siquiera quien tenga permiso para editar el precio en la venta.
+- En el POS: al editar el precio de un ítem por debajo del mínimo, se **ajusta al mínimo** y avisa. Un **descuento** tampoco puede dejar el precio efectivo por debajo del piso (se limita automáticamente).
+- Vacío = sin mínimo (comportamiento actual). Aplica al precio de unidad base; las presentaciones (jaba, six-pack) no aplican el piso.
+
+---
+
 ## v2.6.26 (BETA) — 2026-06-10 ➕ Presentaciones: agregar unidad agrupada existente con un clic
 
 - En el modal **Presentaciones de compra** (🎁), nuevo selector **"+ Agregar existente…"**: elige una unidad agrupada que ya exista (de otros productos / tipos de unidad) y se **agrega sola como presentación** del producto con su factor ya cargado. Solo das Guardar. Se ocultan las que el producto ya tiene.
