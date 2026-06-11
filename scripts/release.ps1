@@ -138,9 +138,11 @@ Write-Host "`n[6/6] Creando GitHub Release v$Version..." -ForegroundColor Yellow
 # gh tiene 2 cuentas logueadas (tecnomade y digitalserverec). Si otra sesion
 # cambio la cuenta activa durante el build (~10 min), el release falla con
 # "workflow scope may be required". Fijamos la cuenta correcta aqui mismo.
-# (*> y no 2>: en PS 5.1, redirigir solo stderr de un exe lo convierte en
-# NativeCommandError fatal — gh escribe su mensaje de exito por stderr)
-gh auth switch --hostname github.com --user tecnomade *> $null
+# (via cmd /c: gh escribe su mensaje de exito por STDERR y con
+# $ErrorActionPreference=Stop cualquier redireccion PowerShell de stderr de un
+# exe se vuelve NativeCommandError fatal; cmd se traga el stderr antes de que
+# PowerShell lo vea — verificado bajo EAP Stop)
+cmd /c 'gh auth switch --hostname github.com --user tecnomade 2>nul'
 Write-Host "Cuenta gh activa: tecnomade" -ForegroundColor Gray
 
 $ReleaseFiles = @(
