@@ -135,6 +135,12 @@ Write-Host "OK - latest.json generado (sin BOM)" -ForegroundColor Green
 # --- Paso 6: Crear GitHub Release ---
 Write-Host "`n[6/6] Creando GitHub Release v$Version..." -ForegroundColor Yellow
 
+# gh tiene 2 cuentas logueadas (tecnomade y digitalserverec). Si otra sesion
+# cambio la cuenta activa durante el build (~10 min), el release falla con
+# "workflow scope may be required". Fijamos la cuenta correcta aqui mismo.
+gh auth switch --hostname github.com --user tecnomade 2>$null
+Write-Host "Cuenta gh activa: tecnomade" -ForegroundColor Gray
+
 $ReleaseFiles = @(
     (Join-Path $BundleDir $ExeName),
     (Join-Path $BundleDir $ZipName),

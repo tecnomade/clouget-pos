@@ -10,6 +10,7 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 - **POS**: el botón "Ver detalles" del producto ahora está disponible para **todos los usuarios** (antes solo admin). El cajero ve nombre, precio de venta, stock, IVA y componentes de combo; el **precio de costo** solo se muestra con permiso `ver_costos` y el botón **Editar** solo con permiso `gestionar_productos`.
 - **Fix reportes PDF**: en el reporte de ventas, las celdas "CONSUMIDOR FINAL" y la identificación `9999999999999` salían **vacías** (la librería PDF descarta palabras más anchas que la columna). Ahora las palabras largas se parten para envolver, y los anchos de columna se reparten según el contenido real. Mismo fix aplicado al PDF de inventario (códigos de barras largos).
+- **Fix UI**: el botón "Ajustar" (stock) en el formulario de producto tenía el texto invisible (clase CSS sin definir). También afectaba botones Cancelar en el modal de ajuste y en pedidos de restaurante.
 
 ---
 
