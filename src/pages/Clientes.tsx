@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  listarClientes, crearCliente, actualizarCliente, listarListasPrecios, consultarIdentificacion,
+  listarClientes, crearCliente, actualizarCliente, eliminarCliente, listarListasPrecios, consultarIdentificacion,
   // v2.5.39
   listarCategoriasClientes, crearCategoriaCliente, actualizarCategoriaCliente, eliminarCategoriaCliente,
   exportarPlantillaClientes, exportarClientesExcel, importarClientesExcel,
@@ -8,11 +8,16 @@ import {
 import type { CategoriaCliente } from "../services/api";
 import { useToast } from "../components/Toast";
 import { useTabActivated } from "../contexts/TabsContext";
+import { useSesion } from "../contexts/SesionContext";
 import type { Cliente, ListaPrecio } from "../types";
 
 export default function Clientes() {
   const { toastExito, toastError } = useToast();
+  const { esAdmin, tienePermiso } = useSesion();
+  // Solo admin o usuarios con 'eliminar_clientes' ven los controles de borrado.
+  const puedeEliminar = esAdmin || tienePermiso("eliminar_clientes");
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
   const [mostrarForm, setMostrarForm] = useState(false);
   const [editando, setEditando] = useState<Cliente | undefined>();
   const [listasPrecios, setListasPrecios] = useState<ListaPrecio[]>([]);
@@ -49,6 +54,54 @@ export default function Clientes() {
   // v2.5.3: refrescar lista al volver a esta pestaña (un cliente pudo crearse
   // desde POS o editarse desde otra tab).
   useTabActivated("/clientes", () => { cargar(); });
+
+  const clientesFiltrados = clientes.filter((c) => {
+    if (!busqueda.trim()) return true;
+    const q = busqueda.toLowerCase();
+    return (c.nombre?.toLowerCase().includes(q)) ||
+      (c.identificacion?.toLowerCase().includes(q)) ||
+      (c.email?.toLowerCase().includes(q)) ||
+      (c.telefono?.toLowerCase().includes(q));
+  });
+
+  const manejarErrorEliminar = (nombre: string, err: unknown) => {
+    const msg = String((err as Error)?.message || err);
+    const m = msg.match(/BLOCK_DELETE_CREDITO:([\d.]+)/);
+    if (m) {
+      toastError(`"${nombre}" tiene crédito pendiente por $${m[1]}. Cobra o anula sus cuentas antes de eliminarlo.`);
+    } else {
+      toastError(`No se pudo eliminar "${nombre}": ${msg}`);
+    }
+  };
+
+  const eliminarUno = async (c: Cliente) => {
+    if (!confirm(`¿Eliminar al cliente "${c.nombre}"?\n\nSi tiene historial de ventas se desactiva (el historial no se pierde).`)) return;
+    try {
+      await eliminarCliente(c.id!);
+      toastExito(`Cliente "${c.nombre}" eliminado`);
+      setSeleccionados(prev => { const s = new Set(prev); s.delete(c.id!); return s; });
+      cargar();
+    } catch (err) {
+      manejarErrorEliminar(c.nombre, err);
+    }
+  };
+
+  const eliminarVarios = async () => {
+    if (!confirm(`¿Eliminar ${seleccionados.size} cliente(s)?\n\nLos que tengan historial de ventas se desactivan (el historial no se pierde). Los que tengan crédito pendiente NO se eliminan.`)) return;
+    let ok = 0;
+    for (const id of seleccionados) {
+      const c = clientes.find(x => x.id === id);
+      try {
+        await eliminarCliente(id);
+        ok++;
+      } catch (err) {
+        manejarErrorEliminar(c?.nombre || `#${id}`, err);
+      }
+    }
+    if (ok > 0) toastExito(`${ok} cliente(s) eliminado(s)`);
+    setSeleccionados(new Set());
+    cargar();
+  };
 
   const abrirNuevo = () => {
     setEditando(undefined);
@@ -385,10 +438,37 @@ export default function Clientes() {
               autoFocus
             />
           </div>
+          {puedeEliminar && seleccionados.size > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{seleccionados.size} seleccionado(s)</span>
+              <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={eliminarVarios}>
+                Eliminar seleccionados
+              </button>
+              <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => setSeleccionados(new Set())}>
+                Cancelar
+              </button>
+            </div>
+          )}
           <div className="card">
             <table className="table">
               <thead>
                 <tr>
+                  {puedeEliminar && (
+                    <th style={{ width: 32 }}>
+                      <input
+                        type="checkbox"
+                        checked={clientesFiltrados.filter(c => c.id !== 1).length > 0 && clientesFiltrados.filter(c => c.id !== 1).every(c => seleccionados.has(c.id!))}
+                        onChange={(e) => {
+                          const s = new Set(seleccionados);
+                          // Consumidor Final (id=1) nunca es seleccionable
+                          clientesFiltrados.filter(c => c.id !== 1).forEach(c => {
+                            if (e.target.checked) s.add(c.id!); else s.delete(c.id!);
+                          });
+                          setSeleccionados(s);
+                        }}
+                      />
+                    </th>
+                  )}
                   <th>Identificación</th>
                   <th>Nombre</th>
                   <th>Teléfono</th>
@@ -398,28 +478,43 @@ export default function Clientes() {
                 </tr>
               </thead>
               <tbody>
-                {clientes.filter((c) => {
-                  if (!busqueda.trim()) return true;
-                  const q = busqueda.toLowerCase();
-                  return (c.nombre?.toLowerCase().includes(q)) ||
-                    (c.identificacion?.toLowerCase().includes(q)) ||
-                    (c.email?.toLowerCase().includes(q)) ||
-                    (c.telefono?.toLowerCase().includes(q));
-                }).map((c) => (
+                {clientesFiltrados.map((c) => (
                   <tr key={c.id}>
+                    {puedeEliminar && (
+                      <td>
+                        {c.id !== 1 && (
+                          <input
+                            type="checkbox"
+                            checked={seleccionados.has(c.id!)}
+                            onChange={(e) => {
+                              const s = new Set(seleccionados);
+                              if (e.target.checked) s.add(c.id!); else s.delete(c.id!);
+                              setSeleccionados(s);
+                            }}
+                          />
+                        )}
+                      </td>
+                    )}
                     <td>{c.identificacion ?? "-"}</td>
                     <td><strong>{c.nombre}</strong></td>
                     <td className="text-secondary">{c.telefono ?? "-"}</td>
                     <td className="text-secondary">{c.email ?? "-"}</td>
                     <td className="text-secondary">{c.lista_precio_nombre ?? "Por defecto"}</td>
-                    <td>
+                    <td style={{ whiteSpace: "nowrap" }}>
                       <button className="btn btn-outline" onClick={() => abrirEditar(c)}>Editar</button>
+                      {puedeEliminar && c.id !== 1 && (
+                        <button className="btn btn-outline" title="Eliminar cliente"
+                          style={{ marginLeft: 6, color: "var(--color-danger)", borderColor: "var(--color-danger)" }}
+                          onClick={() => eliminarUno(c)}>
+                          ✕
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
                 {clientes.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center text-secondary" style={{ padding: 40 }}>
+                    <td colSpan={puedeEliminar ? 7 : 6} className="text-center text-secondary" style={{ padding: 40 }}>
                       No hay clientes registrados
                     </td>
                   </tr>

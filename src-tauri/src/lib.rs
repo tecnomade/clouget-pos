@@ -370,6 +370,7 @@ pub fn run() {
             // Clientes
             commands::clientes::crear_cliente,
             commands::clientes::actualizar_cliente,
+            commands::clientes::eliminar_cliente,
             commands::clientes::buscar_clientes,
             commands::clientes::listar_clientes,
             commands::clientes::consultar_identificacion,

@@ -346,6 +346,10 @@ export async function actualizarCliente(cliente: Cliente): Promise<void> {
   return smartInvoke("actualizar_cliente", { cliente });
 }
 
+export async function eliminarCliente(id: number): Promise<void> {
+  return smartInvoke("eliminar_cliente", { id });
+}
+
 export async function buscarClientes(termino: string): Promise<Cliente[]> {
   return smartInvoke("buscar_clientes", { termino });
 }

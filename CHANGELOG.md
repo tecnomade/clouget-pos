@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.29 (BETA) — 2026-06-11 🗑 Eliminar clientes (uno o varios)
+
+- **Clientes**: nuevo botón ✕ por fila y selección múltiple con checkboxes + "Eliminar seleccionados".
+- Requiere ser admin o tener el nuevo permiso **"Eliminar clientes"** (asignable en Configuración → Usuarios).
+- Reglas de seguridad: **Consumidor Final nunca se elimina**; clientes con **crédito pendiente se bloquean** (avisa el saldo); clientes con historial de ventas se **desactivan** en vez de borrarse (el historial no se pierde y su cédula queda libre para re-crearlos).
+
+---
+
 ## v2.6.28 (BETA) — 2026-06-11 👁 Detalles de producto para cajeros + fix PDF reportes
 
 - **POS**: el botón "Ver detalles" del producto ahora está disponible para **todos los usuarios** (antes solo admin). El cajero ve nombre, precio de venta, stock, IVA y componentes de combo; el **precio de costo** solo se muestra con permiso `ver_costos` y el botón **Editar** solo con permiso `gestionar_productos`.

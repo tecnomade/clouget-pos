@@ -1,7 +1,68 @@
-use crate::db::Database;
+use crate::db::{Database, SesionState};
 use crate::models::Cliente;
 use serde::Deserialize;
 use tauri::State;
+
+/// Elimina un cliente. Reglas:
+/// - Requiere ADMIN o permiso 'eliminar_clientes'.
+/// - Consumidor Final (id=1) nunca se elimina.
+/// - Si tiene crédito PENDIENTE se bloquea (prefijo BLOCK_DELETE_CREDITO:saldo).
+/// - DELETE físico; si tiene referencias (ventas, notas débito, cxc pagadas)
+///   hace soft delete liberando la identificación para poder re-crearlo.
+#[tauri::command]
+pub fn eliminar_cliente(db: State<Database>, sesion: State<SesionState>, id: i64) -> Result<(), String> {
+    {
+        let sesion_guard = sesion.sesion.lock().map_err(|e| e.to_string())?;
+        if let Some(s) = sesion_guard.as_ref() {
+            if s.rol != "ADMIN" {
+                let tiene = serde_json::from_str::<serde_json::Value>(&s.permisos)
+                    .ok()
+                    .and_then(|v| v.get("eliminar_clientes")?.as_bool())
+                    .unwrap_or(false);
+                if !tiene {
+                    return Err("No tiene permiso para eliminar clientes.".to_string());
+                }
+            }
+        }
+    }
+
+    if id == 1 {
+        return Err("No se puede eliminar Consumidor Final.".to_string());
+    }
+
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+
+    let saldo_pendiente: f64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(saldo), 0) FROM cuentas_por_cobrar
+             WHERE cliente_id = ?1 AND estado = 'PENDIENTE'",
+            rusqlite::params![id],
+            |r| r.get(0),
+        )
+        .unwrap_or(0.0);
+    if saldo_pendiente > 0.009 {
+        return Err(format!("BLOCK_DELETE_CREDITO:{:.2}", saldo_pendiente));
+    }
+
+    if conn
+        .execute("DELETE FROM clientes WHERE id = ?1", rusqlite::params![id])
+        .is_ok()
+    {
+        return Ok(());
+    }
+
+    // Tiene referencias → soft delete liberando identificacion (UNIQUE)
+    conn.execute(
+        "UPDATE clientes
+         SET activo = 0,
+             identificacion = COALESCE(identificacion, '') || '_DEL' || id
+         WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| format!("No se pudo eliminar cliente: {}", e))?;
+
+    Ok(())
+}
 
 #[tauri::command]
 pub fn crear_cliente(db: State<Database>, cliente: Cliente) -> Result<i64, String> {

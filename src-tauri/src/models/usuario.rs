@@ -26,6 +26,7 @@ pub const PERMISOS_DISPONIBLES: &[(&str, &str, &str)] = &[
     ("ver_reportes",                "Ver reportes",                                             CAT_CORE),
     ("ver_costos",                  "Ver precios de costo",                                     CAT_CORE),
     ("gestionar_clientes",          "Gestionar clientes",                                       CAT_CORE),
+    ("eliminar_clientes",           "Eliminar clientes (boton borrar)",                          CAT_CORE),
     ("gestionar_productos",         "Gestionar productos",                                      CAT_CORE),
     ("eliminar_productos",          "Eliminar productos y categorías (botón borrar)",           CAT_CORE),
     ("gestionar_inventario",        "Gestionar inventario",                                     CAT_CORE),
