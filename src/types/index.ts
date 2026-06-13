@@ -40,6 +40,8 @@ export interface ProductoTactil {
   categoria_id?: number;
   categoria_nombre?: string;
   imagen?: string;
+  /** Flag: el producto tiene imagen. La imagen completa se lazy-loadea via obtenerProducto. */
+  tiene_imagen?: boolean;
   es_servicio?: boolean;
   no_controla_stock?: boolean;
   /** SIMPLE | COMBO_FIJO | COMBO_FLEXIBLE */
@@ -52,6 +54,8 @@ export interface ProductoTactil {
   codigo?: string;
   /** Codigo de barras (para busqueda en POS) */
   codigo_barras?: string;
+  /** Flag: requiere control de caducidad (fast-path al agregar al carrito). */
+  requiere_caducidad?: boolean;
 }
 
 export interface ProductoBusqueda {
@@ -74,6 +78,10 @@ export interface ProductoBusqueda {
   // v2.5.21: flags para excluir servicios y productos sin control del cálculo de stock de combos
   es_servicio?: boolean;
   no_controla_stock?: boolean;
+  /** SIMPLE | COMBO_FIJO | COMBO_FLEXIBLE — permite fast-path al agregar (evita obtenerProducto). */
+  tipo_producto?: string;
+  /** Flag: requiere control de caducidad — fast-path al agregar. */
+  requiere_caducidad?: boolean;
 }
 
 export interface Categoria {

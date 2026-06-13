@@ -6,6 +6,24 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.31 (BETA) — 2026-06-12 ⚡ Velocidad y UX del punto de venta (8 mejoras)
+
+Optimizaciones de rendimiento y experiencia en la pantalla de venta, a partir de una auditoría del flujo de cobro:
+
+**Velocidad**
+- **Listado del POS más liviano**: el grid ya no carga la imagen completa (base64) de cada producto; las miniaturas se cargan bajo demanda al entrar a la vista. Entrar a vender y refrescar tras cada venta es mucho más rápido en catálogos con fotos.
+- **Agregar al carrito instantáneo**: al tocar/escanear un producto del grid ya no se hacen llamadas extra a la base (se reusan los datos que el grid ya tiene). El ítem aparece sin demora.
+- **Migraciones fuera del cobro**: se quitaron `ALTER TABLE` redundantes que se ejecutaban en cada venta.
+- **Índices nuevos** en ventas/movimientos: aceleran reportes y top de productos.
+
+**UX**
+- **Botón Cobrar a prueba de doble-clic**: muestra "Cobrando…" y se bloquea mientras registra, evitando ventas duplicadas (incluido el caso de facturas SRI).
+- **Enter agrega el primer resultado** de la búsqueda (venta por nombre sin escáner).
+- **Efectivo más seguro**: si no se ingresa monto recibido se asume pago exacto (registra el efectivo real, no $0); si el monto es menor al total, avisa en vez de cerrar mal.
+- **Beep de confirmación** al agregar un producto (se puede desactivar).
+
+---
+
 ## v2.6.30 (BETA) — 2026-06-11 🔓 Fix "os error 32" al guardar PDF (RIDE/factura, tickets, etc.)
 
 > Corrige el error reportado: *"Error RIDE: Error guardando PDF: El proceso no tiene acceso al archivo porque está siendo utilizado por otro proceso (os error 32)"*.

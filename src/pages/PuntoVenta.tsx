@@ -14,6 +14,32 @@ import { usePausableInterval } from "../hooks/usePausableInterval";
 import DocumentosRecientes from "../components/DocumentosRecientes";
 import type { ProductoBusqueda, ProductoTactil, Categoria, ItemCarrito, NuevaVenta, VentaCompleta, Cliente, Caja, ResultadoEmision, ProductoPresentacion } from "../types";
 
+// Beep corto de confirmacion al agregar al carrito (feedback inmediato, sin
+// assets, independiente de que la insercion real tarde). Se desactiva guardando
+// localStorage 'pos_beep' = '0'.
+let _audioCtxBeep: AudioContext | null = null;
+function playBeepAgregar() {
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("pos_beep") === "0") return;
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    if (!_audioCtxBeep) _audioCtxBeep = new Ctx();
+    const ctx = _audioCtxBeep!;
+    if (ctx.state === "suspended") ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+  } catch { /* audio no disponible, ignorar */ }
+}
+
 export default function PuntoVenta() {
   const { toastExito, toastError, toastWarning } = useToast();
   const navigate = useNavigate();
@@ -344,6 +370,10 @@ export default function PuntoVenta() {
     setBusqueda(termino);
     if (buscarTimerRef.current) clearTimeout(buscarTimerRef.current);
     if (termino.length < 1) { setResultados([]); return; }
+    // Limpiar resultados viejos en cada tecla: evita que el Enter del escáner
+    // agregue un resultado OBSOLETO (de una búsqueda manual previa) antes de que
+    // el debounce los reemplace. La lista se repuebla solo cuando el debounce corre.
+    setResultados([]);
     // Debounce: solo buscar/auto-agregar cuando el término dejó de cambiar ~140ms.
     // Así un escáner (que teclea el código completo en pocos ms) nunca dispara
     // sobre un valor intermedio que coincida parcialmente con otro producto.
@@ -516,18 +546,38 @@ export default function PuntoVenta() {
     }
     lastAddRef.current = { id: producto.id, time: now };
 
+    // Fast-path: el grid ya manda es_servicio / no_controla_stock / tipo_producto /
+    // requiere_caducidad en `producto`, asi que un tap NO necesita ningun
+    // obtenerProducto. Solo el path de busqueda (que no trae todos los flags)
+    // hace UN obtenerProducto memoizado y reutilizado por las 3 validaciones.
+    let _prodFull: any = undefined;
+    const getProdFull = async () => {
+      if (_prodFull === undefined) {
+        try { _prodFull = await obtenerProducto(producto.id); }
+        catch { _prodFull = null; }
+      }
+      return _prodFull;
+    };
+
     // Bloqueo por stock cuando config = BLOQUEAR | BLOQUEAR_OCULTAR
     // Excepciones: servicios y productos sin control de stock siempre se permiten.
     if (stockModo !== "PERMITIR") {
       try {
-        const prodFull = await obtenerProducto(producto.id);
+        let esServicioF = producto.es_servicio;
+        let noControlaF = producto.no_controla_stock;
+        let tipoP = producto.tipo_producto;
+        if (esServicioF === undefined || noControlaF === undefined || tipoP === undefined) {
+          const pf = await getProdFull();
+          esServicioF = esServicioF ?? pf?.es_servicio;
+          noControlaF = noControlaF ?? (pf as any)?.no_controla_stock;
+          tipoP = tipoP ?? (pf as any)?.tipo_producto;
+        }
         // v2.5.20: omitir validación de stock para servicios, productos sin control,
         // Y combos (los combos no tienen stock propio — el backend valida los componentes)
-        const esCombo = prodFull && ((prodFull as any).tipo_producto === "COMBO_FIJO" ||
-                                      (prodFull as any).tipo_producto === "COMBO_FLEXIBLE");
-        const omiteStock = prodFull && (prodFull.es_servicio || (prodFull as any).no_controla_stock || esCombo);
+        const esCombo = tipoP === "COMBO_FIJO" || tipoP === "COMBO_FLEXIBLE";
+        const omiteStock = esServicioF || noControlaF || esCombo;
         if (!omiteStock) {
-          const stockActual = Number(producto.stock_actual ?? prodFull?.stock_actual ?? 0);
+          const stockActual = Number(producto.stock_actual ?? 0);
           // Calcular cuanto ya esta en el carrito de este producto (todas las lineas)
           const factor = unidadElegida?.factor ?? 1;
           const cantNueva = factor; // 1 unidad de la presentacion seleccionada
@@ -559,8 +609,8 @@ export default function PuntoVenta() {
 
     // Combos: verificar tipo_producto y procesar
     try {
-      const prodFull = await obtenerProducto(producto.id);
-      const tp = (prodFull as any)?.tipo_producto;
+      let tp = producto.tipo_producto;
+      if (tp === undefined) { const pf = await getProdFull(); tp = (pf as any)?.tipo_producto; }
       if (tp === "COMBO_FLEXIBLE") {
         // Abrir modal de seleccion de componentes
         const [grupos, componentes] = await Promise.all([
@@ -592,8 +642,9 @@ export default function PuntoVenta() {
     // Caducidad: si el producto requiere_caducidad y no se especifico lote, abrir selector
     if (!loteElegido) {
       try {
-        const prodFull = await obtenerProducto(producto.id);
-        if (prodFull && prodFull.requiere_caducidad) {
+        let reqCad = producto.requiere_caducidad;
+        if (reqCad === undefined) { const pf = await getProdFull(); reqCad = pf?.requiere_caducidad; }
+        if (reqCad) {
           const lotes = await listarLotesProducto(producto.id);
           const lotesConStock = lotes.filter((l: any) => l.cantidad > 0);
           if (lotesConStock.length > 0) {
@@ -752,6 +803,8 @@ export default function PuntoVenta() {
         } as any,
       ]);
     }
+    // Feedback sonoro inmediato de "agregado" (clave al escanear sin mirar).
+    playBeepAgregar();
     setBusqueda("");
     setResultados([]);
     inputRef.current?.focus();
@@ -850,8 +903,20 @@ export default function PuntoVenta() {
   const total = totalBruto - descuentoAplicado;
   const cambio = parseFloat(montoRecibido || "0") - total;
 
+  // Guard anti-doble-clic en Cobrar: registrarVenta escribe la venta y descuenta
+  // stock; un segundo click mientras corre podia generar una venta duplicada.
+  const procesandoVentaRef = useRef(false);
+  const [registrando, setRegistrando] = useState(false);
+
   const procesarVenta = useCallback(async () => {
     if (carrito.length === 0) return;
+    if (procesandoVentaRef.current) return; // ya hay una venta en curso
+    // Marcar EN CURSO de inmediato (ANTES de cualquier await, ej. consultarEstadoSri
+    // en FACTURA) para que un segundo clic/F9 no pueda colarse y duplicar la venta.
+    // El try/finally que envuelve todo el cuerpo garantiza el reset en cada salida.
+    procesandoVentaRef.current = true;
+    setRegistrando(true);
+    try {
     if (!cajaAbierta) {
       toastError("Debe abrir la caja antes de realizar ventas");
       return;
@@ -870,6 +935,16 @@ export default function PuntoVenta() {
     if (!esFiado && formaPago === "TRANSFER" && requiereComprobante && !comprobanteImagen) {
       toastError("El comprobante de transferencia es obligatorio");
       return;
+    }
+    // EFECTIVO: si se ingreso un monto recibido MENOR al total, es un error de
+    // cobro (no se puede cerrar con pago insuficiente). Si quedo vacio, mas abajo
+    // se asume pago exacto (= total) para no perder el calculo de vuelto.
+    if (!modoPagoMixto && !esFiado && formaPago === "EFECTIVO" && montoRecibido.trim() !== "") {
+      const recibido = parseFloat(montoRecibido) || 0;
+      if (recibido < total - 0.001) {
+        toastError(`El monto recibido ($${recibido.toFixed(2)}) es menor al total ($${total.toFixed(2)}).`);
+        return;
+      }
     }
     // Verificar que el usuario ha confirmado el ambiente SRI
     if (tipoDocumento === "FACTURA" && sriModuloActivo && !sriAmbienteConfirmado) {
@@ -967,7 +1042,9 @@ export default function PuntoVenta() {
       // "Transfer" para ventas a crédito.
       forma_pago: usarMixto ? "MIXTO" : (esFiado ? "CREDITO" : formaPago),
       // Redondear a centavos para evitar arrastre de float (ej. 24.9999 -> 25.00)
-      monto_recibido: usarMixto ? total : (esFiado ? 0 : Math.round((parseFloat(montoRecibido || "0")) * 100) / 100),
+      // EFECTIVO sin monto ingresado = pago exacto (= total): asi el cierre de
+      // caja y el historial guardan el efectivo real recibido, no 0.
+      monto_recibido: usarMixto ? total : (esFiado ? 0 : (montoRecibido.trim() === "" ? total : Math.round(parseFloat(montoRecibido) * 100) / 100)),
       // v2.3.63: descuento automático por forma de pago (helper calcula 0 si
       // no aplica: feature off, mixto, % no configurado, o monto < mínimo).
       descuento: descuentoAplicado,
@@ -1085,6 +1162,11 @@ export default function PuntoVenta() {
       }).catch(() => {});
     } catch (err) {
       toastError("Error al registrar venta: " + err);
+    }
+    } finally {
+      // Reset garantizado en TODA salida (incluidos early-returns de validacion).
+      procesandoVentaRef.current = false;
+      setRegistrando(false);
     }
   }, [carrito, cajaAbierta, clienteSeleccionado, formaPago, montoRecibido, esFiado, tipoDocumento, sriModuloActivo, sriEmisionAutomatica, regimen, autoImprimirTicket, autoImprimirSri, ticketUsarPdf, requiereComprobante, comprobanteImagen, toastError, toastExito, toastWarning,
       // v2.5.55 FIX: agregadas deps faltantes que causaban stale closure.
@@ -2475,15 +2557,18 @@ export default function PuntoVenta() {
               <button className="btn btn-success" data-action="cobrar"
                 style={{ width: "100%", justifyContent: "center", fontSize: 15, padding: "12px 0" }}
                 disabled={
-                  carrito.length === 0
+                  registrando
+                  || carrito.length === 0
                   || (esFiado && !clienteSeleccionado)
                   || (modoPagoMixto && (pagosMixtos.length === 0 || Math.abs(pagosMixtos.reduce((s, p) => s + p.monto, 0) - total) > 0.02))
                 }
                 onClick={procesarVenta}>
-                {modoPagoMixto
-                  ? `Cobrar mixto $${total.toFixed(2)}`
-                  : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)}
-                <span className="kbd">F9</span>
+                {registrando
+                  ? "Cobrando…"
+                  : modoPagoMixto
+                    ? `Cobrar mixto $${total.toFixed(2)}`
+                    : (esFiado ? `Credito $${total.toFixed(2)}` : `Cobrar $${total.toFixed(2)}`)}
+                {!registrando && <span className="kbd">F9</span>}
               </button>
             </div>
 

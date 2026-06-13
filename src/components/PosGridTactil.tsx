@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from "react";
 import type { ProductoTactil, ProductoBusqueda, Categoria } from "../types";
+import PosProductoImagen from "./PosProductoImagen";
 
 interface PosGridTactilProps {
   categorias: Categoria[];
@@ -86,6 +87,8 @@ export default function PosGridTactil({
       : p.stock_actual;
     const busquedaCompatible: ProductoBusqueda = {
       id: p.id,
+      codigo: p.codigo,
+      codigo_barras: p.codigo_barras,
       nombre: p.nombre,
       precio_venta: p.precio_venta,
       // Arrastrar el piso de precio para que el carrito lo respete.
@@ -96,11 +99,25 @@ export default function PosGridTactil({
       stock_minimo: 0,
       categoria_nombre: p.categoria_nombre,
       precio_lista: undefined,
+      // Fast-path al agregar: estos flags evitan llamadas obtenerProducto.
+      es_servicio: p.es_servicio,
+      no_controla_stock: p.no_controla_stock,
+      tipo_producto: p.tipo_producto,
+      requiere_caducidad: p.requiere_caducidad,
     };
     const now = Date.now();
     if (lastAddRef.current.id === busquedaCompatible.id && now - lastAddRef.current.time < 500) return;
     lastAddRef.current = { id: busquedaCompatible.id, time: now };
     onAgregarProducto(busquedaCompatible);
+  };
+
+  // Agrega un resultado del dropdown de busqueda (reutilizado por click y Enter).
+  const agregarResultado = (r: ProductoBusqueda) => {
+    const now = Date.now();
+    if (lastAddRef.current.id === r.id && now - lastAddRef.current.time < 500) return;
+    lastAddRef.current = { id: r.id, time: now };
+    onAgregarProducto(r);
+    onBusquedaChange("");
   };
 
   return (
@@ -114,6 +131,16 @@ export default function PosGridTactil({
           placeholder="Buscar producto... (Ctrl+B)"
           value={busqueda}
           onChange={(e) => onBusquedaChange(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter agrega el primer resultado (venta por nombre sin escaner).
+            // resultados solo tiene datos cuando el debounce de busqueda ya corrio
+            // (se limpia en cada tecla), asi que el Enter del escaner no agrega un
+            // item obsoleto. isComposing evita disparar durante IME.
+            if (e.key === "Enter" && !e.nativeEvent.isComposing && busqueda.trim() && resultados.length > 0) {
+              e.preventDefault();
+              agregarResultado(resultados[0]);
+            }
+          }}
           style={{ fontSize: 14 }}
         />
         {/* Search results dropdown (same as normal mode) */}
@@ -126,7 +153,7 @@ export default function PosGridTactil({
           }}>
             {resultados.map((r) => (
               <div key={r.id}
-                onClick={() => { const now = Date.now(); if (lastAddRef.current.id === r.id && now - lastAddRef.current.time < 500) return; lastAddRef.current = { id: r.id, time: now }; onAgregarProducto(r); onBusquedaChange(""); }}
+                onClick={() => agregarResultado(r)}
                 style={{
                   padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--color-border)",
                   display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -242,7 +269,6 @@ export default function PosGridTactil({
                     ? null   // no se puede precalcular, depende de seleccion
                     : p.stock_actual;
                 const sinStock = !omiteStock && !esComboFlex && (stockMostrar !== null && stockMostrar <= 0);
-                const hayImagen = !!p.imagen;
                 return (
               <button
                 onClick={() => handleTap(p)}
@@ -262,30 +288,14 @@ export default function PosGridTactil({
                 onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
                 onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
               >
-                {/* Imagen ocupa todo el card.
-                    v2.4.18: objectFit "contain" en lugar de "cover" para que NUNCA
-                    se recorte el producto (mejor ver bordes blancos que cortar la mitad
-                    del envase). Background neutro para llenar el espacio sobrante. */}
-                {hayImagen ? (
-                  <img
-                    src={`data:image/png;base64,${p.imagen}`}
-                    alt={p.nombre}
-                    style={{
-                      width: "100%", height: "100%", objectFit: "contain",
-                      display: "block",
-                      background: "rgba(255,255,255,0.06)",
-                    }}
-                  />
-                ) : (
-                  <div style={{
-                    width: "100%", height: "100%",
-                    background: "linear-gradient(135deg, rgba(59,130,246,0.15) 0%, rgba(59,130,246,0.05) 100%)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "var(--color-primary)", fontSize: 56, fontWeight: 800,
-                  }}>
-                    {p.nombre.charAt(0).toUpperCase()}
-                  </div>
-                )}
+                {/* Imagen ocupa todo el card — lazy-load por viewport (la imagen
+                    real ya no viene en el listado, solo el flag tiene_imagen).
+                    objectFit "contain" para no recortar el producto. */}
+                <PosProductoImagen
+                  productoId={p.id}
+                  tieneImagen={!!p.tiene_imagen}
+                  nombre={p.nombre}
+                />
 
                 {/* Overlay con nombre + precio en parte inferior (gradient para legibilidad) */}
                 <div style={{

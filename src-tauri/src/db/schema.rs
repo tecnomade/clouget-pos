@@ -119,6 +119,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_venta_detalles_venta ON venta_detalles(venta_id);
+        CREATE INDEX IF NOT EXISTS idx_venta_detalles_producto ON venta_detalles(producto_id);
 
         -- Caja (apertura y cierre)
         CREATE TABLE IF NOT EXISTS caja (
@@ -336,6 +337,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_mov_inv_producto ON movimientos_inventario(producto_id);
         CREATE INDEX IF NOT EXISTS idx_mov_inv_fecha ON movimientos_inventario(created_at);
         CREATE INDEX IF NOT EXISTS idx_mov_inv_tipo ON movimientos_inventario(tipo);
+        CREATE INDEX IF NOT EXISTS idx_mov_inv_referencia ON movimientos_inventario(referencia_id);
 
         -- Establecimientos (sucursales/locales)
         CREATE TABLE IF NOT EXISTS establecimientos (

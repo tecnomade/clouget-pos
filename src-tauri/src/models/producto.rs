@@ -103,6 +103,10 @@ pub struct ProductoTactil {
     pub categoria_id: Option<i64>,
     pub categoria_nombre: Option<String>,
     pub imagen: Option<String>,
+    /// Flag: el producto tiene imagen (la imagen completa se lazy-loadea via obtenerProducto).
+    /// Evita enviar megabytes de base64 en el listado del POS tactil.
+    #[serde(default)]
+    pub tiene_imagen: bool,
     pub es_servicio: bool,
     pub no_controla_stock: bool,
     /// 'SIMPLE' | 'COMBO_FIJO' | 'COMBO_FLEXIBLE'
@@ -120,6 +124,10 @@ pub struct ProductoTactil {
     /// Codigo de barras (para busqueda en POS)
     #[serde(default)]
     pub codigo_barras: Option<String>,
+    /// Flag: requiere control de caducidad. Permite al POS evitar un
+    /// obtenerProducto extra al agregar al carrito (fast-path).
+    #[serde(default)]
+    pub requiere_caducidad: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

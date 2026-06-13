@@ -380,9 +380,9 @@ pub fn registrar_venta(
             ).ok();
         }
 
-        // v2.5.18 SELF-HEALING: asegurar que la columna tipo_producto exista
-        // (en BDs viejas el ALTER pudo no haberse ejecutado correctamente)
-        let _ = conn.execute("ALTER TABLE productos ADD COLUMN tipo_producto TEXT NOT NULL DEFAULT 'SIMPLE'", []);
+        // La columna tipo_producto se garantiza en create_tables/run_migrations al
+        // arrancar (schema.rs). Antes se hacia un ALTER aqui en cada item de cada venta,
+        // tomando el schema lock de SQLite innecesariamente en el hot-path.
 
         // Obtener stock antes de descontar y verificar si es servicio / no_controla_stock / combo
         let (stock_antes, es_servicio, no_controla_stock, tipo_producto): (f64, bool, bool, String) = conn
@@ -627,14 +627,11 @@ pub fn registrar_venta(
             // Insertar cada pago en pagos_venta. Para componentes TRANSFER, marcar el
             // estado de verificacion segun rol del usuario (igual que la venta misma).
             //
-            // v2.5.15 SELF-HEALING: si la columna pago_estado no existe en la BD del cliente
-            // (bug de migracion en instalaciones viejas), intentamos agregarla on-the-fly
-            // antes del INSERT. Si igual falla, hacemos INSERT minimo sin esas columnas para
-            // no perder la venta — luego UPDATE silencioso para setear pago_estado.
-            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN pago_estado TEXT DEFAULT 'NO_APLICA'", []);
-            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN verificado_por INTEGER", []);
-            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN fecha_verificacion TEXT", []);
-            let _ = conn.execute("ALTER TABLE pagos_venta ADD COLUMN motivo_verificacion TEXT", []);
+            // Las columnas pago_estado/verificado_por/fecha_verificacion/motivo_verificacion
+            // se garantizan en create_tables/run_migrations al arrancar (schema.rs). Antes se
+            // hacian estos 4 ALTER aqui en cada venta mixta, tomando el schema lock de SQLite.
+            // El INSERT mantiene su fallback defensivo (INSERT minimo) por si la BD es muy vieja
+            // y aun no corrio la migracion.
 
             for p in pagos {
                 let pf = p.forma_pago.to_uppercase();

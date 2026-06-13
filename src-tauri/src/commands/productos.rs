@@ -677,10 +677,12 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
     let mut stmt = conn
         .prepare(
             "SELECT p.id, p.nombre, p.precio_venta, p.iva_porcentaje, p.incluye_iva, p.stock_actual,
-                    p.categoria_id, c.nombre, p.imagen,
+                    p.categoria_id, c.nombre,
+                    CASE WHEN p.imagen IS NOT NULL AND p.imagen != '' THEN 1 ELSE 0 END,
                     COALESCE(p.es_servicio, 0), COALESCE(p.no_controla_stock, 0),
                     COALESCE(p.tipo_producto, 'SIMPLE') as tipo_producto,
-                    p.descripcion, p.codigo, p.codigo_barras, p.precio_minimo
+                    p.descripcion, p.codigo, p.codigo_barras, p.precio_minimo,
+                    COALESCE(p.requiere_caducidad, 0)
              FROM productos p
              LEFT JOIN categorias c ON p.categoria_id = c.id
              WHERE p.activo = 1
@@ -700,7 +702,8 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 stock_actual: row.get(5)?,
                 categoria_id: row.get(6)?,
                 categoria_nombre: row.get(7)?,
-                imagen: row.get(8)?,
+                imagen: None,
+                tiene_imagen: row.get::<_, i32>(8)? != 0,
                 es_servicio: row.get::<_, i32>(9)? != 0,
                 no_controla_stock: row.get::<_, i32>(10)? != 0,
                 tipo_producto: row.get(11)?,
@@ -708,6 +711,7 @@ pub fn listar_productos_tactil(db: State<Database>) -> Result<Vec<ProductoTactil
                 descripcion: row.get(12)?,
                 codigo: row.get(13)?,
                 codigo_barras: row.get(14)?,
+                requiere_caducidad: row.get::<_, i32>(16)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
