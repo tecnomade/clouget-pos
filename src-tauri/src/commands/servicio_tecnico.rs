@@ -1251,14 +1251,12 @@ pub fn imprimir_orden_servicio_pdf(
     doc.push(Paragraph::new("___________________________").aligned(Alignment::Center).styled(normal_st));
     doc.push(Paragraph::new(if es_cotizacion { "Aceptación del Cliente" } else { "Firma del Cliente" }).aligned(Alignment::Center).styled(normal_st));
 
+    // Renderizar a bytes y guardar con nombre único + escritura robusta (os error 32)
+    let mut pdf_bytes = Vec::new();
+    doc.render(&mut pdf_bytes).map_err(|e| format!("Error generando PDF: {}", e))?;
     let temp_dir = std::env::temp_dir();
-    let filename = if es_cotizacion {
-        format!("Cotizacion-{}.pdf", numero.replace("/", "-"))
-    } else {
-        format!("OrdenServicio-{}.pdf", numero.replace("/", "-"))
-    };
-    let pdf_path = temp_dir.join(&filename);
-    doc.render_to_file(&pdf_path).map_err(|e| format!("Error generando PDF: {}", e))?;
+    let prefijo = if es_cotizacion { "Cotizacion" } else { "OrdenServicio" };
+    let pdf_path = crate::utils::escribir_pdf_robusto(&temp_dir, prefijo, &numero, &pdf_bytes)?;
 
     #[cfg(target_os = "windows")]
     crate::utils::silent_command("cmd").args(["/C", "start", "", &pdf_path.to_string_lossy()]).spawn().ok();

@@ -59,6 +59,7 @@ export default function VentasDia() {
   const [fechaDesde, setFechaDesde] = useState(fechaHoy);
   const [fechaHasta, setFechaHasta] = useState(fechaHoy);
   const [reintentandoSri, setReintentandoSri] = useState<number | null>(null);
+  const [rideEnProceso, setRideEnProceso] = useState<number | null>(null);
   // Modal: forma de pago para SRI cuando la venta es a credito/mixto
   const [sriPagoVenta, setSriPagoVenta] = useState<{ id: number; numero: string } | null>(null);
   const [sriFormaPagoCredito, setSriFormaPagoCredito] = useState<string>("20");
@@ -862,10 +863,20 @@ export default function VentasDia() {
                               </button>
                               <button className="btn btn-outline" style={{ padding: "2px 6px", fontSize: 10 }}
                                 title="Imprimir RIDE (PDF A4)"
-                                onClick={() => v.id && imprimirRide(v.id)
-                                  .then(() => toastExito("RIDE abierto"))
-                                  .catch((e) => toastError("Error RIDE: " + e))}>
-                                RIDE
+                                disabled={rideEnProceso !== null}
+                                onClick={async () => {
+                                  if (!v.id || rideEnProceso !== null) return;
+                                  setRideEnProceso(v.id);
+                                  try {
+                                    await imprimirRide(v.id);
+                                    toastExito("RIDE abierto");
+                                  } catch (e) {
+                                    toastError("Error RIDE: " + e);
+                                  } finally {
+                                    setRideEnProceso(null);
+                                  }
+                                }}>
+                                {rideEnProceso === v.id ? "..." : "RIDE"}
                               </button>
                               {(esAdmin || tienePermiso("crear_nota_credito")) && (
                                 !notasCredito.some(nc => nc.venta_id === v.id) ? (

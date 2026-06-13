@@ -3,6 +3,62 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Escribe bytes a un PDF de forma robusta ante el bug de Windows **os error 32**
+/// (ERROR_SHARING_VIOLATION): "el archivo está siendo utilizado por otro proceso",
+/// que ocurre cuando un visor (Adobe Reader), un antivirus o un cliente de
+/// sincronización sostiene el handle del archivo mientras se reintenta escribir.
+///
+/// Tres capas de defensa:
+/// 1. **Nombre único** (uuid) por archivo → nunca colisiona con una copia que un
+///    visor aún tenga abierta (causa principal del bug en el RIDE/factura).
+/// 2. **Escribe a `.tmp` y renombra** (rename atómico) → no expone un archivo a
+///    medio escribir al antivirus/sync.
+/// 3. **Reintento con backoff** ante os error 32 → absorbe los bloqueos
+///    transitorios de antivirus/sync sin depender del entorno del cliente.
+///
+/// Devuelve la ruta final del PDF escrito. `prefijo` ej. "RIDE", "RIDE-NC",
+/// "TICKET"; `numero` se sanea de caracteres inválidos de nombre de archivo.
+pub fn escribir_pdf_robusto(
+    dir: &std::path::Path,
+    prefijo: &str,
+    numero: &str,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let safe = numero.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+    let uid = uuid::Uuid::new_v4();
+    let final_path = dir.join(format!("{}-{}-{}.pdf", prefijo, safe, uid));
+    let tmp_path = dir.join(format!(".{}-{}-{}.pdf.tmp", prefijo, safe, uid));
+
+    // Capa 2+3: escribir a .tmp con reintentos ante locks transitorios.
+    let mut intento = 0u32;
+    loop {
+        match std::fs::write(&tmp_path, bytes) {
+            Ok(_) => break,
+            Err(e) if e.raw_os_error() == Some(32) && intento < 5 => {
+                intento += 1;
+                std::thread::sleep(std::time::Duration::from_millis(120 * u64::from(intento)));
+            }
+            Err(e) => return Err(format!("Error guardando PDF: {}", e)),
+        }
+    }
+
+    // Rename atómico al destino final, también con reintentos.
+    intento = 0;
+    loop {
+        match std::fs::rename(&tmp_path, &final_path) {
+            Ok(_) => return Ok(final_path),
+            Err(e) if e.raw_os_error() == Some(32) && intento < 5 => {
+                intento += 1;
+                std::thread::sleep(std::time::Duration::from_millis(120 * u64::from(intento)));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(format!("Error guardando PDF: {}", e));
+            }
+        }
+    }
+}
+
 /// Convierte un Excel serial date a string ISO YYYY-MM-DD.
 ///
 /// Excel almacena fechas como días desde 1899-12-30 (con un bug histórico:

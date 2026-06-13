@@ -165,7 +165,9 @@ pub fn generar_ride_pdf(
     if let Some(logo_b64) = config.get("logo_negocio") {
         if !logo_b64.is_empty() {
             if let Ok(logo_bytes) = BASE64.decode(logo_b64) {
-                let logo_temp = std::env::temp_dir().join("clouget_ride_logo.png");
+                // Nombre único: bajo concurrencia (auto-SRI + impresión manual)
+                // dos RIDE no deben pisarse el mismo PNG intermedio.
+                let logo_temp = std::env::temp_dir().join(format!("clouget_ride_logo_{}.png", uuid::Uuid::new_v4()));
                 if std::fs::write(&logo_temp, &logo_bytes).is_ok() {
                     if let Ok(mut logo_img) = genpdf::elements::Image::from_path(&logo_temp) {
                         logo_img = logo_img.with_alignment(Alignment::Center);
@@ -896,7 +898,8 @@ pub fn generar_barcode128_image(data: &str) -> Result<String, String> {
     let gray_img = image::GrayImage::from_raw(width, height, img_buf)
         .ok_or("Error creando imagen barcode")?;
 
-    let temp_path = std::env::temp_dir().join("clouget_ride_barcode.png");
+    // Nombre único para no colisionar con otra generación de RIDE concurrente.
+    let temp_path = std::env::temp_dir().join(format!("clouget_ride_barcode_{}.png", uuid::Uuid::new_v4()));
     gray_img
         .save(&temp_path)
         .map_err(|e| format!("Error guardando barcode: {}", e))?;

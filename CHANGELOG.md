@@ -6,6 +6,17 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.30 (BETA) — 2026-06-11 🔓 Fix "os error 32" al guardar PDF (RIDE/factura, tickets, etc.)
+
+> Corrige el error reportado: *"Error RIDE: Error guardando PDF: El proceso no tiene acceso al archivo porque está siendo utilizado por otro proceso (os error 32)"*.
+
+- **Causa**: el PDF se guardaba siempre con el mismo nombre fijo; al re-imprimir/reenviar el mismo comprobante mientras el visor (Adobe) aún lo tenía abierto, o con antivirus escaneándolo, Windows bloqueaba la escritura.
+- **Fix robusto** (`escribir_pdf_robusto`): cada PDF se guarda con **nombre único** (uuid), escribiendo a un temporal y renombrando de forma atómica, con **reintentos** ante el bloqueo. Aplicado a RIDE de factura y nota de crédito, tickets, cotización, nota de venta y orden de servicio. Los códigos de barras/logos intermedios también usan nombre único (evita colisión bajo emisión concurrente).
+- **UX**: el botón **RIDE/Imprimir** se deshabilita mientras procesa, para que un doble-clic no dispare escrituras solapadas (en Ventas del día, post-venta y Documentos recientes).
+- Workaround inmediato sin actualizar: cerrar Adobe antes de reimprimir, o usar Microsoft Edge como visor de PDF por defecto.
+
+---
+
 ## v2.6.29 (BETA) — 2026-06-11 🗑 Eliminar clientes (uno o varios)
 
 - **Clientes**: nuevo botón ✕ por fila y selección múltiple con checkboxes + "Eliminar seleccionados".

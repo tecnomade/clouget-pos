@@ -331,15 +331,14 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
 
     let pdf_bytes = crate::sri::ride::generar_ticket_pdf(&venta_completa, &config, &pagos_mixtos)?;
 
-    // Guardar en directorio temporal
+    // Guardar en directorio temporal (nombre único + escritura robusta ante os error 32)
     let temp_dir = std::env::temp_dir();
-    let filename = format!(
-        "Ticket-{}.pdf",
-        venta_completa.venta.numero.replace(['/', '\\', ':'], "-")
-    );
-    let pdf_path = temp_dir.join(&filename);
-    std::fs::write(&pdf_path, &pdf_bytes)
-        .map_err(|e| format!("Error guardando ticket PDF: {}", e))?;
+    let pdf_path = crate::utils::escribir_pdf_robusto(
+        &temp_dir,
+        "Ticket",
+        &venta_completa.venta.numero,
+        &pdf_bytes,
+    )?;
 
     // Abrir con visor del sistema
     #[cfg(target_os = "windows")]

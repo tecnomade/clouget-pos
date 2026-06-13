@@ -24,6 +24,7 @@ export default function PuntoVenta() {
   const [carrito, setCarrito] = useState<ItemCarrito[]>([]);
   const [montoRecibido, setMontoRecibido] = useState("");
   const [ventaCompletada, setVentaCompletada] = useState<VentaCompleta | null>(null);
+  const [rideEnProceso, setRideEnProceso] = useState<number | null>(null);
   const [formaPago, setFormaPago] = useState("EFECTIVO");
   const [esFiado, setEsFiado] = useState(false);
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null);
@@ -1583,14 +1584,21 @@ export default function PuntoVenta() {
                 {esFacturaAutorizada && (
                   <>
                     <button className="btn btn-outline btn-lg"
-                      onClick={() => {
-                        if (ventaCompletada.venta.id) {
-                          imprimirRide(ventaCompletada.venta.id)
-                            .then(() => toastExito("RIDE abierto"))
-                            .catch((e) => toastError("Error RIDE: " + e));
+                      disabled={rideEnProceso !== null}
+                      onClick={async () => {
+                        const ventaId = ventaCompletada.venta.id;
+                        if (!ventaId || rideEnProceso !== null) return;
+                        setRideEnProceso(ventaId);
+                        try {
+                          await imprimirRide(ventaId);
+                          toastExito("RIDE abierto");
+                        } catch (e) {
+                          toastError("Error RIDE: " + e);
+                        } finally {
+                          setRideEnProceso(null);
                         }
                       }}>
-                      RIDE
+                      {rideEnProceso !== null ? "..." : "RIDE"}
                     </button>
                     <button className="btn btn-outline btn-lg"
                       onClick={async () => {

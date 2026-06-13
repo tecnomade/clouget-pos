@@ -2004,14 +2004,13 @@ pub fn generar_ride_pdf(
         None,
     )?;
 
-    // Guardar en directorio temporal
+    // Guardar en temporal con nombre ÚNICO + reintentos ante os error 32
+    // (Windows: archivo bloqueado por visor/antivirus al re-imprimir la misma
+    //  factura). Ver utils::escribir_pdf_robusto.
     let temp_dir = std::env::temp_dir();
     let num_for_file = venta_completa.venta.numero_factura.as_deref()
         .unwrap_or(&venta_completa.venta.numero);
-    let filename = format!("RIDE-{}.pdf", num_for_file.replace(['/', '\\', ':'], "-"));
-    let pdf_path = temp_dir.join(&filename);
-    std::fs::write(&pdf_path, &pdf_bytes)
-        .map_err(|e| format!("Error guardando PDF: {}", e))?;
+    let pdf_path = crate::utils::escribir_pdf_robusto(&temp_dir, "RIDE", num_for_file, &pdf_bytes)?;
 
     Ok(pdf_path.to_string_lossy().to_string())
 }
@@ -2855,10 +2854,7 @@ pub fn generar_ride_nc_pdf(
     let temp_dir = std::env::temp_dir();
     let num_for_file = venta_completa.venta.numero_factura.as_deref()
         .unwrap_or(&venta_completa.venta.numero);
-    let filename = format!("RIDE-NC-{}.pdf", num_for_file.replace(['/', '\\', ':'], "-"));
-    let pdf_path = temp_dir.join(&filename);
-    std::fs::write(&pdf_path, &pdf_bytes)
-        .map_err(|e| format!("Error guardando PDF: {}", e))?;
+    let pdf_path = crate::utils::escribir_pdf_robusto(&temp_dir, "RIDE-NC", num_for_file, &pdf_bytes)?;
 
     // Abrir en visor del sistema
     #[cfg(target_os = "windows")]

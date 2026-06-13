@@ -15,6 +15,7 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
   const [documentos, setDocumentos] = useState<DocumentoReciente[]>([]);
   const [filtro, setFiltro] = useState<string>("TODOS");
   const [cargando, setCargando] = useState(false);
+  const [rideEnProceso, setRideEnProceso] = useState<number | null>(null);
 
   // Estados del modal de conversion guia -> venta (igual que en GuiasRemisionPage)
   const [convertir, setConvertir] = useState<VentaCompleta | null>(null);
@@ -191,11 +192,15 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
   };
 
   const handleRide = async (doc: DocumentoReciente) => {
+    if (rideEnProceso !== null) return;
+    setRideEnProceso(doc.id);
     try {
       await imprimirRide(doc.id);
       toastExito("RIDE generado");
     } catch (err) {
       toastError("Error: " + err);
+    } finally {
+      setRideEnProceso(null);
     }
   };
 
@@ -338,8 +343,9 @@ export default function DocumentosRecientes({ abierto, onCerrar, onCargarDocumen
                         </button>
                         {doc.tipo_documento === "FACTURA" && (
                           <button className="btn btn-outline" style={{ fontSize: 10, padding: "2px 8px" }}
+                            disabled={rideEnProceso !== null}
                             onClick={() => handleRide(doc)}>
-                            RIDE
+                            {rideEnProceso === doc.id ? "..." : "RIDE"}
                           </button>
                         )}
                       </>

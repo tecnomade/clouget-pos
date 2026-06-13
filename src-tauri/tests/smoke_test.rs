@@ -292,7 +292,40 @@ fn exportar_tabla_pdf_no_pierde_celdas_largas() {
     assert!(bytes > 1000, "PDF sospechosamente pequeño: {} bytes", bytes);
 }
 
-// ── 8) ESCENARIO MIXTO COMPLEJO — test de aceptación ────────────────────────
+// ── 8) ESCRITURA ROBUSTA DE PDF — nombre único anti os error 32 ─────────────
+
+#[test]
+fn escribir_pdf_robusto_genera_nombres_unicos() {
+    // El fix del "os error 32": dos generaciones del MISMO comprobante deben
+    // escribir archivos DISTINTOS (no pisar uno que un visor tenga abierto).
+    let dir = std::env::temp_dir();
+    let bytes = b"%PDF-1.4 contenido de prueba";
+    let p1 = clouget_pos_lib::utils::escribir_pdf_robusto(&dir, "RIDE", "001-001-000000003", bytes)
+        .expect("primer write");
+    let p2 = clouget_pos_lib::utils::escribir_pdf_robusto(&dir, "RIDE", "001-001-000000003", bytes)
+        .expect("segundo write del mismo numero");
+    assert_ne!(p1, p2, "Dos RIDE del mismo numero deben tener rutas distintas (uuid)");
+    assert!(p1.exists() && p2.exists(), "Ambos PDF deben existir en disco");
+    assert!(p1.file_name().unwrap().to_string_lossy().starts_with("RIDE-001-001-000000003-"));
+    assert_eq!(std::fs::read(&p1).unwrap(), bytes, "El contenido debe ser exacto");
+    // No debe quedar el .tmp intermedio
+    let tmp = dir.join(format!(".{}.tmp", p1.file_name().unwrap().to_string_lossy()));
+    assert!(!tmp.exists(), "El .tmp intermedio no debe quedar tras el rename");
+    let _ = std::fs::remove_file(&p1);
+    let _ = std::fs::remove_file(&p2);
+}
+
+#[test]
+fn escribir_pdf_robusto_sanea_caracteres_invalidos() {
+    let dir = std::env::temp_dir();
+    let p = clouget_pos_lib::utils::escribir_pdf_robusto(&dir, "RIDE-NC", "001/001:0003", b"x")
+        .expect("write con caracteres invalidos en numero");
+    let name = p.file_name().unwrap().to_string_lossy();
+    assert!(!name.contains('/') && !name.contains(':'), "Caracteres invalidos saneados: {}", name);
+    let _ = std::fs::remove_file(&p);
+}
+
+// ── 9) ESCENARIO MIXTO COMPLEJO — test de aceptación ────────────────────────
 
 #[test]
 fn escenario_mixto_caja_cierra_correctamente() {

@@ -633,15 +633,10 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
         &config_map,
     )?;
 
-    // Guardar en directorio temporal
+    // Guardar en directorio temporal (nombre único + escritura robusta ante os error 32)
     let temp_dir = std::env::temp_dir();
-    let filename = format!(
-        "NotaVenta-{}.pdf",
-        venta.numero.replace(['/', '\\', ':'], "-")
-    );
-    let pdf_path = temp_dir.join(&filename);
-    std::fs::write(&pdf_path, &pdf_bytes)
-        .map_err(|e| format!("Error guardando PDF: {}", e))?;
+    let pdf_path =
+        crate::utils::escribir_pdf_robusto(&temp_dir, "NotaVenta", &venta.numero, &pdf_bytes)?;
 
     // Abrir con visor del sistema
     #[cfg(target_os = "windows")]

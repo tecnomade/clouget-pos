@@ -162,15 +162,10 @@ pub fn generar_cotizacion_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
     let pdf_bytes =
         generar_pdf_cotizacion(&venta, &detalles, &cliente, &config)?;
 
-    // Guardar en temp
+    // Guardar en temp (nombre único + escritura robusta ante os error 32)
     let temp_dir = std::env::temp_dir();
-    let filename = format!(
-        "Cotizacion-{}.pdf",
-        venta.numero.replace(['/', '\\', ':'], "-")
-    );
-    let pdf_path = temp_dir.join(&filename);
-    std::fs::write(&pdf_path, &pdf_bytes)
-        .map_err(|e| format!("Error guardando PDF: {}", e))?;
+    let pdf_path =
+        crate::utils::escribir_pdf_robusto(&temp_dir, "Cotizacion", &venta.numero, &pdf_bytes)?;
 
     // Abrir con visor del sistema
     #[cfg(target_os = "windows")]
