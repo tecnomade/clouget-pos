@@ -6,6 +6,17 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.33 (BETA) — 2026-06-15 🛒 Vaciar carrito + Ventas "en espera" (park/hold)
+
+Para alto flujo de caja: aparcar una venta y atender a otro cliente sin perder nada.
+
+- **Botón "🗑 Vaciar"** en el encabezado del carrito (junto a Items), con confirmación.
+- **"⏸ En espera"**: aparca el carrito actual (con su cliente) y lo limpia al instante para atender al siguiente. **Persistente** — sobrevive al cierre de la app.
+- **Chip "En espera (N)"**: abre la lista de ventas aparcadas; **Retomar** la carga de vuelta con un clic, **✕** la descarta. Si tenés un carrito activo al retomar, se aparca solo (no se pierde nada).
+- Se mantienen **Borrador** (documento guardado) y **Recientes** — el "en espera" es para parqueo rápido dentro del turno.
+
+---
+
 ## v2.6.32 (BETA) — 2026-06-15 🔬 Trazabilidad de lotes (recall farmacéutico)
 
 Ahora podés saber **qué lote le vendiste a cada cliente** — clave para reclamos y retiros de producto caducado. El dato del lote ya se guardaba en cada venta; esta versión lo hace **visible y buscable**.

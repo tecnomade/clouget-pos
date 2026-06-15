@@ -129,6 +129,18 @@ export default function PuntoVenta() {
   // Panel documentos recientes
   const [mostrarRecientes, setMostrarRecientes] = useState(false);
 
+  // Ventas "en espera" (park/hold): aparcar el carrito actual para atender a
+  // otro cliente y retomarlo despues. Persistente en localStorage (sobrevive
+  // cierre de app, por terminal). Distinto del Borrador (documento guardado).
+  const [enEspera, setEnEspera] = useState<any[]>(() => {
+    try { return JSON.parse(localStorage.getItem("pos_en_espera") || "[]"); } catch { return []; }
+  });
+  const [mostrarEnEspera, setMostrarEnEspera] = useState(false);
+  const persistirEnEspera = (lista: any[]) => {
+    setEnEspera(lista);
+    try { localStorage.setItem("pos_en_espera", JSON.stringify(lista)); } catch { /* storage lleno/no disp */ }
+  };
+
   // Modal guía de remisión
   const [mostrarModalGuia, setMostrarModalGuia] = useState(false);
   const [guiaPlaca, setGuiaPlaca] = useState("");
@@ -1176,6 +1188,57 @@ export default function PuntoVenta() {
       pagosMixtos, modoPagoMixto, descuentoAplicado, descuentoFp,
       sriAmbienteConfirmado, total, subtotal]);
 
+  // Aparcar el carrito actual "en espera" y limpiar para atender a otro cliente.
+  const ponerEnEspera = () => {
+    if (carrito.length === 0) return;
+    const parked = {
+      id: Date.now(),
+      etiqueta: clienteSeleccionado?.nombre || "Cliente sin registrar",
+      items: carrito.reduce((s, i) => s + i.cantidad, 0),
+      total,
+      hora: new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" }),
+      carrito,
+      cliente: clienteSeleccionado,
+    };
+    persistirEnEspera([parked, ...enEspera]);
+    setCarrito([]);
+    setMontoRecibido("");
+    setClienteSeleccionado(null);
+    setPagosMixtos([]);
+    setModoPagoMixto(false);
+    toastExito("Venta puesta en espera");
+    inputRef.current?.focus();
+  };
+
+  // Retomar una venta en espera. Si hay un carrito activo, lo aparca primero
+  // (swap sin pérdida de datos).
+  const retomarEnEspera = (parked: any) => {
+    let restantes = enEspera.filter((p) => p.id !== parked.id);
+    if (carrito.length > 0) {
+      const actual = {
+        id: Date.now(),
+        etiqueta: clienteSeleccionado?.nombre || "Cliente sin registrar",
+        items: carrito.reduce((s: number, i: any) => s + i.cantidad, 0),
+        total,
+        hora: new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" }),
+        carrito,
+        cliente: clienteSeleccionado,
+      };
+      restantes = [actual, ...restantes];
+    }
+    persistirEnEspera(restantes);
+    setCarrito(parked.carrito || []);
+    setClienteSeleccionado(parked.cliente || null);
+    setMontoRecibido("");
+    setMostrarEnEspera(false);
+    toastExito("Venta retomada");
+    inputRef.current?.focus();
+  };
+
+  const eliminarEnEspera = (id: number) => {
+    persistirEnEspera(enEspera.filter((p) => p.id !== id));
+  };
+
   const nuevaVentaClick = useCallback(() => {
     setVentaCompletada(null);
     setResultadoSri(null);
@@ -1963,6 +2026,19 @@ export default function PuntoVenta() {
               onClick={() => setMostrarRecientes(true)}>
               Recientes
             </button>
+            <button className="btn btn-outline" style={{ fontSize: 11, padding: "5px 14px", opacity: carrito.length === 0 ? 0.5 : 1 }}
+              disabled={carrito.length === 0}
+              title="Aparcar este carrito y atender a otro cliente"
+              onClick={ponerEnEspera}>
+              ⏸ En espera
+            </button>
+            {enEspera.length > 0 && (
+              <button className="btn" style={{ fontSize: 11, padding: "5px 14px", background: "var(--color-warning)", color: "#0f172a", border: "none", fontWeight: 700 }}
+                title="Ver ventas en espera"
+                onClick={() => setMostrarEnEspera(true)}>
+                En espera ({enEspera.length})
+              </button>
+            )}
           </div>
         </div>
 
@@ -2001,7 +2077,27 @@ export default function PuntoVenta() {
                   </button>
                 )}
               </div>
-              <span className="text-secondary" style={{ fontSize: 12 }}>Items: {carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="text-secondary" style={{ fontSize: 12 }}>Items: {carrito.reduce((s, i) => s + i.cantidad, 0)}</span>
+                {carrito.length > 0 && (
+                  <button
+                    title="Vaciar carrito"
+                    onClick={() => {
+                      if (carrito.length && confirm(`¿Vaciar el carrito? (${carrito.length} producto(s))`)) {
+                        setCarrito([]);
+                        setMontoRecibido("");
+                      }
+                    }}
+                    style={{
+                      background: "none", border: "1px solid var(--color-border)", borderRadius: "var(--radius)",
+                      cursor: "pointer", color: "var(--color-danger)", fontSize: 12,
+                      padding: "2px 8px", display: "flex", alignItems: "center", gap: 4,
+                    }}
+                  >
+                    🗑 Vaciar
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Cart items list - scrollable. flex:1 + min-height:0 permite que se reduzca
@@ -2680,6 +2776,45 @@ export default function PuntoVenta() {
           setMontoRecibido("");
         }}
       />
+
+      {/* Modal de ventas EN ESPERA (park/hold) */}
+      {mostrarEnEspera && (
+        <div className="modal-overlay" onClick={() => setMostrarEnEspera(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0 }}>⏸ Ventas en espera ({enEspera.length})</h3>
+              <button onClick={() => setMostrarEnEspera(false)} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "var(--color-text)" }}>×</button>
+            </div>
+            <div className="modal-body" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {enEspera.length === 0 ? (
+                <div className="text-center text-secondary" style={{ padding: 24 }}>No hay ventas en espera.</div>
+              ) : (
+                enEspera.map((p: any) => (
+                  <div key={p.id} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 8, padding: "10px 12px", border: "1px solid var(--color-border)",
+                    borderRadius: "var(--radius)", background: "var(--color-surface)",
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.etiqueta}</div>
+                      <div className="text-secondary" style={{ fontSize: 12 }}>
+                        {p.items} item(s) · ${Number(p.total).toFixed(2)} · {p.hora}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <button className="btn btn-primary" style={{ fontSize: 12, padding: "4px 12px" }}
+                        onClick={() => retomarEnEspera(p)}>Retomar</button>
+                      <button className="btn btn-outline" title="Eliminar"
+                        style={{ fontSize: 12, padding: "4px 10px", color: "var(--color-danger)", borderColor: "var(--color-danger)" }}
+                        onClick={() => { if (confirm(`¿Eliminar la venta en espera de "${p.etiqueta}"?`)) eliminarEnEspera(p.id); }}>✕</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal datos de Guía de Remisión */}
       {mostrarModalGuia && (
