@@ -733,22 +733,38 @@ select option {
 }
 
 /* Scrollbar */
+/* Scrollbars finos y "flotantes": track TRANSPARENTE (antes usaba --color-bg,
+   que se veia como una franja vertical de otro color al lado de los paneles) y
+   thumb tipo pildora redondeada con borde transparente (se ve despegado, no
+   pegado al borde). Aplica a Chromium (webview de Tauri) y Firefox. */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-secondary);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
 }
 
 /* Badge utilities for dark theme */

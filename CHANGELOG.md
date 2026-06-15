@@ -6,6 +6,12 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.34 (BETA) — 2026-06-15 🎚 Barras de desplazamiento más limpias
+
+- Las barras de scroll ya no muestran una **franja vertical de otro color** pegada al borde (el track usaba un color distinto al panel). Ahora el track es transparente y el "thumb" es una píldora redondeada que se funde con el fondo. Aplica a todos los listados, grid de productos y modales.
+
+---
+
 ## v2.6.33 (BETA) — 2026-06-15 🛒 Vaciar carrito + Ventas "en espera" (park/hold)
 
 Para alto flujo de caja: aparcar una venta y atender a otro cliente sin perder nada.
