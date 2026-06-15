@@ -349,11 +349,24 @@ pub fn registrar_venta(
             None
         };
 
+        // v2.6.32: snapshot del lote (numero + caducidad) para trazabilidad/recall.
+        // Se guarda copia en venta_detalles para no perderlo si el lote se borra.
+        let (lote_numero_snap, lote_fecha_snap): (Option<String>, Option<String>) =
+            if let Some(lid) = lote_id_final {
+                conn.query_row(
+                    "SELECT lote, fecha_caducidad FROM lotes_caducidad WHERE id = ?1",
+                    rusqlite::params![lid],
+                    |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+                ).unwrap_or((None, None))
+            } else {
+                (None, None)
+            };
+
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
              descuento, iva_porcentaje, subtotal, info_adicional, precio_costo,
-             unidad_id, unidad_nombre, factor_unidad, lote_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             unidad_id, unidad_nombre, factor_unidad, lote_id, lote_numero, lote_fecha_caducidad)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -368,6 +381,8 @@ pub fn registrar_venta(
                 item.unidad_nombre,
                 factor_unidad,
                 lote_id_final,
+                lote_numero_snap,
+                lote_fecha_snap,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -571,7 +586,7 @@ pub fn registrar_venta(
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
             info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         });
     }
@@ -894,9 +909,13 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
     let mut stmt = conn
         .prepare(
             "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
-             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional
+             d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
+             d.lote_id,
+             COALESCE(d.lote_numero, l.lote),
+             COALESCE(d.lote_fecha_caducidad, l.fecha_caducidad)
              FROM venta_detalles d
              LEFT JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN lotes_caducidad l ON d.lote_id = l.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -914,7 +933,10 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+                lote_id: row.get(10).ok(),
+                lote_numero: row.get(11).ok(),
+                lote_fecha_caducidad: row.get(12).ok(),
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
             })
         })
@@ -2033,7 +2055,7 @@ fn guardar_documento_pendiente(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         });
     }
@@ -2216,7 +2238,7 @@ pub fn guardar_guia_remision(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: cantidad_efectiva, precio_unitario: precio_unitario_efectivo,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: pres_snapshot.as_ref().map(|(id, _, _, _)| *id),
             cantidad_presentacion: pres_snapshot.as_ref().map(|(_, _, _, c)| *c),
         });
@@ -2781,7 +2803,7 @@ pub fn convertir_guia_a_venta(
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
-            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, combo_seleccion: None,
+            unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         })
     }).map_err(|e| e.to_string())?

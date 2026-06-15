@@ -6,6 +6,19 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.32 (BETA) — 2026-06-15 🔬 Trazabilidad de lotes (recall farmacéutico)
+
+Ahora podés saber **qué lote le vendiste a cada cliente** — clave para reclamos y retiros de producto caducado. El dato del lote ya se guardaba en cada venta; esta versión lo hace **visible y buscable**.
+
+- **Nueva pantalla "Trazabilidad"** (menú Gestión): escribís el número de lote → lista de clientes a los que se les vendió, con teléfono, email, producto, cantidad, caducidad, fecha y N° de venta. Exportable a CSV. *Responde directo: "¿a quién le vendí el lote caducado?"*
+- **Lote + caducidad visibles en el detalle de venta** (Ventas del día): al abrir una venta se ve el lote de cada ítem.
+- **Snapshot del lote en la venta**: se guarda copia del número y caducidad del lote vendido, así la trazabilidad **no se pierde aunque borres el lote** del inventario.
+- El lote sigue siendo **opcional**: si hay stock sin lote (ej. recién instalado, info incompleta), se vende igual sin bloquear.
+
+> Nota: ventas a "Consumidor Final" aparecen en la búsqueda pero sin datos de contacto (no se registró cliente).
+
+---
+
 ## v2.6.31 (BETA) — 2026-06-12 ⚡ Velocidad y UX del punto de venta (8 mejoras)
 
 Optimizaciones de rendimiento y experiencia en la pantalla de venta, a partir de una auditoría del flujo de cobro:

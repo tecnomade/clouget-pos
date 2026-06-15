@@ -1543,6 +1543,12 @@ export default function VentasDia() {
                       <tr key={i}>
                         <td>
                           <div>{nombre}</div>
+                          {(d.lote_numero || d.lote_fecha_caducidad) && (
+                            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
+                              {d.lote_numero ? `Lote: ${d.lote_numero}` : "Lote"}
+                              {d.lote_fecha_caducidad ? ` · Cad: ${d.lote_fecha_caducidad.slice(0, 10)}` : ""}
+                            </div>
+                          )}
                           {d.nombre_producto && d.info_adicional && (
                             <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 2 }}>
                               {d.info_adicional}

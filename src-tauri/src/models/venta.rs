@@ -89,6 +89,12 @@ pub struct VentaDetalle {
     /// Lote de caducidad del que se vendio este item (v2.2.0)
     #[serde(default)]
     pub lote_id: Option<i64>,
+    /// v2.6.32: snapshot del lote vendido (numero + caducidad) para trazabilidad.
+    /// Se conserva aunque el lote se borre del inventario.
+    #[serde(default)]
+    pub lote_numero: Option<String>,
+    #[serde(default)]
+    pub lote_fecha_caducidad: Option<String>,
     /// Para combos: seleccion de componentes (COMBO_FLEXIBLE) o vacio (COMBO_FIJO usa la definicion).
     /// Lista de (producto_hijo_id, cantidad). Solo aplica si producto_id es un combo.
     #[serde(default)]

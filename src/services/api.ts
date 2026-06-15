@@ -248,6 +248,23 @@ export const listarLotesProducto = (productoId: number) =>
 export const alertasCaducidad = () =>
   smartInvoke<{lotes: any[], vencidos: number, por_vencer: number, dias_alerta: number}>("alertas_caducidad");
 
+// --- Trazabilidad de lotes / Recall ---
+export interface ClientePorLote {
+  venta_numero: string;
+  fecha: string;
+  cliente_id?: number | null;
+  cliente_nombre: string;
+  cliente_telefono?: string | null;
+  cliente_email?: string | null;
+  producto_nombre?: string | null;
+  cantidad: number;
+  lote?: string | null;
+  caducidad?: string | null;
+}
+export async function clientesPorLote(termino: string): Promise<ClientePorLote[]> {
+  return smartInvoke("clientes_por_lote", { termino });
+}
+
 // --- Combos / Kits ---
 export interface ComboGrupo {
   id?: number;

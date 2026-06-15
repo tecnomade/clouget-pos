@@ -9,7 +9,7 @@ import TabBar from "./TabBar";
 import SuscripcionBanner from "./SuscripcionBanner";
 import UpdateChecker from "./UpdateChecker";
 import { FEATURES } from "../config/branding";
-import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot, CaretLeft, CaretRight } from "@phosphor-icons/react";
+import { House, Storefront, Package, Users, Receipt, Truck, Money, Coins, Bank, ShoppingCart, ChartLineUp, Warehouse, Gear, CurrencyDollar, SignOut, Question, Moon, Sun, Wallet, Barcode, Calendar, Wrench, ForkKnife, CookingPot, CaretLeft, CaretRight, MagnifyingGlass } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 
 /** Grupos del sidebar — organizan los items en secciones lógicas.
@@ -52,6 +52,7 @@ const navItems: NavItem[] = [
   { path: "/inventario", label: "Inventario", icon: Warehouse, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
   { path: "/series", label: "Series", icon: Barcode, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
   { path: "/caducidad", label: "Caducidad", icon: Calendar, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
+  { path: "/recall", label: "Trazabilidad", icon: MagnifyingGlass, shortcut: "", todos: false, permiso: "gestionar_inventario", group: "gestion" },
   // COMPRAS
   { path: "/compras", label: "Compras", icon: ShoppingCart, shortcut: "", todos: false, permiso: "gestionar_compras", group: "compras" },
   { path: "/pagar", label: "Pagar", icon: Wallet, shortcut: "", todos: false, permiso: "gestionar_compras", group: "compras" },
@@ -193,7 +194,7 @@ export default function Layout({ children }: { children?: ReactNode }) {
         });
     // Ocultar Series si módulo no está activo
     if (!moduloSeriesActivo) items = items.filter(i => i.path !== "/series");
-    if (!moduloCaducidadActivo) items = items.filter(i => i.path !== "/caducidad");
+    if (!moduloCaducidadActivo) items = items.filter(i => i.path !== "/caducidad" && i.path !== "/recall");
     if (!moduloServicioTecnicoActivo) items = items.filter(i => i.path !== "/servicio-tecnico");
     if (!moduloContabilidadActivo) items = items.filter(i => i.path !== "/contabilidad");
     // Mesas/Cocina: solo si modulo Restaurante activo (build Clouget + licencia con 'restaurante')

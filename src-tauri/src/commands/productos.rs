@@ -1672,6 +1672,54 @@ pub fn buscar_serie(
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
 }
 
+/// Trazabilidad de lotes para recall farmacéutico: "¿a qué clientes les vendí el lote X?".
+/// Busca por el snapshot (venta_detalles.lote_numero) para que sobreviva al borrado del lote,
+/// con fallback a la tabla viva lotes_caducidad para ventas antiguas sin snapshot.
+#[tauri::command]
+pub fn clientes_por_lote(
+    db: State<Database>,
+    termino: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    if termino.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let conn = db.conn.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT v.numero, v.fecha, v.cliente_id,
+                COALESCE(NULLIF(c.nombre,''), 'CONSUMIDOR FINAL') as cliente_nombre,
+                c.telefono, c.email,
+                p.nombre as producto_nombre,
+                d.cantidad,
+                COALESCE(d.lote_numero, l.lote) as lote,
+                COALESCE(d.lote_fecha_caducidad, l.fecha_caducidad) as caducidad
+         FROM venta_detalles d
+         JOIN ventas v ON d.venta_id = v.id
+         LEFT JOIN productos p ON d.producto_id = p.id
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         LEFT JOIN lotes_caducidad l ON d.lote_id = l.id
+         WHERE COALESCE(d.lote_numero, l.lote) LIKE ?1
+           AND COALESCE(v.anulada, 0) = 0
+         ORDER BY v.fecha DESC
+         LIMIT 200"
+    ).map_err(|e| e.to_string())?;
+    let busq = format!("%{}%", termino.trim());
+    let rows = stmt.query_map(rusqlite::params![busq], |row| {
+        Ok(serde_json::json!({
+            "venta_numero": row.get::<_, String>(0)?,
+            "fecha": row.get::<_, String>(1)?,
+            "cliente_id": row.get::<_, Option<i64>>(2)?,
+            "cliente_nombre": row.get::<_, String>(3)?,
+            "cliente_telefono": row.get::<_, Option<String>>(4)?,
+            "cliente_email": row.get::<_, Option<String>>(5)?,
+            "producto_nombre": row.get::<_, Option<String>>(6)?,
+            "cantidad": row.get::<_, f64>(7)?,
+            "lote": row.get::<_, Option<String>>(8)?,
+            "caducidad": row.get::<_, Option<String>>(9)?
+        }))
+    }).map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn devolver_serie(
     db: State<Database>,

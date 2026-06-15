@@ -37,6 +37,7 @@ const PagarPage = lazy(() => import("../pages/PagarPage"));
 const MovimientosBancariosPage = lazy(() => import("../pages/MovimientosBancariosPage"));
 const SeriesPage = lazy(() => import("../pages/SeriesPage"));
 const CaducidadPage = lazy(() => import("../pages/CaducidadPage"));
+const RecallPage = lazy(() => import("../pages/RecallPage"));
 const ServicioTecnicoPage = lazy(() => import("../pages/ServicioTecnicoPage"));
 const MesasPage = lazy(() => import("../restaurante/pages/MesasPage"));
 const CocinaPage = lazy(() => import("../restaurante/pages/CocinaPage"));
@@ -70,6 +71,7 @@ function resolverPagina(path: string) {
     case "/inventario":      return <InventarioPage />;
     case "/series":          return <SeriesPage />;
     case "/caducidad":       return <CaducidadPage />;
+    case "/recall":          return <RecallPage />;
     case "/servicio-tecnico":return <ServicioTecnicoPage />;
     case "/contabilidad":    return <ContabilidadPage />;
     case "/reportes":        return <ReportesPage />;

@@ -114,6 +114,11 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             presentacion_nombre TEXT,
             presentacion_factor REAL,
             cantidad_presentacion REAL,
+            -- v2.6.32: snapshot del lote vendido (numero + caducidad) para
+            -- trazabilidad/recall. Se conserva aunque el lote se borre del
+            -- inventario. lote_id es el FK; estos son la copia inmutable.
+            lote_numero TEXT,
+            lote_fecha_caducidad TEXT,
             FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE,
             FOREIGN KEY (producto_id) REFERENCES productos(id)
         );

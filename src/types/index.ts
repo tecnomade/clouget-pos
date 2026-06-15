@@ -220,6 +220,8 @@ export interface VentaDetalle {
   unidad_nombre?: string | null;
   factor_unidad?: number | null;
   lote_id?: number | null;
+  lote_numero?: string | null;
+  lote_fecha_caducidad?: string | null;
 }
 
 export interface PagoMixto {

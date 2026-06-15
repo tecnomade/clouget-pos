@@ -29,6 +29,8 @@ fn setup_db() -> Connection {
     conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_nombre TEXT", []).ok();
     conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_factor REAL", []).ok();
     conn.execute("ALTER TABLE venta_detalles ADD COLUMN cantidad_presentacion REAL", []).ok();
+    conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_numero TEXT", []).ok();
+    conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_fecha_caducidad TEXT", []).ok();
     conn
 }
 
@@ -325,7 +327,74 @@ fn escribir_pdf_robusto_sanea_caracteres_invalidos() {
     let _ = std::fs::remove_file(&p);
 }
 
-// ── 9) ESCENARIO MIXTO COMPLEJO — test de aceptación ────────────────────────
+// ── 9) TRAZABILIDAD DE LOTE → CLIENTE (recall farmacéutico) ─────────────────
+
+/// Reproduce la query de clientes_por_lote para verificar la cadena de recall
+/// lote → venta_detalle → venta → cliente, incluyendo que el SNAPSHOT del lote
+/// sobreviva al borrado del lote del inventario.
+fn recall_buscar(conn: &Connection, termino: &str) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(c.nombre,''), 'CONSUMIDOR FINAL') as cliente_nombre,
+                c.telefono,
+                COALESCE(d.lote_numero, l.lote) as lote
+         FROM venta_detalles d
+         JOIN ventas v ON d.venta_id = v.id
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         LEFT JOIN lotes_caducidad l ON d.lote_id = l.id
+         WHERE COALESCE(d.lote_numero, l.lote) LIKE ?1
+           AND COALESCE(v.anulada, 0) = 0",
+    ).unwrap();
+    let busq = format!("%{}%", termino.trim());
+    stmt.query_map(params![busq], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, Option<String>>(2)?))
+    }).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+}
+
+#[test]
+fn recall_encuentra_cliente_por_lote_y_sobrevive_borrado() {
+    let conn = setup_db();
+    let prod_id = seed_producto(&conn, "Paracetamol");
+    // Cliente real
+    conn.execute(
+        "INSERT INTO clientes (id, tipo_identificacion, identificacion, nombre, telefono)
+         VALUES (50, 'CEDULA', '0925479925', 'Lucia Bueno', '0991112233')",
+        [],
+    ).unwrap();
+    // Lote con caducidad
+    conn.execute(
+        "INSERT INTO lotes_caducidad (id, producto_id, lote, fecha_caducidad, cantidad, cantidad_inicial)
+         VALUES (7, ?1, 'L01', '2026-12-01', 100, 100)",
+        params![prod_id],
+    ).unwrap();
+    // Venta al cliente con ese lote (snapshot guardado como en registrar_venta)
+    let venta_id = insertar_venta(&conn, "NV-500", "EFECTIVO", 5.0, "COMPLETADA", None);
+    conn.execute("UPDATE ventas SET cliente_id = 50 WHERE id = ?1", params![venta_id]).unwrap();
+    conn.execute(
+        "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario, subtotal,
+         lote_id, lote_numero, lote_fecha_caducidad)
+         VALUES (?1, ?2, 2.0, 2.5, 5.0, 7, 'L01', '2026-12-01')",
+        params![venta_id, prod_id],
+    ).unwrap();
+
+    // Recall por número de lote → debe encontrar al cliente
+    let r1 = recall_buscar(&conn, "L01");
+    assert_eq!(r1.len(), 1, "Debe encontrar 1 venta del lote L01");
+    assert_eq!(r1[0].0, "Lucia Bueno");
+    assert_eq!(r1[0].1.as_deref(), Some("0991112233"), "Debe traer el telefono para contactar");
+    assert_eq!(r1[0].2.as_deref(), Some("L01"));
+
+    // Borrar el lote del inventario: el snapshot en venta_detalles debe seguir rastreando
+    conn.execute("DELETE FROM lotes_caducidad WHERE id = 7", []).unwrap();
+    let r2 = recall_buscar(&conn, "L01");
+    assert_eq!(r2.len(), 1, "El snapshot debe sobrevivir al borrado del lote");
+    assert_eq!(r2[0].0, "Lucia Bueno");
+
+    // Una venta anulada NO debe aparecer en el recall
+    conn.execute("UPDATE ventas SET anulada = 1 WHERE id = ?1", params![venta_id]).unwrap();
+    assert_eq!(recall_buscar(&conn, "L01").len(), 0, "Ventas anuladas excluidas del recall");
+}
+
+// ── 10) ESCENARIO MIXTO COMPLEJO — test de aceptación ───────────────────────
 
 #[test]
 fn escenario_mixto_caja_cierra_correctamente() {

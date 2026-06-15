@@ -82,7 +82,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
                 presentacion_id: None, cantidad_presentacion: None,
             })
         })
@@ -266,7 +266,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
                 presentacion_id: None, cantidad_presentacion: None,
             })
         })
@@ -2019,7 +2019,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                 info_adicional: row.get(9).ok(),
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
-                factor_unidad: row.get(11).ok(), lote_id: None, combo_seleccion: None,
+                factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
                 presentacion_id: None, cantidad_presentacion: None,
             })
         })
@@ -2731,7 +2731,7 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: None, unidad_id: None, unidad_nombre: None,
-            factor_unidad: None, lote_id: None, combo_seleccion: None,
+            factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         })
     ).map_err(|e| e.to_string())?

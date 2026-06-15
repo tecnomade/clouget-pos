@@ -159,6 +159,9 @@ impl Database {
         conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_nombre TEXT", []).ok();
         conn.execute("ALTER TABLE venta_detalles ADD COLUMN presentacion_factor REAL", []).ok();
         conn.execute("ALTER TABLE venta_detalles ADD COLUMN cantidad_presentacion REAL", []).ok();
+        // v2.6.32: snapshot del lote vendido (trazabilidad/recall)
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_numero TEXT", []).ok();
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_fecha_caducidad TEXT", []).ok();
 
         // Seed admin por defecto si no hay usuarios
         seed_default_admin(&conn);

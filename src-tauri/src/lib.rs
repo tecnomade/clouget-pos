@@ -347,6 +347,7 @@ pub fn run() {
             commands::productos::series_disponibles,
             commands::productos::marcar_serie_vendida,
             commands::productos::buscar_serie,
+            commands::productos::clientes_por_lote,
             commands::productos::devolver_serie,
             commands::productos::registrar_lote_caducidad,
             commands::productos::listar_lotes_producto,
