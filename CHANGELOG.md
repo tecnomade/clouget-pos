@@ -6,6 +6,14 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.35 (BETA) — 2026-06-16 📖 Centro de ayuda + Manual de usuario
+
+- El icono **"?"** del header ahora abre un **Centro de ayuda** con acceso directo a: 📖 **Manual de usuario** (web), 🎥 Tutoriales en video, 💬 Soporte por WhatsApp — además de los atajos de teclado que ya mostraba.
+- Nuevo **manual de usuario** completo en `pos.clouget.com/manual/` (17 secciones: configuración, caja, ventas, facturación SRI, inventario, lotes, reportes, respaldos y más). También accesible desde el footer de la web.
+- Sin menús nuevos: el manual se accede desde el "?" existente, sin saturar la interfaz.
+
+---
+
 ## v2.6.34 (BETA) — 2026-06-15 🎚 Barras de desplazamiento más limpias
 
 - Las barras de scroll ya no muestran una **franja vertical de otro color** pegada al borde (el track usaba un color distinto al panel). Ahora el track es transparente y el "thumb" es una píldora redondeada que se funde con el fondo. Aplica a todos los listados, grid de productos y modales.

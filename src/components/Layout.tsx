@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useKeyboardShortcuts, SHORTCUTS_LIST } from "../hooks/useKeyboardShortcuts";
 import { useSesion } from "../contexts/SesionContext";
@@ -94,6 +95,10 @@ export default function Layout({ children }: { children?: ReactNode }) {
     }
   };
   const [mostrarAyuda, setMostrarAyuda] = useState(false);
+  // Abrir un enlace externo en el navegador del sistema (con fallback).
+  const abrirExterno = async (url: string) => {
+    try { await openUrl(url); } catch { window.open(url, "_blank"); }
+  };
   const [saliendoDemo, setSaliendoDemo] = useState(false);
   const [moduloSeriesActivo, setModuloSeriesActivo] = useState(false);
   const [moduloCaducidadActivo, setModuloCaducidadActivo] = useState(false);
@@ -606,12 +611,30 @@ export default function Layout({ children }: { children?: ReactNode }) {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="card-header flex justify-between items-center">
-              <span>Atajos de Teclado</span>
+              <span>Centro de ayuda</span>
               <button className="btn btn-outline" style={{ padding: "2px 8px" }} onClick={() => setMostrarAyuda(false)}>
                 x
               </button>
             </div>
             <div className="card-body">
+              {/* Accesos directos de ayuda (manual, videos, soporte) */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+                <button className="btn btn-primary" style={{ width: "100%", justifyContent: "flex-start", gap: 10 }}
+                  onClick={() => { setMostrarAyuda(false); abrirExterno("https://pos.clouget.com/manual/"); }}>
+                  📖 Manual de usuario
+                </button>
+                <button className="btn btn-outline" style={{ width: "100%", justifyContent: "flex-start", gap: 10 }}
+                  onClick={() => { setMostrarAyuda(false); abrirExterno("https://pos.clouget.com/tutoriales/"); }}>
+                  🎥 Tutoriales en video
+                </button>
+                <button className="btn btn-outline" style={{ width: "100%", justifyContent: "flex-start", gap: 10 }}
+                  onClick={() => { setMostrarAyuda(false); abrirExterno("https://wa.me/593981285671?text=Hola%2C%20necesito%20ayuda%20con%20Clouget%20POS"); }}>
+                  💬 Soporte por WhatsApp
+                </button>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                Atajos de teclado
+              </div>
               {SHORTCUTS_LIST.map((s) => (
                 <div
                   key={s.keys}
