@@ -59,7 +59,7 @@ export default function PuntoVenta() {
   const [_mostrarAlertas, _setMostrarAlertas] = useState(false);
   const [tipoDocumento, setTipoDocumento] = useState("NOTA_VENTA");
   // --- Ítem/Servicio a medida (línea fuera del catálogo) ---
-  type ComponenteMedida = { id: number; nombre: string; precio_costo: number; qty: number };
+  type ComponenteMedida = { id: number; nombre: string; precio_costo: number; precio_venta: number; qty: number };
   const [mostrarItemMedida, setMostrarItemMedida] = useState(false);
   const [medidaNombre, setMedidaNombre] = useState("");
   // "SIMPLE" = solo nombre + precio | "SERVICIO" = nombre + precio + componentes (descuentan stock)
@@ -88,6 +88,8 @@ export default function PuntoVenta() {
   // Permiso para cambiar lista de precios POR ITEM (modal al click en nombre/precio del carrito).
   // El cajero NO ve un selector global — la tarifa se cambia por cada item.
   const puedeCambiarListaPrecio = esAdmin || tienePermiso("cambiar_lista_precio");
+  // Solo admin o permiso 'ver_costos' ve costos y utilidad (en el modal a medida y demas).
+  const puedeVerCostos = esAdmin || tienePermiso("ver_costos");
   // Lista de TODAS las listas de precios activas (para los modales del item).
   // Aunque el producto no tenga precio especifico en una lista, se muestra y al
   // aplicar usa el precio_venta base del producto.
@@ -872,7 +874,7 @@ export default function PuntoVenta() {
       if (existe) {
         return prev.map((c) => c.id === p.id ? { ...c, qty: c.qty + 1 } : c);
       }
-      return [...prev, { id: p.id, nombre: p.nombre, precio_costo: Number(p.precio_costo ?? 0), qty: 1 }];
+      return [...prev, { id: p.id, nombre: p.nombre, precio_costo: Number(p.precio_costo ?? 0), precio_venta: Number(p.precio_venta ?? 0), qty: 1 }];
     });
     setMedidaBusqueda("");
     setMedidaResultados([]);
@@ -4312,7 +4314,7 @@ export default function PuntoVenta() {
                             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                             <span style={{ fontWeight: 500, fontSize: 13 }}>{r.nombre}</span>
                             <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
-                              costo ${Number(r.precio_costo ?? 0).toFixed(2)}
+                              ${Number(r.precio_venta ?? 0).toFixed(2)}{puedeVerCostos ? ` · costo $${Number(r.precio_costo ?? 0).toFixed(2)}` : ""}
                             </span>
                           </div>
                         ))}
@@ -4333,7 +4335,7 @@ export default function PuntoVenta() {
                             {c.nombre}
                           </span>
                           <span style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
-                            ${c.precio_costo.toFixed(2)} c/u
+                            ${c.precio_venta.toFixed(2)} c/u{puedeVerCostos ? ` · costo $${c.precio_costo.toFixed(2)}` : ""}
                           </span>
                           <input type="number" min={0} step="any"
                             value={c.qty}
@@ -4348,10 +4350,12 @@ export default function PuntoVenta() {
                           </button>
                         </div>
                       ))}
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, marginTop: 2 }}>
-                        <span className="text-secondary">Costo total</span>
-                        <span>${medidaCostoTotal.toFixed(2)}</span>
-                      </div>
+                      {puedeVerCostos && (
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, marginTop: 2 }}>
+                          <span className="text-secondary">Costo total</span>
+                          <span>${medidaCostoTotal.toFixed(2)}</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -4366,8 +4370,8 @@ export default function PuntoVenta() {
                   onKeyDown={(e) => { if (e.key === "Enter" && medidaPuedeAgregar) confirmarItemMedida(); }} />
               </div>
 
-              {/* Utilidad (solo informativa cuando hay componentes) */}
-              {medidaTipo === "SERVICIO" && medidaComponentes.length > 0 && (
+              {/* Utilidad (solo informativa, solo con permiso ver_costos) */}
+              {puedeVerCostos && medidaTipo === "SERVICIO" && medidaComponentes.length > 0 && (
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700,
                   padding: "8px 10px", borderRadius: 6,
                   background: medidaUtilidad >= 0 ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)" }}>

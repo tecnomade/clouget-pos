@@ -6,6 +6,13 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.37 (BETA) — 2026-06-17 🔒 Ítem a medida: costos solo con permiso
+
+- En el modal "Ítem/Servicio a medida", el **costo unitario, el costo total y la utilidad** ahora solo se ven con permiso **`ver_costos`** (o admin).
+- El cajero **sin** ese permiso ve el **precio de venta** de cada producto seleccionado (no el costo ni la utilidad).
+
+---
+
 ## v2.6.36 (BETA) — 2026-06-16 🛠 Ítem/Servicio a medida (venta rápida con productos)
 
 Para vender productos/servicios armados al momento (ej. mangueras a medida) sin crear un producto en el catálogo.
