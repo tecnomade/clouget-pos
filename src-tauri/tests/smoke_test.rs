@@ -394,6 +394,55 @@ fn recall_encuentra_cliente_por_lote_y_sobrevive_borrado() {
     assert_eq!(recall_buscar(&conn, "L01").len(), 0, "Ventas anuladas excluidas del recall");
 }
 
+// ── ÍTEM A MEDIDA — línea sin producto del catálogo (descripcion + componentes) ──
+
+#[test]
+fn item_a_medida_guarda_nombre_y_componentes() {
+    let conn = setup_db();
+    // Migración v2.6.36: columna descripcion para lineas a medida.
+    conn.execute("ALTER TABLE venta_detalles ADD COLUMN descripcion TEXT", []).ok();
+
+    let venta_id = insertar_venta(&conn, "NV-700", "EFECTIVO", 25.0, "COMPLETADA", None);
+    let prod_a = seed_producto(&conn, "Manguera 1m");
+    let prod_b = seed_producto(&conn, "Acople");
+
+    // Linea "a medida": producto_id NULL, nombre en descripcion, costo = suma de
+    // componentes (seed_producto crea precio_costo=1.0; 2 manguera + 1 acople => 3.0).
+    conn.execute(
+        "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
+         descuento, iva_porcentaje, subtotal, precio_costo, descripcion)
+         VALUES (?1, NULL, 1, 25.0, 0, 0, 25.0, 3.0, 'Manguera armada 10m')",
+        params![venta_id],
+    ).expect("insertar linea a medida");
+    let detalle_id = conn.last_insert_rowid();
+
+    // Componentes en venta_detalle_combo (lo que descuenta stock / devuelve al anular)
+    conn.execute(
+        "INSERT INTO venta_detalle_combo (venta_detalle_id, producto_hijo_id, cantidad) VALUES (?1, ?2, 2.0)",
+        params![detalle_id, prod_a],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO venta_detalle_combo (venta_detalle_id, producto_hijo_id, cantidad) VALUES (?1, ?2, 1.0)",
+        params![detalle_id, prod_b],
+    ).unwrap();
+
+    // El nombre de la linea sale de descripcion (COALESCE con producto inexistente).
+    let (nombre, costo): (String, f64) = conn.query_row(
+        "SELECT COALESCE(p.nombre, d.descripcion), d.precio_costo
+         FROM venta_detalles d LEFT JOIN productos p ON d.producto_id = p.id
+         WHERE d.id = ?1",
+        params![detalle_id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).unwrap();
+    assert_eq!(nombre, "Manguera armada 10m", "la linea a medida se nombra por su descripcion");
+    assert!((costo - 3.0).abs() < 0.001, "costo = suma de componentes (utilidad = 25 - 3 = 22)");
+
+    let n_comp: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM venta_detalle_combo WHERE venta_detalle_id = ?1",
+        params![detalle_id], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(n_comp, 2, "se guardaron los 2 componentes usados");
+}
+
 // ── 10) ESCENARIO MIXTO COMPLEJO — test de aceptación ───────────────────────
 
 #[test]

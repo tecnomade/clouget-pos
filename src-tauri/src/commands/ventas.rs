@@ -55,9 +55,20 @@ pub fn registrar_venta(
         // - Combo flexible: usar item.combo_seleccion
         let mut requerido: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
         for it in &venta.items {
-            let Some(pid) = it.producto_id else { continue };
             let factor = it.factor_unidad.unwrap_or(1.0);
             let cant_total = it.cantidad * factor;
+            // v2.6.36: linea "a medida" (sin producto del catalogo). Si lleva
+            // componentes elegidos, validar el stock de esos componentes.
+            let Some(pid) = it.producto_id else {
+                if let Some(sel) = &it.combo_seleccion {
+                    for c in sel {
+                        if c.cantidad > 0.0 {
+                            *requerido.entry(c.producto_hijo_id).or_insert(0.0) += c.cantidad * cant_total;
+                        }
+                    }
+                }
+                continue;
+            };
 
             // ¿Es combo? Chequear tipo_producto + presencia de componentes
             let (tipo_prod, tiene_componentes): (String, i64) = conn.query_row(
@@ -298,14 +309,35 @@ pub fn registrar_venta(
     for item in &venta.items {
         let subtotal = r2(item.cantidad * item.precio_unitario - item.descuento);
 
-        // Obtener precio_costo del producto para snapshot en venta_detalles
-        let precio_costo_prod: f64 = conn
-            .query_row(
+        // Obtener precio_costo del producto para snapshot en venta_detalles.
+        // v2.6.36: para una linea "a medida" (sin producto del catalogo) el costo
+        // unitario es la SUMA de los costos de los componentes elegidos, asi la
+        // utilidad = precio final - costo de componentes sale correcta en reportes.
+        let precio_costo_prod: f64 = if item.producto_id.is_none() {
+            let mut costo = 0.0;
+            if let Some(sel) = &item.combo_seleccion {
+                for c in sel {
+                    if c.cantidad > 0.0 {
+                        let cu: f64 = conn
+                            .query_row(
+                                "SELECT precio_costo FROM productos WHERE id = ?1",
+                                rusqlite::params![c.producto_hijo_id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or(0.0);
+                        costo += cu * c.cantidad;
+                    }
+                }
+            }
+            costo
+        } else {
+            conn.query_row(
                 "SELECT precio_costo FROM productos WHERE id = ?1",
                 rusqlite::params![item.producto_id],
                 |row| row.get(0),
             )
-            .unwrap_or(0.0);
+            .unwrap_or(0.0)
+        };
 
         // Multi-unidad: factor de conversion (default 1 = unidad base)
         let factor_unidad = item.factor_unidad.unwrap_or(1.0);
@@ -365,8 +397,9 @@ pub fn registrar_venta(
         conn.execute(
             "INSERT INTO venta_detalles (venta_id, producto_id, cantidad, precio_unitario,
              descuento, iva_porcentaje, subtotal, info_adicional, precio_costo,
-             unidad_id, unidad_nombre, factor_unidad, lote_id, lote_numero, lote_fecha_caducidad)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             unidad_id, unidad_nombre, factor_unidad, lote_id, lote_numero, lote_fecha_caducidad,
+             descripcion)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 venta_id,
                 item.producto_id,
@@ -383,6 +416,7 @@ pub fn registrar_venta(
                 lote_id_final,
                 lote_numero_snap,
                 lote_fecha_snap,
+                item.descripcion,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -419,7 +453,14 @@ pub fn registrar_venta(
         let es_combo_efectivo = tipo_producto == "COMBO_FIJO"
             || tipo_producto == "COMBO_FLEXIBLE"
             || (tiene_componentes > 0 && tipo_producto != "COMBO_FLEXIBLE");
-        let es_combo = es_combo_efectivo;
+        // v2.6.36: una linea "a medida" con componentes elegidos se procesa como
+        // combo flexible (descuenta los componentes via combo_seleccion), aunque
+        // no tenga producto padre en el catalogo.
+        let tiene_seleccion = item
+            .combo_seleccion
+            .as_ref()
+            .map_or(false, |s| s.iter().any(|c| c.cantidad > 0.0));
+        let es_combo = es_combo_efectivo || tiene_seleccion;
         // Si detectamos componentes pero tipo es SIMPLE, auto-corregir el tipo en BD
         // para que próximas ventas no necesiten esta heurística.
         if tiene_componentes > 0 && tipo_producto == "SIMPLE" {
@@ -435,8 +476,9 @@ pub fn registrar_venta(
         } else {
             tipo_producto
         };
-        // Los combos no descuentan stock del padre — se gestiona via componentes mas abajo
-        let omite_stock = es_servicio || no_controla_stock || es_combo;
+        // Los combos no descuentan stock del padre — se gestiona via componentes mas abajo.
+        // v2.6.36: las lineas a medida (sin producto) tampoco descuentan stock de padre.
+        let omite_stock = item.producto_id.is_none() || es_servicio || no_controla_stock || es_combo;
 
         // Descontar stock (cantidad_base = cantidad x factor de la unidad de venta)
         if !omite_stock {
@@ -483,14 +525,20 @@ pub fn registrar_venta(
             );
         }
 
-        // Obtener nombre del producto
-        let nombre_prod: String = conn
-            .query_row(
+        // Obtener nombre del producto. v2.6.36: para una linea "a medida" (sin
+        // producto del catalogo) el nombre de la linea es item.descripcion.
+        let nombre_prod: String = if item.producto_id.is_none() {
+            item.descripcion
+                .clone()
+                .unwrap_or_else(|| "Item a medida".to_string())
+        } else {
+            conn.query_row(
                 "SELECT nombre FROM productos WHERE id = ?1",
                 rusqlite::params![item.producto_id],
                 |row| row.get(0),
             )
-            .unwrap_or_default();
+            .unwrap_or_default()
+        };
 
         let detalle_id = conn.last_insert_rowid();
 
@@ -586,6 +634,7 @@ pub fn registrar_venta(
             iva_porcentaje: item.iva_porcentaje,
             subtotal,
             info_adicional: item.info_adicional.clone(),
+            descripcion: item.descripcion.clone(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         });
@@ -908,11 +957,12 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
     // Antes el INNER JOIN filtraba esas lineas y desaparecian del detalle.
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.lote_id,
              COALESCE(d.lote_numero, l.lote),
-             COALESCE(d.lote_fecha_caducidad, l.fecha_caducidad)
+             COALESCE(d.lote_fecha_caducidad, l.fecha_caducidad),
+             d.descripcion
              FROM venta_detalles d
              LEFT JOIN productos p ON d.producto_id = p.id
              LEFT JOIN lotes_caducidad l ON d.lote_id = l.id
@@ -936,6 +986,7 @@ pub fn obtener_venta(db: State<Database>, id: i64) -> Result<VentaCompleta, Stri
                 lote_id: row.get(10).ok(),
                 lote_numero: row.get(11).ok(),
                 lote_fecha_caducidad: row.get(12).ok(),
+                descripcion: row.get(13).ok(),
             unidad_id: None, unidad_nombre: None, factor_unidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
             })
@@ -2055,6 +2106,7 @@ fn guardar_documento_pendiente(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: item.cantidad, precio_unitario: item.precio_unitario,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
+            descripcion: None,
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         });
@@ -2238,6 +2290,7 @@ pub fn guardar_guia_remision(
             id: Some(conn.last_insert_rowid()), venta_id: Some(venta_id), producto_id: item.producto_id,
             nombre_producto: Some(nombre_prod), cantidad: cantidad_efectiva, precio_unitario: precio_unitario_efectivo,
             descuento: item.descuento, iva_porcentaje: item.iva_porcentaje, subtotal, info_adicional: item.info_adicional.clone(),
+            descripcion: None,
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: pres_snapshot.as_ref().map(|(id, _, _, _)| *id),
             cantidad_presentacion: pres_snapshot.as_ref().map(|(_, _, _, c)| *c),
@@ -2803,6 +2856,7 @@ pub fn convertir_guia_a_venta(
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
             info_adicional: row.get(9)?,
+            descripcion: None,
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         })
@@ -3594,6 +3648,54 @@ pub fn anular_venta(
             "Error registrando movimiento de auditoría para producto {}: {}. La anulación NO se aplicó.",
             prod_id, e
         ))?;
+    }
+
+    // v2.6.36: reintegrar stock de COMPONENTES de combos / items a medida.
+    // Los componentes vendidos se guardaron en venta_detalle_combo (el padre —
+    // combo o item a medida — no tiene stock propio). Antes la anulacion no
+    // los devolvia (gap pre-existente de combos). Cubre ambos casos.
+    if !omitir_reintegro_stock {
+        let mut stmt_c = conn.prepare(
+            "SELECT vdc.producto_hijo_id, vdc.cantidad
+             FROM venta_detalle_combo vdc
+             JOIN venta_detalles d ON vdc.venta_detalle_id = d.id
+             WHERE d.venta_id = ?1",
+        ).map_err(|e| e.to_string())?;
+        let comps: Vec<(i64, f64)> = stmt_c
+            .query_map(rusqlite::params![venta_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt_c);
+        for (hijo_id, cant) in &comps {
+            let omite: bool = conn.query_row(
+                "SELECT (COALESCE(es_servicio,0)+COALESCE(no_controla_stock,0))>0 FROM productos WHERE id=?1",
+                rusqlite::params![hijo_id],
+                |r| r.get::<_, i64>(0).map(|v| v > 0),
+            ).unwrap_or(false);
+            if omite { continue; }
+            let stock_antes: f64 = conn.query_row(
+                "SELECT stock_actual FROM productos WHERE id=?1",
+                rusqlite::params![hijo_id], |r| r.get(0),
+            ).unwrap_or(0.0);
+            conn.execute(
+                "UPDATE productos SET stock_actual = stock_actual + ?1 WHERE id = ?2",
+                rusqlite::params![cant, hijo_id],
+            ).map_err(|e| format!("Error reintegrando componente {}: {}", hijo_id, e))?;
+            if let Some(eid) = est_id {
+                let _ = conn.execute(
+                    "UPDATE stock_establecimiento SET stock_actual = stock_actual + ?1
+                     WHERE producto_id = ?2 AND establecimiento_id = ?3",
+                    rusqlite::params![cant, hijo_id, eid],
+                );
+            }
+            let _ = conn.execute(
+                "INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, motivo, usuario, referencia_id, establecimiento_id)
+                 VALUES (?1, 'ANULACION_COMBO', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![hijo_id, cant, stock_antes, stock_antes + cant,
+                    format!("Anulacion venta {} (combo) - {}", numero, motivo.trim()), usuario_nombre, venta_id, est_id],
+            );
+        }
     }
 
     // v2.3.49: calcular EFECTIVO real de la venta ANTES de borrar pagos_venta.

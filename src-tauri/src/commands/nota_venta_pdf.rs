@@ -559,7 +559,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
     // Obtener detalles con codigo de producto e info_adicional
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal,
              COALESCE(p.codigo, '') as codigo,
              d.info_adicional
@@ -582,6 +582,7 @@ pub fn generar_nota_venta_pdf(db: State<Database>, venta_id: i64) -> Result<Stri
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(10).ok(),
+                descripcion: None,
             unidad_id: None, unidad_nombre: None, factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
             };

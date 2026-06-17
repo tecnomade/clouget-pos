@@ -210,6 +210,9 @@ export interface VentaDetalle {
   // v2.4.14: nullable — para servicios manuales (orden de servicio técnico)
   producto_id: number | null;
   nombre_producto?: string;
+  /** Nombre/descripción de la línea cuando producto_id es null (ítem/servicio a medida).
+   *  El backend lo almacena y lo muestra cuando no hay producto del catálogo. */
+  descripcion?: string | null;
   cantidad: number;
   precio_unitario: number;
   descuento: number;
@@ -678,6 +681,9 @@ export interface ResumenAcreedor {
 
 // Item del carrito (para la pantalla de venta)
 export interface ItemCarrito {
+  /** Id del producto del catálogo. Para líneas "a medida" (es_a_medida) se usa un
+   *  id sentinela único (negativo, timestamp) solo como React key; el payload de venta
+   *  envía producto_id null. */
   producto_id: number;
   codigo?: string;
   nombre: string;
@@ -711,4 +717,12 @@ export interface ItemCarrito {
   presentacion_nombre?: string;
   presentacion_factor?: number;
   cantidad_presentacion?: number;
+  /** Línea "a medida": ítem/servicio que NO es un producto del catálogo.
+   *  Se envía con producto_id null + descripcion (nombre). */
+  es_a_medida?: boolean;
+  /** Nombre/descripción de la línea a medida (se envía como descripcion en el payload). */
+  descripcion?: string;
+  /** Componentes elegidos para un servicio a medida (descuentan stock). Reusa el
+   *  formato de combo_seleccion: { producto_hijo_id, cantidad, nombre? }. */
+  combo_seleccion?: Array<{ producto_hijo_id: number; cantidad: number; grupo_id?: number | null; nombre?: string }>;
 }

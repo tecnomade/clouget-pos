@@ -14,6 +14,8 @@ interface PosGridTactilProps {
   inputRef: React.RefObject<HTMLInputElement | null>;
   /** Modo BLOQUEAR_OCULTAR: ocultar agotados en la vista normal (el filtro "Sin stock" los muestra igual). */
   ocultarSinStock?: boolean;
+  /** Abrir modal para agregar un ítem/servicio a medida (línea no-catálogo). */
+  onAgregarAMedida?: () => void;
 }
 
 export default function PosGridTactil({
@@ -27,6 +29,7 @@ export default function PosGridTactil({
   resultados,
   inputRef,
   ocultarSinStock,
+  onAgregarAMedida,
 }: PosGridTactilProps) {
   const [categoriaActiva, setCategoriaActiva] = useState<number | null>(null);
   const [soloSinStock, setSoloSinStock] = useState(false);
@@ -124,25 +127,45 @@ export default function PosGridTactil({
     <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%", overflow: "hidden", minWidth: 0 }}>
       {/* Search bar */}
       <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)", flexShrink: 0, position: "relative", minWidth: 0, overflow: "hidden" }}>
-        <input
-          ref={inputRef}
-          className="input"
-          data-action="busqueda"
-          placeholder="Buscar producto... (Ctrl+B)"
-          value={busqueda}
-          onChange={(e) => onBusquedaChange(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter agrega el primer resultado (venta por nombre sin escaner).
-            // resultados solo tiene datos cuando el debounce de busqueda ya corrio
-            // (se limpia en cada tecla), asi que el Enter del escaner no agrega un
-            // item obsoleto. isComposing evita disparar durante IME.
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && busqueda.trim() && resultados.length > 0) {
-              e.preventDefault();
-              agregarResultado(resultados[0]);
-            }
-          }}
-          style={{ fontSize: 14 }}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <input
+            ref={inputRef}
+            className="input"
+            data-action="busqueda"
+            placeholder="Buscar producto... (Ctrl+B)"
+            value={busqueda}
+            onChange={(e) => onBusquedaChange(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter agrega el primer resultado (venta por nombre sin escaner).
+              // resultados solo tiene datos cuando el debounce de busqueda ya corrio
+              // (se limpia en cada tecla), asi que el Enter del escaner no agrega un
+              // item obsoleto. isComposing evita disparar durante IME.
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && busqueda.trim() && resultados.length > 0) {
+                e.preventDefault();
+                agregarResultado(resultados[0]);
+              }
+            }}
+            style={{ fontSize: 14, flex: 1, minWidth: 0 }}
+          />
+          {/* ＋ Agregar ítem/servicio a medida (línea fuera del catálogo) */}
+          {onAgregarAMedida && (
+            <button
+              type="button"
+              title="Agregar ítem/servicio a medida"
+              onClick={onAgregarAMedida}
+              style={{
+                flexShrink: 0,
+                width: 38, height: 38,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: 8, cursor: "pointer",
+                background: "var(--color-primary)", color: "#fff",
+                border: "none", fontSize: 22, fontWeight: 700, lineHeight: 1,
+              }}
+            >
+              ＋
+            </button>
+          )}
+        </div>
         {/* Search results dropdown (same as normal mode) */}
         {busqueda.trim() && resultados.length > 0 && (
           <div style={{

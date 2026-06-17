@@ -162,6 +162,9 @@ impl Database {
         // v2.6.32: snapshot del lote vendido (trazabilidad/recall)
         conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_numero TEXT", []).ok();
         conn.execute("ALTER TABLE venta_detalles ADD COLUMN lote_fecha_caducidad TEXT", []).ok();
+        // v2.6.36: nombre libre para lineas a medida (item/servicio sin producto
+        // del catalogo). Se muestra como nombre de la linea cuando producto_id es NULL.
+        conn.execute("ALTER TABLE venta_detalles ADD COLUMN descripcion TEXT", []).ok();
 
         // Seed admin por defecto si no hay usuarios
         seed_default_admin(&conn);

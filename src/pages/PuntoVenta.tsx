@@ -58,6 +58,17 @@ export default function PuntoVenta() {
   const [_alertas, setAlertas] = useState<AlertaStock[]>([]);
   const [_mostrarAlertas, _setMostrarAlertas] = useState(false);
   const [tipoDocumento, setTipoDocumento] = useState("NOTA_VENTA");
+  // --- Ítem/Servicio a medida (línea fuera del catálogo) ---
+  type ComponenteMedida = { id: number; nombre: string; precio_costo: number; qty: number };
+  const [mostrarItemMedida, setMostrarItemMedida] = useState(false);
+  const [medidaNombre, setMedidaNombre] = useState("");
+  // "SIMPLE" = solo nombre + precio | "SERVICIO" = nombre + precio + componentes (descuentan stock)
+  const [medidaTipo, setMedidaTipo] = useState<"SIMPLE" | "SERVICIO">("SIMPLE");
+  const [medidaPrecio, setMedidaPrecio] = useState("");
+  const [medidaComponentes, setMedidaComponentes] = useState<ComponenteMedida[]>([]);
+  const [medidaBusqueda, setMedidaBusqueda] = useState("");
+  const [medidaResultados, setMedidaResultados] = useState<ProductoBusqueda[]>([]);
+  const medidaBuscarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [regimen, setRegimen] = useState("RIMPE_POPULAR");
   const [sriModuloActivo, setSriModuloActivo] = useState(false);
   const [emitiendo, setEmitiendo] = useState(false);
@@ -832,6 +843,95 @@ export default function PuntoVenta() {
     }
   };
 
+  // ===== Ítem/Servicio a medida (línea fuera del catálogo) =====
+  const abrirItemMedida = () => {
+    setMedidaNombre("");
+    setMedidaTipo("SIMPLE");
+    setMedidaPrecio("");
+    setMedidaComponentes([]);
+    setMedidaBusqueda("");
+    setMedidaResultados([]);
+    setMostrarItemMedida(true);
+  };
+
+  const buscarComponenteMedida = (termino: string) => {
+    setMedidaBusqueda(termino);
+    if (medidaBuscarTimerRef.current) clearTimeout(medidaBuscarTimerRef.current);
+    if (termino.trim().length < 1) { setMedidaResultados([]); return; }
+    medidaBuscarTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await buscarProductos(termino, clienteSeleccionado?.lista_precio_id);
+        setMedidaResultados(res);
+      } catch { setMedidaResultados([]); }
+    }, 200);
+  };
+
+  const agregarComponenteMedida = (p: ProductoBusqueda) => {
+    setMedidaComponentes((prev) => {
+      const existe = prev.find((c) => c.id === p.id);
+      if (existe) {
+        return prev.map((c) => c.id === p.id ? { ...c, qty: c.qty + 1 } : c);
+      }
+      return [...prev, { id: p.id, nombre: p.nombre, precio_costo: Number(p.precio_costo ?? 0), qty: 1 }];
+    });
+    setMedidaBusqueda("");
+    setMedidaResultados([]);
+  };
+
+  const quitarComponenteMedida = (id: number) => {
+    setMedidaComponentes((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const setQtyComponenteMedida = (id: number, qty: number) => {
+    if (qty <= 0) { quitarComponenteMedida(id); return; }
+    setMedidaComponentes((prev) => prev.map((c) => c.id === id ? { ...c, qty } : c));
+  };
+
+  // Costo total de componentes (solo informativo en UI; el backend recalcula el costo real)
+  const medidaCostoTotal = medidaComponentes.reduce((s, c) => s + c.precio_costo * c.qty, 0);
+  const medidaPrecioNum = parseFloat(medidaPrecio) || 0;
+  const medidaUtilidad = medidaPrecioNum - medidaCostoTotal;
+  // Para "Servicio con productos" se requiere al menos 1 componente; si no, es un ítem simple.
+  const medidaPuedeAgregar = medidaNombre.trim().length > 0 && medidaPrecioNum > 0 &&
+    (medidaTipo === "SIMPLE" || medidaComponentes.length > 0);
+
+  const confirmarItemMedida = () => {
+    if (!medidaPuedeAgregar) return;
+    const nombre = medidaNombre.trim();
+    const precio = Math.round(medidaPrecioNum * 100) / 100;
+    // Componentes solo si es servicio. Un servicio sin componentes = ítem simple.
+    const esServicioConProductos = medidaTipo === "SERVICIO" && medidaComponentes.length > 0;
+    const combo = esServicioConProductos
+      ? medidaComponentes.map((c) => ({ producto_hijo_id: c.id, cantidad: c.qty, nombre: c.nombre }))
+      : undefined;
+    // Id sentinela negativo único: solo se usa como React key. El payload envía producto_id null.
+    const keyId = -Date.now();
+    setCarrito((prev) => [
+      ...prev,
+      {
+        producto_id: keyId,
+        nombre,
+        descripcion: nombre,
+        es_a_medida: true,
+        cantidad: 1,
+        precio_unitario: precio,
+        descuento: 0,
+        // IVA por defecto 0% para líneas a medida (el usuario puede cambiarlo en el carrito).
+        iva_porcentaje: 0,
+        incluye_iva: false,
+        subtotal: precio,
+        // null → el guard de stock (omiteStock cuando stock_disponible == null) salta la validación.
+        stock_disponible: null as any,
+        stock_minimo: 0,
+        precio_base: precio,
+        precio_minimo: null,
+        combo_seleccion: combo,
+      } as any,
+    ]);
+    playBeepAgregar();
+    setMostrarItemMedida(false);
+  };
+
   const actualizarCantidad = (idx: number, cantidad: number) => {
     if (cantidad <= 0) {
       setCarrito((prev) => prev.filter((_, k) => k !== idx));
@@ -1033,8 +1133,12 @@ export default function PuntoVenta() {
       cliente_id: clienteSeleccionado?.id ?? 1,
       items: carrito.map((i) => {
         const d = desglosar(i);
+        // Líneas "a medida": producto_id null + descripcion (nombre). El sentinela
+        // negativo solo era React key; el backend espera producto_id null.
+        const esAMedida = (i as any).es_a_medida === true;
         return {
-          producto_id: i.producto_id,
+          producto_id: esAMedida ? null : (i.producto_id ?? null),
+          descripcion: (i as any).descripcion ?? null,
           cantidad: i.cantidad,
           precio_unitario: d.precio_unitario,
           descuento: d.descuento,
@@ -1321,7 +1425,8 @@ export default function PuntoVenta() {
       cliente_id: clienteSeleccionado?.id ?? 1,
       items: carrito.map(i => {
         const d = desglosar(i);
-        return { producto_id: i.producto_id, cantidad: i.cantidad, precio_unitario: d.precio_unitario, descuento: d.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: d.subtotal, info_adicional: i.info_adicional || null } as any;
+        const esAMedida = (i as any).es_a_medida === true;
+        return { producto_id: esAMedida ? null : (i.producto_id ?? null), descripcion: (i as any).descripcion ?? null, cantidad: i.cantidad, precio_unitario: d.precio_unitario, descuento: d.descuento, iva_porcentaje: i.iva_porcentaje, subtotal: d.subtotal, info_adicional: i.info_adicional || null, combo_seleccion: (i as any).combo_seleccion ?? null } as any;
       }),
       forma_pago: formaPago, monto_recibido: 0, descuento: 0,
       tipo_documento: tipoDocumento, es_fiado: false,
@@ -1415,14 +1520,17 @@ export default function PuntoVenta() {
       cliente_id: clienteSeleccionado?.id ?? 1,
       items: carrito.map((i) => {
         const d = desglosar2(i);
+        const esAMedida = (i as any).es_a_medida === true;
         return {
-          producto_id: i.producto_id,
+          producto_id: esAMedida ? null : (i.producto_id ?? null),
+          descripcion: (i as any).descripcion ?? null,
           cantidad: i.cantidad,
           precio_unitario: d.precio_unitario,
           descuento: d.descuento,
           iva_porcentaje: i.iva_porcentaje,
           subtotal: d.subtotal,
           info_adicional: i.info_adicional || null,
+          combo_seleccion: (i as any).combo_seleccion ?? null,
           // v2.6.26 Sprint 3: snapshot de presentación si el item se cargó en bulto.
           presentacion_id: i.presentacion_id ?? null,
           cantidad_presentacion: i.cantidad_presentacion ?? null,
@@ -2002,6 +2110,7 @@ export default function PuntoVenta() {
               onBusquedaChange={handleBuscar}
               resultados={resultados}
               inputRef={inputRef}
+              onAgregarAMedida={abrirItemMedida}
             />
           </div>
           {/* Footer acciones rápidas */}
@@ -2130,6 +2239,16 @@ export default function PuntoVenta() {
                         <span style={{ fontWeight: 600, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
                           {item.nombre}
                         </span>
+                        {(item as any).es_a_medida && (
+                          <span style={{
+                            fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
+                            background: "rgba(234,88,12,0.18)", color: "#ea580c",
+                            border: "1px solid rgba(234,88,12,0.4)", flexShrink: 0,
+                            whiteSpace: "nowrap",
+                          }} title="Ítem/servicio a medida (fuera del catálogo)">
+                            a medida
+                          </span>
+                        )}
                         {item.unidad_nombre && (
                           <span style={{
                             fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 3,
@@ -4133,6 +4252,141 @@ export default function PuntoVenta() {
           </div>
         );
       })()}
+
+      {/* Modal: Ítem/Servicio a medida (línea fuera del catálogo) */}
+      {mostrarItemMedida && (
+        <div className="modal-overlay" onClick={() => setMostrarItemMedida(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-header"><h3>＋ Ítem / Servicio a medida</h3></div>
+            <div className="modal-body">
+              {/* Nombre */}
+              <div style={{ marginBottom: 12 }}>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Nombre (requerido)</label>
+                <input className="input" autoFocus
+                  placeholder="Ej: Reparación de pantalla, Combo personalizado..."
+                  value={medidaNombre} onChange={(e) => setMedidaNombre(e.target.value)} />
+              </div>
+
+              {/* Toggle tipo */}
+              <div style={{ display: "flex", gap: 0, marginBottom: 14, border: "1px solid var(--color-border)", borderRadius: 8, overflow: "hidden" }}>
+                {([["SIMPLE", "Ítem simple"], ["SERVICIO", "Servicio con productos"]] as const).map(([val, label]) => (
+                  <button key={val} type="button"
+                    onClick={() => setMedidaTipo(val)}
+                    style={{
+                      flex: 1, padding: "8px 10px", cursor: "pointer", border: "none",
+                      fontSize: 12, fontWeight: 600,
+                      background: medidaTipo === val ? "var(--color-primary)" : "var(--color-surface)",
+                      color: medidaTipo === val ? "#fff" : "var(--color-text-secondary)",
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Componentes (solo servicio) */}
+              {medidaTipo === "SERVICIO" && (
+                <div style={{ marginBottom: 14 }}>
+                  <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>
+                    Productos usados (descuentan stock)
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <input className="input"
+                      placeholder="Buscar producto para agregar..."
+                      value={medidaBusqueda}
+                      onChange={(e) => buscarComponenteMedida(e.target.value)} />
+                    {medidaBusqueda.trim() && medidaResultados.length > 0 && (
+                      <div style={{
+                        position: "absolute", zIndex: 10, background: "var(--color-surface)",
+                        border: "1px solid var(--color-border)", borderRadius: "var(--radius)",
+                        maxHeight: 180, overflowY: "auto", width: "100%",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                      }}>
+                        {medidaResultados.map((r) => (
+                          <div key={r.id}
+                            onClick={() => agregarComponenteMedida(r)}
+                            style={{
+                              padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--color-border)",
+                              display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surface-hover)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
+                            <span style={{ fontWeight: 500, fontSize: 13 }}>{r.nombre}</span>
+                            <span style={{ fontSize: 11, color: "var(--color-text-secondary)" }}>
+                              costo ${Number(r.precio_costo ?? 0).toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lista de componentes elegidos */}
+                  {medidaComponentes.length > 0 && (
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {medidaComponentes.map((c) => (
+                        <div key={c.id} style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "6px 8px", borderRadius: 6, background: "var(--color-surface-alt)",
+                          border: "1px solid var(--color-border)",
+                        }}>
+                          <span style={{ flex: 1, fontSize: 12, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {c.nombre}
+                          </span>
+                          <span style={{ fontSize: 11, color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
+                            ${c.precio_costo.toFixed(2)} c/u
+                          </span>
+                          <input type="number" min={0} step="any"
+                            value={c.qty}
+                            onChange={(e) => setQtyComponenteMedida(c.id, parseFloat(e.target.value) || 0)}
+                            style={{ width: 54, fontSize: 12, padding: "3px 4px", textAlign: "center",
+                              border: "1px solid var(--color-border)", borderRadius: 4,
+                              background: "var(--color-surface)", color: "var(--color-text)" }} />
+                          <button type="button" onClick={() => quitarComponenteMedida(c.id)}
+                            title="Quitar"
+                            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-danger)", fontSize: 16, lineHeight: 1, flexShrink: 0 }}>
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, marginTop: 2 }}>
+                        <span className="text-secondary">Costo total</span>
+                        <span>${medidaCostoTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Precio final */}
+              <div style={{ marginBottom: 10 }}>
+                <label className="text-secondary" style={{ fontSize: 12, display: "block", marginBottom: 4 }}>Precio final (lo que se cobra)</label>
+                <input className="input" type="number" min={0} step="any"
+                  placeholder="0.00"
+                  value={medidaPrecio} onChange={(e) => setMedidaPrecio(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && medidaPuedeAgregar) confirmarItemMedida(); }} />
+              </div>
+
+              {/* Utilidad (solo informativa cuando hay componentes) */}
+              {medidaTipo === "SERVICIO" && medidaComponentes.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700,
+                  padding: "8px 10px", borderRadius: 6,
+                  background: medidaUtilidad >= 0 ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)" }}>
+                  <span>Utilidad estimada</span>
+                  <span style={{ color: medidaUtilidad >= 0 ? "var(--color-success)" : "var(--color-danger)" }}>
+                    ${medidaUtilidad.toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn btn-outline" onClick={() => setMostrarItemMedida(false)}>Cancelar</button>
+              <button className="btn btn-primary" disabled={!medidaPuedeAgregar} onClick={confirmarItemMedida}>
+                Agregar al carrito
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

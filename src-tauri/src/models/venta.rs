@@ -78,6 +78,10 @@ pub struct VentaDetalle {
     pub subtotal: f64,
     #[serde(default)]
     pub info_adicional: Option<String>,
+    /// v2.6.36: nombre libre de una linea "a medida" (item/servicio sin producto
+    /// del catalogo). Si producto_id es None, este es el nombre de la linea.
+    #[serde(default)]
+    pub descripcion: Option<String>,
     /// Unidad de medida usada (opcional). Si presente, factor_unidad indica cuantas
     /// unidades base equivale 1 unidad de venta (ej: SIXPACK = 6 unidades base)
     #[serde(default)]

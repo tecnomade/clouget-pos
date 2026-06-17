@@ -6,6 +6,19 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.36 (BETA) — 2026-06-16 🛠 Ítem/Servicio a medida (venta rápida con productos)
+
+Para vender productos/servicios armados al momento (ej. mangueras a medida) sin crear un producto en el catálogo.
+
+- Nuevo botón **＋** a la derecha de la barra de búsqueda del POS → abre el modal "a medida".
+- **Ítem simple**: nombre + precio (no mueve inventario).
+- **Servicio con productos**: nombre + precio final + los **productos que se usaron** (componentes). En el modal ves el **costo total** y la **utilidad en vivo**.
+- Se cobra y factura como **una sola línea** (nombre + precio); los componentes quedan internos: **descuentan stock** y la **utilidad = precio final − costo de los componentes**.
+- **Anular** la venta **devuelve el stock** de los componentes (también corrige este comportamiento para combos).
+- Las líneas a medida aparecen correctamente en factura SRI, RIDE, ticket, nota de venta y en el detalle de Ventas.
+
+---
+
 ## v2.6.35 (BETA) — 2026-06-16 📖 Centro de ayuda + Manual de usuario
 
 - El icono **"?"** del header ahora abre un **Centro de ayuda** con acceso directo a: 📖 **Manual de usuario** (web), 🎥 Tutoriales en video, 💬 Soporte por WhatsApp — además de los atajos de teclado que ya mostraba.

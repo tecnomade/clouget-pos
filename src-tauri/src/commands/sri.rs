@@ -389,10 +389,10 @@ pub async fn emitir_factura_sri_internal(
 
         // Leer detalles
         let mut stmt = conn.prepare(
-            "SELECT p.codigo, p.nombre, d.cantidad,
+            "SELECT COALESCE(p.codigo, 'VARIOS'), COALESCE(p.nombre, d.descripcion, 'Item'), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1"
         ).map_err(|e| e.to_string())?;
 
@@ -967,8 +967,8 @@ pub async fn emitir_guia_remision_sri(
 
         // detalles
         let mut stmt = conn.prepare(
-            "SELECT p.codigo, p.nombre, d.cantidad
-             FROM venta_detalles d JOIN productos p ON d.producto_id = p.id
+            "SELECT COALESCE(p.codigo, 'VARIOS'), COALESCE(p.nombre, d.descripcion, 'Item'), d.cantidad
+             FROM venta_detalles d LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1"
         ).map_err(|e| e.to_string())?;
         let detalles: Vec<(String, String, f64)> = stmt
@@ -1890,12 +1890,12 @@ pub fn generar_ride_pdf(
     // Obtener detalles con codigo de producto
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion, 'Item'), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal,
-             COALESCE(p.codigo, CAST(d.producto_id AS TEXT)) as codigo,
+             COALESCE(p.codigo, CAST(d.producto_id AS TEXT), 'VARIOS') as codigo,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.venta_id = ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -2370,9 +2370,9 @@ pub async fn emitir_nota_credito_sri(
 
         // Leer detalles NC
         let mut stmt_det = conn.prepare(
-            "SELECT p.codigo, p.nombre, d.cantidad, d.precio_unitario, d.descuento, d.iva_porcentaje
+            "SELECT COALESCE(p.codigo, 'VARIOS'), COALESCE(p.nombre, 'Item'), d.cantidad, d.precio_unitario, d.descuento, d.iva_porcentaje
              FROM nota_credito_detalles d
-             JOIN productos p ON d.producto_id = p.id
+             LEFT JOIN productos p ON d.producto_id = p.id
              WHERE d.nota_credito_id = ?1"
         ).map_err(|e| e.to_string())?;
 
@@ -2752,9 +2752,9 @@ pub fn generar_ride_nc_pdf(
 
     // Detalles
     let mut stmt = conn.prepare(
-        "SELECT p.codigo, p.nombre, d.cantidad, d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.producto_id
+        "SELECT COALESCE(p.codigo, 'VARIOS'), COALESCE(p.nombre, 'Item'), d.cantidad, d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.producto_id
          FROM nota_credito_detalles d
-         JOIN productos p ON d.producto_id = p.id
+         LEFT JOIN productos p ON d.producto_id = p.id
          WHERE d.nota_credito_id = ?1"
     ).map_err(|e| e.to_string())?;
 

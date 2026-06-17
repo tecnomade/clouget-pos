@@ -58,7 +58,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
     // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
@@ -80,6 +80,7 @@ pub fn imprimir_ticket(db: State<Database>, venta_id: i64) -> Result<String, Str
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+                descripcion: None,
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
                 factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
@@ -242,7 +243,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
     // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
@@ -264,6 +265,7 @@ pub fn imprimir_ticket_pdf(db: State<Database>, venta_id: i64) -> Result<String,
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+                descripcion: None,
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
                 factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
@@ -1995,7 +1997,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
     // v2.4.16: LEFT JOIN para incluir servicios manuales (producto_id NULL)
     let mut stmt = conn
         .prepare(
-            "SELECT d.id, d.venta_id, d.producto_id, p.nombre, d.cantidad,
+            "SELECT d.id, d.venta_id, d.producto_id, COALESCE(p.nombre, d.descripcion), d.cantidad,
              d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal, d.info_adicional,
              d.unidad_nombre, COALESCE(d.factor_unidad, 1) as factor_unidad
              FROM venta_detalles d
@@ -2017,6 +2019,7 @@ pub fn imprimir_guia_remision_pdf(db: State<Database>, venta_id: i64) -> Result<
                 iva_porcentaje: row.get(7)?,
                 subtotal: row.get(8)?,
                 info_adicional: row.get(9).ok(),
+                descripcion: None,
                 unidad_id: None,
                 unidad_nombre: row.get(10).ok(),
                 factor_unidad: row.get(11).ok(), lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
@@ -2711,10 +2714,10 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
     };
 
     let mut stmt = conn.prepare(
-        "SELECT d.id, d.nota_credito_id, d.producto_id, p.nombre, d.cantidad,
+        "SELECT d.id, d.nota_credito_id, d.producto_id, COALESCE(p.nombre, 'Item'), d.cantidad,
          d.precio_unitario, d.descuento, d.iva_porcentaje, d.subtotal
          FROM nota_credito_detalles d
-         JOIN productos p ON d.producto_id = p.id
+         LEFT JOIN productos p ON d.producto_id = p.id
          WHERE d.nota_credito_id = ?1"
     ).map_err(|e| e.to_string())?;
 
@@ -2730,7 +2733,7 @@ pub fn imprimir_ticket_nc(db: State<Database>, nc_id: i64) -> Result<String, Str
             descuento: row.get(6)?,
             iva_porcentaje: row.get(7)?,
             subtotal: row.get(8)?,
-            info_adicional: None, unidad_id: None, unidad_nombre: None,
+            info_adicional: None, descripcion: None, unidad_id: None, unidad_nombre: None,
             factor_unidad: None, lote_id: None, lote_numero: None, lote_fecha_caducidad: None, combo_seleccion: None,
             presentacion_id: None, cantidad_presentacion: None,
         })
