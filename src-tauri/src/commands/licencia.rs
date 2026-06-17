@@ -231,6 +231,129 @@ pub async fn verificar_licencia(
     })
 }
 
+/// Registra una LICENCIA DE PRUEBA (trial) de 15 días desde la app.
+/// Llama a la edge function `trial-registro` con el RUC del negocio (para que no
+/// se repita la prueba) y activa la licencia localmente al instante.
+#[tauri::command]
+pub async fn registrar_licencia_prueba(
+    db: State<'_, Database>,
+    negocio: String,
+    ruc: String,
+    email: Option<String>,
+    telefono: Option<String>,
+) -> Result<LicenciaInfo, String> {
+    let negocio = negocio.trim().to_string();
+    let ruc = ruc.trim().to_string();
+    if negocio.is_empty() {
+        return Err("Ingrese el nombre de su negocio".to_string());
+    }
+    if ruc.is_empty() {
+        return Err("Ingrese su RUC".to_string());
+    }
+
+    let machine_id = obtener_machine_id()?;
+
+    let (api_url, api_key) = {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let get = |key: &str| -> String {
+            conn.query_row(
+                "SELECT value FROM config WHERE key = ?1",
+                rusqlite::params![key],
+                |row| row.get(0),
+            )
+            .unwrap_or_default()
+        };
+        (get("licencia_api_url"), get("licencia_api_key"))
+    };
+    if api_url.is_empty() {
+        return Err("URL del servidor de licencias no configurada".to_string());
+    }
+
+    let endpoint = format!("{}/trial-registro", api_url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Error creando cliente HTTP: {}", e))?;
+
+    let body = serde_json::json!({
+        "machine_id": machine_id,
+        "ruc": ruc,
+        "negocio": negocio,
+        "email": email,
+        "telefono": telefono,
+    });
+
+    let resp = client
+        .post(&endpoint)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("apikey", &api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| "No se pudo conectar al servidor. Verifique su conexión a internet.".to_string())?;
+
+    let status = resp.status();
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Error parseando respuesta: {}", e))?;
+
+    if !status.is_success() || !data.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let msg = data
+            .get("mensaje")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No se pudo activar la prueba")
+            .to_string();
+        return Err(msg);
+    }
+
+    let tipo = data.get("tipo").and_then(|v| v.as_str()).unwrap_or("prueba").to_string();
+    let expira = data.get("expira").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let modulos: Vec<String> = data
+        .get("modulos")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    let modulos_json = serde_json::to_string(&modulos).unwrap_or_else(|_| "[]".to_string());
+    let hoy = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let email_s = email.unwrap_or_default();
+
+    {
+        let conn = db.conn.lock().map_err(|e| e.to_string())?;
+        let configs = [
+            ("licencia_activada", "1"),
+            ("licencia_codigo", "PRUEBA"),
+            ("licencia_negocio", negocio.as_str()),
+            ("licencia_email", email_s.as_str()),
+            ("licencia_tipo", tipo.as_str()),
+            ("licencia_emitida", hoy.as_str()),
+            ("licencia_expira", expira.as_str()),
+            ("licencia_machine_id", machine_id.as_str()),
+            ("licencia_ultima_validacion", hoy.as_str()),
+            ("licencia_modulos", modulos_json.as_str()),
+        ];
+        for (key, value) in &configs {
+            conn.execute(
+                "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+                rusqlite::params![key, value],
+            )
+            .map_err(|e| format!("Error guardando licencia: {}", e))?;
+        }
+        conn.execute("UPDATE config SET value = '0' WHERE key = 'demo_activo'", []).ok();
+    }
+
+    Ok(LicenciaInfo {
+        negocio,
+        email: email_s,
+        tipo,
+        emitida: hoy,
+        machine_id,
+        activa: true,
+        modulos,
+    })
+}
+
 // ─── Obtener Estado de Licencia ────────────────────────────
 
 /// Obtiene el estado actual de la licencia desde la caché local.

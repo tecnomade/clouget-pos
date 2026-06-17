@@ -510,6 +510,7 @@ pub fn run() {
             // Licencia
             commands::licencia::obtener_machine_id,
             commands::licencia::verificar_licencia,
+            commands::licencia::registrar_licencia_prueba,
             commands::licencia::obtener_estado_licencia,
             // Usuarios / Sesión
             commands::usuarios::iniciar_sesion,

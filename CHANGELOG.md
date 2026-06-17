@@ -6,6 +6,15 @@ Repositorio: https://github.com/tecnomade/clouget-pos/releases
 
 ---
 
+## v2.6.38 (BETA) — 2026-06-17 🆓 Licencia de prueba de 15 días
+
+- En la pantalla de licencia, nuevo **"Probar 15 días gratis"**: el cliente se registra (negocio + RUC) y usa Clouget con sus datos reales por 15 días, sin código.
+- Se valida con el **RUC** (no se puede repetir la prueba) y por equipo. Al vencer, muestra la pantalla de compra.
+- La prueba trae el POS con módulos básicos (el admin puede asignar/quitar módulos) y el SRI con sus documentos gratis.
+- Requiere desplegar en Supabase la migración `004` y la function `trial-registro`.
+
+---
+
 ## v2.6.37 (BETA) — 2026-06-17 🔒 Ítem a medida: costos solo con permiso
 
 - En el modal "Ítem/Servicio a medida", el **costo unitario, el costo total y la utilidad** ahora solo se ven con permiso **`ver_costos`** (o admin).

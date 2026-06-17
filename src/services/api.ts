@@ -1031,6 +1031,13 @@ export async function verificarLicencia(claveLicencia: string): Promise<Licencia
   return invoke("verificar_licencia", { claveLicencia });
 }
 
+/** Registra una licencia de prueba (15 días) validando RUC. */
+export async function registrarLicenciaPrueba(
+  negocio: string, ruc: string, email?: string, telefono?: string,
+): Promise<LicenciaInfo> {
+  return invoke("registrar_licencia_prueba", { negocio, ruc, email: email ?? null, telefono: telefono ?? null });
+}
+
 export async function obtenerEstadoLicencia(): Promise<LicenciaInfo | null> {
   return invoke("obtener_estado_licencia");
 }
